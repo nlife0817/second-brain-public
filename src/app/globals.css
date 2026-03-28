@@ -138,6 +138,31 @@
   margin: 0.5rem 0;
 }
 
+.tiptap ul,
+.tiptap ol {
+  margin: 0.25rem 0;
+  padding-left: 1.25rem;
+}
+
+.tiptap li {
+  margin: 0;
+}
+
+.tiptap li p {
+  margin: 0;
+}
+
+.tiptap.prose li {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.tiptap.prose ul,
+.tiptap.prose ol {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

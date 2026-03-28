@@ -6,13 +6,16 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { KanbanBoard } from "@/components/kanban/Board";
 import { ListView } from "@/components/list/ListView";
-import { TaskDetailSheet } from "@/components/task/TaskDetailSheet";
+import { WeeklyView } from "@/components/weekly/WeeklyView";
+import { TaskDetailModal, TaskDetailPanel } from "@/components/task/TaskDetailSheet";
 import { CreateTaskDialog } from "@/components/task/CreateTaskDialog";
 
 export default function Home() {
   const fetchItems = useBrainStore((s) => s.fetchItems);
   const fetchTags = useBrainStore((s) => s.fetchTags);
   const viewMode = useBrainStore((s) => s.viewMode);
+  const detailMode = useBrainStore((s) => s.detailMode);
+  const isDetailOpen = useBrainStore((s) => s.isDetailOpen);
 
   useEffect(() => {
     fetchItems();
@@ -24,11 +27,17 @@ export default function Home() {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <Header />
-        <main className="flex-1 overflow-hidden">
-          {viewMode === "kanban" ? <KanbanBoard /> : <ListView />}
-        </main>
+        <div className="flex-1 flex min-h-0">
+          {/* Main content — gets narrower when panel is open */}
+          <main className="flex-1 overflow-auto min-w-0">
+            {viewMode === "weekly" ? <WeeklyView /> : viewMode === "kanban" ? <KanbanBoard /> : <ListView />}
+          </main>
+          {/* Inline panel (only when mode=panel and detail is open) */}
+          {detailMode === "panel" && isDetailOpen && <TaskDetailPanel />}
+        </div>
       </div>
-      <TaskDetailSheet />
+      {/* Modal (only when mode=modal) */}
+      {detailMode === "modal" && <TaskDetailModal />}
       <CreateTaskDialog />
     </div>
   );

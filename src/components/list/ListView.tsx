@@ -20,6 +20,8 @@ import {
   ItemCategory,
   ItemType,
   Item,
+  ListGroupByField,
+  ListGroupByConfig,
 } from "@/types";
 import { format, isPast, isToday, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -42,6 +44,9 @@ import {
   Plus,
   Check,
   X,
+  Layers,
+  Trash2,
+  Archive,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -157,9 +162,11 @@ function buildFlatRows(
   const rows: FlatRow[] = [];
 
   for (const item of sortedItems) {
-    const totalSub = item.subtasks?.length ?? 0;
-    const doneSub =
-      item.subtasks?.filter((s) => s.status === "done").length ?? 0;
+    // Items with parent_id are subtasks shown as detached — no nesting allowed
+    const isDetachedSubtask = !!item.parent_id;
+    const totalSub = isDetachedSubtask ? 0 : (item.subtasks?.length ?? 0);
+    const doneSub = isDetachedSubtask ? 0 :
+      (item.subtasks?.filter((s) => s.status === "done").length ?? 0);
 
     rows.push({
       item,
@@ -187,6 +194,191 @@ function buildFlatRows(
   }
 
   return rows;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Grouping helpers                                                          */
+/* -------------------------------------------------------------------------- */
+
+const GROUP_BY_OPTIONS: { key: ListGroupByField; label: string }[] = [
+  { key: "none", label: "Без группировки" },
+  { key: "status", label: "Статус" },
+  { key: "priority", label: "Приоритет" },
+  { key: "category", label: "Категория" },
+  { key: "type", label: "Тип" },
+];
+
+function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField): string {
+  switch (field) {
+    case "status": return item.status;
+    case "priority": return item.priority;
+    case "category": return item.category;
+    case "type": return item.type;
+    default: return "";
+  }
+}
+
+function getGroupLabel(field: ListGroupByField, key: string): string {
+  switch (field) {
+    case "status": return STATUS_CONFIG[key as ItemStatus]?.label ?? key;
+    case "priority": return PRIORITY_CONFIG[key as ItemPriority]?.label ?? key;
+    case "category": return CATEGORY_CONFIG[key as ItemCategory]?.label ?? key;
+    case "type": return TYPE_CONFIG[key as ItemType]?.label ?? key;
+    default: return key;
+  }
+}
+
+function getGroupIcon(field: ListGroupByField, key: string): string {
+  switch (field) {
+    case "priority": return PRIORITY_CONFIG[key as ItemPriority]?.icon ?? "";
+    default: return "";
+  }
+}
+
+const GROUP_ORDER: Record<string, Record<string, number>> = {
+  status: STATUS_WEIGHT,
+  priority: PRIORITY_WEIGHT,
+};
+
+interface ItemGroup {
+  key: string;
+  label: string;
+  icon: string;
+  items: ItemWithSubtasks[];
+}
+
+function groupItems(
+  items: ItemWithSubtasks[],
+  field: ListGroupByField
+): ItemGroup[] {
+  if (field === "none") return [];
+
+  const map = new Map<string, ItemWithSubtasks[]>();
+  for (const item of items) {
+    const key = getGroupKey(item, field);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(item);
+  }
+
+  const groups: ItemGroup[] = [];
+  for (const [key, groupItems] of map) {
+    groups.push({
+      key,
+      label: getGroupLabel(field, key),
+      icon: getGroupIcon(field, key),
+      items: groupItems,
+    });
+  }
+
+  // Sort groups by predefined order if available, otherwise alphabetically
+  const orderMap = GROUP_ORDER[field];
+  if (orderMap) {
+    groups.sort((a, b) => (orderMap[a.key] ?? 99) - (orderMap[b.key] ?? 99));
+  } else {
+    groups.sort((a, b) => a.label.localeCompare(b.label, "ru"));
+  }
+
+  return groups;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  GroupBy config popover (two levels)                                        */
+/* -------------------------------------------------------------------------- */
+
+function GroupByPopover({
+  value,
+  onChange,
+}: {
+  value: ListGroupByConfig;
+  onChange: (config: ListGroupByConfig) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  const isActive = value[0] !== "none";
+  const level2Options = GROUP_BY_OPTIONS.filter((o) => o.key === "none" || o.key !== value[0]);
+
+  return (
+    <div className="relative" ref={popoverRef}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={cn(
+          "inline-flex items-center justify-center size-6 rounded hover:bg-slate-200/70 transition-colors",
+          isActive
+            ? "text-violet-500 hover:text-violet-700"
+            : "text-slate-400 hover:text-slate-600"
+        )}
+        title="Группировка"
+      >
+        <Layers className="size-3.5" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 w-52 rounded-lg border border-slate-200 bg-white shadow-lg py-1">
+          {/* Level 1 */}
+          <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wider px-3 py-1.5">
+            Уровень 1
+          </div>
+          {GROUP_BY_OPTIONS.map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => {
+                const newL1 = opt.key;
+                const newL2 = newL1 === "none" ? "none" as ListGroupByField : (value[1] === newL1 ? "none" as ListGroupByField : value[1]);
+                onChange([newL1, newL2]);
+                if (newL1 === "none") setOpen(false);
+              }}
+              className={cn(
+                "flex w-full items-center px-3 py-1.5 text-xs hover:bg-slate-50 text-left",
+                opt.key === value[0] && "bg-violet-50 text-violet-700 font-medium"
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+
+          {/* Level 2 — only if level 1 is set */}
+          {value[0] !== "none" && (
+            <>
+              <div className="border-t border-slate-100 mt-1 mb-0.5" />
+              <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wider px-3 py-1.5">
+                Уровень 2
+              </div>
+              {level2Options.map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => {
+                    onChange([value[0], opt.key]);
+                    if (opt.key === "none") setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center px-3 py-1.5 text-xs hover:bg-slate-50 text-left",
+                    opt.key === value[1] && "bg-violet-50 text-violet-700 font-medium"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -638,6 +830,61 @@ function CreationSelectDropdown<T extends string>({
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Bulk action dropdown                                                      */
+/* -------------------------------------------------------------------------- */
+
+function BulkActionDropdown({
+  label,
+  options,
+  onSelect,
+}: {
+  label: string;
+  options: { key: string; label: string }[];
+  onSelect: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-blue-100 text-blue-700 transition-colors"
+      >
+        {label}
+        <ChevronDown className="size-3" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-50 min-w-[140px] max-h-[200px] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl">
+          {options.map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => {
+                onSelect(opt.key);
+                setOpen(false);
+              }}
+              className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-slate-50 text-left"
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Component                                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -661,6 +908,9 @@ export function ListView() {
   const reorderItems = useBrainStore((s) => s.reorderItems);
   const listColumnOrder = useBrainStore((s) => s.listColumnOrder);
   const setListColumnOrder = useBrainStore((s) => s.setListColumnOrder);
+  const listGroupBy = useBrainStore((s) => s.listGroupBy);
+  const setListGroupBy = useBrainStore((s) => s.setListGroupBy);
+  const fetchItems = useBrainStore((s) => s.fetchItems);
 
   const [sort, setSort] = useState<SortState>({
     column: "created_at",
@@ -670,6 +920,7 @@ export function ListView() {
   const [manualOrder, setManualOrder] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   /* ----- Inline task creation state -------------------------------------- */
   const [isCreating, setIsCreating] = useState(false);
@@ -780,6 +1031,42 @@ export function ListView() {
     return sorted;
   }, [items, sort, manualOrder]);
 
+  /* ----- grouping ---------------------------------------------------------- */
+
+  const groups = useMemo(
+    () => groupItems(sortedItems, listGroupBy[0]),
+    [sortedItems, listGroupBy]
+  );
+
+  const isGrouped = listGroupBy[0] !== "none" && groups.length > 0;
+  const hasLevel2 = listGroupBy[1] !== "none";
+
+  const toggleGroup = useCallback((key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  /* Build a set of item IDs per group key (for DnD restriction) */
+  const groupItemIdSets = useMemo(() => {
+    if (!isGrouped) return null;
+    const map = new Map<string, Set<string>>();
+    for (const group of groups) {
+      const ids = new Set<string>();
+      for (const item of group.items) {
+        ids.add(item.id);
+        if (item.subtasks) {
+          for (const sub of item.subtasks) ids.add(sub.id);
+        }
+      }
+      map.set(group.key, ids);
+    }
+    return map;
+  }, [isGrouped, groups]);
+
   /* ----- flat rows -------------------------------------------------------- */
 
   const flatRows = useMemo(
@@ -867,6 +1154,31 @@ export function ListView() {
     });
   }, []);
 
+  /* ----- Bulk action handlers -------------------------------------------- */
+
+  const handleBulkUpdate = useCallback(async (field: string, value: string) => {
+    const ids = Array.from(selectedIds);
+    await Promise.all(ids.map(id =>
+      fetch(`/api/items/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [field]: value }),
+      })
+    ));
+    setSelectedIds(new Set());
+    await fetchItems();
+  }, [selectedIds, fetchItems]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (!confirm(`Удалить выбранные элементы (${selectedIds.size})?`)) return;
+    const ids = Array.from(selectedIds);
+    await Promise.all(ids.map(id =>
+      fetch(`/api/items/${id}`, { method: "DELETE" })
+    ));
+    setSelectedIds(new Set());
+    await fetchItems();
+  }, [selectedIds, fetchItems]);
+
   /* ----- DnD drag end handler -------------------------------------------- */
 
   const handleDragEnd = useCallback(
@@ -878,6 +1190,18 @@ export function ListView() {
       const activeRow = rowByIdMap.get(active.id as string);
       const overRow = rowByIdMap.get(over.id as string);
       if (!activeRow || !overRow) return;
+
+      /* --- If grouped, both items must belong to the same group --- */
+      if (isGrouped && groupItemIdSets) {
+        let sameGroup = false;
+        for (const idSet of groupItemIdSets.values()) {
+          if (idSet.has(active.id as string) && idSet.has(over.id as string)) {
+            sameGroup = true;
+            break;
+          }
+        }
+        if (!sameGroup) return;
+      }
 
       /* --- Subtask reorder: both must share the same parent --- */
       if (activeRow.isSubtask && activeRow.parentId) {
@@ -905,7 +1229,34 @@ export function ListView() {
         return;
       }
 
-      /* --- Top-level reorder --- */
+      /* --- Top-level reorder (within group if grouped) --- */
+      if (isGrouped) {
+        // Find which group the active item belongs to
+        const group = groups.find((g) => g.items.some((i) => i.id === active.id));
+        if (!group) return;
+
+        const groupIds = group.items.map((i) => i.id);
+        const oldIndex = groupIds.indexOf(active.id as string);
+        const newIndex = groupIds.indexOf(over.id as string);
+        if (oldIndex === -1 || newIndex === -1) return;
+
+        const reorderedGroup = arrayMove(group.items, oldIndex, newIndex);
+        const updates = reorderedGroup.map((item, index) => ({
+          id: item.id,
+          position: index,
+        }));
+
+        setManualOrder(true);
+
+        try {
+          await reorderItems(updates);
+        } catch {
+          // fetchItems will restore correct state
+        }
+        return;
+      }
+
+      /* --- Flat reorder (no groups) --- */
       const oldIndex = topLevelIds.indexOf(active.id as string);
       const newIndex = topLevelIds.indexOf(over.id as string);
 
@@ -926,7 +1277,7 @@ export function ListView() {
         // fetchItems will restore correct state
       }
     },
-    [topLevelIds, sortedItems, reorderItems, rowByIdMap, subtaskSiblingMap]
+    [topLevelIds, sortedItems, reorderItems, rowByIdMap, subtaskSiblingMap, isGrouped, groupItemIdSets, groups]
   );
 
   /* ----- Inline task creation handlers ----------------------------------- */
@@ -1309,6 +1660,67 @@ export function ListView() {
     return () => document.removeEventListener("keydown", handler);
   }, [isCreating, handleCancelCreate]);
 
+  /* ----- renderFlatRows helper -------------------------------------------- */
+
+  const renderFlatRows = (rows: FlatRow[]) =>
+    rows.map((row, idx) => {
+      const isLastSubtaskOfParent =
+        row.isSubtask &&
+        row.parentId &&
+        (idx === rows.length - 1 ||
+          rows[idx + 1].parentId !== row.parentId ||
+          !rows[idx + 1].isSubtask);
+      const parentRow = !row.isSubtask ? row : null;
+      const isDetachedSubtask = !!row.item.parent_id && !row.isSubtask;
+      const isExpandedParentWithNoSubtasks =
+        parentRow &&
+        !isDetachedSubtask &&
+        expandedItems.has(row.item.id) &&
+        !parentRow.hasSubtasks;
+      const showAddSubtaskAfter = isDetachedSubtask
+        ? false
+        : isLastSubtaskOfParent || isExpandedParentWithNoSubtasks;
+      const addSubtaskParentId = row.isSubtask
+        ? row.parentId
+        : row.item.id;
+
+      return (
+        <ItemRowGroup
+          key={`${row.parentId ?? "root"}-${row.item.id}`}
+          row={row}
+          selected={selectedIds.has(row.item.id)}
+          onSelect={toggleOne}
+          onOpen={openDetail}
+          editingField={
+            editingItemId === row.item.id ? editingField : null
+          }
+          setEditingItem={setEditingItem}
+          updateItem={updateItem}
+          isExpanded={expandedItems.has(row.item.id)}
+          onToggleExpand={toggleExpanded}
+          visibleColumns={visibleColumns}
+          showAddSubtaskRow={
+            !!(showAddSubtaskAfter && addSubtaskParentId !== null)
+          }
+          addSubtaskParentId={addSubtaskParentId}
+          creatingSubtaskFor={creatingSubtaskFor}
+          onStartSubtaskCreate={handleStartSubtaskCreate}
+          newSubtask={newSubtask}
+          setNewSubtask={setNewSubtask}
+          onCommitSubtaskCreate={handleCommitSubtaskCreate}
+          onCancelSubtaskCreate={handleCancelSubtaskCreate}
+          subtaskInputRef={subtaskInputRef}
+          subtaskCellRefs={subtaskCellRefs}
+          subtaskDropdown={subtaskDropdown}
+          setSubtaskDropdown={setSubtaskDropdown}
+          statusOptions={statusOptions}
+          priorityOptions={priorityOptions}
+          categoryOptions={categoryOptions}
+          typeOptions={typeOptions}
+        />
+      );
+    });
+
   /* ----- render ----------------------------------------------------------- */
 
   if (items.length === 0 && !isCreating) {
@@ -1341,7 +1753,7 @@ export function ListView() {
             items={allRowIds}
             strategy={verticalListSortingStrategy}
           >
-            <table className="w-full border-collapse bg-white border border-slate-200 rounded-lg overflow-hidden">
+            <table className="w-full border-collapse bg-white border border-t-0 border-slate-200 rounded-b-lg">
               {/* ---- Header ------------------------------------------- */}
               <thead className="sticky top-0 z-10">
                 <tr className="bg-slate-50 border-b border-slate-200">
@@ -1386,14 +1798,81 @@ export function ListView() {
                     )
                   )}
 
-                  {/* Column config button */}
-                  <th className="w-8 px-1 py-2">
-                    <ColumnConfigPopover
-                      columnOrder={listColumnOrder}
-                      onOrderChange={setListColumnOrder}
-                    />
+                  {/* Column config & grouping buttons */}
+                  <th className="w-16 px-1 py-2">
+                    <div className="flex items-center gap-0.5 justify-end">
+                      <GroupByPopover
+                        value={listGroupBy}
+                        onChange={setListGroupBy}
+                      />
+                      <ColumnConfigPopover
+                        columnOrder={listColumnOrder}
+                        onOrderChange={setListColumnOrder}
+                      />
+                    </div>
                   </th>
                 </tr>
+
+                {/* ---- Bulk actions bar -------------------------------- */}
+                {selectedIds.size > 0 && (
+                  <tr className="bg-blue-50 border-b border-blue-200">
+                    <td colSpan={visibleColumns.length + 4} className="px-3 py-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-medium text-blue-700">
+                          Выбрано: {selectedIds.size}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedIds(new Set())}
+                          className="inline-flex items-center justify-center size-5 rounded hover:bg-blue-200/70 text-blue-500 transition-colors"
+                          title="Снять выделение"
+                        >
+                          <X className="size-3" />
+                        </button>
+                        <div className="h-4 w-px bg-blue-200 mx-0.5" />
+                        <BulkActionDropdown
+                          label="Статус"
+                          options={statusOptions}
+                          onSelect={(val) => handleBulkUpdate("status", val)}
+                        />
+                        <BulkActionDropdown
+                          label="Приоритет"
+                          options={priorityOptions}
+                          onSelect={(val) => handleBulkUpdate("priority", val)}
+                        />
+                        <BulkActionDropdown
+                          label="Категория"
+                          options={categoryOptions}
+                          onSelect={(val) => handleBulkUpdate("category", val)}
+                        />
+                        <BulkActionDropdown
+                          label="Тип"
+                          options={typeOptions}
+                          onSelect={(val) => handleBulkUpdate("type", val)}
+                        />
+                        <div className="h-4 w-px bg-blue-200 mx-0.5" />
+                        <button
+                          type="button"
+                          onClick={() => handleBulkUpdate("status", "archived")}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-amber-100 text-amber-700 transition-colors"
+                          title="В архив"
+                        >
+                          <Archive className="size-3" />
+                          В архив
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleBulkDelete}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-red-100 text-red-600 transition-colors"
+                          title="Удалить"
+                        >
+                          <Trash2 className="size-3" />
+                          Удалить
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
               </thead>
 
               {/* ---- Body --------------------------------------------- */}
@@ -1417,7 +1896,7 @@ export function ListView() {
                         Добавить задачу
                       </span>
                     </td>
-                    <td className="w-8" />
+                    <td className="w-16" />
                   </tr>
                 ) : (
                   <tr className="bg-blue-50/40 ring-1 ring-inset ring-blue-200">
@@ -1455,79 +1934,130 @@ export function ListView() {
                     {/* Dynamic creation cells */}
                     {visibleColumns.map((col) => renderCreateCell(col.id))}
                     {/* Settings spacer */}
-                    <td className="w-8" />
+                    <td className="w-16" />
                   </tr>
                 )}
 
-                {/* === Data rows === */}
-                {flatRows.map((row, idx) => {
-                  // Determine if this is the last subtask of its parent
-                  // so we can show the "add subtask" row after it
-                  const isLastSubtaskOfParent =
-                    row.isSubtask &&
-                    row.parentId &&
-                    (idx === flatRows.length - 1 ||
-                      flatRows[idx + 1].parentId !== row.parentId ||
-                      !flatRows[idx + 1].isSubtask);
+                {/* === Data rows (grouped or flat) === */}
+                {isGrouped
+                  ? groups.map((group) => {
+                      const l1Key = group.key;
+                      const groupCollapsed = collapsedGroups.has(l1Key);
+                      const colCount = visibleColumns.length + 4;
 
-                  // Or this is a parent with no subtasks but is expanded
-                  const parentRow = !row.isSubtask ? row : null;
-                  const isExpandedParentWithNoSubtasks =
-                    parentRow &&
-                    expandedItems.has(row.item.id) &&
-                    !parentRow.hasSubtasks;
+                      // Level 2 sub-groups
+                      const level2Groups = hasLevel2
+                        ? groupItems(group.items, listGroupBy[1])
+                        : null;
 
-                  // Check if "add subtask" row should follow this row
-                  const showAddSubtaskAfter =
-                    isLastSubtaskOfParent ||
-                    isExpandedParentWithNoSubtasks;
-                  const addSubtaskParentId = row.isSubtask
-                    ? row.parentId
-                    : row.item.id;
+                      return (
+                        <GroupSection
+                          key={l1Key}
+                          group={group}
+                          collapsed={groupCollapsed}
+                          onToggle={() => toggleGroup(l1Key)}
+                          colCount={colCount}
+                          depth={0}
+                        >
+                          {!groupCollapsed && (level2Groups
+                            ? level2Groups.map((subGroup) => {
+                                const l2Key = `${l1Key}::${subGroup.key}`;
+                                const l2Collapsed = collapsedGroups.has(l2Key);
+                                const l2FlatRows = buildFlatRows(subGroup.items, expandedItems);
 
-                  return (
-                    <ItemRowGroup
-                      key={`${row.parentId ?? "root"}-${row.item.id}`}
-                      row={row}
-                      selected={selectedIds.has(row.item.id)}
-                      onSelect={toggleOne}
-                      onOpen={openDetail}
-                      editingField={
-                        editingItemId === row.item.id ? editingField : null
-                      }
-                      setEditingItem={setEditingItem}
-                      updateItem={updateItem}
-                      isExpanded={expandedItems.has(row.item.id)}
-                      onToggleExpand={toggleExpanded}
-                      visibleColumns={visibleColumns}
-                      showAddSubtaskRow={
-                        !!(showAddSubtaskAfter &&
-                        addSubtaskParentId !== null)
-                      }
-                      addSubtaskParentId={addSubtaskParentId}
-                      creatingSubtaskFor={creatingSubtaskFor}
-                      onStartSubtaskCreate={handleStartSubtaskCreate}
-                      newSubtask={newSubtask}
-                      setNewSubtask={setNewSubtask}
-                      onCommitSubtaskCreate={handleCommitSubtaskCreate}
-                      onCancelSubtaskCreate={handleCancelSubtaskCreate}
-                      subtaskInputRef={subtaskInputRef}
-                      subtaskCellRefs={subtaskCellRefs}
-                      subtaskDropdown={subtaskDropdown}
-                      setSubtaskDropdown={setSubtaskDropdown}
-                      statusOptions={statusOptions}
-                      priorityOptions={priorityOptions}
-                      categoryOptions={categoryOptions}
-                      typeOptions={typeOptions}
-                    />
-                  );
-                })}
+                                return (
+                                  <GroupSection
+                                    key={l2Key}
+                                    group={subGroup}
+                                    collapsed={l2Collapsed}
+                                    onToggle={() => toggleGroup(l2Key)}
+                                    colCount={colCount}
+                                    depth={1}
+                                  >
+                                    {!l2Collapsed &&
+                                      renderFlatRows(l2FlatRows)}
+                                  </GroupSection>
+                                );
+                              })
+                            : renderFlatRows(buildFlatRows(group.items, expandedItems))
+                          )}
+                        </GroupSection>
+                      );
+                    })
+                  : renderFlatRows(flatRows)}
               </tbody>
             </table>
           </SortableContext>
         </DndContext>
       </div>
     </ScrollArea>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Group section header row                                                  */
+/* -------------------------------------------------------------------------- */
+
+function GroupSection({
+  group,
+  collapsed,
+  onToggle,
+  colCount,
+  depth = 0,
+  children,
+}: {
+  group: ItemGroup;
+  collapsed: boolean;
+  onToggle: () => void;
+  colCount: number;
+  depth?: number;
+  children: React.ReactNode;
+}) {
+  const isNested = depth > 0;
+
+  return (
+    <>
+      <tr
+        className={cn(
+          "hover:bg-slate-200/60 cursor-pointer transition-colors border-t border-slate-200",
+          isNested ? "bg-slate-50/90" : "bg-slate-100/80"
+        )}
+        onClick={onToggle}
+      >
+        <td colSpan={colCount} className="px-3 py-2">
+          <div
+            className="flex items-center gap-2"
+            style={{ paddingLeft: isNested ? 20 : 0 }}
+          >
+            <button
+              type="button"
+              className="inline-flex items-center justify-center size-4 rounded hover:bg-slate-300/50 transition-colors text-slate-500"
+            >
+              {collapsed ? (
+                <ChevronRight className="size-3.5" />
+              ) : (
+                <ChevronDown className="size-3.5" />
+              )}
+            </button>
+            {group.icon && (
+              <span className="text-sm leading-none">{group.icon}</span>
+            )}
+            <span
+              className={cn(
+                "font-semibold",
+                isNested ? "text-[11px] text-slate-600" : "text-xs text-slate-700"
+              )}
+            >
+              {group.label}
+            </span>
+            <span className="text-[10px] text-slate-400 tabular-nums">
+              {group.items.length}
+            </span>
+          </div>
+        </td>
+      </tr>
+      {children}
+    </>
   );
 }
 
@@ -1980,6 +2510,9 @@ function ItemRow({
   typeOptions: { key: ItemType; label: string }[];
 }) {
   const { item, isSubtask, hasSubtasks, totalSubtasks, doneSubtasks } = row;
+  const allItems = useBrainStore((s) => s.items);
+  const isDetachedSubtask = !isSubtask && !!item.parent_id;
+  const parentItem = isDetachedSubtask ? allItems.find((i) => i.id === item.parent_id) : null;
 
   /* ----- Ref map for cells that need portal-based dropdowns -------------- */
   const cellRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
@@ -2047,7 +2580,7 @@ function ItemRow({
 
   /* ----- Accordion chevron ------------------------------------------------ */
 
-  const showChevron = !isSubtask;
+  const showChevron = !isSubtask && !item.parent_id;
 
   /* ----- Row classes ------------------------------------------------------ */
 
@@ -2101,12 +2634,19 @@ function ItemRow({
             className="px-3 py-1.5 cursor-pointer"
             onClick={(e) => handleCellClick("title", e)}
           >
+            {isDetachedSubtask && parentItem && (
+              <span className="text-[9px] text-slate-400 block leading-tight truncate mb-0.5">
+                {parentItem.title}
+              </span>
+            )}
             <span
               className={cn(
                 "text-xs font-medium leading-snug line-clamp-1 transition-colors",
                 isSubtask
                   ? "text-slate-600 pl-4"
-                  : "text-slate-900 group-hover:text-blue-600"
+                  : isDetachedSubtask
+                    ? "text-slate-700 group-hover:text-blue-600"
+                    : "text-slate-900 group-hover:text-blue-600"
               )}
             >
               {isSubtask && (

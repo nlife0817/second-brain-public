@@ -2,8 +2,10 @@ export type ItemType = "task" | "note" | "meeting" | "plan" | "idea";
 export type ItemStatus = "inbox" | "todo" | "in_progress" | "review" | "done" | "archived";
 export type ItemPriority = "urgent" | "high" | "medium" | "low" | "none";
 export type ItemCategory = "projects" | "development" | "clients" | "research" | "other";
-export type ViewMode = "kanban" | "list";
+export type ViewMode = "kanban" | "list" | "weekly";
 export type SubtaskDisplayMode = "inline" | "accordion" | "detached";
+export type ListGroupByField = "none" | "status" | "priority" | "category" | "type";
+export type ListGroupByConfig = [ListGroupByField, ListGroupByField];
 
 export type FilterOperator = "is" | "is_not" | "contains" | "not_contains" | "before" | "after" | "is_empty" | "is_not_empty";
 export type FilterField = "status" | "priority" | "category" | "type" | "title" | "description" | "due_date" | "has_parent";
@@ -129,3 +131,63 @@ export interface SavedFilter {
 }
 
 export const KANBAN_COLUMNS: ItemStatus[] = ["inbox", "todo", "in_progress", "review", "done"];
+
+// --- Weekly Planning ---
+
+export type WeeklyPlanStatus = "active" | "completed" | "archived";
+export type EntryResultStatus = "pending" | "done" | "not_done" | "transferred";
+
+export interface WeeklyPlan {
+  id: string;
+  week_start: string;
+  week_end: string;
+  title: string;
+  status: WeeklyPlanStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WeeklyPlanEntry {
+  id: string;
+  plan_id: string;
+  item_id: string;
+  position: number;
+  result_status: EntryResultStatus;
+  result_comment: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EntryComment {
+  id: string;
+  entry_id: string;
+  text: string;
+  created_at: string;
+}
+
+export interface WeeklyPlanEntryWithItem extends WeeklyPlanEntry {
+  item: Item;
+  comments: EntryComment[];
+}
+
+export interface WeeklyPlanFull extends WeeklyPlan {
+  entries: WeeklyPlanEntryWithItem[];
+}
+
+export interface WeeklyPlanReport {
+  plan: WeeklyPlan;
+  done: WeeklyPlanEntryWithItem[];
+  not_done: WeeklyPlanEntryWithItem[];
+  transferred: WeeklyPlanEntryWithItem[];
+  unplanned_done: Item[];
+  total: number;
+  done_count: number;
+  completion_rate: number;
+}
+
+export const RESULT_STATUS_CONFIG: Record<EntryResultStatus, { label: string; icon: string; color: string }> = {
+  pending: { label: "Ожидает", icon: "Clock", color: "text-gray-400" },
+  done: { label: "Выполнено", icon: "CheckCircle2", color: "text-emerald-600" },
+  not_done: { label: "Не выполнено", icon: "XCircle", color: "text-red-500" },
+  transferred: { label: "Перенесено", icon: "ArrowRight", color: "text-amber-500" },
+};

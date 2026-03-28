@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useBrainStore, useSelectedItem } from "@/lib/store";
 import {
+  ItemWithSubtasks,
   ItemStatus,
   ItemPriority,
   ItemCategory,
@@ -22,12 +23,7 @@ import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
 import Underline from "@tiptap/extension-underline";
 
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   Select,
   SelectTrigger,
@@ -42,7 +38,6 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { SubtaskList } from "./SubtaskList";
 
@@ -57,10 +52,11 @@ import {
   Strikethrough as StrikethroughIcon,
   List,
   ListOrdered,
+  X,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
-/*  RichEditor – inline tiptap component                              */
+/*  RichEditor                                                         */
 /* ------------------------------------------------------------------ */
 
 function RichEditor({
@@ -126,7 +122,6 @@ function RichEditor({
     },
   });
 
-  // Sync content when the item changes externally
   useEffect(() => {
     if (editor && content !== editor.getHTML()) {
       editor.commands.setContent(content || "");
@@ -144,7 +139,6 @@ function RichEditor({
 
   return (
     <div className="space-y-1.5">
-      {/* Toolbar */}
       <div className="flex items-center gap-0.5">
         <button
           type="button"
@@ -199,19 +193,501 @@ function RichEditor({
         </button>
       </div>
 
-      {/* Editor */}
       <EditorContent editor={editor} />
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  TaskDetailSheet                                                    */
+/*  Field selectors (shared)                                           */
 /* ------------------------------------------------------------------ */
 
-export function TaskDetailSheet() {
-  const { isDetailOpen, closeDetail, updateItem, deleteItem } = useBrainStore();
-  const item = useSelectedItem();
+function FieldSelectors({
+  item,
+  layout,
+  datePickerOpen,
+  setDatePickerOpen,
+  onStatusChange,
+  onPriorityChange,
+  onCategoryChange,
+  onTypeChange,
+  onDateChange,
+  onClearDate,
+}: {
+  item: ItemWithSubtasks;
+  layout: "modal" | "panel";
+  datePickerOpen: boolean;
+  setDatePickerOpen: (v: boolean) => void;
+  onStatusChange: (v: ItemStatus | null) => void;
+  onPriorityChange: (v: ItemPriority | null) => void;
+  onCategoryChange: (v: ItemCategory | null) => void;
+  onTypeChange: (v: ItemType | null) => void;
+  onDateChange: (d: Date | undefined) => void;
+  onClearDate: () => void;
+}) {
+  const dueDate = item.due_date ? new Date(item.due_date) : undefined;
+  const isOverdue =
+    dueDate && dueDate < new Date() && item.status !== "done";
+
+  const isPanel = layout === "panel";
+  const labelCls = isPanel ? "text-xs text-slate-500" : "text-sm text-slate-500";
+  const triggerH = isPanel ? "h-7" : "h-8";
+
+  /* ===== PANEL layout: grouped 2-column with labels on top ===== */
+  if (isPanel) {
+    return (
+      <div className="flex flex-col gap-2">
+        {/* Row 1: Status + Priority */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <span className={labelCls}>Статус</span>
+            <Select value={item.status} onValueChange={onStatusChange}>
+              <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white text-xs")}>
+                <SelectValue>
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-medium",
+                      STATUS_CONFIG[item.status].color
+                    )}
+                  >
+                    {STATUS_CONFIG[item.status].label}
+                  </span>
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent className="border-slate-200 bg-white">
+                {(
+                  Object.entries(STATUS_CONFIG) as [
+                    ItemStatus,
+                    (typeof STATUS_CONFIG)[ItemStatus],
+                  ][]
+                ).map(([key, config]) => (
+                  <SelectItem key={key} value={key}>
+                    <span
+                      className={cn(
+                        "inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium",
+                        config.color
+                      )}
+                    >
+                      {config.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className={labelCls}>Приоритет</span>
+            <Select value={item.priority} onValueChange={onPriorityChange}>
+              <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white text-xs")}>
+                <SelectValue>
+                  <span className="inline-flex items-center gap-1.5 text-xs">
+                    <span
+                      className={cn(
+                        "inline-block size-2 rounded-full",
+                        item.priority === "urgent" && "bg-red-500",
+                        item.priority === "high" && "bg-orange-500",
+                        item.priority === "medium" && "bg-yellow-500",
+                        item.priority === "low" && "bg-blue-500",
+                        item.priority === "none" && "bg-gray-400"
+                      )}
+                    />
+                    {PRIORITY_CONFIG[item.priority].label}
+                  </span>
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent className="border-slate-200 bg-white">
+                {(
+                  Object.entries(PRIORITY_CONFIG) as [
+                    ItemPriority,
+                    (typeof PRIORITY_CONFIG)[ItemPriority],
+                  ][]
+                ).map(([key, config]) => (
+                  <SelectItem key={key} value={key}>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span
+                        className={cn(
+                          "inline-block size-2 rounded-full",
+                          key === "urgent" && "bg-red-500",
+                          key === "high" && "bg-orange-500",
+                          key === "medium" && "bg-yellow-500",
+                          key === "low" && "bg-blue-500",
+                          key === "none" && "bg-gray-400"
+                        )}
+                      />
+                      {config.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* Row 2: Category + Type */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <span className={labelCls}>Категория</span>
+            <Select value={item.category} onValueChange={onCategoryChange}>
+              <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white text-xs")}>
+                <SelectValue>{CATEGORY_CONFIG[item.category].label}</SelectValue>
+              </SelectTrigger>
+              <SelectContent className="border-slate-200 bg-white">
+                {(
+                  Object.entries(CATEGORY_CONFIG) as [
+                    ItemCategory,
+                    (typeof CATEGORY_CONFIG)[ItemCategory],
+                  ][]
+                ).map(([key, config]) => (
+                  <SelectItem key={key} value={key}>
+                    {config.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className={labelCls}>Тип</span>
+            <Select value={item.type} onValueChange={onTypeChange}>
+              <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white text-xs")}>
+                <SelectValue>{TYPE_CONFIG[item.type].label}</SelectValue>
+              </SelectTrigger>
+              <SelectContent className="border-slate-200 bg-white">
+                {(
+                  Object.entries(TYPE_CONFIG) as [
+                    ItemType,
+                    (typeof TYPE_CONFIG)[ItemType],
+                  ][]
+                ).map(([key, config]) => (
+                  <SelectItem key={key} value={key}>
+                    {config.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* Row 3: Due date (full width) */}
+        <div className="flex flex-col gap-1">
+          <span className={labelCls}>Срок</span>
+          <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+            <PopoverTrigger
+              render={
+                <button
+                  className={cn(
+                    "inline-flex h-7 w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-900 transition-colors hover:bg-slate-50",
+                    !dueDate && "text-slate-500",
+                    isOverdue && "border-red-300 text-red-600"
+                  )}
+                  type="button"
+                />
+              }
+            >
+              <CalendarIcon className="size-3.5 shrink-0" />
+              {dueDate ? (
+                <span className="flex items-center gap-1.5">
+                  {format(dueDate, "d MMM yyyy", { locale: ru })}
+                  {isOverdue && (
+                    <AlertTriangle className="size-3 text-red-500" />
+                  )}
+                </span>
+              ) : (
+                <span>Без срока</span>
+              )}
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              className="w-auto border-slate-200 bg-white p-0"
+            >
+              <Calendar
+                mode="single"
+                selected={dueDate}
+                onSelect={onDateChange}
+                locale={ru}
+              />
+              {dueDate && (
+                <div className="border-t border-slate-200 px-3 py-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full text-slate-500 hover:text-slate-900"
+                    onClick={onClearDate}
+                  >
+                    Убрать срок
+                  </Button>
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
+      </div>
+    );
+  }
+
+  /* ===== MODAL layout: label-left, value-right grid ===== */
+  return (
+    <div className="grid items-center gap-x-4 gap-y-2.5 grid-cols-[auto_1fr]">
+      {/* Status */}
+      <span className={labelCls}>Статус</span>
+      <Select value={item.status} onValueChange={onStatusChange}>
+        <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white")}>
+          <SelectValue>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-medium",
+                STATUS_CONFIG[item.status].color
+              )}
+            >
+              {STATUS_CONFIG[item.status].label}
+            </span>
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent className="border-slate-200 bg-white">
+          {(
+            Object.entries(STATUS_CONFIG) as [
+              ItemStatus,
+              (typeof STATUS_CONFIG)[ItemStatus],
+            ][]
+          ).map(([key, config]) => (
+            <SelectItem key={key} value={key}>
+              <span
+                className={cn(
+                  "inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium",
+                  config.color
+                )}
+              >
+                {config.label}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {/* Priority */}
+      <span className={labelCls}>Приоритет</span>
+      <Select value={item.priority} onValueChange={onPriorityChange}>
+        <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white")}>
+          <SelectValue>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className={cn(
+                  "inline-block size-2 rounded-full",
+                  item.priority === "urgent" && "bg-red-500",
+                  item.priority === "high" && "bg-orange-500",
+                  item.priority === "medium" && "bg-yellow-500",
+                  item.priority === "low" && "bg-blue-500",
+                  item.priority === "none" && "bg-gray-400"
+                )}
+              />
+              {PRIORITY_CONFIG[item.priority].label}
+            </span>
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent className="border-slate-200 bg-white">
+          {(
+            Object.entries(PRIORITY_CONFIG) as [
+              ItemPriority,
+              (typeof PRIORITY_CONFIG)[ItemPriority],
+            ][]
+          ).map(([key, config]) => (
+            <SelectItem key={key} value={key}>
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  className={cn(
+                    "inline-block size-2 rounded-full",
+                    key === "urgent" && "bg-red-500",
+                    key === "high" && "bg-orange-500",
+                    key === "medium" && "bg-yellow-500",
+                    key === "low" && "bg-blue-500",
+                    key === "none" && "bg-gray-400"
+                  )}
+                />
+                {config.label}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {/* Category */}
+      <span className={labelCls}>Категория</span>
+      <Select value={item.category} onValueChange={onCategoryChange}>
+        <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white")}>
+          <SelectValue>{CATEGORY_CONFIG[item.category].label}</SelectValue>
+        </SelectTrigger>
+        <SelectContent className="border-slate-200 bg-white">
+          {(
+            Object.entries(CATEGORY_CONFIG) as [
+              ItemCategory,
+              (typeof CATEGORY_CONFIG)[ItemCategory],
+            ][]
+          ).map(([key, config]) => (
+            <SelectItem key={key} value={key}>
+              {config.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {/* Type */}
+      <span className={labelCls}>Тип</span>
+      <Select value={item.type} onValueChange={onTypeChange}>
+        <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white")}>
+          <SelectValue>{TYPE_CONFIG[item.type].label}</SelectValue>
+        </SelectTrigger>
+        <SelectContent className="border-slate-200 bg-white">
+          {(
+            Object.entries(TYPE_CONFIG) as [
+              ItemType,
+              (typeof TYPE_CONFIG)[ItemType],
+            ][]
+          ).map(([key, config]) => (
+            <SelectItem key={key} value={key}>
+              {config.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {/* Due date */}
+      <span className={labelCls}>Срок</span>
+      <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+        <PopoverTrigger
+          render={
+            <button
+              className={cn(
+                "inline-flex h-8 w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900 transition-colors hover:bg-slate-50",
+                !dueDate && "text-slate-500",
+                isOverdue && "border-red-300 text-red-600"
+              )}
+              type="button"
+            />
+          }
+        >
+          <CalendarIcon className="size-3.5 shrink-0" />
+          {dueDate ? (
+            <span className="flex items-center gap-1.5">
+              {format(dueDate, "d MMM yyyy", { locale: ru })}
+              {isOverdue && (
+                <AlertTriangle className="size-3 text-red-500" />
+              )}
+            </span>
+          ) : (
+            <span>Без срока</span>
+          )}
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-auto border-slate-200 bg-white p-0"
+        >
+          <Calendar
+            mode="single"
+            selected={dueDate}
+            onSelect={onDateChange}
+            locale={ru}
+          />
+          {dueDate && (
+            <div className="border-t border-slate-200 px-3 py-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full text-slate-500 hover:text-slate-900"
+                onClick={onClearDate}
+              >
+                Убрать срок
+              </Button>
+            </div>
+          )}
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Timestamps                                                         */
+/* ------------------------------------------------------------------ */
+
+function Timestamps({ item }: { item: ItemWithSubtasks }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5 text-xs text-slate-400">
+        <Clock className="size-3" />
+        <span>
+          Создано:{" "}
+          {format(new Date(item.created_at), "d MMM yyyy, HH:mm", {
+            locale: ru,
+          })}
+        </span>
+      </div>
+      <div className="flex items-center gap-1.5 text-xs text-slate-400">
+        <Clock className="size-3" />
+        <span>
+          Обновлено:{" "}
+          {format(new Date(item.updated_at), "d MMM yyyy, HH:mm", {
+            locale: ru,
+          })}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Delete section                                                     */
+/* ------------------------------------------------------------------ */
+
+function DeleteSection({
+  showDeleteConfirm,
+  setShowDeleteConfirm,
+  onDelete,
+}: {
+  showDeleteConfirm: boolean;
+  setShowDeleteConfirm: (v: boolean) => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div>
+      {showDeleteConfirm ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-red-200 bg-red-50 p-3">
+          <p className="text-sm text-red-600">
+            Вы уверены? Это действие нельзя отменить.
+          </p>
+          <div className="flex items-center gap-2">
+            <Button variant="destructive" size="sm" onClick={onDelete}>
+              <Trash2 className="size-3.5" />
+              Удалить
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowDeleteConfirm(false)}
+            >
+              Отмена
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-slate-500 hover:text-red-600"
+          onClick={() => setShowDeleteConfirm(true)}
+        >
+          <Trash2 className="size-3.5" />
+          Удалить задачу
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  useTaskDetailLogic — shared hook for both modes                    */
+/* ------------------------------------------------------------------ */
+
+function useTaskDetailLogic(item: ItemWithSubtasks | null) {
+  const { updateItem, deleteItem, closeDetail } = useBrainStore();
 
   const [title, setTitle] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -219,7 +695,6 @@ export function TaskDetailSheet() {
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync local state with selected item
   useEffect(() => {
     if (item) {
       setTitle(item.title);
@@ -227,7 +702,6 @@ export function TaskDetailSheet() {
     }
   }, [item]);
 
-  // Focus title input when editing starts
   useEffect(() => {
     if (isEditingTitle && titleInputRef.current) {
       titleInputRef.current.focus();
@@ -308,332 +782,398 @@ export function TaskDetailSheet() {
     }
   }, [item, deleteItem, closeDetail]);
 
+  return {
+    title,
+    setTitle,
+    isEditingTitle,
+    setIsEditingTitle,
+    showDeleteConfirm,
+    setShowDeleteConfirm,
+    datePickerOpen,
+    setDatePickerOpen,
+    titleInputRef,
+    handleTitleSave,
+    handleDescriptionSave,
+    handleStatusChange,
+    handlePriorityChange,
+    handleCategoryChange,
+    handleTypeChange,
+    handleDateChange,
+    handleClearDate,
+    handleDelete,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  TaskDetailContent — shared inner content                           */
+/* ------------------------------------------------------------------ */
+
+function TaskDetailContent({
+  item,
+  layout,
+}: {
+  item: ItemWithSubtasks;
+  layout: "modal" | "panel";
+}) {
+  const {
+    title,
+    setTitle,
+    isEditingTitle,
+    setIsEditingTitle,
+    showDeleteConfirm,
+    setShowDeleteConfirm,
+    datePickerOpen,
+    setDatePickerOpen,
+    titleInputRef,
+    handleTitleSave,
+    handleDescriptionSave,
+    handleStatusChange,
+    handlePriorityChange,
+    handleCategoryChange,
+    handleTypeChange,
+    handleDateChange,
+    handleClearDate,
+    handleDelete,
+  } = useTaskDetailLogic(item);
+
+  /* ---- Parent link (for subtasks) ---- */
+  const isSubtask = !!item.parent_id;
+  const allItems = useBrainStore((s) => s.items);
+  const openDetail = useBrainStore((s) => s.openDetail);
+  const parentItem = isSubtask ? allItems.find((i) => i.id === item.parent_id) : null;
+
+  /* ---- Title block ---- */
+  const titleSizeCls = layout === "panel" ? "text-base" : "text-lg";
+  const titleBlock = (
+    <div className="space-y-2">
+      {parentItem && (
+        <button
+          onClick={() => openDetail(parentItem.id)}
+          className="text-[11px] text-blue-500 hover:text-blue-700 hover:underline transition-colors flex items-center gap-1"
+        >
+          <span className="text-slate-400">↑</span>
+          {parentItem.title}
+        </button>
+      )}
+      {isEditingTitle ? (
+        <input
+          ref={titleInputRef}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onBlur={handleTitleSave}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleTitleSave();
+            if (e.key === "Escape") {
+              setTitle(item.title);
+              setIsEditingTitle(false);
+            }
+          }}
+          className={cn("w-full bg-transparent font-semibold leading-snug text-slate-900 outline-none", titleSizeCls)}
+        />
+      ) : (
+        <h2
+          onClick={() => setIsEditingTitle(true)}
+          className={cn("cursor-text font-semibold leading-snug text-slate-900 transition-colors hover:text-slate-700", titleSizeCls)}
+        >
+          {item.title}
+        </h2>
+      )}
+    </div>
+  );
+
+  /* ---- Field selectors block ---- */
+  const fieldsBlock = (
+    <FieldSelectors
+      item={item}
+      layout={layout}
+      datePickerOpen={datePickerOpen}
+      setDatePickerOpen={setDatePickerOpen}
+      onStatusChange={handleStatusChange}
+      onPriorityChange={handlePriorityChange}
+      onCategoryChange={handleCategoryChange}
+      onTypeChange={handleTypeChange}
+      onDateChange={handleDateChange}
+      onClearDate={handleClearDate}
+    />
+  );
+
+  /* ---- Description block ---- */
+  const descriptionBlock = (
+    <div className="space-y-2">
+      <span className={cn("font-medium text-slate-500", layout === "panel" ? "text-xs" : "text-sm")}>Описание</span>
+      <RichEditor
+        content={item.description || ""}
+        onSave={handleDescriptionSave}
+      />
+    </div>
+  );
+
+  /* ---- Subtasks block (hidden for subtasks themselves) ---- */
+  const subtasksBlock = isSubtask ? null : (
+    <SubtaskList parentId={item.id} subtasks={item.subtasks || []} />
+  );
+
+  /* ---- Timestamps block ---- */
+  const timestampsBlock = <Timestamps item={item} />;
+
+  /* ---- Delete block ---- */
+  const deleteBlock = (
+    <DeleteSection
+      showDeleteConfirm={showDeleteConfirm}
+      setShowDeleteConfirm={setShowDeleteConfirm}
+      onDelete={handleDelete}
+    />
+  );
+
+  /* ===== MODAL: responsive two-column layout ===== */
+  if (layout === "modal") {
+    return (
+      <div className="flex flex-col md:flex-row gap-6">
+        {/* LEFT column — main content */}
+        <div className="flex-1 min-w-0 flex flex-col gap-5">
+          {titleBlock}
+          <Separator className="bg-slate-200" />
+          {descriptionBlock}
+          {subtasksBlock && <Separator className="bg-slate-200" />}
+          {subtasksBlock}
+        </div>
+
+        {/* RIGHT column — fields sidebar, stacks below on small screens */}
+        <div className="w-full md:w-[260px] lg:w-[280px] shrink-0 flex flex-col gap-4">
+          {fieldsBlock}
+          <Separator className="bg-slate-200" />
+          {timestampsBlock}
+          <Separator className="bg-slate-200" />
+          {deleteBlock}
+        </div>
+      </div>
+    );
+  }
+
+  /* ===== PANEL: single-column layout ===== */
+  return (
+    <div className="flex flex-col gap-3">
+      {titleBlock}
+      <Separator className="bg-slate-200" />
+      {fieldsBlock}
+      {descriptionBlock}
+      {subtasksBlock && <Separator className="bg-slate-200" />}
+      {subtasksBlock}
+      <Separator className="bg-slate-200" />
+      <div className="flex items-center justify-between">
+        {timestampsBlock}
+        {deleteBlock}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  TaskDetailSheet — modal mode (Dialog)                              */
+/* ------------------------------------------------------------------ */
+
+export { TaskDetailModal as TaskDetailSheet };
+
+export function TaskDetailModal() {
+  const isDetailOpen = useBrainStore((s) => s.isDetailOpen);
+  const closeDetail = useBrainStore((s) => s.closeDetail);
+  const detailMode = useBrainStore((s) => s.detailMode);
+  const item = useSelectedItem();
+
+  // Only render in modal mode
+  if (detailMode !== "modal") return null;
   if (!item) return null;
 
-  const dueDate = item.due_date ? new Date(item.due_date) : undefined;
-  const isOverdue =
-    dueDate && dueDate < new Date() && item.status !== "done";
-
   return (
-    <Sheet
+    <Dialog
       open={isDetailOpen}
       onOpenChange={(open) => {
         if (!open) closeDetail();
       }}
     >
-      <SheetContent
-        side="right"
-        className="flex w-[700px] flex-col border-l border-slate-200 bg-white p-0 sm:max-w-2xl"
+      <DialogContent
+        className="max-w-[calc(100%-1rem)] sm:max-w-[92vw] md:max-w-[90vw] lg:max-w-5xl xl:max-w-7xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-6 lg:p-8 bg-white"
         showCloseButton
       >
-        <div className="flex-1 overflow-y-auto max-h-[calc(100vh-80px)]">
-          <div className="flex flex-col gap-6 p-6 pb-8">
-            {/* Header: Title + Type badge */}
-            <SheetHeader className="gap-3 p-0">
-              <div className="flex items-start gap-2">
-                <Badge variant="secondary" className="mt-0.5 shrink-0">
-                  {TYPE_CONFIG[item.type].label}
-                </Badge>
-              </div>
+        <DialogTitle className="sr-only">{item.title}</DialogTitle>
+        <TaskDetailContent item={item} layout="modal" />
+      </DialogContent>
+    </Dialog>
+  );
+}
 
-              <SheetTitle className="sr-only">{item.title}</SheetTitle>
+/* ------------------------------------------------------------------ */
+/*  TaskDetailPanel — panel mode (inline right side)                   */
+/*  Responsive: mobile (<md) = full-width overlay drawer               */
+/*              md-lg = inline panel, percentage-clamped                */
+/*              lg+   = inline panel with drag resize                  */
+/* ------------------------------------------------------------------ */
 
-              {isEditingTitle ? (
-                <input
-                  ref={titleInputRef}
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  onBlur={handleTitleSave}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleTitleSave();
-                    if (e.key === "Escape") {
-                      setTitle(item.title);
-                      setIsEditingTitle(false);
-                    }
-                  }}
-                  className="w-full bg-transparent text-lg font-semibold leading-snug text-slate-900 outline-none"
-                />
-              ) : (
-                <h2
-                  onClick={() => setIsEditingTitle(true)}
-                  className="cursor-text text-lg font-semibold leading-snug text-slate-900 transition-colors hover:text-slate-700"
-                >
-                  {item.title}
-                </h2>
-              )}
-            </SheetHeader>
+const PANEL_MIN_WIDTH = 320;
+const PANEL_DEFAULT_WIDTH = 400;
 
-            {/* Properties grid */}
-            <div className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2.5">
-              {/* Status */}
-              <span className="text-sm text-slate-500">Статус</span>
-              <Select
-                value={item.status}
-                onValueChange={handleStatusChange}
-              >
-                <SelectTrigger className="h-8 w-full border-slate-200 bg-white">
-                  <SelectValue>
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-medium",
-                        STATUS_CONFIG[item.status].color
-                      )}
-                    >
-                      {STATUS_CONFIG[item.status].label}
-                    </span>
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent className="border-slate-200 bg-white">
-                  {(
-                    Object.entries(STATUS_CONFIG) as [
-                      ItemStatus,
-                      (typeof STATUS_CONFIG)[ItemStatus],
-                    ][]
-                  ).map(([key, config]) => (
-                    <SelectItem key={key} value={key}>
-                      <span
-                        className={cn(
-                          "inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium",
-                          config.color
-                        )}
-                      >
-                        {config.label}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+/** Max width = 50% of viewport so the panel never exceeds half the screen */
+function getPanelMaxWidth() {
+  if (typeof window === "undefined") return 700;
+  return Math.floor(window.innerWidth * 0.5);
+}
 
-              {/* Priority */}
-              <span className="text-sm text-slate-500">Приоритет</span>
-              <Select
-                value={item.priority}
-                onValueChange={handlePriorityChange}
-              >
-                <SelectTrigger className="h-8 w-full border-slate-200 bg-white">
-                  <SelectValue>
-                    <span className="inline-flex items-center gap-1.5">
-                      <span
-                        className={cn(
-                          "inline-block size-2 rounded-full",
-                          item.priority === "urgent" && "bg-red-500",
-                          item.priority === "high" && "bg-orange-500",
-                          item.priority === "medium" && "bg-yellow-500",
-                          item.priority === "low" && "bg-blue-500",
-                          item.priority === "none" && "bg-gray-400"
-                        )}
-                      />
-                      {PRIORITY_CONFIG[item.priority].label}
-                    </span>
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent className="border-slate-200 bg-white">
-                  {(
-                    Object.entries(PRIORITY_CONFIG) as [
-                      ItemPriority,
-                      (typeof PRIORITY_CONFIG)[ItemPriority],
-                    ][]
-                  ).map(([key, config]) => (
-                    <SelectItem key={key} value={key}>
-                      <span className="inline-flex items-center gap-1.5">
-                        <span
-                          className={cn(
-                            "inline-block size-2 rounded-full",
-                            key === "urgent" && "bg-red-500",
-                            key === "high" && "bg-orange-500",
-                            key === "medium" && "bg-yellow-500",
-                            key === "low" && "bg-blue-500",
-                            key === "none" && "bg-gray-400"
-                          )}
-                        />
-                        {config.label}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+/** Check if viewport is below the md breakpoint (768px) */
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 767px)");
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+  return isMobile;
+}
 
-              {/* Category */}
-              <span className="text-sm text-slate-500">Категория</span>
-              <Select
-                value={item.category}
-                onValueChange={handleCategoryChange}
-              >
-                <SelectTrigger className="h-8 w-full border-slate-200 bg-white">
-                  <SelectValue>
-                    {CATEGORY_CONFIG[item.category].label}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent className="border-slate-200 bg-white">
-                  {(
-                    Object.entries(CATEGORY_CONFIG) as [
-                      ItemCategory,
-                      (typeof CATEGORY_CONFIG)[ItemCategory],
-                    ][]
-                  ).map(([key, config]) => (
-                    <SelectItem key={key} value={key}>
-                      {config.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+export function TaskDetailPanel() {
+  const isDetailOpen = useBrainStore((s) => s.isDetailOpen);
+  const closeDetail = useBrainStore((s) => s.closeDetail);
+  const detailMode = useBrainStore((s) => s.detailMode);
+  const item = useSelectedItem();
+  const isMobile = useIsMobile();
 
-              {/* Type */}
-              <span className="text-sm text-slate-500">Тип</span>
-              <Select value={item.type} onValueChange={handleTypeChange}>
-                <SelectTrigger className="h-8 w-full border-slate-200 bg-white">
-                  <SelectValue>
-                    {TYPE_CONFIG[item.type].label}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent className="border-slate-200 bg-white">
-                  {(
-                    Object.entries(TYPE_CONFIG) as [
-                      ItemType,
-                      (typeof TYPE_CONFIG)[ItemType],
-                    ][]
-                  ).map(([key, config]) => (
-                    <SelectItem key={key} value={key}>
-                      {config.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+  const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_WIDTH);
+  const isResizing = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
 
-              {/* Due date */}
-              <span className="text-sm text-slate-500">Срок</span>
-              <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
-                <PopoverTrigger
-                  render={
-                    <button
-                      className={cn(
-                        "inline-flex h-8 w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900 transition-colors hover:bg-slate-50",
-                        !dueDate && "text-slate-500",
-                        isOverdue && "border-red-300 text-red-600"
-                      )}
-                      type="button"
-                    />
-                  }
-                >
-                  <CalendarIcon className="size-3.5 shrink-0" />
-                  {dueDate ? (
-                    <span className="flex items-center gap-1.5">
-                      {format(dueDate, "d MMM yyyy", { locale: ru })}
-                      {isOverdue && (
-                        <AlertTriangle className="size-3 text-red-500" />
-                      )}
-                    </span>
-                  ) : (
-                    <span>Без срока</span>
-                  )}
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-auto border-slate-200 bg-white p-0">
-                  <Calendar
-                    mode="single"
-                    selected={dueDate}
-                    onSelect={handleDateChange}
-                    locale={ru}
-                  />
-                  {dueDate && (
-                    <div className="border-t border-slate-200 px-3 py-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="w-full text-slate-500 hover:text-slate-900"
-                        onClick={handleClearDate}
-                      >
-                        Убрать срок
-                      </Button>
-                    </div>
-                  )}
-                </PopoverContent>
-              </Popover>
-            </div>
+  /* Keep panelWidth within bounds when the viewport resizes */
+  useEffect(() => {
+    const onResize = () => {
+      const max = getPanelMaxWidth();
+      setPanelWidth((prev) => Math.min(prev, Math.max(PANEL_MIN_WIDTH, max)));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
-            <Separator className="bg-slate-200" />
+  // Resize via dragging left edge (only for md+ screens)
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizing.current = true;
 
-            {/* Description – Rich text editor */}
-            <div className="space-y-2">
-              <span className="text-sm font-medium text-slate-500">
-                Описание
-              </span>
-              <RichEditor
-                content={item.description || ""}
-                onSave={handleDescriptionSave}
-              />
-            </div>
+    const startX = e.clientX;
+    const startWidth = panelRef.current?.getBoundingClientRect().width ?? PANEL_DEFAULT_WIDTH;
 
-            <Separator className="bg-slate-200" />
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isResizing.current) return;
+      const maxW = getPanelMaxWidth();
+      // Dragging left means increasing width (panel is on the right)
+      const delta = startX - ev.clientX;
+      const newWidth = Math.min(
+        maxW,
+        Math.max(PANEL_MIN_WIDTH, startWidth + delta)
+      );
+      setPanelWidth(newWidth);
+    };
 
-            {/* Subtasks */}
-            <SubtaskList parentId={item.id} subtasks={item.subtasks || []} />
+    const handleMouseUp = () => {
+      isResizing.current = false;
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
 
-            <Separator className="bg-slate-200" />
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  }, []);
 
-            {/* Timestamps */}
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                <Clock className="size-3" />
-                <span>
-                  Создано:{" "}
-                  {format(new Date(item.created_at), "d MMM yyyy, HH:mm", {
-                    locale: ru,
-                  })}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                <Clock className="size-3" />
-                <span>
-                  Обновлено:{" "}
-                  {format(new Date(item.updated_at), "d MMM yyyy, HH:mm", {
-                    locale: ru,
-                  })}
-                </span>
-              </div>
-            </div>
+  // Slide-in animation on mount only.
+  // The component is conditionally rendered in page.tsx, so it mounts
+  // when the panel opens and unmounts when it closes. Switching between
+  // items keeps it mounted — no re-trigger, no flicker.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
-            <Separator className="bg-slate-200" />
+  if (detailMode !== "panel") return null;
+  if (!isDetailOpen || !item) return null;
 
-            {/* Delete */}
-            <div>
-              {showDeleteConfirm ? (
-                <div className="flex flex-col gap-2 rounded-lg border border-red-200 bg-red-50 p-3">
-                  <p className="text-sm text-red-600">
-                    Вы уверены? Это действие нельзя отменить.
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={handleDelete}
-                    >
-                      <Trash2 className="size-3.5" />
-                      Удалить
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowDeleteConfirm(false)}
-                    >
-                      Отмена
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-slate-500 hover:text-red-600"
-                  onClick={() => setShowDeleteConfirm(true)}
-                >
-                  <Trash2 className="size-3.5" />
-                  Удалить задачу
-                </Button>
-              )}
-            </div>
+  /* ---------- Mobile: full-width overlay drawer ---------- */
+  if (isMobile) {
+    return (
+      <div className="fixed inset-0 z-50 flex">
+        {/* Backdrop */}
+        <div
+          className={cn(
+            "absolute inset-0 bg-black/30 transition-opacity duration-200",
+            mounted ? "opacity-100" : "opacity-0"
+          )}
+          onClick={closeDetail}
+        />
+        {/* Drawer panel */}
+        <div
+          ref={panelRef}
+          className={cn(
+            "relative ml-auto flex flex-col bg-white h-full w-[calc(100vw-40px)] max-w-[500px] shadow-xl",
+            "transition-transform duration-200 ease-out",
+            mounted ? "translate-x-0" : "translate-x-full"
+          )}
+        >
+          {/* Close button */}
+          <div className="flex items-center justify-end p-2 shrink-0">
+            <Button variant="ghost" size="icon-sm" onClick={closeDetail}>
+              <X className="size-4" />
+            </Button>
+          </div>
+          {/* Scrollable content */}
+          <div className="flex-1 overflow-y-auto px-4 pb-6">
+            <TaskDetailContent item={item} layout="panel" />
           </div>
         </div>
-      </SheetContent>
-    </Sheet>
+      </div>
+    );
+  }
+
+  /* ---------- Desktop (md+): inline side panel ---------- */
+  return (
+    <div
+      ref={panelRef}
+      className={cn(
+        "relative shrink-0 flex flex-col border-l border-slate-200 bg-white h-full",
+        "transition-[transform,opacity] duration-200 ease-out",
+        mounted ? "translate-x-0 opacity-100" : "translate-x-4 opacity-0"
+      )}
+      style={{ width: panelWidth }}
+    >
+      {/* Resize handle — wider hit area, visible on hover */}
+      <div
+        onMouseDown={handleMouseDown}
+        className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize group z-10 flex items-center justify-center"
+      >
+        <div className="w-[3px] h-full rounded-full transition-colors group-hover:bg-slate-300 group-active:bg-slate-400" />
+      </div>
+
+      {/* Close button */}
+      <div className="flex items-center justify-end p-2 shrink-0">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={closeDetail}
+        >
+          <X className="size-4" />
+        </Button>
+      </div>
+
+      {/* Scrollable content — responsive padding based on panel width */}
+      <div
+        className={cn(
+          "flex-1 overflow-y-auto pb-6",
+          panelWidth < 380 ? "px-3" : panelWidth >= 550 ? "px-6" : "px-4"
+        )}
+      >
+        <TaskDetailContent item={item} layout="panel" />
+      </div>
+    </div>
   );
 }

@@ -24,7 +24,8 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
-import { Plus, X, Layers, Power, Bookmark, Check, Save, RefreshCw } from "lucide-react";
+import { Plus, X, Layers, Power, Bookmark, Check, Save, RefreshCw, CalendarDays, CalendarClock } from "lucide-react";
+import { format, startOfWeek, endOfWeek } from "date-fns";
 
 /* -------------------------------------------------------------------------- */
 /*  Constants & labels                                                         */
@@ -131,6 +132,39 @@ export function AdvancedFilterBuilder() {
   const resetActiveFilter = useBrainStore((s) => s.resetActiveFilter);
 
   const activePreset = savedFilters.find((f) => f.id === activeFilterId);
+
+  /* ---- built-in dynamic presets ----------------------------------------- */
+
+  const applyTodayFilter = useCallback(() => {
+    const today = format(new Date(), "yyyy-MM-dd");
+    const group: FilterGroup = {
+      id: uuid(),
+      logic: "and",
+      conditions: [
+        { id: uuid(), field: "due_date", operator: "is", value: today },
+      ],
+    };
+    setAdvancedFilters([group]);
+    if (!useAdvanced) toggleAdvancedFilters(true);
+    resetActiveFilter();
+  }, [setAdvancedFilters, useAdvanced, toggleAdvancedFilters, resetActiveFilter]);
+
+  const applyThisWeekFilter = useCallback(() => {
+    const now = new Date();
+    const weekStart = format(startOfWeek(now, { weekStartsOn: 1 }), "yyyy-MM-dd");
+    const weekEnd = format(endOfWeek(now, { weekStartsOn: 1 }), "yyyy-MM-dd");
+    const group: FilterGroup = {
+      id: uuid(),
+      logic: "and",
+      conditions: [
+        { id: uuid(), field: "due_date", operator: "after", value: weekStart },
+        { id: uuid(), field: "due_date", operator: "before", value: weekEnd },
+      ],
+    };
+    setAdvancedFilters([group]);
+    if (!useAdvanced) toggleAdvancedFilters(true);
+    resetActiveFilter();
+  }, [setAdvancedFilters, useAdvanced, toggleAdvancedFilters, resetActiveFilter]);
 
   /* ---- preset handlers -------------------------------------------------- */
 
@@ -304,7 +338,27 @@ export function AdvancedFilterBuilder() {
           <span className="text-xs font-medium text-slate-500">Пресеты</span>
         </div>
 
-        {/* Preset badges row */}
+        {/* Built-in presets */}
+        <div className="flex items-center gap-1.5 mb-2">
+          <button
+            type="button"
+            onClick={applyTodayFilter}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 transition-colors hover:bg-amber-50 hover:border-amber-200 hover:text-amber-700"
+          >
+            <CalendarDays className="size-3" />
+            Сегодня
+          </button>
+          <button
+            type="button"
+            onClick={applyThisWeekFilter}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 transition-colors hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700"
+          >
+            <CalendarClock className="size-3" />
+            Текущая неделя
+          </button>
+        </div>
+
+        {/* Saved preset badges */}
         <div className="flex items-center gap-1.5 flex-wrap">
           {savedFilters.map((sf) => {
             const isActive = sf.id === activeFilterId;
