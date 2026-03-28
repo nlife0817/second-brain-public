@@ -59,9 +59,7 @@ function InlineFieldEditor({ item, field }: InlineFieldEditorProps) {
   const updateItem = useBrainStore((s) => s.updateItem);
   const setEditingItem = useBrainStore((s) => s.setEditingItem);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  const selectClass =
-    "h-6 rounded-md border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/30";
+  const dateRef = useRef<HTMLInputElement>(null);
 
   // Click outside handler
   useEffect(() => {
@@ -88,6 +86,18 @@ function InlineFieldEditor({ item, field }: InlineFieldEditorProps) {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [setEditingItem]);
 
+  // Auto-focus date input
+  useEffect(() => {
+    if (field === "due_date" && dateRef.current) {
+      dateRef.current.focus();
+      try {
+        dateRef.current.showPicker();
+      } catch {
+        // showPicker may fail in some browsers
+      }
+    }
+  }, [field]);
+
   const handleChange = useCallback(
     async (value: string) => {
       await updateItem(item.id, { [field]: value });
@@ -96,91 +106,91 @@ function InlineFieldEditor({ item, field }: InlineFieldEditorProps) {
     [updateItem, item.id, field, setEditingItem]
   );
 
-  if (field === "priority") {
-    return (
+  // Detect if dropdown should open upward
+  const [openUp, setOpenUp] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      if (spaceBelow < 180) setOpenUp(true);
+    }
+  }, []);
+
+  // Helper to render an already-open option list
+  const renderOptionList = (
+    currentValue: string,
+    options: { key: string; label: string }[]
+  ) => (
+    <div
+      ref={containerRef}
+      className="relative"
+      onClick={(e) => e.stopPropagation()}
+    >
       <div
-        ref={containerRef}
-        onClick={(e) => e.stopPropagation()}
+        ref={listRef}
+        className={cn(
+          "absolute left-0 z-50 min-w-[140px] max-h-[180px] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg",
+          openUp ? "bottom-full mb-1" : "top-full mt-1"
+        )}
       >
-        <select
-          autoFocus
-          value={item.priority}
-          onChange={(e) => handleChange(e.target.value)}
-          className={selectClass}
-        >
-          {(Object.keys(PRIORITY_CONFIG) as ItemPriority[]).map((p) => (
-            <option key={p} value={p}>
-              {PRIORITY_CONFIG[p].label}
-            </option>
-          ))}
-        </select>
+        {options.map((opt) => (
+          <button
+            key={opt.key}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleChange(opt.key);
+            }}
+            className={cn(
+              "flex w-full items-center px-3 py-1.5 text-[11px] hover:bg-slate-50 text-left",
+              opt.key === currentValue &&
+                "bg-violet-50 text-violet-700 font-medium"
+            )}
+          >
+            {opt.label}
+          </button>
+        ))}
       </div>
+    </div>
+  );
+
+  if (field === "priority") {
+    return renderOptionList(
+      item.priority,
+      (Object.keys(PRIORITY_CONFIG) as ItemPriority[]).map((p) => ({
+        key: p,
+        label: PRIORITY_CONFIG[p].label,
+      }))
     );
   }
 
   if (field === "status") {
-    return (
-      <div
-        ref={containerRef}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <select
-          autoFocus
-          value={item.status}
-          onChange={(e) => handleChange(e.target.value)}
-          className={selectClass}
-        >
-          {KANBAN_COLUMNS.map((s) => (
-            <option key={s} value={s}>
-              {STATUS_CONFIG[s].label}
-            </option>
-          ))}
-        </select>
-      </div>
+    return renderOptionList(
+      item.status,
+      KANBAN_COLUMNS.map((s) => ({
+        key: s,
+        label: STATUS_CONFIG[s].label,
+      }))
     );
   }
 
   if (field === "category") {
-    return (
-      <div
-        ref={containerRef}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <select
-          autoFocus
-          value={item.category}
-          onChange={(e) => handleChange(e.target.value)}
-          className={selectClass}
-        >
-          {(Object.keys(CATEGORY_CONFIG) as ItemCategory[]).map((c) => (
-            <option key={c} value={c}>
-              {CATEGORY_CONFIG[c].label}
-            </option>
-          ))}
-        </select>
-      </div>
+    return renderOptionList(
+      item.category,
+      (Object.keys(CATEGORY_CONFIG) as ItemCategory[]).map((c) => ({
+        key: c,
+        label: CATEGORY_CONFIG[c].label,
+      }))
     );
   }
 
   if (field === "type") {
-    return (
-      <div
-        ref={containerRef}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <select
-          autoFocus
-          value={item.type}
-          onChange={(e) => handleChange(e.target.value)}
-          className={selectClass}
-        >
-          {(Object.keys(TYPE_CONFIG) as ItemType[]).map((t) => (
-            <option key={t} value={t}>
-              {TYPE_CONFIG[t].label}
-            </option>
-          ))}
-        </select>
-      </div>
+    return renderOptionList(
+      item.type,
+      (Object.keys(TYPE_CONFIG) as ItemType[]).map((t) => ({
+        key: t,
+        label: TYPE_CONFIG[t].label,
+      }))
     );
   }
 
@@ -191,11 +201,10 @@ function InlineFieldEditor({ item, field }: InlineFieldEditorProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <input
+          ref={dateRef}
           type="date"
-          autoFocus
           defaultValue={item.due_date ?? ""}
           onChange={(e) => handleChange(e.target.value || "")}
-          onBlur={() => setEditingItem(null)}
           className="h-6 rounded-md border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/30"
         />
       </div>

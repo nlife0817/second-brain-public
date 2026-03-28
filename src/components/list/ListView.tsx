@@ -7,6 +7,7 @@ import {
   useRef,
   useEffect,
 } from "react";
+import { createPortal } from "react-dom";
 import { useFilteredItems, useBrainStore } from "@/lib/store";
 import {
   STATUS_CONFIG,
@@ -478,12 +479,38 @@ export function ListView() {
     [sortedItems, subtaskDisplayMode, expandedItems]
   );
 
-  /* ----- IDs for SortableContext (top-level only) ------------------------- */
+  /* ----- IDs for SortableContext ------------------------------------------ */
 
   const topLevelIds = useMemo(
     () => flatRows.filter((r) => !r.isSubtask).map((r) => r.item.id),
     [flatRows]
   );
+
+  const allRowIds = useMemo(
+    () => flatRows.map((r) => r.item.id),
+    [flatRows]
+  );
+
+  /* ----- Subtask sibling lookup (parentId -> ordered subtask ids) -------- */
+
+  const subtaskSiblingMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const row of flatRows) {
+      if (row.isSubtask && row.parentId) {
+        if (!map.has(row.parentId)) map.set(row.parentId, []);
+        map.get(row.parentId)!.push(row.item.id);
+      }
+    }
+    return map;
+  }, [flatRows]);
+
+  const rowByIdMap = useMemo(() => {
+    const map = new Map<string, FlatRow>();
+    for (const row of flatRows) {
+      map.set(row.item.id, row);
+    }
+    return map;
+  }, [flatRows]);
 
   /* ----- column toggle ---------------------------------------------------- */
 
@@ -545,6 +572,37 @@ export function ListView() {
 
       if (!over || active.id === over.id) return;
 
+      const activeRow = rowByIdMap.get(active.id as string);
+      const overRow = rowByIdMap.get(over.id as string);
+      if (!activeRow || !overRow) return;
+
+      /* --- Subtask reorder: both must share the same parent --- */
+      if (activeRow.isSubtask && activeRow.parentId) {
+        // Only allow reordering among siblings (same parent_id)
+        if (!overRow.isSubtask || overRow.parentId !== activeRow.parentId) return;
+
+        const siblingIds = subtaskSiblingMap.get(activeRow.parentId);
+        if (!siblingIds) return;
+
+        const oldIndex = siblingIds.indexOf(active.id as string);
+        const newIndex = siblingIds.indexOf(over.id as string);
+        if (oldIndex === -1 || newIndex === -1) return;
+
+        const reordered = arrayMove(siblingIds, oldIndex, newIndex);
+        const updates = reordered.map((id, index) => ({
+          id,
+          position: index,
+        }));
+
+        try {
+          await reorderItems(updates);
+        } catch {
+          // fetchItems will restore correct state
+        }
+        return;
+      }
+
+      /* --- Top-level reorder --- */
       const oldIndex = topLevelIds.indexOf(active.id as string);
       const newIndex = topLevelIds.indexOf(over.id as string);
 
@@ -565,7 +623,7 @@ export function ListView() {
         // fetchItems will restore correct state
       }
     },
-    [topLevelIds, sortedItems, reorderItems]
+    [topLevelIds, sortedItems, reorderItems, rowByIdMap, subtaskSiblingMap]
   );
 
   /* ----- render ----------------------------------------------------------- */
@@ -577,71 +635,71 @@ export function ListView() {
   return (
     <ScrollArea className="h-full w-full">
       <div className="min-w-[900px]">
-        <table className="w-full border-collapse bg-white border border-slate-200 rounded-lg overflow-hidden">
-          {/* ---- Header --------------------------------------------------- */}
-          <thead className="sticky top-0 z-10">
-            <tr className="bg-slate-50 border-b border-slate-200">
-              {/* Drag handle column header */}
-              <th className="w-8 px-1 py-3 text-left" />
-
-              {/* Expand toggle */}
-              <th className="w-10 px-2 py-3 text-left" />
-
-              {/* Checkbox */}
-              <th className="w-10 px-2 py-3 text-left">
-                <Checkbox
-                  checked={allSelected}
-                  indeterminate={someSelected}
-                  onCheckedChange={toggleAll}
-                  className="translate-y-[1px]"
-                />
-              </th>
-
-              {/* Dynamic columns */}
-              {visibleColumns.map((col) =>
-                col.sortable ? (
-                  <SortableHeader
-                    key={col.id}
-                    label={col.label}
-                    column={col.id as SortColumn}
-                    current={sort}
-                    onToggle={toggleSort}
-                    className={col.width}
-                    isManualOrder={manualOrder}
-                  />
-                ) : (
-                  <th
-                    key={col.id}
-                    className={cn(
-                      col.width,
-                      "px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500"
-                    )}
-                  >
-                    {col.label}
-                  </th>
-                )
-              )}
-
-              {/* Column config button */}
-              <th className="w-10 px-1 py-3">
-                <ColumnConfigPopover
-                  columnOrder={listColumnOrder}
-                  onOrderChange={setListColumnOrder}
-                />
-              </th>
-            </tr>
-          </thead>
-
-          {/* ---- Body ----------------------------------------------------- */}
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={allRowIds}
+            strategy={verticalListSortingStrategy}
           >
-            <SortableContext
-              items={topLevelIds}
-              strategy={verticalListSortingStrategy}
-            >
+            <table className="w-full border-collapse bg-white border border-slate-200 rounded-lg overflow-hidden">
+              {/* ---- Header --------------------------------------------------- */}
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  {/* Drag handle column header */}
+                  <th className="w-8 px-1 py-3 text-left" />
+
+                  {/* Expand toggle */}
+                  <th className="w-10 px-2 py-3 text-left" />
+
+                  {/* Checkbox */}
+                  <th className="w-10 px-2 py-3 text-left">
+                    <Checkbox
+                      checked={allSelected}
+                      indeterminate={someSelected}
+                      onCheckedChange={toggleAll}
+                      className="translate-y-[1px]"
+                    />
+                  </th>
+
+                  {/* Dynamic columns */}
+                  {visibleColumns.map((col) =>
+                    col.sortable ? (
+                      <SortableHeader
+                        key={col.id}
+                        label={col.label}
+                        column={col.id as SortColumn}
+                        current={sort}
+                        onToggle={toggleSort}
+                        className={col.width}
+                        isManualOrder={manualOrder}
+                      />
+                    ) : (
+                      <th
+                        key={col.id}
+                        className={cn(
+                          col.width,
+                          "px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500"
+                        )}
+                      >
+                        {col.label}
+                      </th>
+                    )
+                  )}
+
+                  {/* Column config button */}
+                  <th className="w-10 px-1 py-3">
+                    <ColumnConfigPopover
+                      columnOrder={listColumnOrder}
+                      onOrderChange={setListColumnOrder}
+                    />
+                  </th>
+                </tr>
+              </thead>
+
+              {/* ---- Body ----------------------------------------------------- */}
               <tbody className="divide-y divide-slate-100">
                 {flatRows.map((row) => (
                   <ItemRow
@@ -662,9 +720,9 @@ export function ListView() {
                   />
                 ))}
               </tbody>
-            </SortableContext>
-          </DndContext>
-        </table>
+            </table>
+          </SortableContext>
+        </DndContext>
       </div>
     </ScrollArea>
   );
@@ -727,86 +785,176 @@ function InlineSelectCell<T extends string>({
   options,
   onCommit,
   onCancel,
+  anchorRef,
 }: {
   value: T;
   options: { key: T; label: string }[];
   onCommit: (val: T) => void;
   onCancel: () => void;
+  anchorRef?: React.RefObject<HTMLElement | null>;
 }) {
-  const selectRef = useRef<HTMLSelectElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
+  // Position relative to anchor (td cell) via portal in body
   useEffect(() => {
-    const el = selectRef.current;
-    if (el) {
-      el.focus();
-      // Try to auto-open the select dropdown
-      el.showPicker?.();
+    const anchor = anchorRef?.current;
+    if (anchor) {
+      const rect = anchor.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
+      setPos({ top, left: rect.left });
     }
-  }, []);
+  }, [anchorRef]);
 
-  return (
-    <select
-      ref={selectRef}
-      value={value}
-      onChange={(e) => onCommit(e.target.value as T)}
-      onBlur={onCancel}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
+  // Click outside to cancel
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onCancel();
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onCancel]);
+
+  // Escape key
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+    }
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onCancel]);
+
+  if (!pos) return null;
+
+  const openUp = pos.top > window.innerHeight / 2;
+
+  return createPortal(
+    <div
+      ref={ref}
+      style={{
+        position: "fixed",
+        top: openUp ? undefined : pos.top,
+        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
+        left: pos.left,
+        zIndex: 9999,
       }}
-      className="h-7 rounded-md border border-slate-200 bg-white px-1.5 text-xs text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
+      className="min-w-[140px] max-h-[200px] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
       onClick={(e) => e.stopPropagation()}
     >
       {options.map((opt) => (
-        <option key={opt.key} value={opt.key}>
+        <button
+          key={opt.key}
+          onClick={(e) => { e.stopPropagation(); onCommit(opt.key); }}
+          className={cn(
+            "flex w-full items-center px-3 py-1.5 text-xs hover:bg-slate-50 text-left",
+            opt.key === value && "bg-violet-50 text-violet-700 font-medium"
+          )}
+        >
           {opt.label}
-        </option>
+        </button>
       ))}
-    </select>
+    </div>,
+    document.body
   );
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Inline edit cell for date field                                           */
+/*  Inline edit cell for date field (portal-based)                            */
 /* -------------------------------------------------------------------------- */
 
 function InlineDateCell({
   value,
   onCommit,
   onCancel,
+  anchorRef,
 }: {
   value: string;
   onCommit: (val: string | null) => void;
   onCancel: () => void;
+  anchorRef?: React.RefObject<HTMLElement | null>;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  // Position relative to anchor (td cell) via portal in body
+  useEffect(() => {
+    const anchor = anchorRef?.current;
+    if (anchor) {
+      const rect = anchor.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
+      setPos({ top, left: rect.left });
+    }
+  }, [anchorRef]);
 
   useEffect(() => {
+    if (!pos) return;
     const el = inputRef.current;
     if (el) {
       el.focus();
-      el.showPicker?.();
+      try {
+        el.showPicker();
+      } catch {
+        // showPicker may fail in some browsers -- that's okay, input is still focused
+      }
     }
-  }, []);
+  }, [pos]);
 
-  return (
-    <input
-      ref={inputRef}
-      type="date"
-      value={value}
-      onChange={(e) => onCommit(e.target.value || null)}
-      onBlur={onCancel}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
+  // Click outside to cancel
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) onCancel();
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onCancel]);
+
+  // Escape key to cancel
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+      }
+    }
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onCancel]);
+
+  if (!pos) return null;
+
+  const openUp = pos.top > window.innerHeight / 2;
+
+  return createPortal(
+    <div
+      ref={containerRef}
+      style={{
+        position: "fixed",
+        top: openUp ? undefined : pos.top,
+        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
+        left: pos.left,
+        zIndex: 9999,
       }}
-      className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
       onClick={(e) => e.stopPropagation()}
-    />
+    >
+      <input
+        ref={inputRef}
+        type="date"
+        value={value}
+        onChange={(e) => onCommit(e.target.value || null)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>,
+    document.body
   );
 }
 
@@ -841,7 +989,10 @@ function ItemRow({
 }) {
   const { item, isSubtask, hasSubtasks, totalSubtasks, doneSubtasks } = row;
 
-  /* ----- DnD sortable (only top-level items) ----------------------------- */
+  /* ----- Ref map for cells that need portal-based dropdowns -------------- */
+  const cellRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
+
+  /* ----- DnD sortable ---------------------------------------------------- */
 
   const {
     attributes,
@@ -852,7 +1003,6 @@ function ItemRow({
     isDragging,
   } = useSortable({
     id: item.id,
-    disabled: isSubtask,
     animateLayoutChanges: () => false,
   });
 
@@ -960,30 +1110,26 @@ function ItemRow({
   const renderCell = (colId: string) => {
     switch (colId) {
       case "priority": {
-        if (editingField === "priority") {
-          return (
-            <td key={colId} className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+        return (
+          <td
+            key={colId}
+            ref={(el) => { cellRefs.current["priority"] = el; }}
+            className="relative px-4 py-3 cursor-pointer"
+            onClick={(e) => handleCellClick("priority", e)}
+          >
+            {!isSubtask && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm leading-none">{priorityCfg.icon}</span>
+              </div>
+            )}
+            {editingField === "priority" && (
               <InlineSelectCell
                 value={item.priority as ItemPriority}
                 options={priorityOptions}
                 onCommit={(val) => commitFieldEdit("priority", val)}
                 onCancel={cancelEdit}
+                anchorRef={{ current: cellRefs.current["priority"] }}
               />
-            </td>
-          );
-        }
-        return (
-          <td
-            key={colId}
-            className="px-4 py-3 cursor-pointer"
-            onClick={(e) => handleCellClick("priority", e)}
-          >
-            {isSubtask ? (
-              <span className="text-slate-300" />
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm leading-none">{priorityCfg.icon}</span>
-              </div>
             )}
           </td>
         );
@@ -1021,22 +1167,11 @@ function ItemRow({
       }
 
       case "status": {
-        if (editingField === "status") {
-          return (
-            <td key={colId} className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-              <InlineSelectCell
-                value={item.status as ItemStatus}
-                options={statusOptions}
-                onCommit={(val) => commitFieldEdit("status", val)}
-                onCancel={cancelEdit}
-              />
-            </td>
-          );
-        }
         return (
           <td
             key={colId}
-            className="px-4 py-3 cursor-pointer"
+            ref={(el) => { cellRefs.current["status"] = el; }}
+            className="relative px-4 py-3 cursor-pointer"
             onClick={(e) => handleCellClick("status", e)}
           >
             <Badge
@@ -1048,27 +1183,25 @@ function ItemRow({
             >
               {statusCfg.label}
             </Badge>
+            {editingField === "status" && (
+              <InlineSelectCell
+                value={item.status as ItemStatus}
+                options={statusOptions}
+                onCommit={(val) => commitFieldEdit("status", val)}
+                onCancel={cancelEdit}
+                anchorRef={{ current: cellRefs.current["status"] }}
+              />
+            )}
           </td>
         );
       }
 
       case "category": {
-        if (editingField === "category") {
-          return (
-            <td key={colId} className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-              <InlineSelectCell
-                value={item.category as ItemCategory}
-                options={categoryOptions}
-                onCommit={(val) => commitFieldEdit("category", val)}
-                onCancel={cancelEdit}
-              />
-            </td>
-          );
-        }
         return (
           <td
             key={colId}
-            className="px-4 py-3 cursor-pointer"
+            ref={(el) => { cellRefs.current["category"] = el; }}
+            className="relative px-4 py-3 cursor-pointer"
             onClick={(e) => handleCellClick("category", e)}
           >
             <Badge
@@ -1077,71 +1210,70 @@ function ItemRow({
             >
               {categoryCfg.label}
             </Badge>
+            {editingField === "category" && (
+              <InlineSelectCell
+                value={item.category as ItemCategory}
+                options={categoryOptions}
+                onCommit={(val) => commitFieldEdit("category", val)}
+                onCancel={cancelEdit}
+                anchorRef={{ current: cellRefs.current["category"] }}
+              />
+            )}
           </td>
         );
       }
 
       case "type": {
-        if (editingField === "type") {
-          return (
-            <td key={colId} className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+        return (
+          <td
+            key={colId}
+            ref={(el) => { cellRefs.current["type"] = el; }}
+            className="relative px-4 py-3 cursor-pointer"
+            onClick={(e) => handleCellClick("type", e)}
+          >
+            <span className="text-sm text-slate-600">{typeCfg.label}</span>
+            {editingField === "type" && (
               <InlineSelectCell
                 value={item.type as ItemType}
                 options={typeOptions}
                 onCommit={(val) => commitFieldEdit("type", val)}
                 onCancel={cancelEdit}
+                anchorRef={{ current: cellRefs.current["type"] }}
               />
-            </td>
-          );
-        }
-        return (
-          <td
-            key={colId}
-            className="px-4 py-3 cursor-pointer"
-            onClick={(e) => handleCellClick("type", e)}
-          >
-            <span className="text-sm text-slate-600">{typeCfg.label}</span>
+            )}
           </td>
         );
       }
 
       case "due_date": {
-        if (editingField === "due_date") {
-          return (
-            <td key={colId} className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-              <InlineDateCell
-                value={item.due_date ?? ""}
-                onCommit={(val) => commitFieldEdit("due_date", val)}
-                onCancel={cancelEdit}
-              />
-            </td>
-          );
-        }
         return (
           <td
             key={colId}
-            className="px-4 py-3 cursor-pointer"
+            ref={(el) => { cellRefs.current["due_date"] = el; }}
+            className="relative px-4 py-3 cursor-pointer"
             onClick={(e) => handleCellClick("due_date", e)}
           >
             {dueDate ? (
               <div
                 className={cn(
                   "flex items-center gap-1.5 text-sm",
-                  isOverdue
-                    ? "text-red-500 font-medium"
-                    : "text-slate-600"
+                  isOverdue ? "text-red-500 font-medium" : "text-slate-600"
                 )}
               >
-                {isOverdue && (
-                  <AlertCircle className="size-3.5 shrink-0" />
-                )}
-                {!isOverdue && (
-                  <Calendar className="size-3.5 shrink-0 text-slate-400" />
-                )}
+                {isOverdue && <AlertCircle className="size-3.5 shrink-0" />}
+                {!isOverdue && <Calendar className="size-3.5 shrink-0 text-slate-400" />}
                 <span>{format(dueDate, "d MMM", { locale: ru })}</span>
               </div>
             ) : (
               <span className="text-sm text-slate-300">--</span>
+            )}
+            {editingField === "due_date" && (
+              <InlineDateCell
+                value={item.due_date ?? ""}
+                onCommit={(val) => commitFieldEdit("due_date", val)}
+                onCancel={cancelEdit}
+                anchorRef={{ current: cellRefs.current["due_date"] }}
+              />
             )}
           </td>
         );
@@ -1198,16 +1330,17 @@ function ItemRow({
         className="px-1 py-3 text-center"
         onClick={(e) => e.stopPropagation()}
       >
-        {!isSubtask && (
-          <button
-            type="button"
-            className="inline-flex items-center justify-center size-6 rounded hover:bg-slate-200/70 transition-colors text-slate-400 cursor-grab opacity-0 group-hover:opacity-100"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical className="size-4" />
-          </button>
-        )}
+        <button
+          type="button"
+          className={cn(
+            "inline-flex items-center justify-center size-6 rounded hover:bg-slate-200/70 transition-colors text-slate-400 cursor-grab opacity-0 group-hover:opacity-100",
+            isSubtask && "ml-3"
+          )}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="size-4" />
+        </button>
       </td>
 
       {/* Expand / collapse chevron */}

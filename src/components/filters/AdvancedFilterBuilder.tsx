@@ -24,7 +24,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
-import { Plus, X, Layers } from "lucide-react";
+import { Plus, X, Layers, Power, Bookmark, Check, Save, RefreshCw } from "lucide-react";
 
 /* -------------------------------------------------------------------------- */
 /*  Constants & labels                                                         */
@@ -38,12 +38,13 @@ const FIELD_OPTIONS: { value: FilterField; label: string }[] = [
   { value: "title", label: "Название" },
   { value: "description", label: "Описание" },
   { value: "due_date", label: "Дедлайн" },
+  { value: "has_parent", label: "Тип задачи" },
 ];
 
 type FieldKind = "enum" | "text" | "date";
 
 function getFieldKind(field: FilterField): FieldKind {
-  if (["status", "priority", "category", "type"].includes(field)) return "enum";
+  if (["status", "priority", "category", "type", "has_parent"].includes(field)) return "enum";
   if (["title", "description"].includes(field)) return "text";
   return "date";
 }
@@ -77,6 +78,11 @@ function getEnumValues(field: FilterField): { value: string; label: string }[] {
       return Object.entries(CATEGORY_CONFIG).map(([k, v]) => ({ value: k, label: v.label }));
     case "type":
       return Object.entries(TYPE_CONFIG).map(([k, v]) => ({ value: k, label: v.label }));
+    case "has_parent":
+      return [
+        { value: "yes", label: "Дочерняя" },
+        { value: "no", label: "Родительская" },
+      ];
     default:
       return [];
   }
@@ -111,7 +117,29 @@ function defaultValueForField(field: FilterField): string {
 
 export function AdvancedFilterBuilder() {
   const groups = useBrainStore((s) => s.filters.advancedGroups);
+  const useAdvanced = useBrainStore((s) => s.filters.useAdvanced);
   const setAdvancedFilters = useBrainStore((s) => s.setAdvancedFilters);
+  const toggleAdvancedFilters = useBrainStore((s) => s.toggleAdvancedFilters);
+
+  /* ---- preset store selectors ------------------------------------------- */
+  const savedFilters = useBrainStore((s) => s.savedFilters);
+  const activeFilterId = useBrainStore((s) => s.activeFilterId);
+  const saveFilter = useBrainStore((s) => s.saveFilter);
+  const loadFilter = useBrainStore((s) => s.loadFilter);
+  const updateFilter = useBrainStore((s) => s.updateFilter);
+  const deleteFilter = useBrainStore((s) => s.deleteFilter);
+  const resetActiveFilter = useBrainStore((s) => s.resetActiveFilter);
+
+  const activePreset = savedFilters.find((f) => f.id === activeFilterId);
+
+  /* ---- preset handlers -------------------------------------------------- */
+
+  const handleSavePreset = useCallback(() => {
+    const name = window.prompt("Имя пресета:");
+    if (name && name.trim()) {
+      saveFilter(name.trim());
+    }
+  }, [saveFilter]);
 
   /* ---- group-level ops --------------------------------------------------- */
 
@@ -129,13 +157,18 @@ export function AdvancedFilterBuilder() {
       ],
     };
     setAdvancedFilters([...groups, newGroup]);
-  }, [groups, setAdvancedFilters]);
+    // Auto-enable advanced filtering when adding a group
+    if (!useAdvanced) toggleAdvancedFilters(true);
+  }, [groups, setAdvancedFilters, useAdvanced, toggleAdvancedFilters]);
 
   const removeGroup = useCallback(
     (groupId: string) => {
-      setAdvancedFilters(groups.filter((g) => g.id !== groupId));
+      const remaining = groups.filter((g) => g.id !== groupId);
+      setAdvancedFilters(remaining);
+      // Auto-disable advanced filtering when all groups are removed
+      if (remaining.length === 0 && useAdvanced) toggleAdvancedFilters(false);
     },
-    [groups, setAdvancedFilters]
+    [groups, setAdvancedFilters, useAdvanced, toggleAdvancedFilters]
   );
 
   const toggleGroupLogic = useCallback(
@@ -236,6 +269,22 @@ export function AdvancedFilterBuilder() {
           <span className="text-sm font-medium text-slate-900">
             Расширенные фильтры
           </span>
+          {groups.length > 0 && (
+            <Button
+              variant={useAdvanced ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => toggleAdvancedFilters()}
+              className={cn(
+                "text-[11px] gap-1 h-6 px-2",
+                useAdvanced
+                  ? "bg-blue-50 text-blue-700 border-blue-200 ring-1 ring-blue-200 hover:bg-blue-100"
+                  : "text-slate-500 border-slate-200"
+              )}
+            >
+              <Power className="size-3" />
+              {useAdvanced ? "Активны" : "Выключены"}
+            </Button>
+          )}
         </div>
         <Button
           variant="outline"
@@ -246,6 +295,90 @@ export function AdvancedFilterBuilder() {
           <Plus className="size-3.5" />
           Группа
         </Button>
+      </div>
+
+      {/* ---- Presets section ------------------------------------------------ */}
+      <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <div className="mb-2 flex items-center gap-1.5">
+          <Bookmark className="size-3.5 text-slate-400" />
+          <span className="text-xs font-medium text-slate-500">Пресеты</span>
+        </div>
+
+        {/* Preset badges row */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {savedFilters.map((sf) => {
+            const isActive = sf.id === activeFilterId;
+            return (
+              <div
+                key={sf.id}
+                className={cn(
+                  "group relative inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer",
+                  isActive
+                    ? "border-blue-300 bg-blue-50 text-blue-700 ring-1 ring-blue-300"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700"
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => loadFilter(sf.id)}
+                  className="flex items-center gap-1"
+                >
+                  {isActive && <Check className="size-3 text-blue-600" />}
+                  {sf.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteFilter(sf.id);
+                  }}
+                  className="ml-0.5 rounded-sm p-0.5 text-slate-400 hover:bg-red-100 hover:text-red-500 transition-colors"
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            );
+          })}
+
+          {/* Add preset button */}
+          <button
+            type="button"
+            onClick={handleSavePreset}
+            className="inline-flex items-center gap-1 rounded-md border border-dashed border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-400 transition-colors hover:border-slate-400 hover:text-slate-600 hover:bg-white"
+          >
+            <Plus className="size-3" />
+            Сохранить
+          </button>
+        </div>
+
+        {/* Active preset info & actions */}
+        {activePreset && (
+          <div className="mt-2.5 flex items-center gap-2 border-t border-slate-200 pt-2.5">
+            <span className="text-xs text-slate-500">
+              Активный: <span className="font-medium text-slate-700">{activePreset.name}</span>
+            </span>
+            <div className="flex items-center gap-1.5 ml-auto">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => updateFilter(activeFilterId!)}
+                className="h-6 px-2 text-[11px] gap-1 border-slate-200 text-slate-600 hover:text-blue-700 hover:border-blue-200 hover:bg-blue-50"
+              >
+                <Save className="size-3" />
+                Обновить
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => resetActiveFilter()}
+                className="h-6 px-2 text-[11px] gap-1 border-slate-200 text-slate-600 hover:text-slate-900"
+              >
+                <RefreshCw className="size-3" />
+                Сбросить
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Empty state */}

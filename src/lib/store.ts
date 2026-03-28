@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import {
   ItemWithSubtasks,
   Tag,
@@ -13,6 +14,7 @@ import {
   SubtaskDisplayMode,
   FilterGroup,
   FilterCondition,
+  SavedFilter,
 } from "@/types";
 
 interface BrainStore {
@@ -31,6 +33,8 @@ interface BrainStore {
   editingField: string | null;
   cardVisibleFields: string[];
   listColumnOrder: string[];
+  savedFilters: SavedFilter[];
+  activeFilterId: string | null;
 
   fetchItems: () => Promise<void>;
   fetchTags: () => Promise<void>;
@@ -55,6 +59,11 @@ interface BrainStore {
   setEditingItem: (id: string | null, field?: string | null) => void;
   setCardVisibleFields: (fields: string[]) => void;
   setListColumnOrder: (order: string[]) => void;
+  saveFilter: (name: string) => void;
+  loadFilter: (id: string) => void;
+  updateFilter: (id: string) => void;
+  deleteFilter: (id: string) => void;
+  resetActiveFilter: () => void;
 }
 
 const defaultFilters: Filters = {
@@ -68,7 +77,9 @@ const defaultFilters: Filters = {
   useAdvanced: false,
 };
 
-export const useBrainStore = create<BrainStore>((set, get) => ({
+export const useBrainStore = create<BrainStore>()(
+  persist(
+  (set, get) => ({
   items: [],
   tags: [],
   filters: { ...defaultFilters },
@@ -84,6 +95,8 @@ export const useBrainStore = create<BrainStore>((set, get) => ({
   editingField: null,
   cardVisibleFields: ["priority", "category", "due_date", "subtasks", "type"],
   listColumnOrder: ["priority", "title", "status", "category", "type", "due_date", "subtasks"],
+  savedFilters: [],
+  activeFilterId: null,
 
   fetchItems: async () => {
     set({ loading: true });
@@ -183,7 +196,66 @@ export const useBrainStore = create<BrainStore>((set, get) => ({
   setEditingItem: (editingItemId, field = null) => set({ editingItemId, editingField: field }),
   setCardVisibleFields: (cardVisibleFields) => set({ cardVisibleFields }),
   setListColumnOrder: (listColumnOrder) => set({ listColumnOrder }),
-}));
+  saveFilter: (name) => {
+    const { filters, savedFilters } = get();
+    const id = crypto.randomUUID();
+    const newSaved: SavedFilter = {
+      id,
+      name,
+      filters: { ...filters, search: "" },
+    };
+    set({ savedFilters: [...savedFilters, newSaved], activeFilterId: id });
+  },
+  loadFilter: (id) => {
+    const saved = get().savedFilters.find((f) => f.id === id);
+    if (saved) {
+      set({
+        filters: { ...saved.filters, search: get().filters.search },
+        activeFilterId: id,
+      });
+    }
+  },
+  updateFilter: (id) => {
+    const { filters, savedFilters } = get();
+    set({
+      savedFilters: savedFilters.map((f) =>
+        f.id === id ? { ...f, filters: { ...filters, search: "" } } : f
+      ),
+    });
+  },
+  deleteFilter: (id) => {
+    const { savedFilters, activeFilterId } = get();
+    set({
+      savedFilters: savedFilters.filter((f) => f.id !== id),
+      activeFilterId: activeFilterId === id ? null : activeFilterId,
+    });
+  },
+  resetActiveFilter: () => set({ activeFilterId: null }),
+}),
+  {
+    name: "second-brain-settings",
+    storage: createJSONStorage(() => localStorage),
+    partialize: (state) => ({
+      viewMode: state.viewMode,
+      activeCategory: state.activeCategory,
+      subtaskDisplayMode: state.subtaskDisplayMode,
+      cardVisibleFields: state.cardVisibleFields,
+      listColumnOrder: state.listColumnOrder,
+      savedFilters: state.savedFilters,
+      activeFilterId: state.activeFilterId,
+      filters: {
+        categories: state.filters.categories,
+        priorities: state.filters.priorities,
+        types: state.filters.types,
+        showArchived: state.filters.showArchived,
+        advancedGroups: state.filters.advancedGroups,
+        useAdvanced: state.filters.useAdvanced,
+        search: "",
+        tags: [],
+      },
+    }),
+  }
+));
 
 function matchCondition(item: ItemWithSubtasks, cond: FilterCondition): boolean {
   const fieldValue = (() => {
@@ -195,6 +267,7 @@ function matchCondition(item: ItemWithSubtasks, cond: FilterCondition): boolean 
       case "title": return item.title;
       case "description": return item.description;
       case "due_date": return item.due_date ?? "";
+      case "has_parent": return item.parent_id ? "yes" : "no";
       default: return "";
     }
   })();
@@ -256,7 +329,15 @@ export function useSelectedItem(): ItemWithSubtasks | null {
   const items = useBrainStore((s) => s.items);
   const selectedId = useBrainStore((s) => s.selectedItemId);
   if (!selectedId) return null;
-  return items.find((i) => i.id === selectedId) ?? null;
+  // Search top-level
+  const topLevel = items.find((i) => i.id === selectedId);
+  if (topLevel) return topLevel;
+  // Search within subtasks
+  for (const item of items) {
+    const sub = item.subtasks?.find((s) => s.id === selectedId);
+    if (sub) return { ...sub, subtasks: [], tags: [] } as ItemWithSubtasks;
+  }
+  return null;
 }
 
 export function useItemsByStatus(status: ItemStatus): ItemWithSubtasks[] {

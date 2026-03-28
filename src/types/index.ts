@@ -6,7 +6,7 @@ export type ViewMode = "kanban" | "list";
 export type SubtaskDisplayMode = "inline" | "accordion" | "detached";
 
 export type FilterOperator = "is" | "is_not" | "contains" | "not_contains" | "before" | "after" | "is_empty" | "is_not_empty";
-export type FilterField = "status" | "priority" | "category" | "type" | "title" | "description" | "due_date";
+export type FilterField = "status" | "priority" | "category" | "type" | "title" | "description" | "due_date" | "has_parent";
 export type FilterLogic = "and" | "or";
 
 export interface FilterCondition {
@@ -121,5 +121,11 @@ export const TYPE_CONFIG: Record<ItemType, { label: string; icon: string }> = {
   plan: { label: "План", icon: "Map" },
   idea: { label: "Идея", icon: "Lightbulb" },
 };
+
+export interface SavedFilter {
+  id: string;
+  name: string;
+  filters: Filters;
+}
 
 export const KANBAN_COLUMNS: ItemStatus[] = ["inbox", "todo", "in_progress", "review", "done"];
