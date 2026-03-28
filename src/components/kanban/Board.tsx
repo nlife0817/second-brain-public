@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragEndEvent,
   DragOverEvent,
   DragOverlay,
   DragStartEvent,
+  MeasuringStrategy,
   closestCorners,
   PointerSensor,
   useSensor,
@@ -23,6 +24,12 @@ import {
 import { KanbanColumn } from "./Column";
 import { KanbanCard } from "./Card";
 
+const measuringConfig = {
+  droppable: {
+    strategy: MeasuringStrategy.Always,
+  },
+};
+
 export function KanbanBoard() {
   const filteredItems = useFilteredItems();
   const reorderItems = useBrainStore((s) => s.reorderItems);
@@ -31,6 +38,16 @@ export function KanbanBoard() {
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [localItems, setLocalItems] = useState<ItemWithSubtasks[] | null>(null);
+
+  // Track the latest filteredItems so we can clear localItems when store updates
+  const prevFilteredRef = useRef(filteredItems);
+  useEffect(() => {
+    // When the store items update (e.g. after fetchItems completes), clear optimistic state
+    if (prevFilteredRef.current !== filteredItems && localItems !== null && activeId === null) {
+      setLocalItems(null);
+    }
+    prevFilteredRef.current = filteredItems;
+  }, [filteredItems, localItems, activeId]);
 
   // Use localItems during drag for optimistic updates, otherwise filtered
   const items = localItems ?? filteredItems;
@@ -186,12 +203,32 @@ export function KanbanBoard() {
         status: targetStatus as string,
       }));
 
-      setLocalItems(null);
+      // Optimistic update: apply the final state to localItems immediately
+      // so there's no bounce-back while the server round-trip happens
+      setLocalItems((prev) => {
+        if (!prev) return prev;
+        const positionMap = new Map(updates.map((u) => [u.id, u]));
+        return prev.map((item) => {
+          const update = positionMap.get(item.id);
+          if (update) {
+            return {
+              ...item,
+              position: update.position,
+              status: update.status as ItemStatus,
+            };
+          }
+          return item;
+        });
+      });
+
+      // Don't clear localItems here — keep the optimistic state visible.
+      // The useEffect above will clear localItems once fetchItems
+      // (called inside reorderItems) updates the store.
 
       try {
         await reorderItems(updates);
       } catch {
-        // fetchItems will restore correct state
+        // fetchItems will restore correct state; useEffect will clear localItems
       }
     },
     [localItems, filteredItems, reorderItems]
@@ -206,6 +243,7 @@ export function KanbanBoard() {
     <DndContext
       sensors={sensors}
       collisionDetection={closestCorners}
+      measuring={measuringConfig}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
@@ -222,10 +260,7 @@ export function KanbanBoard() {
       </div>
 
       <DragOverlay
-        dropAnimation={{
-          duration: 200,
-          easing: "cubic-bezier(0.18, 0.67, 0.6, 1.22)",
-        }}
+        dropAnimation={{ duration: 150, easing: "ease-out" }}
       >
         {activeItem ? <KanbanCard item={activeItem} isDragOverlay /> : null}
       </DragOverlay>

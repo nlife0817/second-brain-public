@@ -28,6 +28,9 @@ interface BrainStore {
   loading: boolean;
   subtaskDisplayMode: SubtaskDisplayMode;
   editingItemId: string | null;
+  editingField: string | null;
+  cardVisibleFields: string[];
+  listColumnOrder: string[];
 
   fetchItems: () => Promise<void>;
   fetchTags: () => Promise<void>;
@@ -49,7 +52,9 @@ interface BrainStore {
   openCreate: (defaults?: Partial<CreateItemPayload>) => void;
   closeCreate: () => void;
   setSubtaskDisplayMode: (mode: SubtaskDisplayMode) => void;
-  setEditingItem: (id: string | null) => void;
+  setEditingItem: (id: string | null, field?: string | null) => void;
+  setCardVisibleFields: (fields: string[]) => void;
+  setListColumnOrder: (order: string[]) => void;
 }
 
 const defaultFilters: Filters = {
@@ -76,12 +81,23 @@ export const useBrainStore = create<BrainStore>((set, get) => ({
   loading: false,
   subtaskDisplayMode: "inline" as SubtaskDisplayMode,
   editingItemId: null,
+  editingField: null,
+  cardVisibleFields: ["priority", "category", "due_date", "subtasks", "type"],
+  listColumnOrder: ["priority", "title", "status", "category", "type", "due_date", "subtasks"],
 
   fetchItems: async () => {
-    set({ loading: true });
-    const res = await fetch("/api/items");
-    const items = await res.json();
-    set({ items, loading: false });
+    try {
+      set({ loading: true });
+      const mode = get().subtaskDisplayMode;
+      const params = mode === "detached" ? "?children=true" : "";
+      const res = await fetch(`/api/items${params}`);
+      const items = await res.json();
+      console.log("[store] fetchItems:", items.length, "items loaded");
+      set({ items, loading: false });
+    } catch (e) {
+      console.error("[store] fetchItems error:", e);
+      set({ loading: false });
+    }
   },
 
   fetchTags: async () => {
@@ -158,8 +174,13 @@ export const useBrainStore = create<BrainStore>((set, get) => ({
   closeDetail: () => set({ isDetailOpen: false, selectedItemId: null }),
   openCreate: (defaults) => set({ isCreateOpen: true, createDefaults: defaults ?? {} }),
   closeCreate: () => set({ isCreateOpen: false, createDefaults: {} }),
-  setSubtaskDisplayMode: (subtaskDisplayMode) => set({ subtaskDisplayMode }),
-  setEditingItem: (editingItemId) => set({ editingItemId }),
+  setSubtaskDisplayMode: (subtaskDisplayMode) => {
+    set({ subtaskDisplayMode });
+    get().fetchItems();
+  },
+  setEditingItem: (editingItemId, field = null) => set({ editingItemId, editingField: field }),
+  setCardVisibleFields: (cardVisibleFields) => set({ cardVisibleFields }),
+  setListColumnOrder: (listColumnOrder) => set({ listColumnOrder }),
 }));
 
 function matchCondition(item: ItemWithSubtasks, cond: FilterCondition): boolean {

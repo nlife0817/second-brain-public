@@ -5,7 +5,8 @@ import { CreateItemPayload, ItemWithSubtasks } from "@/types";
 
 export async function GET(req: NextRequest) {
   const showArchived = req.nextUrl.searchParams.get("archived") === "true";
-  const items = getAllItems(showArchived);
+  const includeChildren = req.nextUrl.searchParams.get("children") === "true";
+  const items = getAllItems(showArchived, includeChildren);
 
   const itemsWithSubtasks: ItemWithSubtasks[] = items.map((item) => ({
     ...item,

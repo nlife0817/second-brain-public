@@ -58,9 +58,12 @@ function initSchema(db: Database.Database) {
   `);
 }
 
-export function getAllItems(includeArchived = false): Item[] {
+export function getAllItems(includeArchived = false, includeChildren = false): Item[] {
   const db = getDb();
-  const where = includeArchived ? "" : "WHERE i.status != 'archived' AND i.parent_id IS NULL";
+  const conditions: string[] = [];
+  if (!includeArchived) conditions.push("i.status != 'archived'");
+  if (!includeChildren) conditions.push("i.parent_id IS NULL");
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   return db.prepare(`SELECT * FROM items i ${where} ORDER BY position ASC, created_at DESC`).all() as Item[];
 }
 

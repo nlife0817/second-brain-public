@@ -116,7 +116,7 @@ export function KanbanColumn({ status, items }: KanbanColumnProps) {
                   )}
                 >
                   <span className="text-[11px] text-slate-400">
-                    {isOver ? "Drop here" : "No items"}
+                    {isOver ? "Drop here" : "Нет задач"}
                   </span>
                 </div>
               )}
@@ -137,7 +137,7 @@ export function KanbanColumn({ status, items }: KanbanColumnProps) {
           )}
         >
           <Plus className="size-3.5" />
-          Add
+          Добавить
         </button>
       </div>
     </div>

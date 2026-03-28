@@ -104,7 +104,7 @@ export function FilterBar() {
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2 border-b border-slate-200 bg-white px-5 py-2">
       {/* ---- Top row: search + filter dropdowns ----------------------------- */}
       <div className="flex items-center gap-2 flex-wrap">
         {/* Search */}
@@ -114,7 +114,7 @@ export function FilterBar() {
             value={searchValue}
             onChange={(e) => handleSearch((e.target as HTMLInputElement).value)}
             placeholder="Поиск..."
-            className="pl-8 pr-8 h-8 border-slate-200 bg-white text-sm text-slate-900 placeholder:text-slate-400"
+            className="pl-8 pr-8 h-8 rounded-md border-slate-200 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus-visible:ring-slate-300"
           />
           {searchValue && (
             <button

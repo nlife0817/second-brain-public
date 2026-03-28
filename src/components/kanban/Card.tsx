@@ -8,6 +8,7 @@ import {
   ItemStatus,
   ItemPriority,
   ItemCategory,
+  ItemType,
   PRIORITY_CONFIG,
   CATEGORY_CONFIG,
   STATUS_CONFIG,
@@ -46,30 +47,21 @@ const typeIcons: Record<string, React.ElementType> = {
 };
 
 /* ------------------------------------------------------------------ */
-/*  Inline Edit sub-component                                         */
+/*  Inline Field Editor                                               */
 /* ------------------------------------------------------------------ */
 
-interface InlineEditProps {
+interface InlineFieldEditorProps {
   item: ItemWithSubtasks;
-  onDone: () => void;
+  field: string;
 }
 
-function InlineEdit({ item, onDone }: InlineEditProps) {
+function InlineFieldEditor({ item, field }: InlineFieldEditorProps) {
   const updateItem = useBrainStore((s) => s.updateItem);
-
-  const [title, setTitle] = useState(item.title);
-  const [status, setStatus] = useState<ItemStatus>(item.status);
-  const [priority, setPriority] = useState<ItemPriority>(item.priority);
-  const [category, setCategory] = useState<ItemCategory>(item.category);
-
+  const setEditingItem = useBrainStore((s) => s.setEditingItem);
   const containerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Focus on mount
-  useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
-  }, []);
+  const selectClass =
+    "h-6 rounded-md border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/30";
 
   // Click outside handler
   useEffect(() => {
@@ -78,76 +70,42 @@ function InlineEdit({ item, onDone }: InlineEditProps) {
         containerRef.current &&
         !containerRef.current.contains(e.target as Node)
       ) {
-        handleSave();
+        setEditingItem(null);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, status, priority, category]);
+  }, [setEditingItem]);
 
-  const handleSave = useCallback(async () => {
-    const changes: Record<string, string> = {};
-    if (title.trim() && title !== item.title) changes.title = title.trim();
-    if (status !== item.status) changes.status = status;
-    if (priority !== item.priority) changes.priority = priority;
-    if (category !== item.category) changes.category = category;
-
-    if (Object.keys(changes).length > 0) {
-      await updateItem(item.id, changes);
+  // Escape key handler
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setEditingItem(null);
+      }
     }
-    onDone();
-  }, [title, status, priority, category, item, updateItem, onDone]);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [setEditingItem]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleSave();
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onDone();
-    }
-  };
+  const handleChange = useCallback(
+    async (value: string) => {
+      await updateItem(item.id, { [field]: value });
+      setEditingItem(null);
+    },
+    [updateItem, item.id, field, setEditingItem]
+  );
 
-  const selectClass =
-    "h-6 rounded-md border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/30";
-
-  return (
-    <div
-      ref={containerRef}
-      className="flex flex-col gap-2"
-      onClick={(e) => e.stopPropagation()}
-      onDoubleClick={(e) => e.stopPropagation()}
-    >
-      {/* Editable title */}
-      <input
-        ref={inputRef}
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        onKeyDown={handleKeyDown}
-        className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-[13px] font-medium text-slate-800 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/30"
-      />
-
-      {/* Dropdowns row */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        {/* Status */}
+  if (field === "priority") {
+    return (
+      <div
+        ref={containerRef}
+        onClick={(e) => e.stopPropagation()}
+      >
         <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value as ItemStatus)}
-          className={selectClass}
-        >
-          {KANBAN_COLUMNS.map((s) => (
-            <option key={s} value={s}>
-              {STATUS_CONFIG[s].label}
-            </option>
-          ))}
-        </select>
-
-        {/* Priority */}
-        <select
-          value={priority}
-          onChange={(e) => setPriority(e.target.value as ItemPriority)}
+          autoFocus
+          value={item.priority}
+          onChange={(e) => handleChange(e.target.value)}
           className={selectClass}
         >
           {(Object.keys(PRIORITY_CONFIG) as ItemPriority[]).map((p) => (
@@ -156,11 +114,42 @@ function InlineEdit({ item, onDone }: InlineEditProps) {
             </option>
           ))}
         </select>
+      </div>
+    );
+  }
 
-        {/* Category */}
+  if (field === "status") {
+    return (
+      <div
+        ref={containerRef}
+        onClick={(e) => e.stopPropagation()}
+      >
         <select
-          value={category}
-          onChange={(e) => setCategory(e.target.value as ItemCategory)}
+          autoFocus
+          value={item.status}
+          onChange={(e) => handleChange(e.target.value)}
+          className={selectClass}
+        >
+          {KANBAN_COLUMNS.map((s) => (
+            <option key={s} value={s}>
+              {STATUS_CONFIG[s].label}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  if (field === "category") {
+    return (
+      <div
+        ref={containerRef}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <select
+          autoFocus
+          value={item.category}
+          onChange={(e) => handleChange(e.target.value)}
           className={selectClass}
         >
           {(Object.keys(CATEGORY_CONFIG) as ItemCategory[]).map((c) => (
@@ -170,8 +159,50 @@ function InlineEdit({ item, onDone }: InlineEditProps) {
           ))}
         </select>
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (field === "type") {
+    return (
+      <div
+        ref={containerRef}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <select
+          autoFocus
+          value={item.type}
+          onChange={(e) => handleChange(e.target.value)}
+          className={selectClass}
+        >
+          {(Object.keys(TYPE_CONFIG) as ItemType[]).map((t) => (
+            <option key={t} value={t}>
+              {TYPE_CONFIG[t].label}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  if (field === "due_date") {
+    return (
+      <div
+        ref={containerRef}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <input
+          type="date"
+          autoFocus
+          defaultValue={item.due_date ?? ""}
+          onChange={(e) => handleChange(e.target.value || "")}
+          onBlur={() => setEditingItem(null)}
+          className="h-6 rounded-md border border-slate-200 bg-white px-1.5 text-[11px] text-slate-600 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/30"
+        />
+      </div>
+    );
+  }
+
+  return null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -214,7 +245,6 @@ function SubtasksInline({
             key={st.id}
             className="flex items-center gap-1.5 cursor-pointer group/st"
             onClick={(e) => e.stopPropagation()}
-            onDoubleClick={(e) => e.stopPropagation()}
           >
             <input
               type="checkbox"
@@ -265,7 +295,6 @@ function SubtasksAccordion({
           e.stopPropagation();
           setExpanded((v) => !v);
         }}
-        onDoubleClick={(e) => e.stopPropagation()}
       >
         {expanded ? (
           <ChevronDown className="size-3" />
@@ -295,7 +324,6 @@ function SubtasksAccordion({
               key={st.id}
               className="flex items-center gap-1.5 cursor-pointer"
               onClick={(e) => e.stopPropagation()}
-              onDoubleClick={(e) => e.stopPropagation()}
             >
               <input
                 type="checkbox"
@@ -332,7 +360,6 @@ function SubtasksProgressOnly({
   completed: number;
   total: number;
 }) {
-  // Detached mode: no subtask details shown on the card, just a minimal counter
   return (
     <div className="mt-2 flex items-center gap-1.5">
       <div className="flex-1 h-1 rounded-full bg-slate-100 overflow-hidden">
@@ -358,10 +385,12 @@ function SubtasksProgressOnly({
 export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
   const openDetail = useBrainStore((s) => s.openDetail);
   const editingItemId = useBrainStore((s) => s.editingItemId);
+  const editingField = useBrainStore((s) => s.editingField);
   const setEditingItem = useBrainStore((s) => s.setEditingItem);
   const subtaskDisplayMode = useBrainStore((s) => s.subtaskDisplayMode);
+  const cardVisibleFields = useBrainStore((s) => s.cardVisibleFields);
 
-  const isEditing = editingItemId === item.id;
+  const isEditingThis = editingItemId === item.id;
 
   const {
     attributes,
@@ -376,12 +405,13 @@ export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
       type: "item",
       item,
     },
-    disabled: isEditing,
+    disabled: isEditingThis,
+    animateLayoutChanges: () => false,
   });
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
+    transition: transition ?? undefined,
   };
 
   const priorityConfig = PRIORITY_CONFIG[item.priority];
@@ -400,36 +430,34 @@ export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
 
   const TypeIcon = typeIcons[typeConfig.icon] ?? CheckSquare;
 
-  // Click timer for distinguishing single vs double click
-  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showPriority = cardVisibleFields.includes("priority");
+  const showCategory = cardVisibleFields.includes("category");
+  const showDueDate = cardVisibleFields.includes("due_date");
+  const showSubtasks = cardVisibleFields.includes("subtasks");
+  const showType = cardVisibleFields.includes("type");
 
-  const handleClick = useCallback(
-    (e: React.MouseEvent) => {
-      // Don't handle clicks when in edit mode
-      if (isEditing) return;
+  /* ---- Click handler for card background ---- */
+  const handleCardClick = useCallback(() => {
+    if (isEditingThis) return;
+    openDetail(item.id);
+  }, [isEditingThis, item.id, openDetail]);
 
-      if (clickTimer.current) {
-        // Second click within the window -- it's a double-click
-        clearTimeout(clickTimer.current);
-        clickTimer.current = null;
-        setEditingItem(item.id);
-      } else {
-        // First click -- wait to see if a second arrives
-        clickTimer.current = setTimeout(() => {
-          clickTimer.current = null;
-          openDetail(item.id);
-        }, 250);
-      }
+  /* ---- Field click handlers ---- */
+  const handleFieldClick = useCallback(
+    (e: React.MouseEvent, field: string) => {
+      e.stopPropagation();
+      setEditingItem(item.id, field);
     },
-    [isEditing, item.id, openDetail, setEditingItem]
+    [item.id, setEditingItem]
   );
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (clickTimer.current) clearTimeout(clickTimer.current);
-    };
-  }, []);
+  const handleTitleClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      openDetail(item.id);
+    },
+    [item.id, openDetail]
+  );
 
   return (
     <div
@@ -438,18 +466,17 @@ export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
       className={cn(
         "group/card relative rounded-xl border bg-white p-3 shadow-sm",
         "border-slate-200",
-        "transition-all duration-200 ease-out",
+        "transition-shadow duration-200 ease-out",
         "hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5",
         isDragging && !isDragOverlay && "opacity-40 shadow-none scale-[0.98]",
         isDragOverlay &&
           "shadow-2xl shadow-black/10 border-slate-300 ring-1 ring-black/5 rotate-[2deg] scale-105",
-        isEditing && "ring-2 ring-blue-400/50 border-blue-300",
-        "cursor-pointer"
+        isEditingThis && "ring-2 ring-blue-400/50 border-blue-300"
       )}
-      onClick={handleClick}
+      onClick={handleCardClick}
     >
       {/* Drag handle */}
-      {!isEditing && (
+      {!isEditingThis && (
         <div
           className={cn(
             "absolute -left-0.5 top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-150",
@@ -463,62 +490,136 @@ export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
         </div>
       )}
 
-      {isEditing ? (
-        /* ---- Inline edit mode ---- */
-        <InlineEdit item={item} onDone={() => setEditingItem(null)} />
-      ) : (
-        /* ---- Normal display mode ---- */
-        <>
-          {/* Row 1: Priority dot + Title */}
-          <div className="flex items-start gap-2">
-            {/* Priority indicator */}
-            <span
-              className={cn(
-                "mt-1 block size-2 shrink-0 rounded-full",
-                item.priority === "urgent" &&
-                  "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.4)]",
-                item.priority === "high" &&
-                  "bg-orange-500 shadow-[0_0_6px_rgba(249,115,22,0.3)]",
-                item.priority === "medium" && "bg-yellow-500",
-                item.priority === "low" && "bg-blue-400",
-                item.priority === "none" && "bg-slate-300"
-              )}
-              title={priorityConfig.label}
-            />
-
-            <span className="flex-1 text-[13px] font-medium leading-snug text-slate-800 line-clamp-2">
-              {item.title}
-            </span>
-
-            {/* Type icon */}
-            <TypeIcon className="mt-0.5 size-3.5 shrink-0 text-slate-300" />
-          </div>
-
-          {/* Row 2: Category badge + Due date */}
-          <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-            <Badge
-              variant="secondary"
-              className="h-[18px] px-1.5 text-[10px] font-medium rounded-md bg-slate-100 text-slate-600 border-0"
-            >
-              {categoryConfig.label}
-            </Badge>
-
-            {dueDate && (
+      {/* Row 1: Priority dot + Title + Type icon */}
+      <div className="flex items-start gap-2">
+        {/* Priority indicator */}
+        {showPriority && (
+          <>
+            {isEditingThis && editingField === "priority" ? (
+              <InlineFieldEditor item={item} field="priority" />
+            ) : (
               <span
                 className={cn(
-                  "inline-flex items-center gap-0.5 text-[10px] font-medium",
-                  isOverdue && "text-red-500",
-                  isDueToday && "text-amber-600",
-                  !isOverdue && !isDueToday && "text-slate-400"
+                  "mt-1 block size-2 shrink-0 rounded-full cursor-pointer",
+                  item.priority === "urgent" &&
+                    "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.4)]",
+                  item.priority === "high" &&
+                    "bg-orange-500 shadow-[0_0_6px_rgba(249,115,22,0.3)]",
+                  item.priority === "medium" && "bg-yellow-500",
+                  item.priority === "low" && "bg-blue-400",
+                  item.priority === "none" && "bg-slate-300"
                 )}
-              >
-                <Calendar className="size-2.5" />
-                {format(dueDate, "d MMM", { locale: ru })}
-              </span>
+                title={priorityConfig.label}
+                onClick={(e) => handleFieldClick(e, "priority")}
+              />
             )}
-          </div>
+          </>
+        )}
 
-          {/* Row 3: Subtasks based on display mode */}
+        {/* Title — always shown */}
+        <span
+          className="flex-1 text-[13px] font-medium leading-snug text-slate-800 line-clamp-2 cursor-pointer hover:text-violet-600 hover:underline"
+          onClick={handleTitleClick}
+        >
+          {item.title}
+        </span>
+
+        {/* Type icon */}
+        {showType && (
+          <>
+            {isEditingThis && editingField === "type" ? (
+              <InlineFieldEditor item={item} field="type" />
+            ) : (
+              <TypeIcon
+                className="mt-0.5 size-3.5 shrink-0 text-slate-300 cursor-pointer hover:text-slate-500"
+                onClick={(e: React.MouseEvent) => handleFieldClick(e, "type")}
+              />
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Row 2: Category badge + Due date + Status */}
+      {(showCategory || showDueDate) && (
+        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+          {/* Category */}
+          {showCategory && (
+            <>
+              {isEditingThis && editingField === "category" ? (
+                <InlineFieldEditor item={item} field="category" />
+              ) : (
+                <Badge
+                  variant="secondary"
+                  className="h-[18px] px-1.5 text-[10px] font-medium rounded-md bg-slate-100 text-slate-600 border-0 cursor-pointer hover:bg-slate-200"
+                  onClick={(e: React.MouseEvent) =>
+                    handleFieldClick(e, "category")
+                  }
+                >
+                  {categoryConfig.label}
+                </Badge>
+              )}
+            </>
+          )}
+
+          {/* Due date */}
+          {showDueDate && (
+            <>
+              {isEditingThis && editingField === "due_date" ? (
+                <InlineFieldEditor item={item} field="due_date" />
+              ) : dueDate ? (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-0.5 text-[10px] font-medium cursor-pointer",
+                    isOverdue && "text-red-500 hover:text-red-600",
+                    isDueToday && "text-amber-600 hover:text-amber-700",
+                    !isOverdue &&
+                      !isDueToday &&
+                      "text-slate-400 hover:text-slate-500"
+                  )}
+                  onClick={(e) => handleFieldClick(e, "due_date")}
+                >
+                  <Calendar className="size-2.5" />
+                  {format(dueDate, "d MMM", { locale: ru })}
+                </span>
+              ) : (
+                <span
+                  className="inline-flex items-center gap-0.5 text-[10px] font-medium text-slate-300 cursor-pointer hover:text-slate-400"
+                  onClick={(e) => handleFieldClick(e, "due_date")}
+                >
+                  <Calendar className="size-2.5" />
+                  <span>+</span>
+                </span>
+              )}
+            </>
+          )}
+
+          {/* Status indicator (always clickable, shown as a small badge) */}
+          {isEditingThis && editingField === "status" ? (
+            <InlineFieldEditor item={item} field="status" />
+          ) : (
+            <span
+              className="inline-flex items-center text-[10px] font-medium text-slate-400 cursor-pointer hover:text-slate-500"
+              onClick={(e) => handleFieldClick(e, "status")}
+              title={STATUS_CONFIG[item.status].label}
+            >
+              <span
+                className={cn(
+                  "size-1.5 rounded-full mr-0.5",
+                  item.status === "inbox" && "bg-gray-400",
+                  item.status === "todo" && "bg-blue-400",
+                  item.status === "in_progress" && "bg-amber-400",
+                  item.status === "review" && "bg-purple-400",
+                  item.status === "done" && "bg-emerald-400"
+                )}
+              />
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Row 3: Subtasks based on display mode */}
+      {showSubtasks && (
+        <>
           {totalSubtasks > 0 && subtaskDisplayMode === "inline" && (
             <SubtasksInline
               subtasks={item.subtasks}
