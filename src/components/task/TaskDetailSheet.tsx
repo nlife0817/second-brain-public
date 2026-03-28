@@ -16,6 +16,12 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
+import { useEditor, EditorContent } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Image from "@tiptap/extension-image";
+import Placeholder from "@tiptap/extension-placeholder";
+import Underline from "@tiptap/extension-underline";
+
 import {
   Sheet,
   SheetContent,
@@ -30,7 +36,6 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Popover,
   PopoverTrigger,
@@ -39,7 +44,6 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { SubtaskList } from "./SubtaskList";
 
 import {
@@ -47,14 +51,169 @@ import {
   Trash2,
   AlertTriangle,
   Clock,
+  Bold as BoldIcon,
+  Italic as ItalicIcon,
+  Underline as UnderlineIcon,
+  Strikethrough as StrikethroughIcon,
+  List,
+  ListOrdered,
 } from "lucide-react";
+
+/* ------------------------------------------------------------------ */
+/*  RichEditor – inline tiptap component                              */
+/* ------------------------------------------------------------------ */
+
+function RichEditor({
+  content,
+  onSave,
+}: {
+  content: string;
+  onSave: (html: string) => void;
+}) {
+  const editor = useEditor({
+    immediatelyRender: false,
+    extensions: [
+      StarterKit,
+      Underline,
+      Image,
+      Placeholder.configure({ placeholder: "Добавьте описание..." }),
+    ],
+    content: content || "",
+    editorProps: {
+      attributes: {
+        class:
+          "min-h-[120px] border border-slate-200 rounded-lg p-3 prose prose-sm max-w-none focus:outline-none focus:border-slate-300",
+      },
+      handlePaste: (view, event) => {
+        const items = event.clipboardData?.items;
+        if (!items) return false;
+        for (const item of Array.from(items)) {
+          if (item.type.startsWith("image/")) {
+            event.preventDefault();
+            const file = item.getAsFile();
+            if (!file) return false;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              const src = e.target?.result as string;
+              editor?.chain().focus().setImage({ src }).run();
+            };
+            reader.readAsDataURL(file);
+            return true;
+          }
+        }
+        return false;
+      },
+      handleDrop: (view, event) => {
+        const files = event.dataTransfer?.files;
+        if (!files?.length) return false;
+        for (const file of Array.from(files)) {
+          if (file.type.startsWith("image/")) {
+            event.preventDefault();
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              const src = e.target?.result as string;
+              editor?.chain().focus().setImage({ src }).run();
+            };
+            reader.readAsDataURL(file);
+            return true;
+          }
+        }
+        return false;
+      },
+    },
+    onBlur: ({ editor: ed }) => {
+      onSave(ed.getHTML());
+    },
+  });
+
+  // Sync content when the item changes externally
+  useEffect(() => {
+    if (editor && content !== editor.getHTML()) {
+      editor.commands.setContent(content || "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content]);
+
+  if (!editor) return null;
+
+  const btnCls = (active: boolean) =>
+    cn(
+      "rounded p-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors",
+      active && "text-slate-900 bg-slate-100"
+    );
+
+  return (
+    <div className="space-y-1.5">
+      {/* Toolbar */}
+      <div className="flex items-center gap-0.5">
+        <button
+          type="button"
+          onClick={() => editor.chain().focus().toggleBold().run()}
+          className={btnCls(editor.isActive("bold"))}
+          title="Жирный"
+        >
+          <BoldIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => editor.chain().focus().toggleItalic().run()}
+          className={btnCls(editor.isActive("italic"))}
+          title="Курсив"
+        >
+          <ItalicIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => editor.chain().focus().toggleUnderline().run()}
+          className={btnCls(editor.isActive("underline"))}
+          title="Подчёркнутый"
+        >
+          <UnderlineIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => editor.chain().focus().toggleStrike().run()}
+          className={btnCls(editor.isActive("strike"))}
+          title="Зачёркнутый"
+        >
+          <StrikethroughIcon className="size-4" />
+        </button>
+
+        <div className="mx-1 h-4 w-px bg-slate-200" />
+
+        <button
+          type="button"
+          onClick={() => editor.chain().focus().toggleBulletList().run()}
+          className={btnCls(editor.isActive("bulletList"))}
+          title="Маркированный список"
+        >
+          <List className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+          className={btnCls(editor.isActive("orderedList"))}
+          title="Нумерованный список"
+        >
+          <ListOrdered className="size-4" />
+        </button>
+      </div>
+
+      {/* Editor */}
+      <EditorContent editor={editor} />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  TaskDetailSheet                                                    */
+/* ------------------------------------------------------------------ */
 
 export function TaskDetailSheet() {
   const { isDetailOpen, closeDetail, updateItem, deleteItem } = useBrainStore();
   const item = useSelectedItem();
 
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -64,7 +223,6 @@ export function TaskDetailSheet() {
   useEffect(() => {
     if (item) {
       setTitle(item.title);
-      setDescription(item.description || "");
       setShowDeleteConfirm(false);
     }
   }, [item]);
@@ -87,11 +245,14 @@ export function TaskDetailSheet() {
     }
   }, [item, title, updateItem]);
 
-  const handleDescriptionSave = useCallback(() => {
-    if (item && description !== (item.description || "")) {
-      updateItem(item.id, { description });
-    }
-  }, [item, description, updateItem]);
+  const handleDescriptionSave = useCallback(
+    (html: string) => {
+      if (item && html !== (item.description || "")) {
+        updateItem(item.id, { description: html });
+      }
+    },
+    [item, updateItem]
+  );
 
   const handleStatusChange = useCallback(
     (value: ItemStatus | null) => {
@@ -162,10 +323,10 @@ export function TaskDetailSheet() {
     >
       <SheetContent
         side="right"
-        className="flex w-full flex-col border-l border-slate-200 bg-white p-0 sm:max-w-lg"
+        className="flex w-[700px] flex-col border-l border-slate-200 bg-white p-0 sm:max-w-2xl"
         showCloseButton
       >
-        <ScrollArea className="flex-1">
+        <div className="flex-1 overflow-y-auto max-h-[calc(100vh-80px)]">
           <div className="flex flex-col gap-6 p-6 pb-8">
             {/* Header: Title + Type badge */}
             <SheetHeader className="gap-3 p-0">
@@ -391,17 +552,14 @@ export function TaskDetailSheet() {
 
             <Separator className="bg-slate-200" />
 
-            {/* Description */}
+            {/* Description – Rich text editor */}
             <div className="space-y-2">
               <span className="text-sm font-medium text-slate-500">
                 Описание
               </span>
-              <Textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                onBlur={handleDescriptionSave}
-                placeholder="Добавьте описание..."
-                className="min-h-[80px] resize-none border-slate-200 bg-slate-50 text-sm text-slate-900 transition-colors placeholder:text-slate-400 focus-visible:border-slate-300 focus-visible:bg-white"
+              <RichEditor
+                content={item.description || ""}
+                onSave={handleDescriptionSave}
               />
             </div>
 
@@ -474,7 +632,7 @@ export function TaskDetailSheet() {
               )}
             </div>
           </div>
-        </ScrollArea>
+        </div>
       </SheetContent>
     </Sheet>
   );

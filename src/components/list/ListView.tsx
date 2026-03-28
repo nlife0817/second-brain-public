@@ -19,7 +19,6 @@ import {
   ItemPriority,
   ItemCategory,
   ItemType,
-  SubtaskDisplayMode,
   Item,
 } from "@/types";
 import { format, isPast, isToday, parseISO } from "date-fns";
@@ -40,6 +39,9 @@ import {
   RotateCcw,
   Eye,
   EyeOff,
+  Plus,
+  Check,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -94,16 +96,24 @@ interface ColumnDef {
 }
 
 const ALL_COLUMNS: ColumnDef[] = [
-  { id: "priority", label: "Приоритет", width: "w-[100px]", sortable: true },
-  { id: "title", label: "Название", width: "min-w-[220px]", sortable: true },
-  { id: "status", label: "Статус", width: "w-[140px]", sortable: true },
-  { id: "category", label: "Категория", width: "w-[140px]", sortable: true },
-  { id: "type", label: "Тип", width: "w-[110px]", sortable: true },
-  { id: "due_date", label: "Дедлайн", width: "w-[120px]", sortable: true },
-  { id: "subtasks", label: "Подзадачи", width: "w-[80px]", sortable: false },
+  { id: "priority", label: "Приоритет", width: "w-20", sortable: true },
+  { id: "title", label: "Название", width: "min-w-[250px] flex-1", sortable: true },
+  { id: "status", label: "Статус", width: "w-28", sortable: true },
+  { id: "category", label: "Категория", width: "w-28", sortable: true },
+  { id: "type", label: "Тип", width: "w-24", sortable: true },
+  { id: "due_date", label: "Дедлайн", width: "w-24", sortable: true },
+  { id: "subtasks", label: "Подзадачи", width: "w-20", sortable: false },
 ];
 
-const DEFAULT_COLUMN_ORDER = ["priority", "title", "status", "category", "type", "due_date", "subtasks"];
+const DEFAULT_COLUMN_ORDER = [
+  "priority",
+  "title",
+  "status",
+  "category",
+  "type",
+  "due_date",
+  "subtasks",
+];
 
 /* -------------------------------------------------------------------------- */
 /*  Priority / status sort weight (lower = more urgent)                       */
@@ -127,7 +137,7 @@ const STATUS_WEIGHT: Record<string, number> = {
 };
 
 /* -------------------------------------------------------------------------- */
-/*  Helper: build flat row list based on subtaskDisplayMode                    */
+/*  Helper: build flat row list (always accordion mode)                       */
 /* -------------------------------------------------------------------------- */
 
 interface FlatRow {
@@ -142,7 +152,6 @@ interface FlatRow {
 
 function buildFlatRows(
   sortedItems: ItemWithSubtasks[],
-  mode: SubtaskDisplayMode,
   expandedItems: Set<string>
 ): FlatRow[] {
   const rows: FlatRow[] = [];
@@ -162,9 +171,7 @@ function buildFlatRows(
       doneSubtasks: doneSub,
     });
 
-    if (totalSub === 0) continue;
-
-    if (mode === "inline") {
+    if (totalSub > 0 && expandedItems.has(item.id)) {
       for (const sub of item.subtasks) {
         rows.push({
           item: sub,
@@ -175,20 +182,6 @@ function buildFlatRows(
           totalSubtasks: 0,
           doneSubtasks: 0,
         });
-      }
-    } else if (mode === "accordion") {
-      if (expandedItems.has(item.id)) {
-        for (const sub of item.subtasks) {
-          rows.push({
-            item: sub,
-            isSubtask: true,
-            parentId: item.id,
-            depth: 1,
-            hasSubtasks: false,
-            totalSubtasks: 0,
-            doneSubtasks: 0,
-          });
-        }
       }
     }
   }
@@ -213,7 +206,10 @@ function ColumnConfigPopover({
   useEffect(() => {
     if (!open) return;
     function handleClick(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+      if (
+        popoverRef.current &&
+        !popoverRef.current.contains(e.target as Node)
+      ) {
         setOpen(false);
       }
     }
@@ -222,12 +218,10 @@ function ColumnConfigPopover({
   }, [open]);
 
   const allColIds = ALL_COLUMNS.map((c) => c.id);
-
-  // Visible = those in columnOrder; hidden = those not in columnOrder (except title always visible)
   const visibleSet = new Set(columnOrder);
 
   const toggleColumn = (colId: string) => {
-    if (colId === "title") return; // title cannot be removed
+    if (colId === "title") return;
     if (visibleSet.has(colId)) {
       onOrderChange(columnOrder.filter((c) => c !== colId));
     } else {
@@ -262,20 +256,19 @@ function ColumnConfigPopover({
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="inline-flex items-center justify-center size-7 rounded hover:bg-slate-200/70 transition-colors text-slate-400 hover:text-slate-600"
+        className="inline-flex items-center justify-center size-6 rounded hover:bg-slate-200/70 transition-colors text-slate-400 hover:text-slate-600"
         title="Настройка колонок"
       >
-        <Settings2 className="size-4" />
+        <Settings2 className="size-3.5" />
       </button>
 
       {open && (
         <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-slate-200 bg-white shadow-lg p-3">
-          <div className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">
+          <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-2">
             Колонки
           </div>
 
-          {/* Visible columns in current order */}
-          <div className="space-y-1 mb-2">
+          <div className="space-y-0.5 mb-2">
             {columnOrder.map((colId, idx) => {
               const col = colMap[colId];
               if (!col) return null;
@@ -283,28 +276,32 @@ function ColumnConfigPopover({
               return (
                 <div
                   key={colId}
-                  className="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-slate-50 text-sm"
+                  className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-slate-50 text-xs"
                 >
                   <button
                     type="button"
                     onClick={() => toggleColumn(colId)}
                     className={cn(
                       "shrink-0",
-                      isTitle ? "text-slate-300 cursor-not-allowed" : "text-blue-500 hover:text-blue-700"
+                      isTitle
+                        ? "text-slate-300 cursor-not-allowed"
+                        : "text-blue-500 hover:text-blue-700"
                     )}
                     disabled={isTitle}
                     title={isTitle ? "Нельзя скрыть" : "Скрыть"}
                   >
-                    <Eye className="size-3.5" />
+                    <Eye className="size-3" />
                   </button>
-                  <span className="flex-1 text-slate-700 truncate">{col.label}</span>
+                  <span className="flex-1 text-slate-700 truncate">
+                    {col.label}
+                  </span>
                   <button
                     type="button"
                     onClick={() => moveUp(colId)}
                     disabled={idx === 0}
                     className="text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
                   >
-                    <MoveUpIcon className="size-3.5" />
+                    <MoveUpIcon className="size-3" />
                   </button>
                   <button
                     type="button"
@@ -312,20 +309,19 @@ function ColumnConfigPopover({
                     disabled={idx === columnOrder.length - 1}
                     className="text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
                   >
-                    <MoveDownIcon className="size-3.5" />
+                    <MoveDownIcon className="size-3" />
                   </button>
                 </div>
               );
             })}
           </div>
 
-          {/* Hidden columns */}
           {allColIds.filter((id) => !visibleSet.has(id)).length > 0 && (
             <>
-              <div className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1 mt-3">
+              <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-1 mt-3">
                 Скрытые
               </div>
-              <div className="space-y-1 mb-2">
+              <div className="space-y-0.5 mb-2">
                 {allColIds
                   .filter((id) => !visibleSet.has(id))
                   .map((colId) => {
@@ -334,7 +330,7 @@ function ColumnConfigPopover({
                     return (
                       <div
                         key={colId}
-                        className="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-slate-50 text-sm"
+                        className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-slate-50 text-xs"
                       >
                         <button
                           type="button"
@@ -342,9 +338,11 @@ function ColumnConfigPopover({
                           className="shrink-0 text-slate-400 hover:text-slate-600"
                           title="Показать"
                         >
-                          <EyeOff className="size-3.5" />
+                          <EyeOff className="size-3" />
                         </button>
-                        <span className="flex-1 text-slate-400 truncate">{col.label}</span>
+                        <span className="flex-1 text-slate-400 truncate">
+                          {col.label}
+                        </span>
                       </div>
                     );
                   })}
@@ -355,9 +353,9 @@ function ColumnConfigPopover({
           <button
             type="button"
             onClick={reset}
-            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700 mt-2 px-1.5 py-1 rounded hover:bg-slate-50 w-full"
+            className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-700 mt-2 px-1.5 py-0.5 rounded hover:bg-slate-50 w-full"
           >
-            <RotateCcw className="size-3" />
+            <RotateCcw className="size-2.5" />
             Сбросить
           </button>
         </div>
@@ -367,13 +365,295 @@ function ColumnConfigPopover({
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Inline edit cell for select fields (portal-based)                         */
+/* -------------------------------------------------------------------------- */
+
+function InlineSelectCell<T extends string>({
+  value,
+  options,
+  onCommit,
+  onCancel,
+  anchorRef,
+}: {
+  value: T;
+  options: { key: T; label: string }[];
+  onCommit: (val: T) => void;
+  onCancel: () => void;
+  anchorRef?: React.RefObject<HTMLElement | null>;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    const anchor = anchorRef?.current;
+    if (anchor) {
+      const rect = anchor.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
+      setPos({ top, left: rect.left });
+    }
+  }, [anchorRef]);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onCancel();
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onCancel]);
+
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+      }
+    }
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onCancel]);
+
+  if (!pos) return null;
+
+  const openUp = pos.top > window.innerHeight / 2;
+
+  return createPortal(
+    <div
+      ref={ref}
+      style={{
+        position: "fixed",
+        top: openUp ? undefined : pos.top,
+        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
+        left: pos.left,
+        zIndex: 9999,
+      }}
+      className="min-w-[140px] max-h-[200px] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {options.map((opt) => (
+        <button
+          key={opt.key}
+          onClick={(e) => {
+            e.stopPropagation();
+            onCommit(opt.key);
+          }}
+          className={cn(
+            "flex w-full items-center px-3 py-1 text-[10px] hover:bg-slate-50 text-left",
+            opt.key === value && "bg-violet-50 text-violet-700 font-medium"
+          )}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Inline edit cell for date field (portal-based)                            */
+/* -------------------------------------------------------------------------- */
+
+function InlineDateCell({
+  value,
+  onCommit,
+  onCancel,
+  anchorRef,
+}: {
+  value: string;
+  onCommit: (val: string | null) => void;
+  onCancel: () => void;
+  anchorRef?: React.RefObject<HTMLElement | null>;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    const anchor = anchorRef?.current;
+    if (anchor) {
+      const rect = anchor.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
+      setPos({ top, left: rect.left });
+    }
+  }, [anchorRef]);
+
+  useEffect(() => {
+    if (!pos) return;
+    const el = inputRef.current;
+    if (el) {
+      el.focus();
+      try {
+        el.showPicker();
+      } catch {
+        // showPicker may fail in some browsers
+      }
+    }
+  }, [pos]);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      )
+        onCancel();
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onCancel]);
+
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+      }
+    }
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onCancel]);
+
+  if (!pos) return null;
+
+  const openUp = pos.top > window.innerHeight / 2;
+
+  return createPortal(
+    <div
+      ref={containerRef}
+      style={{
+        position: "fixed",
+        top: openUp ? undefined : pos.top,
+        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
+        left: pos.left,
+        zIndex: 9999,
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <input
+        ref={inputRef}
+        type="date"
+        value={value}
+        onChange={(e) => onCommit(e.target.value || null)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        className="h-6 rounded-md border border-slate-200 bg-white px-1.5 text-[10px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>,
+    document.body
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Standalone select dropdown for inline creation row (portal-based)         */
+/* -------------------------------------------------------------------------- */
+
+function CreationSelectDropdown<T extends string>({
+  value,
+  options,
+  onSelect,
+  anchorRef,
+  onClose,
+}: {
+  value: T;
+  options: { key: T; label: string }[];
+  onSelect: (val: T) => void;
+  anchorRef: React.RefObject<HTMLElement | null>;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    const anchor = anchorRef?.current;
+    if (anchor) {
+      const rect = anchor.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
+      setPos({ top, left: rect.left });
+    }
+  }, [anchorRef]);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose]);
+
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    }
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  if (!pos) return null;
+
+  const openUp = pos.top > window.innerHeight / 2;
+
+  return createPortal(
+    <div
+      ref={ref}
+      style={{
+        position: "fixed",
+        top: openUp ? undefined : pos.top,
+        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
+        left: pos.left,
+        zIndex: 9999,
+      }}
+      className="min-w-[140px] max-h-[200px] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {options.map((opt) => (
+        <button
+          key={opt.key}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(opt.key);
+            onClose();
+          }}
+          className={cn(
+            "flex w-full items-center px-3 py-1 text-[10px] hover:bg-slate-50 text-left",
+            opt.key === value && "bg-violet-50 text-violet-700 font-medium"
+          )}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Component                                                                 */
 /* -------------------------------------------------------------------------- */
 
+const NEW_ITEM_DEFAULTS = {
+  title: "",
+  status: "inbox" as ItemStatus,
+  priority: "none" as ItemPriority,
+  category: "other" as ItemCategory,
+  type: "task" as ItemType,
+  due_date: "",
+};
+
 export function ListView() {
   const items = useFilteredItems();
+  const createItem = useBrainStore((s) => s.createItem);
   const openDetail = useBrainStore((s) => s.openDetail);
-  const subtaskDisplayMode = useBrainStore((s) => s.subtaskDisplayMode);
   const editingItemId = useBrainStore((s) => s.editingItemId);
   const editingField = useBrainStore((s) => s.editingField);
   const setEditingItem = useBrainStore((s) => s.setEditingItem);
@@ -391,6 +671,33 @@ export function ListView() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
+  /* ----- Inline task creation state -------------------------------------- */
+  const [isCreating, setIsCreating] = useState(false);
+  const [newItem, setNewItem] = useState({ ...NEW_ITEM_DEFAULTS });
+  const createTitleRef = useRef<HTMLInputElement>(null);
+  const createCellRefs = useRef<Record<string, HTMLTableCellElement | null>>(
+    {}
+  );
+  const [createDropdown, setCreateDropdown] = useState<string | null>(null);
+
+  /* ----- Inline subtask creation state ----------------------------------- */
+  const [creatingSubtaskFor, setCreatingSubtaskFor] = useState<string | null>(
+    null
+  );
+  const [newSubtask, setNewSubtask] = useState({
+    title: "",
+    status: "todo" as ItemStatus,
+    priority: "none" as ItemPriority,
+    category: "other" as ItemCategory,
+    type: "task" as ItemType,
+    due_date: "",
+  });
+  const subtaskInputRef = useRef<HTMLInputElement>(null);
+  const subtaskCellRefs = useRef<Record<string, HTMLTableCellElement | null>>(
+    {}
+  );
+  const [subtaskDropdown, setSubtaskDropdown] = useState<string | null>(null);
+
   /* ----- Column definitions for current order ----------------------------- */
 
   const colMap = useMemo(
@@ -399,7 +706,8 @@ export function ListView() {
   );
 
   const visibleColumns = useMemo(
-    () => listColumnOrder.map((id) => colMap[id]).filter(Boolean) as ColumnDef[],
+    () =>
+      listColumnOrder.map((id) => colMap[id]).filter(Boolean) as ColumnDef[],
     [listColumnOrder, colMap]
   );
 
@@ -407,7 +715,7 @@ export function ListView() {
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: { distance: 5 },
+      activationConstraint: { distance: 3 },
     })
   );
 
@@ -475,8 +783,8 @@ export function ListView() {
   /* ----- flat rows -------------------------------------------------------- */
 
   const flatRows = useMemo(
-    () => buildFlatRows(sortedItems, subtaskDisplayMode, expandedItems),
-    [sortedItems, subtaskDisplayMode, expandedItems]
+    () => buildFlatRows(sortedItems, expandedItems),
+    [sortedItems, expandedItems]
   );
 
   /* ----- IDs for SortableContext ------------------------------------------ */
@@ -486,10 +794,7 @@ export function ListView() {
     [flatRows]
   );
 
-  const allRowIds = useMemo(
-    () => flatRows.map((r) => r.item.id),
-    [flatRows]
-  );
+  const allRowIds = useMemo(() => flatRows.map((r) => r.item.id), [flatRows]);
 
   /* ----- Subtask sibling lookup (parentId -> ordered subtask ids) -------- */
 
@@ -541,11 +846,9 @@ export function ListView() {
   /* ----- selection helpers ------------------------------------------------ */
 
   const allSelected =
-    topLevelIds.length > 0 &&
-    topLevelIds.every((id) => selectedIds.has(id));
+    topLevelIds.length > 0 && topLevelIds.every((id) => selectedIds.has(id));
 
-  const someSelected =
-    selectedIds.size > 0 && !allSelected;
+  const someSelected = selectedIds.size > 0 && !allSelected;
 
   const toggleAll = useCallback(() => {
     if (allSelected) {
@@ -578,8 +881,8 @@ export function ListView() {
 
       /* --- Subtask reorder: both must share the same parent --- */
       if (activeRow.isSubtask && activeRow.parentId) {
-        // Only allow reordering among siblings (same parent_id)
-        if (!overRow.isSubtask || overRow.parentId !== activeRow.parentId) return;
+        if (!overRow.isSubtask || overRow.parentId !== activeRow.parentId)
+          return;
 
         const siblingIds = subtaskSiblingMap.get(activeRow.parentId);
         if (!siblingIds) return;
@@ -626,10 +929,404 @@ export function ListView() {
     [topLevelIds, sortedItems, reorderItems, rowByIdMap, subtaskSiblingMap]
   );
 
+  /* ----- Inline task creation handlers ----------------------------------- */
+
+  const handleStartCreate = useCallback(() => {
+    setIsCreating(true);
+    setNewItem({ ...NEW_ITEM_DEFAULTS });
+    setCreateDropdown(null);
+    // Auto-focus title after render
+    setTimeout(() => createTitleRef.current?.focus(), 0);
+  }, []);
+
+  const handleCancelCreate = useCallback(() => {
+    setIsCreating(false);
+    setNewItem({ ...NEW_ITEM_DEFAULTS });
+    setCreateDropdown(null);
+  }, []);
+
+  const handleCommitCreate = useCallback(async () => {
+    if (!newItem.title.trim()) {
+      handleCancelCreate();
+      return;
+    }
+    try {
+      await createItem({
+        title: newItem.title.trim(),
+        status: newItem.status,
+        priority: newItem.priority,
+        category: newItem.category,
+        type: newItem.type,
+        due_date: newItem.due_date || null,
+      });
+    } catch {
+      // silently fail
+    }
+    setIsCreating(false);
+    setNewItem({ ...NEW_ITEM_DEFAULTS });
+    setCreateDropdown(null);
+  }, [newItem, createItem, handleCancelCreate]);
+
+  /* ----- Inline subtask creation handlers -------------------------------- */
+
+  const handleStartSubtaskCreate = useCallback(
+    (parentId: string) => {
+      const parent = sortedItems.find((i) => i.id === parentId);
+      setCreatingSubtaskFor(parentId);
+      setNewSubtask({
+        title: "",
+        status: "todo" as ItemStatus,
+        priority: "none" as ItemPriority,
+        category: (parent?.category ?? "other") as ItemCategory,
+        type: "task" as ItemType,
+        due_date: "",
+      });
+      setSubtaskDropdown(null);
+      // Expand parent if not expanded
+      setExpandedItems((prev) => {
+        const next = new Set(prev);
+        next.add(parentId);
+        return next;
+      });
+      setTimeout(() => subtaskInputRef.current?.focus(), 0);
+    },
+    [sortedItems]
+  );
+
+  const handleCancelSubtaskCreate = useCallback(() => {
+    setCreatingSubtaskFor(null);
+    setNewSubtask({
+      title: "",
+      status: "todo" as ItemStatus,
+      priority: "none" as ItemPriority,
+      category: "other" as ItemCategory,
+      type: "task" as ItemType,
+      due_date: "",
+    });
+    setSubtaskDropdown(null);
+  }, []);
+
+  const handleCommitSubtaskCreate = useCallback(async () => {
+    if (!newSubtask.title.trim() || !creatingSubtaskFor) {
+      handleCancelSubtaskCreate();
+      return;
+    }
+    try {
+      await createItem({
+        title: newSubtask.title.trim(),
+        parent_id: creatingSubtaskFor,
+        status: newSubtask.status,
+        priority: newSubtask.priority,
+        category: newSubtask.category,
+        type: newSubtask.type,
+        due_date: newSubtask.due_date || null,
+      });
+    } catch {
+      // silently fail
+    }
+    setCreatingSubtaskFor(null);
+    setNewSubtask({
+      title: "",
+      status: "todo" as ItemStatus,
+      priority: "none" as ItemPriority,
+      category: "other" as ItemCategory,
+      type: "task" as ItemType,
+      due_date: "",
+    });
+    setSubtaskDropdown(null);
+  }, [
+    newSubtask,
+    creatingSubtaskFor,
+    createItem,
+    handleCancelSubtaskCreate,
+  ]);
+
+  /* ----- Select option builders ------------------------------------------ */
+
+  const statusOptions = useMemo(
+    () =>
+      (
+        Object.entries(STATUS_CONFIG) as [
+          ItemStatus,
+          (typeof STATUS_CONFIG)[ItemStatus],
+        ][]
+      ).map(([key, cfg]) => ({ key, label: cfg.label })),
+    []
+  );
+
+  const priorityOptions = useMemo(
+    () =>
+      (
+        Object.entries(PRIORITY_CONFIG) as [
+          ItemPriority,
+          (typeof PRIORITY_CONFIG)[ItemPriority],
+        ][]
+      ).map(([key, cfg]) => ({ key, label: `${cfg.icon} ${cfg.label}` })),
+    []
+  );
+
+  const categoryOptions = useMemo(
+    () =>
+      (
+        Object.entries(CATEGORY_CONFIG) as [
+          ItemCategory,
+          (typeof CATEGORY_CONFIG)[ItemCategory],
+        ][]
+      ).map(([key, cfg]) => ({ key, label: cfg.label })),
+    []
+  );
+
+  const typeOptions = useMemo(
+    () =>
+      (
+        Object.entries(TYPE_CONFIG) as [
+          ItemType,
+          (typeof TYPE_CONFIG)[ItemType],
+        ][]
+      ).map(([key, cfg]) => ({ key, label: cfg.label })),
+    []
+  );
+
+  /* ----- Render creation-row cell by column id --------------------------- */
+
+  const renderCreateCell = (colId: string) => {
+    switch (colId) {
+      case "priority": {
+        const cfg = PRIORITY_CONFIG[newItem.priority];
+        return (
+          <td
+            key={colId}
+            ref={(el) => {
+              createCellRefs.current["priority"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              setCreateDropdown(
+                createDropdown === "priority" ? null : "priority"
+              );
+            }}
+          >
+            <span className="text-xs leading-none">{cfg.icon}</span>
+            {createDropdown === "priority" && (
+              <CreationSelectDropdown
+                value={newItem.priority}
+                options={priorityOptions}
+                onSelect={(val) =>
+                  setNewItem((prev) => ({ ...prev, priority: val }))
+                }
+                anchorRef={{
+                  current: createCellRefs.current["priority"],
+                }}
+                onClose={() => setCreateDropdown(null)}
+              />
+            )}
+          </td>
+        );
+      }
+
+      case "title":
+        return (
+          <td key={colId} className="px-3 py-1.5">
+            <input
+              ref={createTitleRef}
+              type="text"
+              placeholder="Название задачи..."
+              value={newItem.title}
+              onChange={(e) =>
+                setNewItem((prev) => ({ ...prev, title: e.target.value }))
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleCommitCreate();
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  handleCancelCreate();
+                }
+              }}
+              className="w-full h-6 bg-transparent text-xs text-slate-900 placeholder:text-slate-400 outline-none border-b border-blue-300 focus:border-blue-500"
+            />
+          </td>
+        );
+
+      case "status": {
+        const cfg = STATUS_CONFIG[newItem.status];
+        return (
+          <td
+            key={colId}
+            ref={(el) => {
+              createCellRefs.current["status"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              setCreateDropdown(
+                createDropdown === "status" ? null : "status"
+              );
+            }}
+          >
+            <Badge
+              variant="secondary"
+              className={cn(
+                "text-[10px] font-medium px-1.5 py-0 rounded-md",
+                cfg.color
+              )}
+            >
+              {cfg.label}
+            </Badge>
+            {createDropdown === "status" && (
+              <CreationSelectDropdown
+                value={newItem.status}
+                options={statusOptions}
+                onSelect={(val) =>
+                  setNewItem((prev) => ({ ...prev, status: val }))
+                }
+                anchorRef={{
+                  current: createCellRefs.current["status"],
+                }}
+                onClose={() => setCreateDropdown(null)}
+              />
+            )}
+          </td>
+        );
+      }
+
+      case "category": {
+        const cfg = CATEGORY_CONFIG[newItem.category];
+        return (
+          <td
+            key={colId}
+            ref={(el) => {
+              createCellRefs.current["category"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              setCreateDropdown(
+                createDropdown === "category" ? null : "category"
+              );
+            }}
+          >
+            <Badge
+              variant="outline"
+              className="text-[10px] font-normal rounded-md border-slate-200 text-slate-600"
+            >
+              {cfg.label}
+            </Badge>
+            {createDropdown === "category" && (
+              <CreationSelectDropdown
+                value={newItem.category}
+                options={categoryOptions}
+                onSelect={(val) =>
+                  setNewItem((prev) => ({ ...prev, category: val }))
+                }
+                anchorRef={{
+                  current: createCellRefs.current["category"],
+                }}
+                onClose={() => setCreateDropdown(null)}
+              />
+            )}
+          </td>
+        );
+      }
+
+      case "type": {
+        const cfg = TYPE_CONFIG[newItem.type];
+        return (
+          <td
+            key={colId}
+            ref={(el) => {
+              createCellRefs.current["type"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              setCreateDropdown(
+                createDropdown === "type" ? null : "type"
+              );
+            }}
+          >
+            <span className="text-xs text-slate-600">{cfg.label}</span>
+            {createDropdown === "type" && (
+              <CreationSelectDropdown
+                value={newItem.type}
+                options={typeOptions}
+                onSelect={(val) =>
+                  setNewItem((prev) => ({ ...prev, type: val }))
+                }
+                anchorRef={{
+                  current: createCellRefs.current["type"],
+                }}
+                onClose={() => setCreateDropdown(null)}
+              />
+            )}
+          </td>
+        );
+      }
+
+      case "due_date": {
+        return (
+          <td key={colId} className="px-3 py-1.5">
+            <input
+              type="date"
+              value={newItem.due_date}
+              onChange={(e) =>
+                setNewItem((prev) => ({
+                  ...prev,
+                  due_date: e.target.value,
+                }))
+              }
+              className="h-5 rounded border border-slate-200 bg-white px-1 text-[10px] text-slate-600 outline-none focus:border-blue-400"
+            />
+          </td>
+        );
+      }
+
+      case "subtasks":
+        return (
+          <td key={colId} className="px-3 py-1.5">
+            <span className="text-xs text-slate-300">--</span>
+          </td>
+        );
+
+      default:
+        return <td key={colId} />;
+    }
+  };
+
+  /* ----- Escape handler for creation mode (global) ----------------------- */
+
+  useEffect(() => {
+    if (!isCreating) return;
+    function handler(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        handleCancelCreate();
+      }
+    }
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [isCreating, handleCancelCreate]);
+
   /* ----- render ----------------------------------------------------------- */
 
-  if (items.length === 0) {
-    return <EmptyState />;
+  if (items.length === 0 && !isCreating) {
+    return (
+      <div>
+        <div className="p-2">
+          <button
+            type="button"
+            onClick={handleStartCreate}
+            className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 transition-colors px-2 py-1 rounded hover:bg-slate-100"
+          >
+            <Plus className="size-3.5" />
+            Добавить задачу
+          </button>
+        </div>
+        {isCreating ? null : <EmptyState />}
+      </div>
+    );
   }
 
   return (
@@ -645,17 +1342,17 @@ export function ListView() {
             strategy={verticalListSortingStrategy}
           >
             <table className="w-full border-collapse bg-white border border-slate-200 rounded-lg overflow-hidden">
-              {/* ---- Header --------------------------------------------------- */}
+              {/* ---- Header ------------------------------------------- */}
               <thead className="sticky top-0 z-10">
                 <tr className="bg-slate-50 border-b border-slate-200">
                   {/* Drag handle column header */}
-                  <th className="w-8 px-1 py-3 text-left" />
+                  <th className="w-7 px-1 py-2 text-left" />
 
                   {/* Expand toggle */}
-                  <th className="w-10 px-2 py-3 text-left" />
+                  <th className="w-8 px-1 py-2 text-left" />
 
                   {/* Checkbox */}
-                  <th className="w-10 px-2 py-3 text-left">
+                  <th className="w-8 px-1.5 py-2 text-left">
                     <Checkbox
                       checked={allSelected}
                       indeterminate={someSelected}
@@ -681,7 +1378,7 @@ export function ListView() {
                         key={col.id}
                         className={cn(
                           col.width,
-                          "px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500"
+                          "px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500"
                         )}
                       >
                         {col.label}
@@ -690,7 +1387,7 @@ export function ListView() {
                   )}
 
                   {/* Column config button */}
-                  <th className="w-10 px-1 py-3">
+                  <th className="w-8 px-1 py-2">
                     <ColumnConfigPopover
                       columnOrder={listColumnOrder}
                       onOrderChange={setListColumnOrder}
@@ -699,26 +1396,132 @@ export function ListView() {
                 </tr>
               </thead>
 
-              {/* ---- Body ----------------------------------------------------- */}
+              {/* ---- Body --------------------------------------------- */}
               <tbody className="divide-y divide-slate-100">
-                {flatRows.map((row) => (
-                  <ItemRow
-                    key={`${row.parentId ?? "root"}-${row.item.id}`}
-                    row={row}
-                    selected={selectedIds.has(row.item.id)}
-                    onSelect={toggleOne}
-                    onOpen={openDetail}
-                    editingField={
-                      editingItemId === row.item.id ? editingField : null
-                    }
-                    setEditingItem={setEditingItem}
-                    updateItem={updateItem}
-                    subtaskDisplayMode={subtaskDisplayMode}
-                    isExpanded={expandedItems.has(row.item.id)}
-                    onToggleExpand={toggleExpanded}
-                    visibleColumns={visibleColumns}
-                  />
-                ))}
+                {/* === Inline creation row === */}
+                {!isCreating ? (
+                  <tr
+                    className="hover:bg-slate-50/50 cursor-pointer group"
+                    onClick={handleStartCreate}
+                  >
+                    <td className="px-1 py-1.5" />
+                    <td className="px-1 py-1.5" />
+                    <td className="px-1.5 py-1.5">
+                      <Plus className="size-3.5 text-slate-400 group-hover:text-blue-500 transition-colors" />
+                    </td>
+                    <td
+                      colSpan={visibleColumns.length}
+                      className="px-3 py-1.5"
+                    >
+                      <span className="text-xs text-slate-400 group-hover:text-blue-500 transition-colors">
+                        Добавить задачу
+                      </span>
+                    </td>
+                    <td className="w-8" />
+                  </tr>
+                ) : (
+                  <tr className="bg-blue-50/40 ring-1 ring-inset ring-blue-200">
+                    {/* Drag handle placeholder */}
+                    <td className="px-1 py-1.5" />
+                    {/* Expand placeholder */}
+                    <td className="px-1 py-1.5" />
+                    {/* Action buttons */}
+                    <td className="px-1.5 py-1.5">
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCommitCreate();
+                          }}
+                          className="inline-flex items-center justify-center size-5 rounded hover:bg-emerald-100 text-emerald-600 transition-colors"
+                          title="Создать"
+                        >
+                          <Check className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCancelCreate();
+                          }}
+                          className="inline-flex items-center justify-center size-5 rounded hover:bg-red-100 text-red-500 transition-colors"
+                          title="Отмена"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                    {/* Dynamic creation cells */}
+                    {visibleColumns.map((col) => renderCreateCell(col.id))}
+                    {/* Settings spacer */}
+                    <td className="w-8" />
+                  </tr>
+                )}
+
+                {/* === Data rows === */}
+                {flatRows.map((row, idx) => {
+                  // Determine if this is the last subtask of its parent
+                  // so we can show the "add subtask" row after it
+                  const isLastSubtaskOfParent =
+                    row.isSubtask &&
+                    row.parentId &&
+                    (idx === flatRows.length - 1 ||
+                      flatRows[idx + 1].parentId !== row.parentId ||
+                      !flatRows[idx + 1].isSubtask);
+
+                  // Or this is a parent with no subtasks but is expanded
+                  const parentRow = !row.isSubtask ? row : null;
+                  const isExpandedParentWithNoSubtasks =
+                    parentRow &&
+                    expandedItems.has(row.item.id) &&
+                    !parentRow.hasSubtasks;
+
+                  // Check if "add subtask" row should follow this row
+                  const showAddSubtaskAfter =
+                    isLastSubtaskOfParent ||
+                    isExpandedParentWithNoSubtasks;
+                  const addSubtaskParentId = row.isSubtask
+                    ? row.parentId
+                    : row.item.id;
+
+                  return (
+                    <ItemRowGroup
+                      key={`${row.parentId ?? "root"}-${row.item.id}`}
+                      row={row}
+                      selected={selectedIds.has(row.item.id)}
+                      onSelect={toggleOne}
+                      onOpen={openDetail}
+                      editingField={
+                        editingItemId === row.item.id ? editingField : null
+                      }
+                      setEditingItem={setEditingItem}
+                      updateItem={updateItem}
+                      isExpanded={expandedItems.has(row.item.id)}
+                      onToggleExpand={toggleExpanded}
+                      visibleColumns={visibleColumns}
+                      showAddSubtaskRow={
+                        !!(showAddSubtaskAfter &&
+                        addSubtaskParentId !== null)
+                      }
+                      addSubtaskParentId={addSubtaskParentId}
+                      creatingSubtaskFor={creatingSubtaskFor}
+                      onStartSubtaskCreate={handleStartSubtaskCreate}
+                      newSubtask={newSubtask}
+                      setNewSubtask={setNewSubtask}
+                      onCommitSubtaskCreate={handleCommitSubtaskCreate}
+                      onCancelSubtaskCreate={handleCancelSubtaskCreate}
+                      subtaskInputRef={subtaskInputRef}
+                      subtaskCellRefs={subtaskCellRefs}
+                      subtaskDropdown={subtaskDropdown}
+                      setSubtaskDropdown={setSubtaskDropdown}
+                      statusOptions={statusOptions}
+                      priorityOptions={priorityOptions}
+                      categoryOptions={categoryOptions}
+                      typeOptions={typeOptions}
+                    />
+                  );
+                })}
               </tbody>
             </table>
           </SortableContext>
@@ -750,12 +1553,12 @@ function SortableHeader({
   const isActive = !isManualOrder && current.column === column;
 
   return (
-    <th className={cn("px-4 py-3 text-left", className)}>
+    <th className={cn("px-3 py-2 text-left", className)}>
       <button
         type="button"
         onClick={() => onToggle(column)}
         className={cn(
-          "inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider transition-colors",
+          "inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider transition-colors",
           isActive
             ? "text-slate-900"
             : "text-slate-500 hover:text-slate-900"
@@ -764,12 +1567,12 @@ function SortableHeader({
         {label}
         {isActive ? (
           current.direction === "asc" ? (
-            <ArrowUp className="size-3.5" />
+            <ArrowUp className="size-3" />
           ) : (
-            <ArrowDown className="size-3.5" />
+            <ArrowDown className="size-3" />
           )
         ) : (
-          <ArrowUpDown className="size-3.5 opacity-40" />
+          <ArrowUpDown className="size-3 opacity-40" />
         )}
       </button>
     </th>
@@ -777,184 +1580,367 @@ function SortableHeader({
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Inline edit cell for select fields                                        */
+/*  ItemRowGroup: renders the main row + optional "add subtask" row           */
 /* -------------------------------------------------------------------------- */
 
-function InlineSelectCell<T extends string>({
-  value,
-  options,
-  onCommit,
-  onCancel,
-  anchorRef,
+function ItemRowGroup({
+  row,
+  selected,
+  onSelect,
+  onOpen,
+  editingField,
+  setEditingItem,
+  updateItem,
+  isExpanded,
+  onToggleExpand,
+  visibleColumns,
+  showAddSubtaskRow,
+  addSubtaskParentId,
+  creatingSubtaskFor,
+  onStartSubtaskCreate,
+  newSubtask,
+  setNewSubtask,
+  onCommitSubtaskCreate,
+  onCancelSubtaskCreate,
+  subtaskInputRef,
+  subtaskCellRefs,
+  subtaskDropdown,
+  setSubtaskDropdown,
+  statusOptions,
+  priorityOptions,
+  categoryOptions,
+  typeOptions,
 }: {
-  value: T;
-  options: { key: T; label: string }[];
-  onCommit: (val: T) => void;
-  onCancel: () => void;
-  anchorRef?: React.RefObject<HTMLElement | null>;
+  row: FlatRow;
+  selected: boolean;
+  onSelect: (id: string) => void;
+  onOpen: (id: string) => void;
+  editingField: string | null;
+  setEditingItem: (id: string | null, field?: string | null) => void;
+  updateItem: (id: string, payload: Record<string, unknown>) => Promise<void>;
+  isExpanded: boolean;
+  onToggleExpand: (id: string) => void;
+  visibleColumns: ColumnDef[];
+  showAddSubtaskRow: boolean;
+  addSubtaskParentId: string | null;
+  creatingSubtaskFor: string | null;
+  onStartSubtaskCreate: (parentId: string) => void;
+  newSubtask: {
+    title: string;
+    status: ItemStatus;
+    priority: ItemPriority;
+    category: ItemCategory;
+    type: ItemType;
+    due_date: string;
+  };
+  setNewSubtask: React.Dispatch<React.SetStateAction<{
+    title: string;
+    status: ItemStatus;
+    priority: ItemPriority;
+    category: ItemCategory;
+    type: ItemType;
+    due_date: string;
+  }>>;
+  onCommitSubtaskCreate: () => void;
+  onCancelSubtaskCreate: () => void;
+  subtaskInputRef: React.RefObject<HTMLInputElement | null>;
+  subtaskCellRefs: React.MutableRefObject<Record<string, HTMLTableCellElement | null>>;
+  subtaskDropdown: string | null;
+  setSubtaskDropdown: (val: string | null) => void;
+  statusOptions: { key: ItemStatus; label: string }[];
+  priorityOptions: { key: ItemPriority; label: string }[];
+  categoryOptions: { key: ItemCategory; label: string }[];
+  typeOptions: { key: ItemType; label: string }[];
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const colCount = visibleColumns.length + 4; // drag + expand + checkbox + settings
 
-  // Position relative to anchor (td cell) via portal in body
-  useEffect(() => {
-    const anchor = anchorRef?.current;
-    if (anchor) {
-      const rect = anchor.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
-      setPos({ top, left: rect.left });
-    }
-  }, [anchorRef]);
-
-  // Click outside to cancel
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) onCancel();
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [onCancel]);
-
-  // Escape key
-  useEffect(() => {
-    function handler(e: KeyboardEvent) {
-      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-    }
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onCancel]);
-
-  if (!pos) return null;
-
-  const openUp = pos.top > window.innerHeight / 2;
-
-  return createPortal(
-    <div
-      ref={ref}
-      style={{
-        position: "fixed",
-        top: openUp ? undefined : pos.top,
-        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
-        left: pos.left,
-        zIndex: 9999,
-      }}
-      className="min-w-[140px] max-h-[200px] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
-      onClick={(e) => e.stopPropagation()}
-    >
-      {options.map((opt) => (
-        <button
-          key={opt.key}
-          onClick={(e) => { e.stopPropagation(); onCommit(opt.key); }}
-          className={cn(
-            "flex w-full items-center px-3 py-1.5 text-xs hover:bg-slate-50 text-left",
-            opt.key === value && "bg-violet-50 text-violet-700 font-medium"
-          )}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>,
-    document.body
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Inline edit cell for date field (portal-based)                            */
-/* -------------------------------------------------------------------------- */
-
-function InlineDateCell({
-  value,
-  onCommit,
-  onCancel,
-  anchorRef,
-}: {
-  value: string;
-  onCommit: (val: string | null) => void;
-  onCancel: () => void;
-  anchorRef?: React.RefObject<HTMLElement | null>;
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-
-  // Position relative to anchor (td cell) via portal in body
-  useEffect(() => {
-    const anchor = anchorRef?.current;
-    if (anchor) {
-      const rect = anchor.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
-      setPos({ top, left: rect.left });
-    }
-  }, [anchorRef]);
-
-  useEffect(() => {
-    if (!pos) return;
-    const el = inputRef.current;
-    if (el) {
-      el.focus();
-      try {
-        el.showPicker();
-      } catch {
-        // showPicker may fail in some browsers -- that's okay, input is still focused
-      }
-    }
-  }, [pos]);
-
-  // Click outside to cancel
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) onCancel();
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [onCancel]);
-
-  // Escape key to cancel
-  useEffect(() => {
-    function handler(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCancel();
-      }
-    }
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onCancel]);
-
-  if (!pos) return null;
-
-  const openUp = pos.top > window.innerHeight / 2;
-
-  return createPortal(
-    <div
-      ref={containerRef}
-      style={{
-        position: "fixed",
-        top: openUp ? undefined : pos.top,
-        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
-        left: pos.left,
-        zIndex: 9999,
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <input
-        ref={inputRef}
-        type="date"
-        value={value}
-        onChange={(e) => onCommit(e.target.value || null)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault();
-            onCancel();
-          }
-        }}
-        className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
-        onClick={(e) => e.stopPropagation()}
+  return (
+    <>
+      <ItemRow
+        row={row}
+        selected={selected}
+        onSelect={onSelect}
+        onOpen={onOpen}
+        editingField={editingField}
+        setEditingItem={setEditingItem}
+        updateItem={updateItem}
+        isExpanded={isExpanded}
+        onToggleExpand={onToggleExpand}
+        visibleColumns={visibleColumns}
+        statusOptions={statusOptions}
+        priorityOptions={priorityOptions}
+        categoryOptions={categoryOptions}
+        typeOptions={typeOptions}
       />
-    </div>,
-    document.body
+
+      {/* "Add subtask" row after last subtask or after expanded empty parent */}
+      {showAddSubtaskRow && addSubtaskParentId && (
+        <>
+          {creatingSubtaskFor === addSubtaskParentId ? (
+            <tr className="bg-blue-50/30 ring-1 ring-inset ring-blue-200">
+              {/* Drag handle placeholder */}
+              <td className="px-1 py-1" />
+              {/* Expand placeholder */}
+              <td className="px-1 py-1" />
+              {/* Action buttons */}
+              <td className="px-1.5 py-1">
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCommitSubtaskCreate();
+                    }}
+                    className="inline-flex items-center justify-center size-4 rounded hover:bg-emerald-100 text-emerald-600 transition-colors"
+                  >
+                    <Check className="size-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCancelSubtaskCreate();
+                    }}
+                    className="inline-flex items-center justify-center size-4 rounded hover:bg-red-100 text-red-500 transition-colors"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              </td>
+              {/* Dynamic subtask creation cells */}
+              {visibleColumns.map((col) => {
+                switch (col.id) {
+                  case "priority": {
+                    const cfg = PRIORITY_CONFIG[newSubtask.priority];
+                    return (
+                      <td
+                        key={col.id}
+                        ref={(el) => {
+                          subtaskCellRefs.current["priority"] = el;
+                        }}
+                        className="relative px-3 py-1 cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSubtaskDropdown(
+                            subtaskDropdown === "priority" ? null : "priority"
+                          );
+                        }}
+                      >
+                        <span className="text-xs leading-none">{cfg.icon}</span>
+                        {subtaskDropdown === "priority" && (
+                          <CreationSelectDropdown
+                            value={newSubtask.priority}
+                            options={priorityOptions}
+                            onSelect={(val) =>
+                              setNewSubtask((prev) => ({ ...prev, priority: val }))
+                            }
+                            anchorRef={{
+                              current: subtaskCellRefs.current["priority"],
+                            }}
+                            onClose={() => setSubtaskDropdown(null)}
+                          />
+                        )}
+                      </td>
+                    );
+                  }
+
+                  case "title":
+                    return (
+                      <td key={col.id} className="px-3 py-1">
+                        <div className="flex items-center gap-1.5 pl-4">
+                          <span className="text-slate-300 text-[10px] select-none">
+                            {"\u21B3"}
+                          </span>
+                          <input
+                            ref={subtaskInputRef}
+                            type="text"
+                            placeholder="Название подзадачи..."
+                            value={newSubtask.title}
+                            onChange={(e) =>
+                              setNewSubtask((prev) => ({ ...prev, title: e.target.value }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                onCommitSubtaskCreate();
+                              }
+                              if (e.key === "Escape") {
+                                e.preventDefault();
+                                onCancelSubtaskCreate();
+                              }
+                            }}
+                            className="flex-1 h-5 bg-transparent text-xs text-slate-700 placeholder:text-slate-400 outline-none border-b border-blue-200 focus:border-blue-400"
+                          />
+                        </div>
+                      </td>
+                    );
+
+                  case "status": {
+                    const cfg = STATUS_CONFIG[newSubtask.status];
+                    return (
+                      <td
+                        key={col.id}
+                        ref={(el) => {
+                          subtaskCellRefs.current["status"] = el;
+                        }}
+                        className="relative px-3 py-1 cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSubtaskDropdown(
+                            subtaskDropdown === "status" ? null : "status"
+                          );
+                        }}
+                      >
+                        <Badge
+                          variant="secondary"
+                          className={cn(
+                            "text-[10px] font-medium px-1.5 py-0 rounded-md",
+                            cfg.color
+                          )}
+                        >
+                          {cfg.label}
+                        </Badge>
+                        {subtaskDropdown === "status" && (
+                          <CreationSelectDropdown
+                            value={newSubtask.status}
+                            options={statusOptions}
+                            onSelect={(val) =>
+                              setNewSubtask((prev) => ({ ...prev, status: val }))
+                            }
+                            anchorRef={{
+                              current: subtaskCellRefs.current["status"],
+                            }}
+                            onClose={() => setSubtaskDropdown(null)}
+                          />
+                        )}
+                      </td>
+                    );
+                  }
+
+                  case "category": {
+                    const cfg = CATEGORY_CONFIG[newSubtask.category];
+                    return (
+                      <td
+                        key={col.id}
+                        ref={(el) => {
+                          subtaskCellRefs.current["category"] = el;
+                        }}
+                        className="relative px-3 py-1 cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSubtaskDropdown(
+                            subtaskDropdown === "category" ? null : "category"
+                          );
+                        }}
+                      >
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] font-normal rounded-md border-slate-200 text-slate-600"
+                        >
+                          {cfg.label}
+                        </Badge>
+                        {subtaskDropdown === "category" && (
+                          <CreationSelectDropdown
+                            value={newSubtask.category}
+                            options={categoryOptions}
+                            onSelect={(val) =>
+                              setNewSubtask((prev) => ({ ...prev, category: val }))
+                            }
+                            anchorRef={{
+                              current: subtaskCellRefs.current["category"],
+                            }}
+                            onClose={() => setSubtaskDropdown(null)}
+                          />
+                        )}
+                      </td>
+                    );
+                  }
+
+                  case "type": {
+                    const cfg = TYPE_CONFIG[newSubtask.type];
+                    return (
+                      <td
+                        key={col.id}
+                        ref={(el) => {
+                          subtaskCellRefs.current["type"] = el;
+                        }}
+                        className="relative px-3 py-1 cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSubtaskDropdown(
+                            subtaskDropdown === "type" ? null : "type"
+                          );
+                        }}
+                      >
+                        <span className="text-xs text-slate-600">{cfg.label}</span>
+                        {subtaskDropdown === "type" && (
+                          <CreationSelectDropdown
+                            value={newSubtask.type}
+                            options={typeOptions}
+                            onSelect={(val) =>
+                              setNewSubtask((prev) => ({ ...prev, type: val }))
+                            }
+                            anchorRef={{
+                              current: subtaskCellRefs.current["type"],
+                            }}
+                            onClose={() => setSubtaskDropdown(null)}
+                          />
+                        )}
+                      </td>
+                    );
+                  }
+
+                  case "due_date":
+                    return (
+                      <td key={col.id} className="px-3 py-1">
+                        <input
+                          type="date"
+                          value={newSubtask.due_date}
+                          onChange={(e) =>
+                            setNewSubtask((prev) => ({
+                              ...prev,
+                              due_date: e.target.value,
+                            }))
+                          }
+                          className="h-5 rounded border border-slate-200 bg-white px-1 text-[10px] text-slate-600 outline-none focus:border-blue-400"
+                        />
+                      </td>
+                    );
+
+                  case "subtasks":
+                    return (
+                      <td key={col.id} className="px-3 py-1">
+                        <span className="text-xs text-slate-300">--</span>
+                      </td>
+                    );
+
+                  default:
+                    return <td key={col.id} />;
+                }
+              })}
+              {/* Settings spacer */}
+              <td className="w-8" />
+            </tr>
+          ) : (
+            <tr
+              className="hover:bg-slate-50/50 cursor-pointer group/sub"
+              onClick={() => onStartSubtaskCreate(addSubtaskParentId)}
+            >
+              <td className="px-1 py-1" />
+              <td className="px-1 py-1" />
+              <td className="px-1.5 py-1">
+                <Plus className="size-3 text-slate-300 group-hover/sub:text-blue-500 transition-colors" />
+              </td>
+              <td colSpan={colCount - 3} className="px-3 py-1">
+                <span className="text-[10px] text-slate-400 group-hover/sub:text-blue-500 transition-colors pl-5">
+                  Добавить подзадачу
+                </span>
+              </td>
+            </tr>
+          )}
+        </>
+      )}
+    </>
   );
 }
 
@@ -970,10 +1956,13 @@ function ItemRow({
   editingField,
   setEditingItem,
   updateItem,
-  subtaskDisplayMode,
   isExpanded,
   onToggleExpand,
   visibleColumns,
+  statusOptions,
+  priorityOptions,
+  categoryOptions,
+  typeOptions,
 }: {
   row: FlatRow;
   selected: boolean;
@@ -982,10 +1971,13 @@ function ItemRow({
   editingField: string | null;
   setEditingItem: (id: string | null, field?: string | null) => void;
   updateItem: (id: string, payload: Record<string, unknown>) => Promise<void>;
-  subtaskDisplayMode: SubtaskDisplayMode;
   isExpanded: boolean;
   onToggleExpand: (id: string) => void;
   visibleColumns: ColumnDef[];
+  statusOptions: { key: ItemStatus; label: string }[];
+  priorityOptions: { key: ItemPriority; label: string }[];
+  categoryOptions: { key: ItemCategory; label: string }[];
+  typeOptions: { key: ItemType; label: string }[];
 }) {
   const { item, isSubtask, hasSubtasks, totalSubtasks, doneSubtasks } = row;
 
@@ -1007,8 +1999,8 @@ function ItemRow({
   });
 
   const sortableStyle: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
+    transform: CSS.Translate.toString(transform),
+    transition: isDragging ? undefined : transition,
   };
 
   const statusCfg = STATUS_CONFIG[item.status as ItemStatus];
@@ -1055,8 +2047,7 @@ function ItemRow({
 
   /* ----- Accordion chevron ------------------------------------------------ */
 
-  const showChevron =
-    subtaskDisplayMode === "accordion" && hasSubtasks && !isSubtask;
+  const showChevron = !isSubtask;
 
   /* ----- Row classes ------------------------------------------------------ */
 
@@ -1065,44 +2056,10 @@ function ItemRow({
     isSubtask
       ? "bg-slate-50/60 hover:bg-slate-100/60"
       : selected
-      ? "bg-blue-50/60"
-      : "hover:bg-slate-50/50",
+        ? "bg-blue-50/60"
+        : "hover:bg-slate-50/50",
     editingField && "ring-1 ring-inset ring-blue-300 bg-blue-50/30",
     isDragging && "opacity-50"
-  );
-
-  /* ----- Select option builders ------------------------------------------ */
-
-  const statusOptions = useMemo(
-    () =>
-      (Object.entries(STATUS_CONFIG) as [ItemStatus, (typeof STATUS_CONFIG)[ItemStatus]][]).map(
-        ([key, cfg]) => ({ key, label: cfg.label })
-      ),
-    []
-  );
-
-  const priorityOptions = useMemo(
-    () =>
-      (Object.entries(PRIORITY_CONFIG) as [ItemPriority, (typeof PRIORITY_CONFIG)[ItemPriority]][]).map(
-        ([key, cfg]) => ({ key, label: `${cfg.icon} ${cfg.label}` })
-      ),
-    []
-  );
-
-  const categoryOptions = useMemo(
-    () =>
-      (Object.entries(CATEGORY_CONFIG) as [ItemCategory, (typeof CATEGORY_CONFIG)[ItemCategory]][]).map(
-        ([key, cfg]) => ({ key, label: cfg.label })
-      ),
-    []
-  );
-
-  const typeOptions = useMemo(
-    () =>
-      (Object.entries(TYPE_CONFIG) as [ItemType, (typeof TYPE_CONFIG)[ItemType]][]).map(
-        ([key, cfg]) => ({ key, label: cfg.label })
-      ),
-    []
   );
 
   /* ----- Render a cell by column id --------------------------------------- */
@@ -1113,13 +2070,15 @@ function ItemRow({
         return (
           <td
             key={colId}
-            ref={(el) => { cellRefs.current["priority"] = el; }}
-            className="relative px-4 py-3 cursor-pointer"
+            ref={(el) => {
+              cellRefs.current["priority"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
             onClick={(e) => handleCellClick("priority", e)}
           >
             {!isSubtask && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm leading-none">{priorityCfg.icon}</span>
+              <div className="flex items-center gap-1">
+                <span className="text-xs leading-none">{priorityCfg.icon}</span>
               </div>
             )}
             {editingField === "priority" && (
@@ -1139,29 +2098,24 @@ function ItemRow({
         return (
           <td
             key={colId}
-            className="px-4 py-3 cursor-pointer"
+            className="px-3 py-1.5 cursor-pointer"
             onClick={(e) => handleCellClick("title", e)}
           >
-            <div className="flex flex-col gap-0.5">
-              <span
-                className={cn(
-                  "text-sm font-medium leading-snug line-clamp-1 transition-colors",
-                  isSubtask
-                    ? "text-slate-600 pl-4"
-                    : "text-slate-900 group-hover:text-blue-600"
-                )}
-              >
-                {isSubtask && (
-                  <span className="text-slate-300 mr-1.5 select-none">{"\u21B3"}</span>
-                )}
-                {item.title}
-              </span>
-              {!isSubtask && "description" in item && (item as ItemWithSubtasks).description && (
-                <span className="text-xs text-slate-400 line-clamp-1 max-w-[320px]">
-                  {(item as ItemWithSubtasks).description}
+            <span
+              className={cn(
+                "text-xs font-medium leading-snug line-clamp-1 transition-colors",
+                isSubtask
+                  ? "text-slate-600 pl-4"
+                  : "text-slate-900 group-hover:text-blue-600"
+              )}
+            >
+              {isSubtask && (
+                <span className="text-slate-300 mr-1 select-none">
+                  {"\u21B3"}
                 </span>
               )}
-            </div>
+              {item.title}
+            </span>
           </td>
         );
       }
@@ -1170,14 +2124,16 @@ function ItemRow({
         return (
           <td
             key={colId}
-            ref={(el) => { cellRefs.current["status"] = el; }}
-            className="relative px-4 py-3 cursor-pointer"
+            ref={(el) => {
+              cellRefs.current["status"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
             onClick={(e) => handleCellClick("status", e)}
           >
             <Badge
               variant="secondary"
               className={cn(
-                "text-[11px] font-medium px-2 py-0.5 rounded-md",
+                "text-[10px] font-medium px-1.5 py-0 rounded-md",
                 statusCfg.color
               )}
             >
@@ -1200,13 +2156,15 @@ function ItemRow({
         return (
           <td
             key={colId}
-            ref={(el) => { cellRefs.current["category"] = el; }}
-            className="relative px-4 py-3 cursor-pointer"
+            ref={(el) => {
+              cellRefs.current["category"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
             onClick={(e) => handleCellClick("category", e)}
           >
             <Badge
               variant="outline"
-              className="text-[11px] font-normal rounded-md border-slate-200 text-slate-600"
+              className="text-[10px] font-normal rounded-md border-slate-200 text-slate-600"
             >
               {categoryCfg.label}
             </Badge>
@@ -1227,11 +2185,13 @@ function ItemRow({
         return (
           <td
             key={colId}
-            ref={(el) => { cellRefs.current["type"] = el; }}
-            className="relative px-4 py-3 cursor-pointer"
+            ref={(el) => {
+              cellRefs.current["type"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
             onClick={(e) => handleCellClick("type", e)}
           >
-            <span className="text-sm text-slate-600">{typeCfg.label}</span>
+            <span className="text-xs text-slate-600">{typeCfg.label}</span>
             {editingField === "type" && (
               <InlineSelectCell
                 value={item.type as ItemType}
@@ -1249,23 +2209,29 @@ function ItemRow({
         return (
           <td
             key={colId}
-            ref={(el) => { cellRefs.current["due_date"] = el; }}
-            className="relative px-4 py-3 cursor-pointer"
+            ref={(el) => {
+              cellRefs.current["due_date"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
             onClick={(e) => handleCellClick("due_date", e)}
           >
             {dueDate ? (
               <div
                 className={cn(
-                  "flex items-center gap-1.5 text-sm",
+                  "flex items-center gap-1 text-xs",
                   isOverdue ? "text-red-500 font-medium" : "text-slate-600"
                 )}
               >
-                {isOverdue && <AlertCircle className="size-3.5 shrink-0" />}
-                {!isOverdue && <Calendar className="size-3.5 shrink-0 text-slate-400" />}
+                {isOverdue && (
+                  <AlertCircle className="size-3 shrink-0" />
+                )}
+                {!isOverdue && (
+                  <Calendar className="size-3 shrink-0 text-slate-400" />
+                )}
                 <span>{format(dueDate, "d MMM", { locale: ru })}</span>
               </div>
             ) : (
-              <span className="text-sm text-slate-300">--</span>
+              <span className="text-xs text-slate-300">--</span>
             )}
             {editingField === "due_date" && (
               <InlineDateCell
@@ -1283,12 +2249,12 @@ function ItemRow({
         return (
           <td
             key={colId}
-            className="px-4 py-3 cursor-pointer"
+            className="px-3 py-1.5 cursor-pointer"
             onClick={(e) => handleCellClick("subtasks", e)}
           >
             {!isSubtask && totalSubtasks > 0 ? (
-              <div className="flex items-center gap-1.5">
-                <div className="h-1.5 w-12 rounded-full bg-slate-200 overflow-hidden">
+              <div className="flex items-center gap-1">
+                <div className="h-1 w-10 rounded-full bg-slate-200 overflow-hidden">
                   <div
                     className={cn(
                       "h-full rounded-full transition-all",
@@ -1301,12 +2267,12 @@ function ItemRow({
                     }}
                   />
                 </div>
-                <span className="text-xs text-slate-500 tabular-nums">
+                <span className="text-[10px] text-slate-500 tabular-nums">
                   {doneSubtasks}/{totalSubtasks}
                 </span>
               </div>
             ) : (
-              <span className="text-sm text-slate-300">--</span>
+              <span className="text-xs text-slate-300">--</span>
             )}
           </td>
         );
@@ -1320,32 +2286,28 @@ function ItemRow({
   /* ----- Render ----------------------------------------------------------- */
 
   return (
-    <tr
-      ref={setNodeRef}
-      style={sortableStyle}
-      className={rowCls}
-    >
+    <tr ref={setNodeRef} style={sortableStyle} className={rowCls}>
       {/* Drag handle */}
       <td
-        className="px-1 py-3 text-center"
+        className="px-1 py-1.5 text-center"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           className={cn(
-            "inline-flex items-center justify-center size-6 rounded hover:bg-slate-200/70 transition-colors text-slate-400 cursor-grab opacity-0 group-hover:opacity-100",
+            "inline-flex items-center justify-center size-5 rounded hover:bg-slate-200/70 transition-colors text-slate-400 cursor-grab opacity-0 group-hover:opacity-100",
             isSubtask && "ml-3"
           )}
           {...attributes}
           {...listeners}
         >
-          <GripVertical className="size-4" />
+          <GripVertical className="size-3.5" />
         </button>
       </td>
 
       {/* Expand / collapse chevron */}
       <td
-        className="px-2 py-3 text-center"
+        className="px-1 py-1.5 text-center"
         onClick={(e) => e.stopPropagation()}
       >
         {showChevron ? (
@@ -1355,23 +2317,21 @@ function ItemRow({
               e.stopPropagation();
               onToggleExpand(item.id);
             }}
-            className="inline-flex items-center justify-center size-5 rounded hover:bg-slate-200/70 transition-colors text-slate-400 hover:text-slate-700"
+            className="inline-flex items-center justify-center size-4 rounded hover:bg-slate-200/70 transition-colors text-slate-400 hover:text-slate-700"
           >
             {isExpanded ? (
-              <ChevronDown className="size-4" />
+              <ChevronDown className="size-3.5" />
             ) : (
-              <ChevronRight className="size-4" />
+              <ChevronRight className="size-3.5" />
             )}
           </button>
         ) : isSubtask ? (
-          <span className="inline-flex items-center justify-center text-slate-300 text-xs select-none">
-
-          </span>
+          <span className="inline-flex items-center justify-center text-slate-300 text-[10px] select-none" />
         ) : null}
       </td>
 
       {/* Checkbox */}
-      <td className="px-2 py-3" onClick={(e) => e.stopPropagation()}>
+      <td className="px-1.5 py-1.5" onClick={(e) => e.stopPropagation()}>
         <Checkbox
           checked={selected}
           onCheckedChange={() => onSelect(item.id)}
@@ -1383,7 +2343,7 @@ function ItemRow({
       {visibleColumns.map((col) => renderCell(col.id))}
 
       {/* Empty cell for the settings column */}
-      <td className="w-10" />
+      <td className="w-8" />
     </tr>
   );
 }
