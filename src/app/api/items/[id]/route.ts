@@ -17,24 +17,28 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const body: UpdateItemPayload = await req.json();
+  try {
+    const { id } = await params;
+    const body: UpdateItemPayload = await req.json();
 
-  if (body.tags) {
-    setItemTags(id, body.tags);
-    delete body.tags;
+    if (body.tags) {
+      setItemTags(id, body.tags);
+      delete body.tags;
+    }
+
+    const updated = updateItem(id, body);
+    if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    const result: ItemWithSubtasks = {
+      ...updated,
+      subtasks: getSubtasks(updated.id),
+      tags: getItemTags(updated.id),
+    };
+
+    return NextResponse.json(result);
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
-
-  const updated = updateItem(id, body);
-  if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const result: ItemWithSubtasks = {
-    ...updated,
-    subtasks: getSubtasks(updated.id),
-    tags: getItemTags(updated.id),
-  };
-
-  return NextResponse.json(result);
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

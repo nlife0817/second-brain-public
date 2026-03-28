@@ -18,35 +18,43 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const body: CreateItemPayload = await req.json();
+  try {
+    const body: CreateItemPayload = await req.json();
 
-  if (!body.title?.trim()) {
-    return NextResponse.json({ error: "Title is required" }, { status: 400 });
+    if (!body.title?.trim()) {
+      return NextResponse.json({ error: "Title is required" }, { status: 400 });
+    }
+
+    const item = createItem({
+      id: uuid(),
+      title: body.title.trim(),
+      description: body.description ?? "",
+      type: body.type ?? "task",
+      status: body.status ?? "inbox",
+      priority: body.priority ?? "none",
+      category: body.category ?? "other",
+      due_date: body.due_date ?? null,
+      position: 0,
+      parent_id: body.parent_id ?? null,
+    });
+
+    return NextResponse.json(item, { status: 201 });
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
-
-  const item = createItem({
-    id: uuid(),
-    title: body.title.trim(),
-    description: body.description ?? "",
-    type: body.type ?? "task",
-    status: body.status ?? "inbox",
-    priority: body.priority ?? "none",
-    category: body.category ?? "other",
-    due_date: body.due_date ?? null,
-    position: 0,
-    parent_id: body.parent_id ?? null,
-  });
-
-  return NextResponse.json(item, { status: 201 });
 }
 
 export async function PUT(req: NextRequest) {
-  const body: { items: { id: string; position: number; status?: string }[] } = await req.json();
+  try {
+    const body: { items: { id: string; position: number; status?: string }[] } = await req.json();
 
-  if (!body.items?.length) {
-    return NextResponse.json({ error: "Items array required" }, { status: 400 });
+    if (!body.items?.length) {
+      return NextResponse.json({ error: "Items array required" }, { status: 400 });
+    }
+
+    reorderItems(body.items);
+    return NextResponse.json({ ok: true });
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
-
-  reorderItems(body.items);
-  return NextResponse.json({ ok: true });
 }

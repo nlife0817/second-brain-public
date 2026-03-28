@@ -116,7 +116,7 @@ export function KanbanColumn({ status, items }: KanbanColumnProps) {
                   )}
                 >
                   <span className="text-[11px] text-slate-400">
-                    {isOver ? "Drop here" : "Нет задач"}
+                    {isOver ? "Перетащите сюда" : "Нет задач"}
                   </span>
                 </div>
               )}

@@ -86,22 +86,18 @@ export const useBrainStore = create<BrainStore>((set, get) => ({
   listColumnOrder: ["priority", "title", "status", "category", "type", "due_date", "subtasks"],
 
   fetchItems: async () => {
-    try {
-      set({ loading: true });
-      const mode = get().subtaskDisplayMode;
-      const params = mode === "detached" ? "?children=true" : "";
-      const res = await fetch(`/api/items${params}`);
-      const items = await res.json();
-      console.log("[store] fetchItems:", items.length, "items loaded");
-      set({ items, loading: false });
-    } catch (e) {
-      console.error("[store] fetchItems error:", e);
-      set({ loading: false });
-    }
+    set({ loading: true });
+    const mode = get().subtaskDisplayMode;
+    const params = mode === "detached" ? "?children=true" : "";
+    const res = await fetch(`/api/items${params}`);
+    if (!res.ok) { set({ loading: false }); return; }
+    const items = await res.json();
+    set({ items, loading: false });
   },
 
   fetchTags: async () => {
     const res = await fetch("/api/tags");
+    if (!res.ok) return;
     const tags = await res.json();
     set({ tags });
   },
@@ -112,22 +108,25 @@ export const useBrainStore = create<BrainStore>((set, get) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (!res.ok) throw new Error("Failed to create item");
     const item = await res.json();
     await get().fetchItems();
     return item;
   },
 
   updateItem: async (id, payload) => {
-    await fetch(`/api/items/${id}`, {
+    const res = await fetch(`/api/items/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (!res.ok) throw new Error("Failed to update item");
     await get().fetchItems();
   },
 
   deleteItem: async (id) => {
-    await fetch(`/api/items/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/items/${id}`, { method: "DELETE" });
+    if (!res.ok) return;
     set((s) => ({
       items: s.items.filter((i) => i.id !== id),
       isDetailOpen: s.selectedItemId === id ? false : s.isDetailOpen,
@@ -136,11 +135,12 @@ export const useBrainStore = create<BrainStore>((set, get) => ({
   },
 
   reorderItems: async (items) => {
-    await fetch("/api/items", {
+    const res = await fetch("/api/items", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items }),
     });
+    if (!res.ok) return;
     await get().fetchItems();
   },
 
@@ -150,17 +150,19 @@ export const useBrainStore = create<BrainStore>((set, get) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, color }),
     });
+    if (!res.ok) throw new Error("Failed to create tag");
     const tag = await res.json();
     await get().fetchTags();
     return tag;
   },
 
   detachSubtask: async (subtaskId) => {
-    await fetch(`/api/items/${subtaskId}`, {
+    const res = await fetch(`/api/items/${subtaskId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ parent_id: null }),
     });
+    if (!res.ok) return;
     await get().fetchItems();
   },
 
