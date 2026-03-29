@@ -26,6 +26,7 @@ export interface DevelopmentParticipant {
   provider: "kaiten" | null;
   remote_id: string | null;
   name: string;
+  position: number;
   created_at: string;
   updated_at: string;
 }

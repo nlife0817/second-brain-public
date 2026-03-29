@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import { CategoryManager } from "./CategoryManager";
 import { OrderableListSection } from "./OrderableListSection";
-import { Tag } from "lucide-react";
+import { Tag, Layers, Users } from "lucide-react";
 
 const PRESET_COLORS = [
   "#6b7280", "#ef4444", "#f97316", "#eab308", "#22c55e",
@@ -94,6 +94,63 @@ function TagsSection() {
         hasColor
         emptyText="Нет тегов"
         addPlaceholder="Название тега..."
+      />
+    </section>
+  );
+}
+
+function DevelopmentStagesSection() {
+  const stages = useBrainStore((s) => s.developmentStages);
+  const create = useBrainStore((s) => s.createDevelopmentStage);
+  const update = useBrainStore((s) => s.updateDevelopmentStage);
+  const del = useBrainStore((s) => s.deleteDevelopmentStage);
+
+  return (
+    <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center gap-2">
+        <Layers className="size-4 text-violet-500" />
+        <span className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Этапы разработки</span>
+        {stages.length > 0 && <span className="text-xs text-slate-400">({stages.length})</span>}
+      </div>
+      <OrderableListSection
+        items={stages}
+        onCreate={(name) => create(name)}
+        onUpdate={(id, updates) => update(id, updates)}
+        onDelete={(id) => del(id)}
+        emptyText="Нет этапов"
+        addPlaceholder="Название этапа..."
+      />
+    </section>
+  );
+}
+
+function DevelopmentParticipantsSection() {
+  const participants = useBrainStore((s) => s.allParticipants);
+  const create = useBrainStore((s) => s.createParticipant);
+  const update = useBrainStore((s) => s.updateParticipant);
+  const del = useBrainStore((s) => s.deleteParticipant);
+
+  // Map DevelopmentParticipant to OrderableItem
+  const items = participants.map((p) => ({
+    id: p.id,
+    name: p.name,
+    position: p.position,
+  }));
+
+  return (
+    <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center gap-2">
+        <Users className="size-4 text-violet-500" />
+        <span className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Участники</span>
+        {participants.length > 0 && <span className="text-xs text-slate-400">({participants.length})</span>}
+      </div>
+      <OrderableListSection
+        items={items}
+        onCreate={(name) => create(name)}
+        onUpdate={(id, updates) => update(id, updates)}
+        onDelete={(id) => del(id)}
+        emptyText="Нет участников"
+        addPlaceholder="Имя участника..."
       />
     </section>
   );
@@ -1354,6 +1411,10 @@ export function SettingsView() {
           </section>
 
           <TagsSection />
+
+          <DevelopmentStagesSection />
+
+          <DevelopmentParticipantsSection />
 
           <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-start justify-between gap-4">

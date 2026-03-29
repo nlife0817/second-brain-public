@@ -9,6 +9,7 @@ import {
   Tag,
   Category,
   CrmSystem,
+  DevelopmentParticipant,
   Filters,
   ViewMode,
   ItemCategory,
@@ -135,6 +136,20 @@ interface BrainStore {
   updateCrmSystem: (id: string, updates: Partial<CrmSystem>) => Promise<void>;
   deleteCrmSystem: (id: string) => Promise<void>;
 
+  // Development stages
+  developmentStages: { id: string; name: string; position: number }[];
+  fetchDevelopmentStages: () => Promise<void>;
+  createDevelopmentStage: (name: string) => Promise<void>;
+  updateDevelopmentStage: (id: string, updates: Record<string, unknown>) => Promise<void>;
+  deleteDevelopmentStage: (id: string) => Promise<void>;
+
+  // Development participants (all, not per-item)
+  allParticipants: DevelopmentParticipant[];
+  fetchAllParticipants: () => Promise<void>;
+  createParticipant: (name: string) => Promise<void>;
+  updateParticipant: (id: string, updates: Record<string, unknown>) => Promise<void>;
+  deleteParticipant: (id: string) => Promise<void>;
+
   openClientDetail: (id: string) => void;
   closeClientDetail: () => void;
   openCreateClient: () => void;
@@ -241,6 +256,8 @@ export const useBrainStore = create<BrainStore>()(
   clients: [],
   clientStatuses: [],
   crmSystems: [],
+  developmentStages: [],
+  allParticipants: [],
   selectedClientId: null,
   isClientDetailOpen: false,
   isCreateClientOpen: false,
@@ -259,8 +276,10 @@ export const useBrainStore = create<BrainStore>()(
   fetchItems: async () => {
     set({ loading: true });
     const mode = get().subtaskDisplayMode;
-    const params = mode === "detached" ? "?children=true" : "";
-    const res = await fetch(`/api/items${params}`);
+    const qs = new URLSearchParams();
+    qs.set("archived", "true");
+    if (mode === "detached") qs.set("children", "true");
+    const res = await fetch(`/api/items?${qs}`);
     if (!res.ok) { set({ loading: false }); return; }
     const items = await res.json();
     set({ items, loading: false });
@@ -645,6 +664,45 @@ export const useBrainStore = create<BrainStore>()(
     await get().fetchClients();
   },
 
+  // Development stages
+  fetchDevelopmentStages: async () => {
+    const res = await fetch("/api/development-stages");
+    if (!res.ok) return;
+    set({ developmentStages: await res.json() });
+  },
+  createDevelopmentStage: async (name) => {
+    await fetch("/api/development-stages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    await get().fetchDevelopmentStages();
+  },
+  updateDevelopmentStage: async (id, updates) => {
+    await fetch(`/api/development-stages/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
+    await get().fetchDevelopmentStages();
+  },
+  deleteDevelopmentStage: async (id) => {
+    await fetch(`/api/development-stages/${id}`, { method: "DELETE" });
+    await get().fetchDevelopmentStages();
+  },
+
+  // Development participants (all)
+  fetchAllParticipants: async () => {
+    const res = await fetch("/api/development-participants");
+    if (!res.ok) return;
+    set({ allParticipants: await res.json() });
+  },
+  createParticipant: async (name) => {
+    await fetch("/api/development-participants", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    await get().fetchAllParticipants();
+  },
+  updateParticipant: async (id, updates) => {
+    await fetch(`/api/development-participants/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
+    await get().fetchAllParticipants();
+  },
+  deleteParticipant: async (id) => {
+    await fetch(`/api/development-participants/${id}`, { method: "DELETE" });
+    await get().fetchAllParticipants();
+    await get().fetchItems();
+  },
+
   setClientViewMode: (clientViewMode) => set({ clientViewMode }),
   setClientStatusFilter: (clientStatusFilter) => set({ clientStatusFilter }),
   setClientGroupBy: (clientGroupBy) => {
@@ -1001,6 +1059,7 @@ export function useFilteredItems() {
   const activeCategory = useBrainStore((s) => s.activeCategory);
 
   return useMemo(() => items.filter((item) => {
+    if (filters.showArchived && item.status !== "archived") return false;
     if (!filters.showArchived && item.status === "archived") return false;
     if (activeCategory !== "all" && item.category !== activeCategory) return false;
 

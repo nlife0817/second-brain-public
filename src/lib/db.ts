@@ -92,11 +92,18 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_items_priority ON items(priority);
     CREATE INDEX IF NOT EXISTS idx_items_development_stage ON items(development_stage);
 
+    CREATE TABLE IF NOT EXISTS development_stages (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS development_participants (
       id TEXT PRIMARY KEY,
       provider TEXT,
       remote_id TEXT,
       name TEXT NOT NULL DEFAULT '',
+      position INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(provider, remote_id)
@@ -641,6 +648,42 @@ function migrateSchema(db: Database.Database) {
     });
     txn();
   }
+
+  // --- Development stages table ---
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS development_stages (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  // Seed from existing items.development_stage values
+  const stagesCount = (db.prepare("SELECT COUNT(*) as c FROM development_stages").get() as { c: number }).c;
+  if (stagesCount === 0) {
+    const existingStages = db.prepare(
+      "SELECT DISTINCT development_stage FROM items WHERE development_stage IS NOT NULL AND development_stage != ''"
+    ).all() as { development_stage: string }[];
+    if (existingStages.length > 0) {
+      const insertStage = db.prepare("INSERT OR IGNORE INTO development_stages (id, name, position) VALUES (?, ?, ?)");
+      const txn2 = db.transaction(() => {
+        existingStages.forEach((s, i) => insertStage.run(crypto.randomUUID(), s.development_stage, i));
+      });
+      txn2();
+    }
+  }
+
+  // --- Participants position migration ---
+  const partCols = db.prepare("PRAGMA table_info(development_participants)").all() as { name: string }[];
+  const partColNames = new Set(partCols.map((c) => c.name));
+  if (!partColNames.has("position")) {
+    db.exec("ALTER TABLE development_participants ADD COLUMN position INTEGER NOT NULL DEFAULT 0");
+    const parts = db.prepare("SELECT id FROM development_participants ORDER BY name ASC").all() as { id: string }[];
+    const updatePart = db.prepare("UPDATE development_participants SET position = ? WHERE id = ?");
+    const txn3 = db.transaction(() => {
+      parts.forEach((p, i) => updatePart.run(i, p.id));
+    });
+    txn3();
+  }
 }
 
 function seedDefaultCategories(db: Database.Database) {
@@ -921,6 +964,85 @@ export function setItemTags(itemId: string, tagIds: string[]) {
   });
 
   transaction();
+}
+
+// --- Development Stages CRUD ---
+
+export interface DevelopmentStage {
+  id: string;
+  name: string;
+  position: number;
+}
+
+export function getAllDevelopmentStages(): DevelopmentStage[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM development_stages ORDER BY position ASC").all() as DevelopmentStage[];
+}
+
+export function createDevelopmentStage(data: { id: string; name: string }): DevelopmentStage {
+  const db = getDb();
+  const maxPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 as p FROM development_stages").get() as { p: number };
+  db.prepare("INSERT INTO development_stages (id, name, position) VALUES (?, ?, ?)").run(data.id, data.name, maxPos.p);
+  return db.prepare("SELECT * FROM development_stages WHERE id = ?").get(data.id) as DevelopmentStage;
+}
+
+export function updateDevelopmentStage(id: string, updates: Partial<Pick<DevelopmentStage, "name" | "position">>): DevelopmentStage | undefined {
+  const db = getDb();
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (fields.length === 0) return db.prepare("SELECT * FROM development_stages WHERE id = ?").get(id) as DevelopmentStage | undefined;
+  values.push(id);
+  db.prepare(`UPDATE development_stages SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  return db.prepare("SELECT * FROM development_stages WHERE id = ?").get(id) as DevelopmentStage | undefined;
+}
+
+export function deleteDevelopmentStage(id: string): boolean {
+  const db = getDb();
+  const result = db.prepare("DELETE FROM development_stages WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+
+// --- Development Participants management ---
+
+export function getAllDevelopmentParticipants(): DevelopmentParticipant[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM development_participants ORDER BY position ASC, name COLLATE NOCASE ASC").all() as DevelopmentParticipant[];
+}
+
+export function updateDevelopmentParticipant(id: string, updates: Partial<Pick<DevelopmentParticipant, "name" | "position">>): DevelopmentParticipant | undefined {
+  const db = getDb();
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (fields.length === 0) return db.prepare("SELECT * FROM development_participants WHERE id = ?").get(id) as DevelopmentParticipant | undefined;
+  fields.push("updated_at = ?");
+  values.push(new Date().toISOString());
+  values.push(id);
+  db.prepare(`UPDATE development_participants SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  return db.prepare("SELECT * FROM development_participants WHERE id = ?").get(id) as DevelopmentParticipant | undefined;
+}
+
+export function deleteDevelopmentParticipant(id: string): boolean {
+  const db = getDb();
+  db.prepare("DELETE FROM item_development_participants WHERE participant_id = ?").run(id);
+  const result = db.prepare("DELETE FROM development_participants WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+
+export function createDevelopmentParticipant(name: string): DevelopmentParticipant {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const maxPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 as p FROM development_participants").get() as { p: number };
+  db.prepare("INSERT INTO development_participants (id, provider, remote_id, name, position, created_at, updated_at) VALUES (?, NULL, NULL, ?, ?, ?, ?)").run(id, name, maxPos.p, now, now);
+  return db.prepare("SELECT * FROM development_participants WHERE id = ?").get(id) as DevelopmentParticipant;
 }
 
 // --- Categories CRUD ---
