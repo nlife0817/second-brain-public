@@ -89,6 +89,7 @@ interface LocalClientState {
   operators_total: string;
   calls_per_month: string;
   crm_system: string;
+  crm_system_ids: string[];
   companies: LocalCompany[];
   contacts: LocalContact[];
   notes: LocalNote[];
@@ -108,6 +109,7 @@ function deepCloneClient(client: ClientFull): LocalClientState {
     operators_total: client.operators_total ?? "",
     calls_per_month: client.calls_per_month ?? "",
     crm_system: client.crm_system ?? "",
+    crm_system_ids: client.crm_systems?.map(c => c.id) ?? [],
     companies: client.companies.map((c) => ({ id: c.id, name: c.name })),
     contacts: client.contacts.map((c) => ({
       id: c.id,
@@ -287,6 +289,7 @@ function ClientDetailContent() {
   const updateClient = useBrainStore((s) => s.updateClient);
   const deleteClient = useBrainStore((s) => s.deleteClient);
   const clientStatuses = useBrainStore((s) => s.clientStatuses);
+  const crmSystems = useBrainStore((s) => s.crmSystems);
   const client = useSelectedClient();
 
   const [local, setLocal] = useState<LocalClientState | null>(null);
@@ -326,6 +329,7 @@ function ClientDetailContent() {
         operators_total: local.operators_total,
         calls_per_month: local.calls_per_month,
         crm_system: local.crm_system,
+        crm_system_ids: local.crm_system_ids,
         companies: local.companies,
         contacts: local.contacts.map((c) => ({
           id: c.id,
@@ -642,6 +646,36 @@ function ClientDetailContent() {
               />
             </div>
           ))}
+        </div>
+        <div className="flex flex-col gap-1 pb-2">
+          <label className="text-[11px] text-slate-500">CRM-системы</label>
+          <div className="flex flex-wrap gap-1.5">
+            {crmSystems.map((crm) => {
+              const isSelected = local.crm_system_ids.includes(crm.id);
+              return (
+                <button
+                  key={crm.id}
+                  onClick={() => {
+                    const next = isSelected
+                      ? local.crm_system_ids.filter(id => id !== crm.id)
+                      : [...local.crm_system_ids, crm.id];
+                    updateLocal({ crm_system_ids: next });
+                  }}
+                  className={cn(
+                    "px-2 py-0.5 rounded-md text-xs border transition-colors",
+                    isSelected
+                      ? "border-violet-300 bg-violet-50 text-violet-700"
+                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+                  )}
+                >
+                  {crm.name}
+                </button>
+              );
+            })}
+            {crmSystems.length === 0 && (
+              <span className="text-xs text-slate-400">Нет CRM (добавьте в настройках)</span>
+            )}
+          </div>
         </div>
       </div>
       <Separator className="bg-slate-100" />

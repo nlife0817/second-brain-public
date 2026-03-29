@@ -21,6 +21,7 @@ export default function Home() {
   const fetchCategories = useBrainStore((s) => s.fetchCategories);
   const fetchClients = useBrainStore((s) => s.fetchClients);
   const fetchClientStatuses = useBrainStore((s) => s.fetchClientStatuses);
+  const fetchCrmSystems = useBrainStore((s) => s.fetchCrmSystems);
   const fetchRelationTypes = useBrainStore((s) => s.fetchRelationTypes);
   const fetchEntityCounts = useBrainStore((s) => s.fetchEntityCounts);
   const fetchStagingItems = useBrainStore((s) => s.fetchStagingItems);
@@ -36,11 +37,12 @@ export default function Home() {
     fetchCategories();
     fetchClients();
     fetchClientStatuses();
+    fetchCrmSystems();
     fetchRelationTypes();
     fetchEntityCounts("item");
     fetchEntityCounts("client");
     fetchStagingItems();
-  }, [fetchItems, fetchTags, fetchCategories, fetchClients, fetchClientStatuses, fetchRelationTypes, fetchEntityCounts, fetchStagingItems]);
+  }, [fetchItems, fetchTags, fetchCategories, fetchClients, fetchClientStatuses, fetchCrmSystems, fetchRelationTypes, fetchEntityCounts, fetchStagingItems]);
 
   return (
     <div className="flex h-screen bg-background">

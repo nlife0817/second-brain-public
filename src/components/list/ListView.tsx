@@ -50,14 +50,12 @@ import {
   Link,
   MessageSquare,
   ChevronsUpDown,
-  ExternalLink as ExternalLinkIcon,
-  Sparkles as SparklesIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function SourceIcon({ source }: { source: string }) {
-  if (source === "kaiten") return <span title="Kaiten"><ExternalLinkIcon className="size-3 text-slate-300 shrink-0 mr-0.5" /></span>;
-  if (source === "claude") return <span title="Claude"><SparklesIcon className="size-3 text-slate-300 shrink-0 mr-0.5" /></span>;
+  if (source === "kaiten") return <span title="Кайтен" className="mr-1 inline-flex size-4 items-center justify-center rounded bg-red-50 text-[10px] font-semibold text-red-600">К</span>;
+  if (source === "claude") return <span title="Клод" className="mr-1 inline-flex size-4 items-center justify-center rounded bg-orange-50 text-[10px] font-semibold text-orange-600">С</span>;
   return null;
 }
 import { Checkbox } from "@/components/ui/checkbox";
@@ -116,6 +114,8 @@ const ALL_COLUMNS: ColumnDef[] = [
   { id: "title", label: "Название", width: "min-w-[250px] flex-1", sortable: true },
   { id: "status", label: "Статус", width: "w-28", sortable: true },
   { id: "category", label: "Категория", width: "w-28", sortable: true },
+  { id: "development_stage", label: "Этап разработки", width: "w-44", sortable: false },
+  { id: "participants", label: "Участники", width: "w-44", sortable: false },
   { id: "tags", label: "Теги", width: "w-36", sortable: false },
   { id: "type", label: "Тип", width: "w-24", sortable: true },
   { id: "due_date", label: "Дедлайн", width: "w-24", sortable: true },
@@ -127,6 +127,8 @@ const DEFAULT_COLUMN_ORDER = [
   "title",
   "status",
   "category",
+  "development_stage",
+  "participants",
   "type",
   "due_date",
   "subtasks",
@@ -219,6 +221,7 @@ const GROUP_BY_OPTIONS: { key: ListGroupByField; label: string }[] = [
   { key: "category", label: "Категория" },
   { key: "type", label: "Тип" },
   { key: "development_stage", label: "Этап разработки" },
+  { key: "participants", label: "Участники" },
 ];
 
 function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField): string {
@@ -228,6 +231,10 @@ function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField): string {
     case "category": return item.category;
     case "type": return item.type;
     case "development_stage": return item.development_stage ?? "__none__";
+    case "participants":
+      return item.participants?.length
+        ? item.participants.map((participant) => participant.name).sort((a, b) => a.localeCompare(b, "ru")).join(", ")
+        : "__none__";
     default: return "";
   }
 }
@@ -239,6 +246,7 @@ function getGroupLabel(field: ListGroupByField, key: string, categoryConfig: Rec
     case "category": return categoryConfig[key]?.label ?? key;
     case "type": return TYPE_CONFIG[key as ItemType]?.label ?? key;
     case "development_stage": return key === "__none__" ? "Не указано" : key;
+    case "participants": return key === "__none__" ? "Без участников" : key;
     default: return key;
   }
 }
@@ -865,6 +873,72 @@ function InlineDateCell({
   );
 }
 
+function InlineTextCell({
+  value,
+  onCommit,
+  onCancel,
+  placeholder,
+}: {
+  value: string;
+  onCommit: (value: string) => void;
+  onCancel: () => void;
+  placeholder?: string;
+}) {
+  const [draft, setDraft] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, []);
+
+  const commit = useCallback(() => {
+    onCommit(draft);
+  }, [draft, onCommit]);
+
+  return (
+    <input
+      ref={inputRef}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      placeholder={placeholder}
+      className="h-6 w-full rounded-md border border-slate-200 bg-white px-1.5 text-[11px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
+    />
+  );
+}
+
+function formatParticipantsValue(
+  participants?: Array<{ name: string }>
+): string {
+  return participants?.map((participant) => participant.name).join(", ") ?? "";
+}
+
+function parseParticipantsValue(value: string) {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((name) => ({ name }));
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Standalone select dropdown for inline creation row (portal-based)         */
 /* -------------------------------------------------------------------------- */
@@ -1087,6 +1161,14 @@ export function ListView() {
       listColumnOrder.map((id) => colMap[id]).filter(Boolean) as ColumnDef[],
     [listColumnOrder, colMap]
   );
+
+  useEffect(() => {
+    const required = ["development_stage", "participants"];
+    const missing = required.filter((id) => !listColumnOrder.includes(id));
+    if (missing.length > 0) {
+      setListColumnOrder([...listColumnOrder, ...missing]);
+    }
+  }, [listColumnOrder, setListColumnOrder]);
 
   /* ----- DnD sensors ----------------------------------------------------- */
 
@@ -1778,6 +1860,10 @@ export function ListView() {
           </td>
         );
       }
+
+      case "development_stage":
+      case "participants":
+      case "tags":
 
       case "subtasks":
         return (
@@ -2713,6 +2799,26 @@ function ItemRow({
 
   const commitFieldEdit = useCallback(
     async (field: string, value: unknown) => {
+      if (field === "development_stage") {
+        const normalized =
+          typeof value === "string" ? value.trim() || null : null;
+        await updateItem(item.id, { development_stage: normalized });
+        setEditingItem(null);
+        return;
+      }
+
+      if (field === "participants") {
+        const participants =
+          typeof value === "string"
+            ? parseParticipantsValue(value)
+            : Array.isArray(value)
+              ? value
+              : [];
+        await updateItem(item.id, { participants });
+        setEditingItem(null);
+        return;
+      }
+
       await updateItem(item.id, { [field]: value });
       setEditingItem(null);
     },
@@ -2894,6 +3000,76 @@ function ItemRow({
                 onCancel={cancelEdit}
                 anchorRef={{ current: cellRefs.current["category"] }}
               />
+            )}
+          </td>
+        );
+      }
+
+      case "development_stage": {
+        return (
+          <td
+            key={colId}
+            ref={(el) => {
+              cellRefs.current["development_stage"] = el;
+            }}
+            className="px-3 py-1.5 cursor-pointer"
+            onClick={(e) => handleCellClick("development_stage", e)}
+          >
+            {editingField === "development_stage" ? (
+              <InlineTextCell
+                value={item.development_stage ?? ""}
+                onCommit={(value) => commitFieldEdit("development_stage", value)}
+                onCancel={cancelEdit}
+                placeholder="Не указан"
+              />
+            ) : item.development_stage ? (
+              <Badge variant="outline" className="text-[10px] border-sky-200 bg-sky-50 text-sky-700">
+                {item.development_stage}
+              </Badge>
+            ) : (
+              <span className="text-xs text-slate-300">--</span>
+            )}
+          </td>
+        );
+      }
+
+      case "participants": {
+        const participants = ("participants" in item ? item.participants : undefined) ?? [];
+        return (
+          <td
+            key={colId}
+            ref={(el) => {
+              cellRefs.current["participants"] = el;
+            }}
+            className="px-3 py-1.5 cursor-pointer"
+            onClick={(e) => handleCellClick("participants", e)}
+          >
+            {editingField === "participants" ? (
+              <InlineTextCell
+                value={formatParticipantsValue(participants)}
+                onCommit={(value) => commitFieldEdit("participants", value)}
+                onCancel={cancelEdit}
+                placeholder="Имена через запятую"
+              />
+            ) : participants.length > 0 ? (
+              <div className="flex flex-wrap gap-1">
+                {participants.slice(0, 3).map((participant: { id: string; name: string }) => (
+                  <Badge
+                    key={participant.id}
+                    variant="outline"
+                    className="text-[10px] border-emerald-200 bg-emerald-50 text-emerald-700"
+                  >
+                    {participant.name}
+                  </Badge>
+                ))}
+                {participants.length > 3 && (
+                  <Badge variant="outline" className="text-[10px] border-slate-200 text-slate-500">
+                    +{participants.length - 3}
+                  </Badge>
+                )}
+              </div>
+            ) : (
+              <span className="text-xs text-slate-300">--</span>
             )}
           </td>
         );

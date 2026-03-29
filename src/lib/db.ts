@@ -1,8 +1,9 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
+import { initBackupSchedule } from "./backup";
 import {
-  Item, Tag, Category, WeeklyPlan, WeeklyPlanEntry, WeeklyPlanEntryWithItem, WeeklyPlanFull, WeeklyPlanReport, EntryComment,
+  Item, Tag, Category, CrmSystem, WeeklyPlan, WeeklyPlanEntry, WeeklyPlanEntryWithItem, WeeklyPlanFull, WeeklyPlanReport, EntryComment,
   Client, ClientFull, ClientStatus, ClientCompany, ClientContact, ClientContactField, ClientNote, ClientLink,
   ContactFieldType,
   RelationType, Relation, RelationWithTarget, Comment, EntityType,
@@ -13,7 +14,7 @@ import {
   DevelopmentParticipant, DevelopmentParticipantInput,
 } from "@/types";
 
-const DB_PATH = path.join(process.cwd(), "data", "brain.db");
+export const DB_PATH = path.join(process.cwd(), "data", "brain.db");
 
 let db: Database.Database | null = null;
 
@@ -29,8 +30,20 @@ function getDb(): Database.Database {
     db.pragma("foreign_keys = ON");
     initSchema(db);
     migrateSchema(db);
+    initBackupSchedule(db, DB_PATH);
   }
   return db;
+}
+
+export function ensureDb(): void {
+  getDb();
+}
+
+export function resetDb(): void {
+  if (db) {
+    db.close();
+    db = null;
+  }
 }
 
 function initSchema(db: Database.Database) {
@@ -193,6 +206,21 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_ccf_contact ON client_contact_fields(contact_id);
     CREATE INDEX IF NOT EXISTS idx_cn_client ON client_notes(client_id);
     CREATE INDEX IF NOT EXISTS idx_cl_client ON client_links(client_id);
+
+    -- CRM systems
+    CREATE TABLE IF NOT EXISTS crm_systems (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS client_crm_systems (
+      client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      crm_system_id TEXT NOT NULL REFERENCES crm_systems(id) ON DELETE CASCADE,
+      PRIMARY KEY (client_id, crm_system_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ccs_client ON client_crm_systems(client_id);
 
     -- Relation types (user-configurable)
     CREATE TABLE IF NOT EXISTS relation_types (
@@ -469,6 +497,50 @@ function migrateSchema(db: Database.Database) {
         WHERE local_entity_type = 'item' AND provider = 'kaiten'
       );
     `);
+  }
+
+  // --- CRM systems migration ---
+  const crmTableExists = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='crm_systems'"
+  ).get();
+
+  if (!crmTableExists) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS crm_systems (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS client_crm_systems (
+        client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        crm_system_id TEXT NOT NULL REFERENCES crm_systems(id) ON DELETE CASCADE,
+        PRIMARY KEY (client_id, crm_system_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_ccs_client ON client_crm_systems(client_id);
+    `);
+
+    // Migrate existing text crm_system values to crm_systems table
+    const existingValues = db.prepare(
+      "SELECT DISTINCT crm_system FROM clients WHERE crm_system != '' AND crm_system IS NOT NULL"
+    ).all() as { crm_system: string }[];
+
+    if (existingValues.length > 0) {
+      const insertCrm = db.prepare("INSERT OR IGNORE INTO crm_systems (id, name, position) VALUES (?, ?, ?)");
+      const insertLink = db.prepare("INSERT OR IGNORE INTO client_crm_systems (client_id, crm_system_id) VALUES (?, ?)");
+      const getClients = db.prepare("SELECT id FROM clients WHERE crm_system = ?");
+
+      const transaction = db.transaction(() => {
+        existingValues.forEach((row, idx) => {
+          const crmId = crypto.randomUUID();
+          insertCrm.run(crmId, row.crm_system.trim(), idx);
+          const clients = getClients.all(row.crm_system) as { id: string }[];
+          for (const client of clients) {
+            insertLink.run(client.id, crmId);
+          }
+        });
+      });
+      transaction();
+    }
   }
 }
 
@@ -1151,8 +1223,9 @@ export function getClientFull(id: string): ClientFull | undefined {
 
   const notes = db.prepare("SELECT * FROM client_notes WHERE client_id = ? ORDER BY created_at DESC").all(id) as ClientNote[];
   const links = db.prepare("SELECT * FROM client_links WHERE client_id = ?").all(id) as ClientLink[];
+  const crm_systems = getClientCrmSystems(id);
 
-  return { ...client, status, companies, contacts, notes, links };
+  return { ...client, status, companies, contacts, notes, links, crm_systems };
 }
 
 export function getAllClientsFull(): ClientFull[] {
@@ -1166,6 +1239,11 @@ export function getAllClientsFull(): ClientFull[] {
   const fieldStmt = db.prepare("SELECT * FROM client_contact_fields WHERE contact_id = ?");
   const noteStmt = db.prepare("SELECT * FROM client_notes WHERE client_id = ? ORDER BY created_at DESC");
   const linkStmt = db.prepare("SELECT * FROM client_links WHERE client_id = ?");
+  const crmStmt = db.prepare(`
+    SELECT cs.* FROM crm_systems cs
+    JOIN client_crm_systems ccs ON cs.id = ccs.crm_system_id
+    WHERE ccs.client_id = ? ORDER BY cs.position ASC
+  `);
 
   return clients.map((client) => {
     const contactRows = contactStmt.all(client.id) as ClientContact[];
@@ -1181,6 +1259,7 @@ export function getAllClientsFull(): ClientFull[] {
       contacts,
       notes: noteStmt.all(client.id) as ClientNote[],
       links: linkStmt.all(client.id) as ClientLink[],
+      crm_systems: crmStmt.all(client.id) as CrmSystem[],
     };
   });
 }
@@ -1233,6 +1312,62 @@ export function reorderClients(updates: { id: string; position: number; status_i
     const now = new Date().toISOString();
     for (const u of updates) {
       stmt.run(u.position, u.status_id ?? null, now, u.id);
+    }
+  });
+  transaction();
+}
+
+// --- CRM Systems CRUD ---
+
+export function getAllCrmSystems(): CrmSystem[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM crm_systems ORDER BY position ASC").all() as CrmSystem[];
+}
+
+export function createCrmSystem(data: { id: string; name: string }): CrmSystem {
+  const db = getDb();
+  const maxPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 as p FROM crm_systems").get() as { p: number };
+  db.prepare("INSERT INTO crm_systems (id, name, position) VALUES (?, ?, ?)").run(data.id, data.name, maxPos.p);
+  return db.prepare("SELECT * FROM crm_systems WHERE id = ?").get(data.id) as CrmSystem;
+}
+
+export function updateCrmSystem(id: string, updates: Partial<Pick<CrmSystem, "name" | "position">>): CrmSystem | undefined {
+  const db = getDb();
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (fields.length === 0) return db.prepare("SELECT * FROM crm_systems WHERE id = ?").get(id) as CrmSystem | undefined;
+  values.push(id);
+  db.prepare(`UPDATE crm_systems SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  return db.prepare("SELECT * FROM crm_systems WHERE id = ?").get(id) as CrmSystem | undefined;
+}
+
+export function deleteCrmSystem(id: string): boolean {
+  const db = getDb();
+  const result = db.prepare("DELETE FROM crm_systems WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+
+export function getClientCrmSystems(clientId: string): CrmSystem[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT cs.* FROM crm_systems cs
+    JOIN client_crm_systems ccs ON cs.id = ccs.crm_system_id
+    WHERE ccs.client_id = ? ORDER BY cs.position ASC
+  `).all(clientId) as CrmSystem[];
+}
+
+export function setClientCrmSystems(clientId: string, crmSystemIds: string[]) {
+  const db = getDb();
+  const deleteStmt = db.prepare("DELETE FROM client_crm_systems WHERE client_id = ?");
+  const insertStmt = db.prepare("INSERT OR IGNORE INTO client_crm_systems (client_id, crm_system_id) VALUES (?, ?)");
+  const transaction = db.transaction(() => {
+    deleteStmt.run(clientId);
+    for (const crmId of crmSystemIds) {
+      insertStmt.run(clientId, crmId);
     }
   });
   transaction();

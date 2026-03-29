@@ -47,3 +47,4 @@ next-env.d.ts
 data/brain.db
 data/brain.db-shm
 data/brain.db-wal
+data/backups/

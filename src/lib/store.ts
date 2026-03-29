@@ -8,6 +8,7 @@ import {
   ItemWithSubtasks,
   Tag,
   Category,
+  CrmSystem,
   Filters,
   ViewMode,
   ItemCategory,
@@ -124,6 +125,14 @@ interface BrainStore {
   createClientStatus: (name: string, color?: string) => Promise<ClientStatus>;
   updateClientStatus: (id: string, updates: Partial<ClientStatus>) => Promise<void>;
   deleteClientStatus: (id: string) => Promise<void>;
+
+  // CRM systems
+  crmSystems: CrmSystem[];
+  fetchCrmSystems: () => Promise<void>;
+  createCrmSystem: (name: string) => Promise<CrmSystem>;
+  updateCrmSystem: (id: string, updates: Partial<CrmSystem>) => Promise<void>;
+  deleteCrmSystem: (id: string) => Promise<void>;
+
   openClientDetail: (id: string) => void;
   closeClientDetail: () => void;
   openCreateClient: () => void;
@@ -229,6 +238,7 @@ export const useBrainStore = create<BrainStore>()(
   // Clients
   clients: [],
   clientStatuses: [],
+  crmSystems: [],
   selectedClientId: null,
   isClientDetailOpen: false,
   isCreateClientOpen: false,
@@ -579,6 +589,43 @@ export const useBrainStore = create<BrainStore>()(
     await get().fetchClients();
   },
 
+  // CRM systems
+  fetchCrmSystems: async () => {
+    const res = await fetch("/api/crm-systems");
+    if (!res.ok) return;
+    const crmSystems = await res.json();
+    set({ crmSystems });
+  },
+
+  createCrmSystem: async (name) => {
+    const res = await fetch("/api/crm-systems", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) throw new Error("Failed to create CRM system");
+    const crm = await res.json();
+    await get().fetchCrmSystems();
+    return crm;
+  },
+
+  updateCrmSystem: async (id, updates) => {
+    const res = await fetch(`/api/crm-systems/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error("Failed to update CRM system");
+    await get().fetchCrmSystems();
+  },
+
+  deleteCrmSystem: async (id) => {
+    const res = await fetch(`/api/crm-systems/${id}`, { method: "DELETE" });
+    if (!res.ok) return;
+    await get().fetchCrmSystems();
+    await get().fetchClients();
+  },
+
   setClientViewMode: (clientViewMode) => set({ clientViewMode }),
   setClientStatusFilter: (clientStatusFilter) => set({ clientStatusFilter }),
   setClientGroupBy: (clientGroupBy) => {
@@ -883,6 +930,20 @@ function matchCondition(item: ItemWithSubtasks, cond: FilterCondition): boolean 
       case "is_not": return !tagIds.includes(cond.value);
       case "is_empty": return tagIds.length === 0;
       case "is_not_empty": return tagIds.length > 0;
+      default: return true;
+    }
+  }
+
+  if (cond.field === "participants") {
+    const participants = item.participants?.map((participant) => participant.name.toLowerCase()) ?? [];
+    const target = cond.value.toLowerCase();
+    switch (cond.operator) {
+      case "is": return participants.includes(target);
+      case "is_not": return !participants.includes(target);
+      case "contains": return participants.some((name) => name.includes(target));
+      case "not_contains": return !participants.some((name) => name.includes(target));
+      case "is_empty": return participants.length === 0;
+      case "is_not_empty": return participants.length > 0;
       default: return true;
     }
   }

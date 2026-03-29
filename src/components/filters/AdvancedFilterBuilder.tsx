@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useBrainStore } from "@/lib/store";
 import {
   FilterGroup,
@@ -36,6 +36,7 @@ const FIELD_OPTIONS: { value: FilterField; label: string }[] = [
   { value: "category", label: "Категория" },
   { value: "type", label: "Тип" },
   { value: "tags", label: "Теги" },
+  { value: "participants", label: "Участники" },
   { value: "development_stage", label: "Этап разработки" },
   { value: "title", label: "Название" },
   { value: "description", label: "Описание" },
@@ -46,7 +47,7 @@ const FIELD_OPTIONS: { value: FilterField; label: string }[] = [
 type FieldKind = "enum" | "text" | "date";
 
 function getFieldKind(field: FilterField): FieldKind {
-  if (["status", "priority", "category", "type", "tags", "has_parent"].includes(field)) return "enum";
+  if (["status", "priority", "category", "type", "tags", "participants", "has_parent"].includes(field)) return "enum";
   if (["title", "description", "development_stage"].includes(field)) return "text";
   return "date";
 }
@@ -73,6 +74,7 @@ const OPERATOR_OPTIONS: Record<FieldKind, { value: FilterOperator; label: string
 interface DynamicEnumOptions {
   categoryOptions?: { value: string; label: string }[];
   tagOptions?: { value: string; label: string }[];
+  participantOptions?: { value: string; label: string }[];
 }
 
 function getEnumValues(field: FilterField, dynamic?: DynamicEnumOptions): { value: string; label: string }[] {
@@ -85,6 +87,8 @@ function getEnumValues(field: FilterField, dynamic?: DynamicEnumOptions): { valu
       return dynamic?.categoryOptions ?? [];
     case "tags":
       return dynamic?.tagOptions ?? [];
+    case "participants":
+      return dynamic?.participantOptions ?? [];
     case "type":
       return Object.entries(TYPE_CONFIG).map(([k, v]) => ({ value: k, label: v.label }));
     case "has_parent":
@@ -131,9 +135,23 @@ export function AdvancedFilterBuilder() {
   const toggleAdvancedFilters = useBrainStore((s) => s.toggleAdvancedFilters);
   const storeCategories = useBrainStore((s) => s.categories);
   const storeTags = useBrainStore((s) => s.tags);
+  const storeItems = useBrainStore((s) => s.items);
+  const participantOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const item of storeItems) {
+      for (const participant of item.participants ?? []) {
+        const normalized = participant.name.trim();
+        if (normalized) names.add(normalized);
+      }
+    }
+    return Array.from(names)
+      .sort((a, b) => a.localeCompare(b, "ru"))
+      .map((name) => ({ value: name.toLowerCase(), label: name }));
+  }, [storeItems]);
   const dynamicOptions: DynamicEnumOptions = {
     categoryOptions: storeCategories.map((c) => ({ value: c.id, label: c.name })),
     tagOptions: storeTags.map((t) => ({ value: t.id, label: t.name })),
+    participantOptions,
   };
 
   /* ---- preset store selectors ------------------------------------------- */

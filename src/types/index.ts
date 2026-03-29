@@ -14,11 +14,11 @@ export interface Category {
 }
 export type ViewMode = "kanban" | "list" | "weekly";
 export type SubtaskDisplayMode = "inline" | "accordion" | "detached";
-export type ListGroupByField = "none" | "status" | "priority" | "category" | "type" | "development_stage";
+export type ListGroupByField = "none" | "status" | "priority" | "category" | "type" | "development_stage" | "participants";
 export type ListGroupByConfig = [ListGroupByField, ListGroupByField];
 
 export type FilterOperator = "is" | "is_not" | "contains" | "not_contains" | "before" | "after" | "is_empty" | "is_not_empty";
-export type FilterField = "status" | "priority" | "category" | "type" | "tags" | "title" | "description" | "due_date" | "has_parent" | "development_stage";
+export type FilterField = "status" | "priority" | "category" | "type" | "tags" | "title" | "description" | "due_date" | "has_parent" | "development_stage" | "participants";
 export type FilterLogic = "and" | "or";
 
 export interface DevelopmentParticipant {
@@ -277,6 +277,12 @@ export interface ClientLink {
   title: string;
 }
 
+export interface CrmSystem {
+  id: string;
+  name: string;
+  position: number;
+}
+
 export interface ClientParams {
   budget: string;
   operators_per_shift: string;
@@ -290,7 +296,6 @@ export const CLIENT_PARAMS_CONFIG: { key: keyof ClientParams; label: string; pla
   { key: "operators_per_shift", label: "Операторов в смену", placeholder: "напр. 10", icon: "UserCheck" },
   { key: "operators_total", label: "Операторов в штате", placeholder: "напр. 30", icon: "Users" },
   { key: "calls_per_month", label: "Обращений в месяц", placeholder: "напр. 5000", icon: "PhoneCall" },
-  { key: "crm_system", label: "CRM-система", placeholder: "напр. Bitrix24", icon: "Database" },
 ];
 
 export interface Client extends ClientParams {
@@ -308,11 +313,13 @@ export interface ClientFull extends Client {
   contacts: ClientContact[];
   notes: ClientNote[];
   links: ClientLink[];
+  crm_systems: CrmSystem[];
 }
 
 export interface CreateClientPayload extends Partial<ClientParams> {
   name: string;
   status_id?: string | null;
+  crm_system_ids?: string[];
   companies?: { name: string }[];
   contacts?: { name: string; fields?: { type: ContactFieldType; value: string }[] }[];
   notes?: { text: string }[];
@@ -323,6 +330,7 @@ export interface UpdateClientPayload extends Partial<ClientParams> {
   name?: string;
   status_id?: string | null;
   position?: number;
+  crm_system_ids?: string[];
   companies?: { id?: string; name: string }[];
   contacts?: { id?: string; name: string; fields?: { id?: string; type: ContactFieldType; value: string }[] }[];
   notes?: { id?: string; text: string }[];
@@ -421,7 +429,7 @@ export interface StagingParsedData {
   status_id?: string | null;
 
   // External sync metadata
-  external_source?: "kaiten";
+  external_source?: "kaiten" | "claude";
   external_id?: string;
   external_title?: string;
   external_url?: string | null;

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getClientFull, updateClient, deleteClient, syncClientNested } from "@/lib/db";
+import { getClientFull, updateClient, deleteClient, syncClientNested, setClientCrmSystems } from "@/lib/db";
 import { UpdateClientPayload } from "@/types";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -14,10 +14,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const body: UpdateClientPayload = await req.json();
 
-    const { companies, contacts, notes, links, ...clientUpdates } = body;
+    const { companies, contacts, notes, links, crm_system_ids, ...clientUpdates } = body;
     if (Object.keys(clientUpdates).length > 0) {
       const updated = updateClient(id, clientUpdates);
       if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    if (crm_system_ids) {
+      setClientCrmSystems(id, crm_system_ids);
     }
 
     syncClientNested(id, { companies, contacts, notes, links });

@@ -13,7 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Plus, X } from "lucide-react";
+import { Plus, X, ChevronUp, ChevronDown } from "lucide-react";
 
 const PRESET_COLORS = [
   "#6b7280", "#ef4444", "#f97316", "#eab308", "#22c55e",
@@ -57,11 +57,23 @@ export function StatusManager({ open, onOpenChange }: StatusManagerProps) {
     setConfirmDeleteId(null);
   }, [deleteStatus]);
 
+  const moveStatus = useCallback(async (index: number, direction: -1 | 1) => {
+    const sorted = [...clientStatuses].sort((a, b) => a.position - b.position);
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= sorted.length) return;
+    const a = sorted[index];
+    const b = sorted[targetIndex];
+    await updateStatus(a.id, { position: b.position });
+    await updateStatus(b.id, { position: a.position });
+  }, [clientStatuses, updateStatus]);
+
   const startEdit = (id: string, name: string, color: string) => {
     setEditingId(id);
     setEditName(name);
     setEditColor(color);
   };
+
+  const sorted = [...clientStatuses].sort((a, b) => a.position - b.position);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -77,7 +89,7 @@ export function StatusManager({ open, onOpenChange }: StatusManagerProps) {
           {/* Existing statuses */}
           {clientStatuses.length > 0 && (
             <div className="flex flex-col gap-1.5">
-              {clientStatuses.map((s) => (
+              {sorted.map((s, idx) => (
                 <div key={s.id} className="group flex items-center gap-2 rounded-lg border border-slate-100 px-3 py-2">
                   {editingId === s.id ? (
                     <>
@@ -120,6 +132,12 @@ export function StatusManager({ open, onOpenChange }: StatusManagerProps) {
                       >
                         {s.name}
                       </span>
+                      <Button size="icon-xs" variant="ghost" disabled={idx === 0} onClick={() => moveStatus(idx, -1)}>
+                        <ChevronUp className="size-3.5 text-slate-400" />
+                      </Button>
+                      <Button size="icon-xs" variant="ghost" disabled={idx === sorted.length - 1} onClick={() => moveStatus(idx, 1)}>
+                        <ChevronDown className="size-3.5 text-slate-400" />
+                      </Button>
                       {confirmDeleteId === s.id ? (
                         <div className="flex items-center gap-1 text-xs">
                           <span className="text-slate-400">Удалить?</span>

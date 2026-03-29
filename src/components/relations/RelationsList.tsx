@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useBrainStore } from "@/lib/store";
-import type { EntityType, RelationWithTarget, Item, ClientFull } from "@/types";
+import type { EntityType, RelationWithTarget, Item, ClientFull, ItemType, ItemStatus } from "@/types";
 import { STATUS_CONFIG, PRIORITY_CONFIG, TYPE_CONFIG } from "@/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Popover,
@@ -17,6 +18,7 @@ import {
   SelectTrigger,
   SelectContent,
   SelectItem,
+  SelectValue,
 } from "@/components/ui/select";
 import {
   Link,
@@ -89,10 +91,18 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
   const [searching, setSearching] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newType, setNewType] = useState<ItemType>("task");
+  const [newStatus, setNewStatus] = useState<ItemStatus>("inbox");
+  const [creating, setCreating] = useState(false);
+
   const fetchRelations = useBrainStore((s) => s.fetchRelations);
   const createRelation = useBrainStore((s) => s.createRelation);
+  const createRelationType = useBrainStore((s) => s.createRelationType);
   const deleteRelation = useBrainStore((s) => s.deleteRelation);
   const updateRelationType_ = useBrainStore((s) => s.updateRelationType_);
+  const createItem = useBrainStore((s) => s.createItem);
   const relationTypes = useBrainStore((s) => s.relationTypes);
   const items = useBrainStore((s) => s.items);
   const clients = useBrainStore((s) => s.clients);
@@ -171,12 +181,39 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
   }, [performSearch]);
 
   const handleAdd = useCallback(async (targetType: EntityType, targetId: string) => {
-    await createRelation(entityType, entityId, targetType, targetId);
+    let relationTypeId: string | null = null;
+    if (targetType === "client") {
+      let clientType = relationTypes.find((rt) => rt.name === "Клиент");
+      if (!clientType) {
+        clientType = await createRelationType("Клиент", "#22c55e", "User");
+      }
+      relationTypeId = clientType.id;
+    }
+    await createRelation(entityType, entityId, targetType, targetId, relationTypeId);
     setSearch("");
     setSearchResults([]);
     setAddOpen(false);
     await loadRelations();
-  }, [createRelation, entityType, entityId, loadRelations]);
+  }, [createRelation, createRelationType, entityType, entityId, relationTypes, loadRelations]);
+
+  const handleCreateAndLink = useCallback(async () => {
+    if (!newTitle.trim() || creating) return;
+    setCreating(true);
+    try {
+      const created = await createItem({ title: newTitle.trim(), type: newType, status: newStatus });
+      await createRelation(entityType, entityId, "item", created.id);
+      setSearch("");
+      setSearchResults([]);
+      setNewTitle("");
+      setNewType("task");
+      setNewStatus("inbox");
+      setShowCreateForm(false);
+      setAddOpen(false);
+      await loadRelations();
+    } finally {
+      setCreating(false);
+    }
+  }, [newTitle, newType, newStatus, creating, createItem, createRelation, entityType, entityId, loadRelations]);
 
   const handleDelete = useCallback(async (relationId: string) => {
     await deleteRelation(relationId);
