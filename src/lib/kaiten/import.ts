@@ -10,19 +10,24 @@ import {
   createStagingItem,
   getExternalEntityLinkByRemote,
   getIntegrationSettings,
+  getItemById,
   getIntegrationToken,
   getLatestSyncImportRun,
   getStagingItemById,
+  setItemParticipants,
   getSyncFieldMappings,
   getSyncProfileById,
   saveSyncImportRun,
+  updateItem,
   updateStagingItem,
   upsertExternalEntityLink,
 } from "@/lib/db";
 import {
   createKaitenClient,
+  extractCardArchived,
   extractCardColumnId,
   extractCardDescription,
+  extractCardDevelopmentStage,
   extractCardDueDate,
   extractCardLaneId,
   extractCardPriority,
@@ -76,6 +81,7 @@ function applyMapping(card: Record<string, unknown>, mappings: SyncFieldMapping[
   const dueDate = extractCardDueDate(card);
   const priorityValue = extractCardPriority(card);
   const tags = extractCardTags(card);
+  const developmentStage = extractCardDevelopmentStage(card);
 
   const parsed: StagingParsedData = {
     external_source: "kaiten",
@@ -93,10 +99,11 @@ function applyMapping(card: Record<string, unknown>, mappings: SyncFieldMapping[
     external_lane_name: typeof card.lane_title === "string" ? card.lane_title : null,
     external_updated_at: typeof card.updated === "string" ? card.updated : typeof card.updated_at === "string" ? card.updated_at : null,
     remote_payload: card,
-    type: null,
+    type: "task",
     status: null,
     priority: null,
     category: "development",
+    development_stage: developmentStage,
     due_date: null,
   };
 
@@ -154,6 +161,7 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
 
   const cards = await client.getCards(profile.source_board_id);
   const filtered = cards.filter((card) => {
+    if (extractCardArchived(card)) return false;
     const status = extractCardStatus(card);
     const columnId = extractCardColumnId(card);
     const laneId = extractCardLaneId(card);
@@ -177,9 +185,17 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
       const enrichedCard = Number.isFinite(remoteNumericId)
         ? await client.getCard(remoteNumericId).catch(() => card)
         : card;
+      if (extractCardArchived(enrichedCard)) {
+        result.skipped += 1;
+        continue;
+      }
+      const participants = Number.isFinite(remoteNumericId)
+        ? await client.getCardMembers(remoteNumericId).catch(() => [])
+        : [];
 
       const link = getExternalEntityLinkByRemote("kaiten", "card", remoteId);
       const parsed = applyMapping(enrichedCard, mappings);
+      parsed.participants = participants;
       const title = extractCardTitle(enrichedCard) || `Kaiten #${remoteId}`;
       const description = extractCardDescription(enrichedCard);
 
@@ -208,6 +224,38 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
             remote_lane_id: parsed.external_lane_id ?? null,
             last_remote_updated_at: parsed.external_updated_at ?? null,
             sync_state: "pending",
+            last_error: null,
+          });
+          continue;
+        }
+
+        const item = getItemById(link.local_entity_id);
+        if (item) {
+          updateItem(item.id, {
+            title,
+            description,
+            type: "task",
+            category: "development",
+            development_stage: parsed.development_stage ?? null,
+            status: parsed.status ?? item.status,
+            priority: parsed.priority ?? item.priority,
+            due_date: parsed.due_date ?? null,
+          });
+          setItemParticipants(item.id, participants);
+          result.updated += 1;
+          result.imported_ids.push(item.id);
+          upsertExternalEntityLink({
+            provider: "kaiten",
+            local_entity_type: "item",
+            local_entity_id: item.id,
+            remote_entity_type: "card",
+            remote_entity_id: remoteId,
+            remote_space_id: parsed.external_space_id ?? null,
+            remote_board_id: parsed.external_board_id ?? profile.source_board_id,
+            remote_column_id: parsed.external_column_id ?? null,
+            remote_lane_id: parsed.external_lane_id ?? null,
+            last_remote_updated_at: parsed.external_updated_at ?? null,
+            sync_state: "active",
             last_error: null,
           });
           continue;

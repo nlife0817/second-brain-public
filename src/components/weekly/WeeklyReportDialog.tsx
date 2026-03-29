@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useBrainStore } from "@/lib/store";
 import type { WeeklyPlanEntryWithItem, Item, ItemCategory } from "@/types";
-import { CATEGORY_CONFIG, PRIORITY_CONFIG, RESULT_STATUS_CONFIG } from "@/types";
+import { CATEGORY_CONFIG, PRIORITY_CONFIG } from "@/types";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";

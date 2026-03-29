@@ -1,4 +1,4 @@
-import type { KaitenBoardOption, KaitenSpace } from "@/types";
+import type { DevelopmentParticipantInput, KaitenBoardOption, KaitenSpace } from "@/types";
 
 export class KaitenApiError extends Error {
   status: number;
@@ -258,6 +258,17 @@ export class KaitenClient {
   async getCard(cardId: number): Promise<Record<string, unknown>> {
     return await this.request<Record<string, unknown>>(`/cards/${cardId}`);
   }
+
+  async getCardMembers(cardId: number): Promise<DevelopmentParticipantInput[]> {
+    const payload = await this.request<unknown>(`/cards/${cardId}/members`);
+    return asArray<Record<string, unknown>>(payload)
+      .map((member) => ({
+        provider: "kaiten" as const,
+        remote_id: String(member.id ?? member.uid ?? ""),
+        name: readString(member.full_name || member.name || member.username),
+      }))
+      .filter((member) => member.remote_id && member.name);
+  }
 }
 
 export function createKaitenClient(options: KaitenClientOptions) {
@@ -288,11 +299,23 @@ export function extractCardTitle(card: Record<string, unknown>): string {
   return readString(card.title || card.name || card.subject);
 }
 
+export function extractCardArchived(card: Record<string, unknown>): boolean {
+  const condition = readNumber(card.condition);
+  return card.archived === true || condition === 2 || condition === 3;
+}
+
 export function extractCardDescription(card: Record<string, unknown>): string {
   const rawDescription = readString(card.description || card.text || card.details);
   const descriptionHtml = normalizeDescriptionMarkup(rawDescription);
   const imageUrls = extractCardImageUrls(card);
   return appendImageGallery(descriptionHtml, imageUrls);
+}
+
+export function extractCardDevelopmentStage(card: Record<string, unknown>): string | null {
+  const columnTitle = readString(card.column_title || card.column_name || readObject(card.column)?.title || readObject(card.column)?.name);
+  const laneTitle = readString(card.lane_title || card.lane_name || readObject(card.lane)?.title || readObject(card.lane)?.name);
+  if (columnTitle && laneTitle) return `${columnTitle} / ${laneTitle}`;
+  return columnTitle || laneTitle || null;
 }
 
 export function extractCardDueDate(card: Record<string, unknown>): string | null {

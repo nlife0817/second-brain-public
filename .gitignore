@@ -43,6 +43,7 @@ next-env.d.ts
 # playwright mcp
 .playwright-mcp/
 
-# SQLite runtime artifacts
+# SQLite database and runtime artifacts
+data/brain.db
 data/brain.db-shm
 data/brain.db-wal

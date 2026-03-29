@@ -25,7 +25,6 @@ import {
   AppSection,
   ClientViewMode,
   ClientGroupByConfig,
-  ClientGroupByField,
   ClientFull,
   ClientStatus,
   CreateClientPayload,
@@ -304,7 +303,7 @@ export const useBrainStore = create<BrainStore>()(
       }),
     }));
 
-    const res = await fetch("/api/items", {
+    await fetch("/api/items", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items: updates }),
@@ -386,7 +385,7 @@ export const useBrainStore = create<BrainStore>()(
       activeFilterId: activeFilterId === id ? null : activeFilterId,
     });
   },
-  resetActiveFilter: () => set({ activeFilterId: null }),
+  resetActiveFilter: () => set({ activeFilterId: null, filters: { ...defaultFilters } }),
   setDetailMode: (detailMode) => set({ detailMode }),
   setAppSection: (appSection) => set({ appSection }),
   setListGroupBy: (listGroupBy) => {
@@ -842,6 +841,7 @@ function matchCondition(item: ItemWithSubtasks, cond: FilterCondition): boolean 
       case "type": return item.type;
       case "title": return item.title;
       case "description": return item.description;
+      case "development_stage": return item.development_stage ?? "";
       case "due_date": return item.due_date ?? "";
       case "has_parent": return item.parent_id ? "yes" : "no";
       default: return "";

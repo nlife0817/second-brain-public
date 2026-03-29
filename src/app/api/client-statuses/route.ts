@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
       color: color || "#6b7280",
     });
     return NextResponse.json(status, { status: 201 });
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Failed to create status" }, { status: 500 });
   }
 }

@@ -574,7 +574,15 @@ export function SettingsView() {
 
           <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
             <div className="space-y-4">
-              <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <div
+                className="rounded-xl border border-slate-200 bg-white p-4"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    handleSaveSync();
+                  }
+                }}
+              >
                 <div className="mb-3 flex items-center gap-2">
                   <Settings2 className="size-4 text-slate-500" />
                   <span className="text-sm font-semibold text-slate-800">Подключение</span>

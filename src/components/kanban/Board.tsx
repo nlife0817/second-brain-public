@@ -17,7 +17,6 @@ import { arrayMove } from "@dnd-kit/sortable";
 import { useBrainStore, useFilteredItems } from "@/lib/store";
 import {
   KANBAN_COLUMNS,
-  STATUS_CONFIG,
   ItemStatus,
   ItemWithSubtasks,
 } from "@/types";
@@ -33,7 +32,6 @@ const measuringConfig = {
 export function KanbanBoard() {
   const filteredItems = useFilteredItems();
   const reorderItems = useBrainStore((s) => s.reorderItems);
-  const updateItem = useBrainStore((s) => s.updateItem);
   const setEditingItem = useBrainStore((s) => s.setEditingItem);
 
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -44,6 +42,7 @@ export function KanbanBoard() {
   useEffect(() => {
     // When the store items update (e.g. after fetchItems completes), clear optimistic state
     if (prevFilteredRef.current !== filteredItems && localItems !== null && activeId === null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLocalItems(null);
     }
     prevFilteredRef.current = filteredItems;

@@ -58,7 +58,7 @@ export function WeeklyTriageView({ plan }: Props) {
       grouped[entry.item.category].push(entry);
     }
     return grouped;
-  }, [plan.entries]);
+  }, [plan]);
 
   const handleAddToPlan = useCallback((itemId: string) => {
     if (isCompleted) return;

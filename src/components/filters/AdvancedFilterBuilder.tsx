@@ -36,6 +36,7 @@ const FIELD_OPTIONS: { value: FilterField; label: string }[] = [
   { value: "priority", label: "Приоритет" },
   { value: "category", label: "Категория" },
   { value: "type", label: "Тип" },
+  { value: "development_stage", label: "Этап разработки" },
   { value: "title", label: "Название" },
   { value: "description", label: "Описание" },
   { value: "due_date", label: "Дедлайн" },
@@ -46,7 +47,7 @@ type FieldKind = "enum" | "text" | "date";
 
 function getFieldKind(field: FilterField): FieldKind {
   if (["status", "priority", "category", "type", "has_parent"].includes(field)) return "enum";
-  if (["title", "description"].includes(field)) return "text";
+  if (["title", "description", "development_stage"].includes(field)) return "text";
   return "date";
 }
 

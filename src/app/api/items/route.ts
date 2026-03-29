@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllItems, createItem, getSubtasks, getItemTags, reorderItems } from "@/lib/db";
+import { getAllItems, createItem, getSubtasks, getItemParticipants, getItemTags, reorderItems, setItemParticipants } from "@/lib/db";
 import { v4 as uuid } from "uuid";
 import { CreateItemPayload, ItemWithSubtasks } from "@/types";
 
@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
     ...item,
     subtasks: getSubtasks(item.id),
     tags: getItemTags(item.id),
+    participants: getItemParticipants(item.id),
   }));
 
   return NextResponse.json(itemsWithSubtasks);
@@ -33,12 +34,21 @@ export async function POST(req: NextRequest) {
       status: body.status ?? "inbox",
       priority: body.priority ?? "none",
       category: body.category ?? "other",
+      development_stage: body.development_stage ?? null,
       due_date: body.due_date ?? null,
       position: 0,
       parent_id: body.parent_id ?? null,
     });
 
-    return NextResponse.json(item, { status: 201 });
+    if (body.participants?.length) {
+      setItemParticipants(item.id, body.participants);
+    }
+    return NextResponse.json({
+      ...item,
+      subtasks: getSubtasks(item.id),
+      tags: getItemTags(item.id),
+      participants: getItemParticipants(item.id),
+    }, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }

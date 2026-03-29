@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useBrainStore } from "@/lib/store";
 import type { EntityType, Comment } from "@/types";
 import { cn } from "@/lib/utils";
@@ -105,8 +105,15 @@ function CommentEditor({ initialContent, onSave, onCancel, placeholder }: {
     editor.commands.clearContent();
   }, [editor, onSave]);
 
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleSave();
+    }
+  }, [handleSave]);
+
   return (
-    <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+    <div className="rounded-lg border border-slate-200 bg-white overflow-hidden" onKeyDown={handleKeyDown}>
       <MiniToolbar editor={editor} />
       <EditorContent editor={editor} />
       <div className="flex items-center justify-end gap-1.5 border-t border-slate-100 px-2 py-1.5">
@@ -128,6 +135,7 @@ export function CommentsList({ entityType, entityId }: CommentsListProps) {
   const [loading, setLoading] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const editingRef = useRef<HTMLDivElement>(null);
 
   const fetchComments = useBrainStore((s) => s.fetchComments);
   const createComment = useBrainStore((s) => s.createComment);
@@ -142,8 +150,15 @@ export function CommentsList({ entityType, entityId }: CommentsListProps) {
   }, [fetchComments, entityType, entityId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadComments();
   }, [loadComments]);
+
+  useEffect(() => {
+    if (editingId && editingRef.current) {
+      editingRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [editingId]);
 
   const handleCreate = useCallback(async (text: string) => {
     await createComment(entityType, entityId, text);
@@ -195,8 +210,12 @@ export function CommentsList({ entityType, entityId }: CommentsListProps) {
 
       {comments.length > 0 && (
         <div className="space-y-2">
-          {comments.map((comment) => (
-            <div key={comment.id} className="group rounded-lg border border-slate-100 bg-white">
+          {[...comments].reverse().map((comment) => (
+            <div
+              key={comment.id}
+              ref={editingId === comment.id ? editingRef : undefined}
+              className="group rounded-lg border border-slate-100 bg-white"
+            >
               {editingId === comment.id ? (
                 <CommentEditor
                   initialContent={comment.text}

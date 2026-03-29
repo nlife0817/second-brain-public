@@ -13,7 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Plus, X, Palette } from "lucide-react";
+import { Plus, X } from "lucide-react";
 
 const PRESET_COLORS = [
   "#6b7280", "#ef4444", "#f97316", "#eab308", "#22c55e",

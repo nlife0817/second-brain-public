@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getItemById, updateItem, deleteItem, getSubtasks, getItemTags, setItemTags } from "@/lib/db";
+import { getItemById, updateItem, deleteItem, getSubtasks, getItemParticipants, getItemTags, setItemParticipants, setItemTags } from "@/lib/db";
 import { UpdateItemPayload, ItemWithSubtasks } from "@/types";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -11,6 +11,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     ...item,
     subtasks: getSubtasks(item.id),
     tags: getItemTags(item.id),
+    participants: getItemParticipants(item.id),
   };
 
   return NextResponse.json(result);
@@ -25,6 +26,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       setItemTags(id, body.tags);
       delete body.tags;
     }
+    if (body.participants) {
+      setItemParticipants(id, body.participants);
+      delete body.participants;
+    }
 
     const updated = updateItem(id, body);
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -33,6 +38,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       ...updated,
       subtasks: getSubtasks(updated.id),
       tags: getItemTags(updated.id),
+      participants: getItemParticipants(updated.id),
     };
 
     return NextResponse.json(result);

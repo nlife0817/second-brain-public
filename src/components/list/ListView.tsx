@@ -6,6 +6,7 @@ import {
   useCallback,
   useRef,
   useEffect,
+  useLayoutEffect,
 } from "react";
 import { createPortal } from "react-dom";
 import { useFilteredItems, useBrainStore } from "@/lib/store";
@@ -49,6 +50,7 @@ import {
   Archive,
   Link,
   MessageSquare,
+  ChevronsUpDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -208,6 +210,7 @@ const GROUP_BY_OPTIONS: { key: ListGroupByField; label: string }[] = [
   { key: "priority", label: "Приоритет" },
   { key: "category", label: "Категория" },
   { key: "type", label: "Тип" },
+  { key: "development_stage", label: "Этап разработки" },
 ];
 
 function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField): string {
@@ -216,6 +219,7 @@ function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField): string {
     case "priority": return item.priority;
     case "category": return item.category;
     case "type": return item.type;
+    case "development_stage": return item.development_stage ?? "__none__";
     default: return "";
   }
 }
@@ -226,6 +230,7 @@ function getGroupLabel(field: ListGroupByField, key: string): string {
     case "priority": return PRIORITY_CONFIG[key as ItemPriority]?.label ?? key;
     case "category": return CATEGORY_CONFIG[key as ItemCategory]?.label ?? key;
     case "type": return TYPE_CONFIG[key as ItemType]?.label ?? key;
+    case "development_stage": return key === "__none__" ? "Не указано" : key;
     default: return key;
   }
 }
@@ -578,12 +583,13 @@ function InlineSelectCell<T extends string>({
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const anchor = anchorRef?.current;
     if (anchor) {
       const rect = anchor.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
       const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPos({ top, left: rect.left });
     }
   }, [anchorRef]);
@@ -663,12 +669,13 @@ function InlineDateCell({
   const inputRef = useRef<HTMLInputElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const anchor = anchorRef?.current;
     if (anchor) {
       const rect = anchor.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
       const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPos({ top, left: rect.left });
     }
   }, [anchorRef]);
@@ -764,12 +771,13 @@ function CreationSelectDropdown<T extends string>({
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const anchor = anchorRef?.current;
     if (anchor) {
       const rect = anchor.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
       const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPos({ top, left: rect.left });
     }
   }, [anchorRef]);
@@ -1042,6 +1050,29 @@ export function ListView() {
 
   const isGrouped = listGroupBy[0] !== "none" && groups.length > 0;
   const hasLevel2 = listGroupBy[1] !== "none";
+
+  const allGroupKeys = useMemo(() => {
+    const keys: string[] = [];
+    for (const g of groups) {
+      keys.push(g.key);
+      if (hasLevel2) {
+        for (const sub of groupItems(g.items, listGroupBy[1])) {
+          keys.push(`${g.key}::${sub.key}`);
+        }
+      }
+    }
+    return keys;
+  }, [groups, hasLevel2, listGroupBy]);
+
+  const allGroupsCollapsed = isGrouped && allGroupKeys.length > 0 && allGroupKeys.every((k) => collapsedGroups.has(k));
+
+  const toggleAllGroups = useCallback(() => {
+    if (allGroupsCollapsed) {
+      setCollapsedGroups(new Set());
+    } else {
+      setCollapsedGroups(new Set(allGroupKeys));
+    }
+  }, [allGroupsCollapsed, allGroupKeys]);
 
   const toggleGroup = useCallback((key: string) => {
     setCollapsedGroups((prev) => {
@@ -1803,6 +1834,16 @@ export function ListView() {
                   {/* Column config & grouping buttons */}
                   <th className="w-16 px-1 py-2">
                     <div className="flex items-center gap-0.5 justify-end">
+                      {isGrouped && (
+                        <button
+                          type="button"
+                          onClick={toggleAllGroups}
+                          className="inline-flex items-center justify-center size-6 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                          title={allGroupsCollapsed ? "Раскрыть всё" : "Свернуть всё"}
+                        >
+                          <ChevronsUpDown className="size-3.5" />
+                        </button>
+                      )}
                       <GroupByPopover
                         value={listGroupBy}
                         onChange={setListGroupBy}
@@ -1934,6 +1975,7 @@ export function ListView() {
                       </div>
                     </td>
                     {/* Dynamic creation cells */}
+                    {/* eslint-disable-next-line react-hooks/refs */}
                     {visibleColumns.map((col) => renderCreateCell(col.id))}
                     {/* Settings spacer */}
                     <td className="w-16" />
@@ -2511,7 +2553,7 @@ function ItemRow({
   categoryOptions: { key: ItemCategory; label: string }[];
   typeOptions: { key: ItemType; label: string }[];
 }) {
-  const { item, isSubtask, hasSubtasks, totalSubtasks, doneSubtasks } = row;
+  const { item, isSubtask, totalSubtasks, doneSubtasks } = row;
   const allItems = useBrainStore((s) => s.items);
   const relCount = useBrainStore((s) => s.itemRelationCounts[item.id] ?? 0);
   const commentCount = useBrainStore((s) => s.itemCommentCounts[item.id] ?? 0);
@@ -2900,6 +2942,7 @@ function ItemRow({
       </td>
 
       {/* Dynamic columns */}
+      {/* eslint-disable-next-line react-hooks/refs */}
       {visibleColumns.map((col) => renderCell(col.id))}
 
       {/* Empty cell for the settings column */}

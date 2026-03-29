@@ -163,6 +163,24 @@
   margin-bottom: 0.25rem;
 }
 
+/* Comment rendered prose: tighter lists */
+.prose.prose-sm ul,
+.prose.prose-sm ol {
+  margin-top: 0.125rem;
+  margin-bottom: 0.125rem;
+  padding-left: 1.25rem;
+}
+
+.prose.prose-sm li {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.prose.prose-sm li p {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

@@ -8,7 +8,6 @@ import {
   ContactFieldType,
   CONTACT_FIELD_CONFIG,
   CLIENT_PARAMS_CONFIG,
-  ClientParams,
 } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -47,11 +46,6 @@ import {
   Send,
   Save,
   Pencil,
-  ChevronDown,
-  Banknote,
-  UserCheck,
-  PhoneCall,
-  Database as DatabaseIcon,
   BarChart3,
 } from "lucide-react";
 
@@ -299,7 +293,6 @@ function ClientDetailContent() {
   const [editingName, setEditingName] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [paramsOpen, setParamsOpen] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   // Reset local state when client data changes (modal opens with new client)
@@ -342,10 +335,20 @@ function ClientDetailContent() {
         notes: local.notes,
         links: local.links,
       });
+      closeModal();
     } finally {
       setSaving(false);
     }
-  }, [client, local, updateClient]);
+  }, [client, local, updateClient, closeModal]);
+
+  /* ---------- Keyboard shortcut ---------- */
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleSave();
+    }
+  }, [handleSave]);
 
   /* ---------- Delete handler ---------- */
 
@@ -541,7 +544,7 @@ function ClientDetailContent() {
   /* ------------------------------------------------------------------ */
 
   const content = (
-    <div className="p-5 sm:p-6 space-y-0">
+    <div className="p-5 sm:p-6 space-y-0" onKeyDown={handleKeyDown}>
       {/* ====== HEADER ====== */}
       <div className="flex items-start gap-3 pb-4">
         <div className="flex-1 min-w-0">

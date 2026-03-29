@@ -1,11 +1,10 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
   ItemWithSubtasks,
-  ItemStatus,
   ItemPriority,
   ItemCategory,
   ItemType,
@@ -111,10 +110,11 @@ function InlineFieldEditor({ item, field }: InlineFieldEditorProps) {
   // Detect if dropdown should open upward
   const [openUp, setOpenUp] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (spaceBelow < 180) setOpenUp(true);
     }
   }, []);

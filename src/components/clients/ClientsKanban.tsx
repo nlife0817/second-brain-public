@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { useBrainStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -68,12 +68,13 @@ function InlineStatusDropdown({
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const anchor = anchorRef?.current;
     if (anchor) {
       const rect = anchor.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
       const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPos({ top, left: rect.left });
     }
   }, [anchorRef]);
@@ -559,18 +560,12 @@ export function ClientsKanban({
   const isDraggingRef = useRef(false);
 
   // Re-sync local state when props/statuses change (but not during a drag)
-  const prevClientsRef = useRef(clients);
-  const prevStatusesRef = useRef(clientStatuses);
-  if (
-    !isDraggingRef.current &&
-    (clients !== prevClientsRef.current ||
-      clientStatuses !== prevStatusesRef.current)
-  ) {
-    prevClientsRef.current = clients;
-    prevStatusesRef.current = clientStatuses;
-    // We set the state lazily; React will batch this
-    setColumns(buildColumnsMap(clients, clientStatuses));
-  }
+  useEffect(() => {
+    if (!isDraggingRef.current) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setColumns(buildColumnsMap(clients, clientStatuses));
+    }
+  }, [clients, clientStatuses]);
 
   // Active client for the drag overlay
   const activeClient = useMemo(() => {
@@ -649,7 +644,9 @@ export function ClientsKanban({
   /** Commit the current columns map to the backend via reorderClients.
    *  Uses a ref so it's always stable and can be called from state updaters. */
   const reorderClientsRef = useRef(reorderClients);
-  reorderClientsRef.current = reorderClients;
+  useEffect(() => {
+    reorderClientsRef.current = reorderClients;
+  }, [reorderClients]);
 
   const commitReorder = useCallback((cols: ColumnsMap) => {
     const updates: { id: string; position: number; status_id?: string }[] = [];

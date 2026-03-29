@@ -27,7 +27,7 @@ export function WeeklyReviewTable({ plan }: Props) {
       grouped[entry.item.category].push(entry);
     }
     return grouped;
-  }, [plan.entries]);
+  }, [plan]);
 
   // Fetch unplanned done items
   useEffect(() => {

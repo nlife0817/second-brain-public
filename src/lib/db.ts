@@ -10,6 +10,7 @@ import {
   IntegrationProvider, IntegrationSettings, IntegrationSettingsInput,
   SyncProfile, SyncProfileInput, SyncFieldMapping, SyncFieldMappingInput,
   ExternalEntityLink, ExternalSyncState, SyncEntityType, SyncDirection, KaitenImportResult,
+  DevelopmentParticipant, DevelopmentParticipantInput,
 } from "@/types";
 
 const DB_PATH = path.join(process.cwd(), "data", "brain.db");
@@ -42,6 +43,7 @@ function initSchema(db: Database.Database) {
       status TEXT NOT NULL DEFAULT 'inbox' CHECK(status IN ('inbox','todo','in_progress','review','done','archived')),
       priority TEXT NOT NULL DEFAULT 'none' CHECK(priority IN ('urgent','high','medium','low','none')),
       category TEXT NOT NULL DEFAULT 'other' CHECK(category IN ('projects','development','clients','research','other')),
+      development_stage TEXT,
       due_date TEXT,
       position INTEGER NOT NULL DEFAULT 0,
       parent_id TEXT REFERENCES items(id) ON DELETE CASCADE,
@@ -65,6 +67,25 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_items_category ON items(category);
     CREATE INDEX IF NOT EXISTS idx_items_parent ON items(parent_id);
     CREATE INDEX IF NOT EXISTS idx_items_priority ON items(priority);
+    CREATE INDEX IF NOT EXISTS idx_items_development_stage ON items(development_stage);
+
+    CREATE TABLE IF NOT EXISTS development_participants (
+      id TEXT PRIMARY KEY,
+      provider TEXT,
+      remote_id TEXT,
+      name TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(provider, remote_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS item_development_participants (
+      item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      participant_id TEXT NOT NULL REFERENCES development_participants(id) ON DELETE CASCADE,
+      PRIMARY KEY (item_id, participant_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_item_development_participants_item ON item_development_participants(item_id);
 
     CREATE TABLE IF NOT EXISTS weekly_plans (
       id TEXT PRIMARY KEY,
@@ -297,6 +318,32 @@ function initSchema(db: Database.Database) {
 }
 
 function migrateSchema(db: Database.Database) {
+  const itemCols = db.prepare("PRAGMA table_info(items)").all() as { name: string }[];
+  const itemColNames = new Set(itemCols.map((c) => c.name));
+  if (!itemColNames.has("development_stage")) {
+    db.exec("ALTER TABLE items ADD COLUMN development_stage TEXT");
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS development_participants (
+      id TEXT PRIMARY KEY,
+      provider TEXT,
+      remote_id TEXT,
+      name TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(provider, remote_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS item_development_participants (
+      item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      participant_id TEXT NOT NULL REFERENCES development_participants(id) ON DELETE CASCADE,
+      PRIMARY KEY (item_id, participant_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_item_development_participants_item ON item_development_participants(item_id);
+  `);
+
   // Add client params columns if they don't exist
   const cols = db.prepare("PRAGMA table_info(clients)").all() as { name: string }[];
   const colNames = new Set(cols.map((c) => c.name));
@@ -389,6 +436,79 @@ export function getItemTags(itemId: string): Tag[] {
   `).all(itemId) as Tag[];
 }
 
+export function getItemParticipants(itemId: string): DevelopmentParticipant[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT p.* FROM development_participants p
+    JOIN item_development_participants ip ON p.id = ip.participant_id
+    WHERE ip.item_id = ?
+    ORDER BY p.name COLLATE NOCASE ASC
+  `).all(itemId) as DevelopmentParticipant[];
+}
+
+export function setItemParticipants(itemId: string, participants: DevelopmentParticipantInput[]): DevelopmentParticipant[] {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const deleteStmt = db.prepare("DELETE FROM item_development_participants WHERE item_id = ?");
+  const findByRemoteStmt = db.prepare(
+    "SELECT * FROM development_participants WHERE provider IS ? AND remote_id IS ?"
+  );
+  const findByNameStmt = db.prepare(
+    "SELECT * FROM development_participants WHERE provider IS NULL AND remote_id IS NULL AND name = ?"
+  );
+  const insertParticipantStmt = db.prepare(`
+    INSERT INTO development_participants (id, provider, remote_id, name, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  const updateParticipantStmt = db.prepare(`
+    UPDATE development_participants SET name = ?, updated_at = ? WHERE id = ?
+  `);
+  const attachStmt = db.prepare(
+    "INSERT OR IGNORE INTO item_development_participants (item_id, participant_id) VALUES (?, ?)"
+  );
+
+  const normalized = participants
+    .map((participant) => ({
+      provider: participant.provider ?? null,
+      remote_id: participant.remote_id ?? null,
+      name: participant.name.trim(),
+    }))
+    .filter((participant) => participant.name.length > 0);
+
+  const transaction = db.transaction(() => {
+    deleteStmt.run(itemId);
+
+    for (const participant of normalized) {
+      const existing = participant.remote_id
+        ? findByRemoteStmt.get(participant.provider, participant.remote_id) as DevelopmentParticipant | undefined
+        : findByNameStmt.get(participant.name) as DevelopmentParticipant | undefined;
+
+      let participantId: string;
+      if (existing) {
+        participantId = existing.id;
+        if (existing.name !== participant.name) {
+          updateParticipantStmt.run(participant.name, now, participantId);
+        }
+      } else {
+        participantId = crypto.randomUUID();
+        insertParticipantStmt.run(
+          participantId,
+          participant.provider,
+          participant.remote_id,
+          participant.name,
+          now,
+          now
+        );
+      }
+
+      attachStmt.run(itemId, participantId);
+    }
+  });
+
+  transaction();
+  return getItemParticipants(itemId);
+}
+
 export function createItem(item: Omit<Item, "created_at" | "updated_at">): Item {
   const db = getDb();
   const now = new Date().toISOString();
@@ -398,11 +518,11 @@ export function createItem(item: Omit<Item, "created_at" | "updated_at">): Item 
   ).get(item.status, item.parent_id ?? null) as { next_pos: number };
 
   db.prepare(`
-    INSERT INTO items (id, title, description, type, status, priority, category, due_date, position, parent_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO items (id, title, description, type, status, priority, category, development_stage, due_date, position, parent_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     item.id, item.title, item.description, item.type, item.status,
-    item.priority, item.category, item.due_date ?? null,
+    item.priority, item.category, item.development_stage ?? null, item.due_date ?? null,
     item.position ?? maxPos.next_pos, item.parent_id ?? null, now, now
   );
 
@@ -499,7 +619,7 @@ export function getWeeklyPlanFull(id: string): WeeklyPlanFull | undefined {
   const rows = db.prepare(`
     SELECT e.*, i.title as item_title, i.description as item_description,
            i.type as item_type, i.status as item_status, i.priority as item_priority,
-           i.category as item_category, i.due_date as item_due_date,
+           i.category as item_category, i.development_stage as item_development_stage, i.due_date as item_due_date,
            i.position as item_position, i.parent_id as item_parent_id,
            i.created_at as item_created_at, i.updated_at as item_updated_at
     FROM weekly_plan_entries e
@@ -533,6 +653,7 @@ export function getWeeklyPlanFull(id: string): WeeklyPlanFull | undefined {
         status: row.item_status as Item["status"],
         priority: row.item_priority as Item["priority"],
         category: row.item_category as Item["category"],
+        development_stage: (row.item_development_stage as string) || null,
         due_date: (row.item_due_date as string) || null,
         position: row.item_position as number,
         parent_id: (row.item_parent_id as string) || null,
@@ -657,7 +778,7 @@ export function getTransferableEntries(planId: string): WeeklyPlanEntryWithItem[
   const rows = db.prepare(`
     SELECT e.*, i.title as item_title, i.description as item_description,
            i.type as item_type, i.status as item_status, i.priority as item_priority,
-           i.category as item_category, i.due_date as item_due_date,
+           i.category as item_category, i.development_stage as item_development_stage, i.due_date as item_due_date,
            i.position as item_position, i.parent_id as item_parent_id,
            i.created_at as item_created_at, i.updated_at as item_updated_at
     FROM weekly_plan_entries e
@@ -690,6 +811,7 @@ export function getTransferableEntries(planId: string): WeeklyPlanEntryWithItem[
         status: row.item_status as Item["status"],
         priority: row.item_priority as Item["priority"],
         category: row.item_category as Item["category"],
+        development_stage: (row.item_development_stage as string) || null,
         due_date: (row.item_due_date as string) || null,
         position: row.item_position as number,
         parent_id: (row.item_parent_id as string) || null,

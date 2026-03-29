@@ -63,6 +63,7 @@ export function Header() {
   const [searchValue, setSearchValue] = useState(filters.search);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSearchValue(filters.search);
   }, [filters.search]);
 

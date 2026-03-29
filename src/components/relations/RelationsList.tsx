@@ -106,7 +106,10 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
     setLoading(false);
   }, [fetchRelations, entityType, entityId]);
 
-  useEffect(() => { loadRelations(); }, [loadRelations]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadRelations();
+  }, [loadRelations]);
 
   // Lookup helpers from store
   const findItem = useCallback((id: string): Item | undefined => {

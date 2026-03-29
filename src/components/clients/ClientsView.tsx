@@ -6,7 +6,7 @@ import { useBrainStore, useFilteredClients } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import type { ClientFull, ClientGroupByField, ClientGroupByConfig } from "@/types";
+import type { ClientFull, ClientGroupByField } from "@/types";
 import {
   Search,
   Plus,
@@ -138,26 +138,6 @@ function groupClients(
 /*  Shared sub-components                                                      */
 /* -------------------------------------------------------------------------- */
 
-function StatusBadge({
-  status,
-}: {
-  status: { id: string; name: string; color: string; position: number } | null;
-}) {
-  if (!status) return <span className="text-xs text-slate-300">--</span>;
-  return (
-    <Badge
-      variant="secondary"
-      className="text-[10px] font-medium rounded-md"
-      style={{
-        backgroundColor: `${status.color}18`,
-        color: status.color,
-        borderColor: `${status.color}30`,
-      }}
-    >
-      {status.name}
-    </Badge>
-  );
-}
 
 /* -------------------------------------------------------------------------- */
 /*  InlineSelectCell — portal-based dropdown for inline editing               */

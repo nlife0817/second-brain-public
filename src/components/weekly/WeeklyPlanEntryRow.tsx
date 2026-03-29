@@ -1,10 +1,10 @@
 "use client";
 
-import { memo, useState, useRef, useEffect } from "react";
+import { memo, useState } from "react";
 import { X, Clock, CheckCircle2, XCircle, ArrowRight, Calendar, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBrainStore } from "@/lib/store";
-import type { WeeklyPlanEntryWithItem, EntryResultStatus, Item, SubtaskDisplayMode } from "@/types";
+import type { WeeklyPlanEntryWithItem, EntryResultStatus, Item } from "@/types";
 import { PRIORITY_CONFIG, RESULT_STATUS_CONFIG, STATUS_CONFIG, CATEGORY_CONFIG } from "@/types";
 import { Button } from "@/components/ui/button";
 
@@ -65,29 +65,23 @@ export const WeeklyPlanEntryRow = memo(function WeeklyPlanEntryRow({ entry, plan
     setIsAddingComment(false);
   };
 
-  const formatDueDate = (d: string | null) => {
-    if (!d) return null;
-    const date = new Date(d + "T00:00:00");
-    return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
-  };
-
   // Triage mode — show all task fields + subtasks
   if (mode === "triage") {
     return <TriageRow entry={entry} item={item} onRemove={onRemove} />;
   }
 
   // Review mode — two columns: Plan (plain) | Result (status + comment) + subtasks
-  return <ReviewRow entry={entry} item={item} cycleStatus={cycleStatus} statusCfg={statusCfg} StatusIcon={StatusIcon} priorityCfg={priorityCfg} lastComment={lastComment} isAddingComment={isAddingComment} setIsAddingComment={setIsAddingComment} newComment={newComment} setNewComment={setNewComment} submitComment={submitComment} cancelComment={cancelComment} openDetail={openDetail} planId={planId} />;
+  return <ReviewRow entry={entry} item={item} cycleStatus={cycleStatus} statusCfg={statusCfg} StatusIcon={StatusIcon} priorityCfg={priorityCfg} lastComment={lastComment} isAddingComment={isAddingComment} setIsAddingComment={setIsAddingComment} newComment={newComment} setNewComment={setNewComment} submitComment={submitComment} cancelComment={cancelComment} openDetail={openDetail} />;
 });
 
 // --- Review row with subtask support ---
 
-function ReviewRow({ entry, item, cycleStatus, statusCfg, StatusIcon, priorityCfg, lastComment, isAddingComment, setIsAddingComment, newComment, setNewComment, submitComment, cancelComment, openDetail, planId }: {
+function ReviewRow({ entry, item, cycleStatus, statusCfg, StatusIcon, priorityCfg, lastComment, isAddingComment, setIsAddingComment, newComment, setNewComment, submitComment, cancelComment, openDetail }: {
   entry: WeeklyPlanEntryWithItem; item: Item; cycleStatus: () => void;
   statusCfg: { label: string; color: string }; StatusIcon: typeof Clock; priorityCfg: { color: string; icon: string };
   lastComment: { text: string } | null; isAddingComment: boolean; setIsAddingComment: (v: boolean) => void;
   newComment: string; setNewComment: (v: string) => void; submitComment: () => void; cancelComment: () => void;
-  openDetail: (id: string) => void; planId: string;
+  openDetail: (id: string) => void;
 }) {
   const items = useBrainStore((s) => s.items);
   const subtaskDisplayMode = useBrainStore((s) => s.subtaskDisplayMode);
@@ -198,7 +192,7 @@ function ReviewRow({ entry, item, cycleStatus, statusCfg, StatusIcon, priorityCf
 
 // --- Triage row with subtask support ---
 
-function TriageRow({ entry, item, onRemove }: { entry: WeeklyPlanEntryWithItem; item: Item; onRemove?: () => void }) {
+function TriageRow({ item, onRemove }: { entry?: WeeklyPlanEntryWithItem; item: Item; onRemove?: () => void }) {
   const openDetail = useBrainStore((s) => s.openDetail);
   const items = useBrainStore((s) => s.items);
   const subtaskDisplayMode = useBrainStore((s) => s.subtaskDisplayMode);

@@ -4,12 +4,27 @@ export type ItemPriority = "urgent" | "high" | "medium" | "low" | "none";
 export type ItemCategory = "projects" | "development" | "clients" | "research" | "other";
 export type ViewMode = "kanban" | "list" | "weekly";
 export type SubtaskDisplayMode = "inline" | "accordion" | "detached";
-export type ListGroupByField = "none" | "status" | "priority" | "category" | "type";
+export type ListGroupByField = "none" | "status" | "priority" | "category" | "type" | "development_stage";
 export type ListGroupByConfig = [ListGroupByField, ListGroupByField];
 
 export type FilterOperator = "is" | "is_not" | "contains" | "not_contains" | "before" | "after" | "is_empty" | "is_not_empty";
-export type FilterField = "status" | "priority" | "category" | "type" | "title" | "description" | "due_date" | "has_parent";
+export type FilterField = "status" | "priority" | "category" | "type" | "title" | "description" | "due_date" | "has_parent" | "development_stage";
 export type FilterLogic = "and" | "or";
+
+export interface DevelopmentParticipant {
+  id: string;
+  provider: "kaiten" | null;
+  remote_id: string | null;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DevelopmentParticipantInput {
+  provider?: "kaiten" | null;
+  remote_id?: string | null;
+  name: string;
+}
 
 export interface FilterCondition {
   id: string;
@@ -32,6 +47,7 @@ export interface Item {
   status: ItemStatus;
   priority: ItemPriority;
   category: ItemCategory;
+  development_stage: string | null;
   due_date: string | null;
   position: number;
   parent_id: string | null;
@@ -42,6 +58,7 @@ export interface Item {
 export interface ItemWithSubtasks extends Item {
   subtasks: Item[];
   tags?: Tag[];
+  participants?: DevelopmentParticipant[];
 }
 
 export interface Tag {
@@ -62,9 +79,11 @@ export interface CreateItemPayload {
   status?: ItemStatus;
   priority?: ItemPriority;
   category?: ItemCategory;
+  development_stage?: string | null;
   due_date?: string | null;
   parent_id?: string | null;
   tags?: string[];
+  participants?: DevelopmentParticipantInput[];
 }
 
 export interface UpdateItemPayload {
@@ -74,10 +93,12 @@ export interface UpdateItemPayload {
   status?: ItemStatus;
   priority?: ItemPriority;
   category?: ItemCategory;
+  development_stage?: string | null;
   due_date?: string | null;
   position?: number;
   parent_id?: string | null;
   tags?: string[];
+  participants?: DevelopmentParticipantInput[];
 }
 
 export interface Filters {
@@ -368,8 +389,10 @@ export interface StagingParsedData {
   status?: ItemStatus | null;
   priority?: ItemPriority | null;
   category?: ItemCategory | null;
+  development_stage?: string | null;
   due_date?: string | null;
   tags?: string[];
+  participants?: DevelopmentParticipantInput[];
   parent_id?: string | null;
   subtasks?: { title: string; description?: string }[];
   relations?: { target_type: EntityType; target_title: string; relation_type?: string }[];

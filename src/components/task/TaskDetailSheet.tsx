@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 import { SubtaskList } from "./SubtaskList";
 import { RelationsList } from "@/components/relations/RelationsList";
 import { CommentsList } from "@/components/comments/CommentsList";
@@ -699,6 +700,7 @@ function useTaskDetailLogic(item: ItemWithSubtasks | null) {
 
   useEffect(() => {
     if (item) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTitle(item.title);
       setShowDeleteConfirm(false);
     }
@@ -915,6 +917,24 @@ function TaskDetailContent({
     <SubtaskList parentId={item.id} subtasks={item.subtasks || []} />
   );
 
+  const developmentSyncBlock = item.category === "development" && (item.development_stage || item.participants?.length) ? (
+    <div className="space-y-2">
+      <span className={cn("font-medium text-slate-500", layout === "panel" ? "text-xs" : "text-sm")}>Разработка</span>
+      <div className="flex flex-wrap gap-1.5">
+        {item.development_stage && (
+          <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
+            {item.development_stage}
+          </Badge>
+        )}
+        {item.participants?.map((participant) => (
+          <Badge key={participant.id} variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+            {participant.name}
+          </Badge>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
   /* ---- Relations block ---- */
   const relationsBlock = (
     <RelationsList entityType="item" entityId={item.id} />
@@ -945,6 +965,8 @@ function TaskDetailContent({
         <div className="flex-1 min-w-0 flex flex-col gap-5">
           {titleBlock}
           <Separator className="bg-slate-200" />
+          {developmentSyncBlock}
+          {developmentSyncBlock && <Separator className="bg-slate-200" />}
           {descriptionBlock}
           {subtasksBlock && <Separator className="bg-slate-200" />}
           {subtasksBlock}
@@ -972,6 +994,7 @@ function TaskDetailContent({
       {titleBlock}
       <Separator className="bg-slate-200" />
       {fieldsBlock}
+      {developmentSyncBlock}
       {descriptionBlock}
       {subtasksBlock && <Separator className="bg-slate-200" />}
       {subtasksBlock}
@@ -1040,10 +1063,12 @@ function getPanelMaxWidth() {
 
 /** Check if viewport is below the md breakpoint (768px) */
 function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 767px)").matches;
+  });
   useEffect(() => {
     const mql = window.matchMedia("(max-width: 767px)");
-    setIsMobile(mql.matches);
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mql.addEventListener("change", handler);
     return () => mql.removeEventListener("change", handler);

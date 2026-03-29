@@ -4,6 +4,8 @@ import {
   createItem, getSubtasks, getItemTags,
   createClient as dbCreateClient,
   rebindExternalEntityLinks,
+  getItemParticipants,
+  setItemParticipants,
 } from "@/lib/db";
 import { v4 as uuid } from "uuid";
 import type { StagingParsedData } from "@/types";
@@ -35,10 +37,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         status: parsed.status ?? "inbox",
         priority: parsed.priority ?? "none",
         category: parsed.category ?? "other",
+        development_stage: parsed.development_stage ?? null,
         due_date: parsed.due_date ?? null,
         position: 0,
         parent_id: parsed.parent_id ?? null,
       });
+
+      if (parsed.participants?.length) {
+        setItemParticipants(itemId, parsed.participants);
+      }
 
       // Create subtasks if any
       if (parsed.subtasks?.length) {
@@ -52,6 +59,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             status: "inbox",
             priority: "none",
             category: parsed.category ?? "other",
+            development_stage: parsed.development_stage ?? null,
             due_date: null,
             position: i,
             parent_id: itemId,
@@ -66,6 +74,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ...item,
         subtasks: getSubtasks(itemId),
         tags: getItemTags(itemId),
+        participants: getItemParticipants(itemId),
       };
       return NextResponse.json(full, { status: 201 });
     }
