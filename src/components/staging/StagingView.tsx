@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBrainStore } from "@/lib/store";
 import {
+  KaitenDevelopmentStageSelect,
+  KaitenParticipantsSelect,
+  useKaitenCatalog,
+} from "@/components/kaiten/KaitenValueControls";
+import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -90,6 +95,7 @@ export function StagingView() {
   const deleteStagingItem = useBrainStore((s) => s.deleteStagingItem);
   const fetchStagingItems = useBrainStore((s) => s.fetchStagingItems);
   const categories = useBrainStore((s) => s.categories);
+  const { catalog } = useKaitenCatalog();
 
   const [collapsedBatches, setCollapsedBatches] = useState<Set<string>>(
     new Set()
@@ -540,6 +546,8 @@ export function StagingView() {
                             key={item.id}
                             item={item}
                             categories={localizedCategories}
+                            stageOptions={catalog.development_stages}
+                            participantOptions={catalog.participants}
                             visibleColumns={visibleColumns}
                             selected={selectedIds.has(item.id)}
                             expanded={expandedIds.has(item.id)}
@@ -569,6 +577,8 @@ export function StagingView() {
 function StagingTableRow({
   item,
   categories,
+  stageOptions,
+  participantOptions,
   visibleColumns,
   selected,
   expanded,
@@ -581,6 +591,19 @@ function StagingTableRow({
 }: {
   item: StagingItemParsed;
   categories: Array<{ value: string; label: string }>;
+  stageOptions: Array<{
+    value: string;
+    label: string;
+    column_id: number | null;
+    lane_id: number | null;
+    column_title: string | null;
+    lane_title: string | null;
+  }>;
+  participantOptions: Array<{
+    provider?: "kaiten" | null;
+    remote_id?: string | null;
+    name: string;
+  }>;
   visibleColumns: StagingColumnId[];
   selected: boolean;
   expanded: boolean;
@@ -599,19 +622,10 @@ function StagingTableRow({
 }) {
   const [title, setTitle] = useState(item.title);
   const [description, setDescription] = useState(item.description);
-  const [developmentStage, setDevelopmentStage] = useState(
-    item.parsed_data.development_stage ?? ""
-  );
-  const [participantsValue, setParticipantsValue] = useState(
-    formatParticipants(item.parsed_data.participants)
-  );
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTitle(item.title);
     setDescription(item.description);
-    setDevelopmentStage(item.parsed_data.development_stage ?? "");
-    setParticipantsValue(formatParticipants(item.parsed_data.participants));
   }, [item]);
 
   const isItem = item.entity_type === "item";
@@ -628,31 +642,6 @@ function StagingTableRow({
       onUpdate({ description });
     }
   }, [description, item.description, onUpdate]);
-
-  const commitDevelopmentStage = useCallback(() => {
-    const normalized = developmentStage.trim();
-    if ((item.parsed_data.development_stage ?? "") !== normalized) {
-      onUpdate({
-        parsed_data: {
-          ...item.parsed_data,
-          development_stage: normalized || null,
-        },
-      });
-    }
-  }, [developmentStage, item.parsed_data, onUpdate]);
-
-  const commitParticipants = useCallback(() => {
-    const parsed = parseParticipants(participantsValue);
-    const current = formatParticipants(item.parsed_data.participants);
-    if (participantsValue.trim() !== current) {
-      onUpdate({
-        parsed_data: {
-          ...item.parsed_data,
-          participants: parsed,
-        },
-      });
-    }
-  }, [item.parsed_data, onUpdate, participantsValue]);
 
   return (
     <>
@@ -850,12 +839,17 @@ function StagingTableRow({
               return (
                 <td key={column} className="px-3 py-2">
                   {isItem ? (
-                    <Input
-                      value={developmentStage}
-                      onChange={(e) => setDevelopmentStage(e.target.value)}
-                      onBlur={commitDevelopmentStage}
-                      placeholder="Не указано"
-                      className="h-8 text-xs"
+                    <KaitenDevelopmentStageSelect
+                      value={item.parsed_data.development_stage}
+                      options={stageOptions}
+                      onChange={(value) =>
+                        onUpdate({
+                          parsed_data: {
+                            ...item.parsed_data,
+                            development_stage: value,
+                          },
+                        })
+                      }
                     />
                   ) : (
                     <EmptyCell />
@@ -867,12 +861,17 @@ function StagingTableRow({
               return (
                 <td key={column} className="px-3 py-2">
                   {isItem ? (
-                    <Input
-                      value={participantsValue}
-                      onChange={(e) => setParticipantsValue(e.target.value)}
-                      onBlur={commitParticipants}
-                      placeholder="Имена через запятую"
-                      className="h-8 text-xs"
+                    <KaitenParticipantsSelect
+                      value={item.parsed_data.participants ?? []}
+                      options={participantOptions}
+                      onChange={(participants) =>
+                        onUpdate({
+                          parsed_data: {
+                            ...item.parsed_data,
+                            participants,
+                          },
+                        })
+                      }
                     />
                   ) : (
                     <EmptyCell />
@@ -1150,18 +1149,6 @@ function truncateText(value: string, limit: number) {
 function toDateInputValue(value?: string | null) {
   if (!value) return "";
   return value.slice(0, 10);
-}
-
-function formatParticipants(participants?: StagingParsedData["participants"]) {
-  return participants?.map((participant) => participant.name).join(", ") ?? "";
-}
-
-function parseParticipants(value: string) {
-  return value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((name) => ({ name }));
 }
 
 function localizeCategoryLabel(label: string, fallbackId?: string) {

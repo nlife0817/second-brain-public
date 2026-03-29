@@ -1,4 +1,9 @@
-import type { DevelopmentParticipantInput, KaitenBoardOption, KaitenSpace } from "@/types";
+import type {
+  DevelopmentParticipantInput,
+  KaitenBoardOption,
+  KaitenSpace,
+  KaitenStageOption,
+} from "@/types";
 
 export class KaitenApiError extends Error {
   status: number;
@@ -269,6 +274,77 @@ export class KaitenClient {
       }))
       .filter((member) => member.remote_id && member.name);
   }
+
+  async getSpaceUsers(spaceId: number): Promise<DevelopmentParticipantInput[]> {
+    const parseUsers = (payload: unknown) =>
+      asArray<Record<string, unknown>>(payload)
+        .map((member) => ({
+          provider: "kaiten" as const,
+          remote_id: String(member.id ?? member.uid ?? ""),
+          name: readString(member.full_name || member.name || member.username),
+        }))
+        .filter((member) => member.remote_id && member.name);
+
+    try {
+      return parseUsers(await this.request<unknown>(`/spaces/${spaceId}/users`));
+    } catch {
+      try {
+        return parseUsers(await this.request<unknown>("/Users"));
+      } catch {
+        return parseUsers(await this.request<unknown>("/users"));
+      }
+    }
+  }
+
+  async updateCard(cardId: number, payload: Record<string, unknown>) {
+    return await this.request<Record<string, unknown>>(`/cards/${cardId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async addCardMember(cardId: number, userId: number) {
+    return await this.request<Record<string, unknown>>(`/cards/${cardId}/members`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ user_id: userId }),
+    });
+  }
+
+  async removeCardMember(cardId: number, userId: number) {
+    return await this.request<Record<string, unknown>>(`/cards/${cardId}/members/${userId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async syncCardMembers(cardId: number, members: DevelopmentParticipantInput[]) {
+    const current = await this.getCardMembers(cardId);
+    const currentIds = new Set(
+      current.map((member) => Number(member.remote_id)).filter(Number.isFinite)
+    );
+    const targetIds = new Set(
+      members
+        .map((member) => Number(member.remote_id))
+        .filter(Number.isFinite)
+    );
+
+    for (const userId of currentIds) {
+      if (!targetIds.has(userId)) {
+        await this.removeCardMember(cardId, userId);
+      }
+    }
+
+    for (const userId of targetIds) {
+      if (!currentIds.has(userId)) {
+        await this.addCardMember(cardId, userId);
+      }
+    }
+  }
 }
 
 export function createKaitenClient(options: KaitenClientOptions) {
@@ -330,4 +406,37 @@ export function extractCardTags(card: Record<string, unknown>): string[] {
   return asArray<Record<string, unknown>>(card.tags)
     .map((tag) => readString(tag.title || tag.name))
     .filter(Boolean);
+}
+
+export function buildBoardStageOptions(board: KaitenBoardOption): KaitenStageOption[] {
+  const result: KaitenStageOption[] = [];
+
+  if (board.lanes.length === 0) {
+    for (const column of board.columns) {
+      result.push({
+        value: column.title,
+        label: column.title,
+        column_id: Number(column.id),
+        lane_id: null,
+        column_title: column.title,
+        lane_title: null,
+      });
+    }
+    return result;
+  }
+
+  for (const column of board.columns) {
+    for (const lane of board.lanes) {
+      result.push({
+        value: `${column.title} / ${lane.title}`,
+        label: `${column.title} / ${lane.title}`,
+        column_id: Number(column.id),
+        lane_id: Number(lane.id),
+        column_title: column.title,
+        lane_title: lane.title,
+      });
+    }
+  }
+
+  return result;
 }

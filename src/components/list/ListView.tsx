@@ -11,6 +11,12 @@ import {
 import { createPortal } from "react-dom";
 import { useFilteredItems, useBrainStore, useCategoryConfig } from "@/lib/store";
 import {
+  KaitenDevelopmentStageSelect,
+  KaitenParticipantsSelect,
+  useKaitenCatalog,
+} from "@/components/kaiten/KaitenValueControls";
+import {
+  DevelopmentParticipantInput,
   STATUS_CONFIG,
   PRIORITY_CONFIG,
   TYPE_CONFIG,
@@ -20,6 +26,7 @@ import {
   ItemCategory,
   ItemType,
   Item,
+  KaitenStageOption,
   ListGroupByField,
   ListGroupByConfig,
 } from "@/types";
@@ -873,72 +880,6 @@ function InlineDateCell({
   );
 }
 
-function InlineTextCell({
-  value,
-  onCommit,
-  onCancel,
-  placeholder,
-}: {
-  value: string;
-  onCommit: (value: string) => void;
-  onCancel: () => void;
-  placeholder?: string;
-}) {
-  const [draft, setDraft] = useState(value);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    setDraft(value);
-  }, [value]);
-
-  useEffect(() => {
-    const input = inputRef.current;
-    if (!input) return;
-    input.focus();
-    input.select();
-  }, []);
-
-  const commit = useCallback(() => {
-    onCommit(draft);
-  }, [draft, onCommit]);
-
-  return (
-    <input
-      ref={inputRef}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit();
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-      }}
-      placeholder={placeholder}
-      className="h-6 w-full rounded-md border border-slate-200 bg-white px-1.5 text-[11px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
-    />
-  );
-}
-
-function formatParticipantsValue(
-  participants?: Array<{ name: string }>
-): string {
-  return participants?.map((participant) => participant.name).join(", ") ?? "";
-}
-
-function parseParticipantsValue(value: string) {
-  return value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((name) => ({ name }));
-}
-
 /* -------------------------------------------------------------------------- */
 /*  Standalone select dropdown for inline creation row (portal-based)         */
 /* -------------------------------------------------------------------------- */
@@ -1097,6 +1038,7 @@ const NEW_ITEM_DEFAULTS = {
 
 export function ListView() {
   const items = useFilteredItems();
+  const { catalog } = useKaitenCatalog();
   const createItem = useBrainStore((s) => s.createItem);
   const openDetail = useBrainStore((s) => s.openDetail);
   const editingItemId = useBrainStore((s) => s.editingItemId);
@@ -1947,6 +1889,8 @@ export function ListView() {
           priorityOptions={priorityOptions}
           categoryOptions={categoryOptions}
           typeOptions={typeOptions}
+          stageOptions={catalog.development_stages}
+          participantOptions={catalog.participants}
         />
       );
     });
@@ -2381,6 +2325,8 @@ function ItemRowGroup({
   priorityOptions,
   categoryOptions,
   typeOptions,
+  stageOptions,
+  participantOptions,
 }: {
   row: FlatRow;
   selected: boolean;
@@ -2422,6 +2368,8 @@ function ItemRowGroup({
   priorityOptions: { key: ItemPriority; label: string }[];
   categoryOptions: { key: ItemCategory; label: string }[];
   typeOptions: { key: ItemType; label: string }[];
+  stageOptions: KaitenStageOption[];
+  participantOptions: DevelopmentParticipantInput[];
 }) {
   const catConfig = useCategoryConfig();
   const colCount = visibleColumns.length + 4; // drag + expand + checkbox + settings
@@ -2443,6 +2391,8 @@ function ItemRowGroup({
         priorityOptions={priorityOptions}
         categoryOptions={categoryOptions}
         typeOptions={typeOptions}
+        stageOptions={stageOptions}
+        participantOptions={participantOptions}
       />
 
       {/* "Add subtask" row after last subtask or after expanded empty parent */}
@@ -2735,6 +2685,8 @@ function ItemRow({
   priorityOptions,
   categoryOptions,
   typeOptions,
+  stageOptions,
+  participantOptions,
 }: {
   row: FlatRow;
   selected: boolean;
@@ -2750,6 +2702,8 @@ function ItemRow({
   priorityOptions: { key: ItemPriority; label: string }[];
   categoryOptions: { key: ItemCategory; label: string }[];
   typeOptions: { key: ItemType; label: string }[];
+  stageOptions: KaitenStageOption[];
+  participantOptions: DevelopmentParticipantInput[];
 }) {
   const { item, isSubtask, totalSubtasks, doneSubtasks } = row;
   const allItems = useBrainStore((s) => s.items);
@@ -2799,26 +2753,6 @@ function ItemRow({
 
   const commitFieldEdit = useCallback(
     async (field: string, value: unknown) => {
-      if (field === "development_stage") {
-        const normalized =
-          typeof value === "string" ? value.trim() || null : null;
-        await updateItem(item.id, { development_stage: normalized });
-        setEditingItem(null);
-        return;
-      }
-
-      if (field === "participants") {
-        const participants =
-          typeof value === "string"
-            ? parseParticipantsValue(value)
-            : Array.isArray(value)
-              ? value
-              : [];
-        await updateItem(item.id, { participants });
-        setEditingItem(null);
-        return;
-      }
-
       await updateItem(item.id, { [field]: value });
       setEditingItem(null);
     },
@@ -3012,23 +2946,15 @@ function ItemRow({
             ref={(el) => {
               cellRefs.current["development_stage"] = el;
             }}
-            className="px-3 py-1.5 cursor-pointer"
-            onClick={(e) => handleCellClick("development_stage", e)}
+            className="px-3 py-1.5"
           >
-            {editingField === "development_stage" ? (
-              <InlineTextCell
-                value={item.development_stage ?? ""}
-                onCommit={(value) => commitFieldEdit("development_stage", value)}
-                onCancel={cancelEdit}
-                placeholder="Не указан"
-              />
-            ) : item.development_stage ? (
-              <Badge variant="outline" className="text-[10px] border-sky-200 bg-sky-50 text-sky-700">
-                {item.development_stage}
-              </Badge>
-            ) : (
-              <span className="text-xs text-slate-300">--</span>
-            )}
+            <KaitenDevelopmentStageSelect
+              value={item.development_stage}
+              options={stageOptions}
+              onChange={(value) =>
+                void updateItem(item.id, { development_stage: value })
+              }
+            />
           </td>
         );
       }
@@ -3041,36 +2967,15 @@ function ItemRow({
             ref={(el) => {
               cellRefs.current["participants"] = el;
             }}
-            className="px-3 py-1.5 cursor-pointer"
-            onClick={(e) => handleCellClick("participants", e)}
+            className="px-3 py-1.5"
           >
-            {editingField === "participants" ? (
-              <InlineTextCell
-                value={formatParticipantsValue(participants)}
-                onCommit={(value) => commitFieldEdit("participants", value)}
-                onCancel={cancelEdit}
-                placeholder="Имена через запятую"
-              />
-            ) : participants.length > 0 ? (
-              <div className="flex flex-wrap gap-1">
-                {participants.slice(0, 3).map((participant: { id: string; name: string }) => (
-                  <Badge
-                    key={participant.id}
-                    variant="outline"
-                    className="text-[10px] border-emerald-200 bg-emerald-50 text-emerald-700"
-                  >
-                    {participant.name}
-                  </Badge>
-                ))}
-                {participants.length > 3 && (
-                  <Badge variant="outline" className="text-[10px] border-slate-200 text-slate-500">
-                    +{participants.length - 3}
-                  </Badge>
-                )}
-              </div>
-            ) : (
-              <span className="text-xs text-slate-300">--</span>
-            )}
+            <KaitenParticipantsSelect
+              value={participants}
+              options={participantOptions}
+              onChange={(nextParticipants) =>
+                void updateItem(item.id, { participants: nextParticipants })
+              }
+            />
           </td>
         );
       }

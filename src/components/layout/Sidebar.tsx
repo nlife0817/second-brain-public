@@ -1,16 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Brain,
   LayoutGrid,
   List,
-  Tag,
   ChevronLeft,
   ClipboardList,
   Contact,
   Settings,
   ClipboardCheck,
+  RefreshCw,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -53,12 +53,15 @@ export function Sidebar() {
   const activeCategory = useBrainStore((s) => s.activeCategory);
   const setActiveCategory = useBrainStore((s) => s.setActiveCategory);
   const items = useBrainStore((s) => s.items);
-  const tags = useBrainStore((s) => s.tags);
   const storeCategories = useBrainStore((s) => s.categories);
   const viewMode = useBrainStore((s) => s.viewMode);
   const setViewMode = useBrainStore((s) => s.setViewMode);
   const clients = useBrainStore((s) => s.clients);
   const stagingItems = useBrainStore((s) => s.stagingItems);
+  const fetchItems = useBrainStore((s) => s.fetchItems);
+  const fetchStagingItems = useBrainStore((s) => s.fetchStagingItems);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
 
   const categoryEntries = useMemo(() => {
     const entries: { key: string; label: string; icon: LucideIcon }[] = [
@@ -80,6 +83,37 @@ export function Sidebar() {
     }
     return map;
   }, [items]);
+
+  const handleServicesSync = useCallback(async () => {
+    setSyncLoading(true);
+    setSyncFeedback(null);
+
+    try {
+      const response = await fetch("/api/kaiten/sync", { method: "POST" });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Не удалось запустить синхронизацию");
+      }
+
+      await Promise.all([fetchItems(), fetchStagingItems()]);
+      const changedCount =
+        Number(payload.exported ?? 0) + Number(payload.remote_overrides ?? 0);
+      setSyncFeedback(
+        changedCount > 0
+          ? `Изменений: ${changedCount}`
+          : "Изменений не найдено"
+      );
+    } catch (error) {
+      setSyncFeedback(
+        error instanceof Error
+          ? error.message
+          : "Синхронизация завершилась ошибкой"
+      );
+    } finally {
+      setSyncLoading(false);
+    }
+  }, [fetchItems, fetchStagingItems]);
 
   return (
     <TooltipProvider>
@@ -307,37 +341,43 @@ export function Sidebar() {
           </nav>}
 
           {/* ---------------------------------------------------------------- */}
-          {/*  Tags section (tasks only)                                        */}
+          {/*  Services sync (tasks only)                                       */}
           {/* ---------------------------------------------------------------- */}
-          {appSection === "tasks" && !collapsed && tags.length > 0 && (
+          {appSection === "tasks" && !collapsed && (
             <>
               <Separator className="mx-3 bg-slate-200" />
 
               <div className="px-2 py-3">
                 <div className="mb-2 flex items-center gap-2 px-2">
-                  <Tag className="size-3.5 text-slate-400" />
+                  <RefreshCw className="size-3.5 text-slate-400" />
                   <span className="text-[11px] font-medium uppercase tracking-widest text-slate-400">
-                    Теги
+                    Сервисы
                   </span>
                 </div>
 
-                <div className="flex flex-wrap gap-1.5 px-1">
-                  {tags.map((tag) => (
+                <div className="space-y-2 px-1">
+                  <Button
+                    variant="outline"
+                    className="h-9 w-full justify-start gap-2 rounded-xl border-slate-200 bg-white text-left text-xs text-slate-700"
+                    onClick={() => void handleServicesSync()}
+                    disabled={syncLoading}
+                  >
+                    <RefreshCw
+                      className={cn("size-3.5", syncLoading && "animate-spin")}
+                    />
+                    Синхронизация с сервисами
+                  </Button>
+                  <p className="px-1 text-[11px] leading-5 text-slate-500">
+                    Ручной запуск двусторонней синхронизации. При конфликте основным остается Kaiten.
+                  </p>
+                  {syncFeedback && (
                     <Badge
-                      key={tag.id}
                       variant="outline"
-                      className={cn(
-                        "cursor-default border-slate-200 bg-white text-[11px] text-slate-600",
-                      )}
-                      style={{
-                        borderColor: `${tag.color}40`,
-                        color: tag.color,
-                        backgroundColor: `${tag.color}10`,
-                      }}
+                      className="ml-1 border-sky-200 bg-sky-50 text-[11px] text-sky-700"
                     >
-                      {tag.name}
+                      {syncFeedback}
                     </Badge>
-                  ))}
+                  )}
                 </div>
               </div>
             </>

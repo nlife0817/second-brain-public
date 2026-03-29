@@ -1845,7 +1845,7 @@ export function upsertSyncProfile(provider: IntegrationProvider, input: SyncProf
       available_development_stages, available_participants, last_catalog_synced_at,
       created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       entity_type = excluded.entity_type,

@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+import { ensureKaitenSyncScheduler } from "@/lib/kaiten/sync";
 import "./globals.css";
 
 const inter = Inter({
@@ -41,6 +42,10 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  if (typeof window === "undefined") {
+    ensureKaitenSyncScheduler();
+  }
+
   return (
     <html
       lang="ru"

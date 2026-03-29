@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAllItems, createItem, getSubtasks, getItemParticipants, getItemTags, reorderItems, setItemParticipants } from "@/lib/db";
 import { v4 as uuid } from "uuid";
 import { CreateItemPayload, ItemWithSubtasks } from "@/types";
+import { ensureKaitenSyncScheduler } from "@/lib/kaiten/sync";
 
 export async function GET(req: NextRequest) {
+  ensureKaitenSyncScheduler();
   const showArchived = req.nextUrl.searchParams.get("archived") === "true";
   const includeChildren = req.nextUrl.searchParams.get("children") === "true";
   const items = getAllItems(showArchived, includeChildren);
@@ -20,6 +22,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    ensureKaitenSyncScheduler();
     const body: CreateItemPayload = await req.json();
 
     if (!body.title?.trim()) {
@@ -57,6 +60,7 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
+    ensureKaitenSyncScheduler();
     const body: { items: { id: string; position: number; status?: string }[] } = await req.json();
 
     if (!body.items?.length) {
