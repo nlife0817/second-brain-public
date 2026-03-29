@@ -4,7 +4,6 @@ import {
   SyncFieldMapping,
   ItemPriority,
   ItemStatus,
-  ItemCategory,
   StagingParsedData,
 } from "@/types";
 import {
@@ -34,6 +33,7 @@ import {
 } from "@/lib/kaiten/client";
 
 function mapPriority(value: string): ItemPriority {
+  if (!value.trim()) return "none";
   if (value.includes("urgent")) return "urgent";
   if (value.includes("high")) return "high";
   if (value.includes("medium")) return "medium";
@@ -41,12 +41,19 @@ function mapPriority(value: string): ItemPriority {
   return "none";
 }
 
-function mapStatus(value: string): ItemStatus {
+function mapPriorityOrNull(value: string): ItemPriority | null {
+  if (!value.trim()) return null;
+  const mapped = mapPriority(value);
+  return mapped === "none" ? null : mapped;
+}
+
+function mapStatus(value: string): ItemStatus | null {
+  if (!value.trim()) return null;
   const normalized = value.toLowerCase().replace(/\s+/g, "_");
   if (["inbox", "todo", "in_progress", "review", "done", "archived"].includes(normalized)) {
     return normalized as ItemStatus;
   }
-  return "inbox";
+  return null;
 }
 
 function applyMapping(card: Record<string, unknown>, mappings: SyncFieldMapping[]): StagingParsedData {
@@ -86,7 +93,11 @@ function applyMapping(card: Record<string, unknown>, mappings: SyncFieldMapping[
     external_lane_name: typeof card.lane_title === "string" ? card.lane_title : null,
     external_updated_at: typeof card.updated === "string" ? card.updated : typeof card.updated_at === "string" ? card.updated_at : null,
     remote_payload: card,
-    category: "other",
+    type: null,
+    status: null,
+    priority: null,
+    category: null,
+    due_date: null,
   };
 
   for (const mapping of resolvedMappings) {
@@ -95,7 +106,7 @@ function applyMapping(card: Record<string, unknown>, mappings: SyncFieldMapping[
         parsed.status = mapStatus(statusValue);
         break;
       case "priority":
-        parsed.priority = mapPriority(priorityValue);
+        parsed.priority = mapPriorityOrNull(priorityValue);
         break;
       case "due_date":
         parsed.due_date = dueDate;
@@ -103,19 +114,12 @@ function applyMapping(card: Record<string, unknown>, mappings: SyncFieldMapping[
       case "tags":
         parsed.tags = tags;
         break;
-      case "description":
-        parsed.type = parsed.type ?? "task";
-        break;
       default:
         break;
     }
   }
 
-  return {
-    ...parsed,
-    type: parsed.type ?? "task",
-    category: (parsed.category ?? "other") as ItemCategory,
-  };
+  return parsed;
 }
 
 export async function importKaitenProfile(profileId: string): Promise<KaitenImportResult> {
@@ -169,10 +173,15 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
         continue;
       }
 
+      const remoteNumericId = Number(remoteId);
+      const enrichedCard = Number.isFinite(remoteNumericId)
+        ? await client.getCard(remoteNumericId).catch(() => card)
+        : card;
+
       const link = getExternalEntityLinkByRemote("kaiten", "card", remoteId);
-      const parsed = applyMapping(card, mappings);
-      const title = extractCardTitle(card) || `Kaiten #${remoteId}`;
-      const description = extractCardDescription(card);
+      const parsed = applyMapping(enrichedCard, mappings);
+      const title = extractCardTitle(enrichedCard) || `Kaiten #${remoteId}`;
+      const description = extractCardDescription(enrichedCard);
 
       if (link) {
         const staging = getStagingItemById(link.local_entity_id);

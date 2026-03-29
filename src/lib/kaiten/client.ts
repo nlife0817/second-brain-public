@@ -43,6 +43,82 @@ function readObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function looksLikeHtml(value: string) {
+  return /<\/?[a-z][\s\S]*>/i.test(value);
+}
+
+function imageMarkdownToHtml(value: string) {
+  return value.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)/g, (_match, alt, src) => {
+    return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" />`;
+  });
+}
+
+function plainTextToHtml(value: string) {
+  const normalized = value.trim();
+  if (!normalized) return "";
+  return normalized
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br />")}</p>`)
+    .join("");
+}
+
+function normalizeDescriptionMarkup(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (looksLikeHtml(trimmed)) return trimmed;
+
+  const markdownWithImages = imageMarkdownToHtml(trimmed);
+  if (markdownWithImages !== trimmed) {
+    return markdownWithImages
+      .split(/\n{2,}/)
+      .map((paragraph) => {
+        if (/<img[\s\S]*>/i.test(paragraph)) return `<p>${paragraph.replace(/\n/g, "<br />")}</p>`;
+        return `<p>${escapeHtml(paragraph).replace(/\n/g, "<br />")}</p>`;
+      })
+      .join("");
+  }
+
+  return plainTextToHtml(trimmed);
+}
+
+function isImageFile(file: Record<string, unknown>) {
+  const mimeType = readString(file.mime_type).toLowerCase();
+  const url = readString(file.url || file.thumbnail_url).toLowerCase();
+  const name = readString(file.name).toLowerCase();
+  return mimeType.startsWith("image/")
+    || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(url)
+    || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(name);
+}
+
+function extractCardImageUrls(card: Record<string, unknown>) {
+  return asArray<Record<string, unknown>>(card.files)
+    .filter((file) => !file.deleted && isImageFile(file))
+    .map((file) => readString(file.url || file.thumbnail_url))
+    .filter(Boolean);
+}
+
+function appendImageGallery(descriptionHtml: string, imageUrls: string[]) {
+  if (imageUrls.length === 0) return descriptionHtml;
+
+  const missingImageUrls = imageUrls.filter((url) => !descriptionHtml.includes(url));
+  if (missingImageUrls.length === 0) return descriptionHtml;
+
+  const galleryHtml = missingImageUrls
+    .map((url) => `<p><img src="${escapeHtml(url)}" alt="" /></p>`)
+    .join("");
+
+  return `${descriptionHtml}${galleryHtml}`;
+}
+
 function collectBoardStatuses(board: Record<string, unknown>): string[] {
   const raw = [
     ...asArray<Record<string, unknown>>(board.statuses),
@@ -158,8 +234,12 @@ export class KaitenClient {
   }
 
   async getCards(boardId: number): Promise<Record<string, unknown>[]> {
-    const payload = await this.request<unknown>(`/cards?board_id=${boardId}`);
+    const payload = await this.request<unknown>(`/cards?board_id=${boardId}&additional_card_fields=description`);
     return asArray<Record<string, unknown>>(payload);
+  }
+
+  async getCard(cardId: number): Promise<Record<string, unknown>> {
+    return await this.request<Record<string, unknown>>(`/cards/${cardId}`);
   }
 }
 
@@ -192,7 +272,10 @@ export function extractCardTitle(card: Record<string, unknown>): string {
 }
 
 export function extractCardDescription(card: Record<string, unknown>): string {
-  return readString(card.description || card.text || card.details);
+  const rawDescription = readString(card.description || card.text || card.details);
+  const descriptionHtml = normalizeDescriptionMarkup(rawDescription);
+  const imageUrls = extractCardImageUrls(card);
+  return appendImageGallery(descriptionHtml, imageUrls);
 }
 
 export function extractCardDueDate(card: Record<string, unknown>): string | null {

@@ -234,16 +234,19 @@ function groupByType(items: StagingItemParsed[]): [string, React.ReactNode, Stag
     if (item.entity_type === "client") {
       key = "client";
     } else {
-      key = item.parsed_data.type || "task";
+      key = item.parsed_data.type || "__untyped__";
     }
     if (!groups[key]) groups[key] = [];
     groups[key].push(item);
   }
 
-  const order = ["task", "note", "meeting", "plan", "idea", "client"];
+  const order = ["__untyped__", "task", "note", "meeting", "plan", "idea", "client"];
   return order
     .filter((k) => groups[k]?.length)
     .map((k) => {
+      if (k === "__untyped__") {
+        return ["Без типа", <CheckSquare key="untyped" className="size-3 text-slate-300" />, groups[k]!] as [string, React.ReactNode, StagingItemParsed[]];
+      }
       if (k === "client") {
         const cfg = ENTITY_TYPE_CONFIG.client;
         return [cfg.label + "ы", <Users key="c" className={cn("size-3", cfg.color)} />, groups[k]!] as [string, React.ReactNode, StagingItemParsed[]];
@@ -300,7 +303,10 @@ function StagingCard({
               </div>
 
               {item.description && (
-                <p className="text-xs text-slate-500 line-clamp-2 mb-1.5">{item.description}</p>
+                <div
+                  className="mb-1.5 max-h-40 overflow-hidden text-xs text-slate-500 prose prose-sm max-w-none [&_img]:my-2 [&_img]:max-h-28 [&_img]:rounded-md [&_img]:border [&_img]:border-slate-200"
+                  dangerouslySetInnerHTML={{ __html: item.description }}
+                />
               )}
 
               {/* Meta badges */}
@@ -434,18 +440,18 @@ function StagingEditForm({
   const [title, setTitle] = useState(item.title);
   const [description, setDescription] = useState(item.description);
   const [entityType, setEntityType] = useState<StagingEntityType>(item.entity_type as StagingEntityType);
-  const [type, setType] = useState<ItemType>(item.parsed_data.type || "task");
-  const [status, setStatus] = useState<ItemStatus>(item.parsed_data.status || "inbox");
-  const [priority, setPriority] = useState<ItemPriority>(item.parsed_data.priority || "none");
-  const [category, setCategory] = useState<ItemCategory>(item.parsed_data.category || "other");
+  const [type, setType] = useState<string>(item.parsed_data.type ?? "__none__");
+  const [status, setStatus] = useState<string>(item.parsed_data.status ?? "__none__");
+  const [priority, setPriority] = useState<string>(item.parsed_data.priority ?? "__none__");
+  const [category, setCategory] = useState<string>(item.parsed_data.category ?? "__none__");
 
   const handleSave = () => {
     const parsed_data: StagingParsedData = {
       ...item.parsed_data,
-      type,
-      status,
-      priority,
-      category,
+      type: type === "__none__" ? null : (type as ItemType),
+      status: status === "__none__" ? null : (status as ItemStatus),
+      priority: priority === "__none__" ? null : (priority as ItemPriority),
+      category: category === "__none__" ? null : (category as ItemCategory),
     };
     onUpdate({ title, description, entity_type: entityType, parsed_data });
     onClose();
@@ -478,11 +484,12 @@ function StagingEditForm({
         </Select>
 
         {entityType === "item" && (
-          <Select value={type} onValueChange={(v) => setType(v as ItemType)}>
+          <Select value={type} onValueChange={(v) => setType(v ?? "__none__")}>
             <SelectTrigger className="h-7 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="__none__">Не выбрано</SelectItem>
               {Object.entries(TYPE_CONFIG).map(([k, v]) => (
                 <SelectItem key={k} value={k}>{v.label}</SelectItem>
               ))}
@@ -491,11 +498,12 @@ function StagingEditForm({
         )}
 
         {entityType === "item" && (
-          <Select value={priority} onValueChange={(v) => setPriority(v as ItemPriority)}>
+          <Select value={priority} onValueChange={(v) => setPriority(v ?? "__none__")}>
             <SelectTrigger className="h-7 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="__none__">Не выбрано</SelectItem>
               {Object.entries(PRIORITY_CONFIG).map(([k, v]) => (
                 <SelectItem key={k} value={k}>{v.icon} {v.label}</SelectItem>
               ))}
@@ -504,11 +512,12 @@ function StagingEditForm({
         )}
 
         {entityType === "item" && (
-          <Select value={category} onValueChange={(v) => setCategory(v as ItemCategory)}>
+          <Select value={category} onValueChange={(v) => setCategory(v ?? "__none__")}>
             <SelectTrigger className="h-7 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="__none__">Не выбрано</SelectItem>
               {Object.entries(CATEGORY_CONFIG).map(([k, v]) => (
                 <SelectItem key={k} value={k}>{v.label}</SelectItem>
               ))}
@@ -517,11 +526,12 @@ function StagingEditForm({
         )}
 
         {entityType === "item" && (
-          <Select value={status} onValueChange={(v) => setStatus(v as ItemStatus)}>
+          <Select value={status} onValueChange={(v) => setStatus(v ?? "__none__")}>
             <SelectTrigger className="h-7 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="__none__">Не выбрано</SelectItem>
               {Object.entries(STATUS_CONFIG).map(([k, v]) => (
                 <SelectItem key={k} value={k}>{v.label}</SelectItem>
               ))}

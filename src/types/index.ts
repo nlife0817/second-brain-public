@@ -364,10 +364,10 @@ export interface StagingItemParsed extends Omit<StagingItem, "parsed_data"> {
 
 export interface StagingParsedData {
   // Item fields
-  type?: ItemType;
-  status?: ItemStatus;
-  priority?: ItemPriority;
-  category?: ItemCategory;
+  type?: ItemType | null;
+  status?: ItemStatus | null;
+  priority?: ItemPriority | null;
+  category?: ItemCategory | null;
   due_date?: string | null;
   tags?: string[];
   parent_id?: string | null;
