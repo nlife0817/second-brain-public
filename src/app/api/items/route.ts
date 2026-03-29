@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAllItems, createItem, getSubtasks, getItemParticipants, getItemTags, reorderItems, setItemParticipants } from "@/lib/db";
 import { v4 as uuid } from "uuid";
 import { CreateItemPayload, ItemWithSubtasks } from "@/types";
-import { ensureKaitenSyncScheduler } from "@/lib/kaiten/sync";
+import { ensureKaitenSyncScheduler, queueKaitenItemSync } from "@/lib/kaiten/sync";
 
 export async function GET(req: NextRequest) {
   ensureKaitenSyncScheduler();
@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
     if (body.participants?.length) {
       setItemParticipants(item.id, body.participants);
     }
+    queueKaitenItemSync(item.id);
     return NextResponse.json({
       ...item,
       subtasks: getSubtasks(item.id),

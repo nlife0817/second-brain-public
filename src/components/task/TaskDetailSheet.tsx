@@ -8,6 +8,7 @@ import {
   ItemPriority,
   ItemCategory,
   ItemType,
+  DevelopmentParticipantInput,
   STATUS_CONFIG,
   PRIORITY_CONFIG,
   TYPE_CONFIG,
@@ -15,6 +16,11 @@ import {
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import {
+  KaitenDevelopmentStageSelect,
+  KaitenParticipantsSelect,
+  useKaitenCatalog,
+} from "@/components/kaiten/KaitenValueControls";
 
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -38,7 +44,6 @@ import {
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Separator } from "@/components/ui/separator";
-import { Badge } from "@/components/ui/badge";
 import { SubtaskList } from "./SubtaskList";
 import { RelationsList } from "@/components/relations/RelationsList";
 import { CommentsList } from "@/components/comments/CommentsList";
@@ -752,6 +757,27 @@ function useTaskDetailLogic(item: ItemWithSubtasks | null) {
     [item, updateItem]
   );
 
+  const handleDevelopmentStageChange = useCallback(
+    (value: string | null) => {
+      if (item) updateItem(item.id, { development_stage: value });
+    },
+    [item, updateItem]
+  );
+
+  const handleParticipantsChange = useCallback(
+    (participants: DevelopmentParticipantInput[]) => {
+      if (!item) return;
+      updateItem(item.id, {
+        participants: participants.map((participant) => ({
+          provider: participant.provider ?? null,
+          remote_id: participant.remote_id ?? null,
+          name: participant.name,
+        })),
+      });
+    },
+    [item, updateItem]
+  );
+
   const handleDateChange = useCallback(
     (date: Date | undefined) => {
       if (item) {
@@ -794,6 +820,8 @@ function useTaskDetailLogic(item: ItemWithSubtasks | null) {
     handlePriorityChange,
     handleCategoryChange,
     handleTypeChange,
+    handleDevelopmentStageChange,
+    handleParticipantsChange,
     handleDateChange,
     handleClearDate,
     handleDelete,
@@ -811,6 +839,7 @@ function TaskDetailContent({
   item: ItemWithSubtasks;
   layout: "modal" | "panel";
 }) {
+  const { catalog, loading: kaitenCatalogLoading } = useKaitenCatalog();
   const {
     title,
     setTitle,
@@ -827,6 +856,8 @@ function TaskDetailContent({
     handlePriorityChange,
     handleCategoryChange,
     handleTypeChange,
+    handleDevelopmentStageChange,
+    handleParticipantsChange,
     handleDateChange,
     handleClearDate,
     handleDelete,
@@ -902,6 +933,53 @@ function TaskDetailContent({
     />
   );
 
+  const developmentFieldsBlock = item.category === "development" ? (
+    <div className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+      <div className="space-y-1">
+        <span
+          className={cn(
+            "font-medium text-slate-500",
+            layout === "panel" ? "text-xs" : "text-sm"
+          )}
+        >
+          Разработка
+        </span>
+        <p className="text-xs text-slate-500">
+          Значения этапа и участников будут использованы при синхронизации с
+          Kaiten.
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <span className="text-xs font-medium text-slate-600">
+          Этап разработки
+        </span>
+        <KaitenDevelopmentStageSelect
+          value={item.development_stage}
+          options={catalog.development_stages}
+          onChange={handleDevelopmentStageChange}
+          className="bg-white"
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <span className="text-xs font-medium text-slate-600">Участники</span>
+        <KaitenParticipantsSelect
+          value={item.participants ?? []}
+          options={catalog.participants}
+          onChange={handleParticipantsChange}
+          buttonClassName="bg-white"
+        />
+      </div>
+
+      {kaitenCatalogLoading && (
+        <div className="text-xs text-slate-500">
+          Загружается каталог Kaiten для этапов и участников.
+        </div>
+      )}
+    </div>
+  ) : null;
+
   /* ---- Description block ---- */
   const descriptionBlock = (
     <div className="space-y-2">
@@ -917,24 +995,6 @@ function TaskDetailContent({
   const subtasksBlock = isSubtask ? null : (
     <SubtaskList parentId={item.id} subtasks={item.subtasks || []} />
   );
-
-  const developmentSyncBlock = item.category === "development" && (item.development_stage || item.participants?.length) ? (
-    <div className="space-y-2">
-      <span className={cn("font-medium text-slate-500", layout === "panel" ? "text-xs" : "text-sm")}>Разработка</span>
-      <div className="flex flex-wrap gap-1.5">
-        {item.development_stage && (
-          <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
-            {item.development_stage}
-          </Badge>
-        )}
-        {item.participants?.map((participant) => (
-          <Badge key={participant.id} variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
-            {participant.name}
-          </Badge>
-        ))}
-      </div>
-    </div>
-  ) : null;
 
   /* ---- Relations block ---- */
   const relationsBlock = (
@@ -966,8 +1026,6 @@ function TaskDetailContent({
         <div className="flex-1 min-w-0 flex flex-col gap-5">
           {titleBlock}
           <Separator className="bg-slate-200" />
-          {developmentSyncBlock}
-          {developmentSyncBlock && <Separator className="bg-slate-200" />}
           {descriptionBlock}
           {subtasksBlock && <Separator className="bg-slate-200" />}
           {subtasksBlock}
@@ -980,6 +1038,7 @@ function TaskDetailContent({
         {/* RIGHT column — fields sidebar, stacks below on small screens */}
         <div className="w-full md:w-[260px] lg:w-[280px] shrink-0 flex flex-col gap-4">
           {fieldsBlock}
+          {developmentFieldsBlock}
           {tagsBlock}
           <Separator className="bg-slate-200" />
           {timestampsBlock}
@@ -996,8 +1055,8 @@ function TaskDetailContent({
       {titleBlock}
       <Separator className="bg-slate-200" />
       {fieldsBlock}
+      {developmentFieldsBlock}
       {tagsBlock}
-      {developmentSyncBlock}
       {descriptionBlock}
       {subtasksBlock && <Separator className="bg-slate-200" />}
       {subtasksBlock}

@@ -1033,6 +1033,8 @@ const NEW_ITEM_DEFAULTS = {
   priority: "none" as ItemPriority,
   category: "other" as ItemCategory,
   type: "task" as ItemType,
+  development_stage: null as string | null,
+  participants: [] as DevelopmentParticipantInput[],
   due_date: "",
 };
 
@@ -1083,6 +1085,8 @@ export function ListView() {
     priority: "none" as ItemPriority,
     category: "other" as ItemCategory,
     type: "task" as ItemType,
+    development_stage: null as string | null,
+    participants: [] as DevelopmentParticipantInput[],
     due_date: "",
   });
   const subtaskInputRef = useRef<HTMLInputElement>(null);
@@ -1481,6 +1485,12 @@ export function ListView() {
         priority: newItem.priority,
         category: newItem.category,
         type: newItem.type,
+        development_stage:
+          newItem.category === "development"
+            ? newItem.development_stage
+            : null,
+        participants:
+          newItem.category === "development" ? newItem.participants : [],
         due_date: newItem.due_date || null,
       });
     } catch {
@@ -1503,6 +1513,18 @@ export function ListView() {
         priority: "none" as ItemPriority,
         category: (parent?.category ?? "other") as ItemCategory,
         type: "task" as ItemType,
+        development_stage:
+          parent?.category === "development"
+            ? parent.development_stage ?? null
+            : null,
+        participants:
+          parent?.category === "development"
+            ? (parent.participants ?? []).map((participant) => ({
+                provider: participant.provider ?? null,
+                remote_id: participant.remote_id ?? null,
+                name: participant.name,
+              }))
+            : [],
         due_date: "",
       });
       setSubtaskDropdown(null);
@@ -1525,6 +1547,8 @@ export function ListView() {
       priority: "none" as ItemPriority,
       category: "other" as ItemCategory,
       type: "task" as ItemType,
+      development_stage: null,
+      participants: [],
       due_date: "",
     });
     setSubtaskDropdown(null);
@@ -1543,6 +1567,14 @@ export function ListView() {
         priority: newSubtask.priority,
         category: newSubtask.category,
         type: newSubtask.type,
+        development_stage:
+          newSubtask.category === "development"
+            ? newSubtask.development_stage
+            : null,
+        participants:
+          newSubtask.category === "development"
+            ? newSubtask.participants
+            : [],
         due_date: newSubtask.due_date || null,
       });
     } catch {
@@ -1555,6 +1587,8 @@ export function ListView() {
       priority: "none" as ItemPriority,
       category: "other" as ItemCategory,
       type: "task" as ItemType,
+      development_stage: null,
+      participants: [],
       due_date: "",
     });
     setSubtaskDropdown(null);
@@ -1804,7 +1838,47 @@ export function ListView() {
       }
 
       case "development_stage":
+        return (
+          <td key={colId} className="px-3 py-1.5">
+            {newItem.category === "development" ? (
+              <KaitenDevelopmentStageSelect
+                value={newItem.development_stage}
+                options={catalog.development_stages}
+                onChange={(value) =>
+                  setNewItem((prev) => ({
+                    ...prev,
+                    development_stage: value,
+                  }))
+                }
+                className="bg-white"
+              />
+            ) : (
+              <span className="text-xs text-slate-300">Для разработки</span>
+            )}
+          </td>
+        );
+
       case "participants":
+        return (
+          <td key={colId} className="px-3 py-1.5">
+            {newItem.category === "development" ? (
+              <KaitenParticipantsSelect
+                value={newItem.participants}
+                options={catalog.participants}
+                onChange={(participants) =>
+                  setNewItem((prev) => ({
+                    ...prev,
+                    participants,
+                  }))
+                }
+                buttonClassName="bg-white"
+              />
+            ) : (
+              <span className="text-xs text-slate-300">Для разработки</span>
+            )}
+          </td>
+        );
+
       case "tags":
 
       case "subtasks":
@@ -2348,6 +2422,8 @@ function ItemRowGroup({
     priority: ItemPriority;
     category: ItemCategory;
     type: ItemType;
+    development_stage: string | null;
+    participants: DevelopmentParticipantInput[];
     due_date: string;
   };
   setNewSubtask: React.Dispatch<React.SetStateAction<{
@@ -2356,6 +2432,8 @@ function ItemRowGroup({
     priority: ItemPriority;
     category: ItemCategory;
     type: ItemType;
+    development_stage: string | null;
+    participants: DevelopmentParticipantInput[];
     due_date: string;
   }>>;
   onCommitSubtaskCreate: () => void;
@@ -2626,6 +2704,52 @@ function ItemRowGroup({
                           }
                           className="h-5 rounded border border-slate-200 bg-white px-1 text-[10px] text-slate-600 outline-none focus:border-blue-400"
                         />
+                      </td>
+                    );
+
+                  case "development_stage":
+                    return (
+                      <td key={col.id} className="px-3 py-1">
+                        {newSubtask.category === "development" ? (
+                          <KaitenDevelopmentStageSelect
+                            value={newSubtask.development_stage}
+                            options={stageOptions}
+                            onChange={(value) =>
+                              setNewSubtask((prev) => ({
+                                ...prev,
+                                development_stage: value,
+                              }))
+                            }
+                            className="bg-white"
+                          />
+                        ) : (
+                          <span className="text-xs text-slate-300">
+                            Для разработки
+                          </span>
+                        )}
+                      </td>
+                    );
+
+                  case "participants":
+                    return (
+                      <td key={col.id} className="px-3 py-1">
+                        {newSubtask.category === "development" ? (
+                          <KaitenParticipantsSelect
+                            value={newSubtask.participants}
+                            options={participantOptions}
+                            onChange={(participants) =>
+                              setNewSubtask((prev) => ({
+                                ...prev,
+                                participants,
+                              }))
+                            }
+                            buttonClassName="bg-white"
+                          />
+                        ) : (
+                          <span className="text-xs text-slate-300">
+                            Для разработки
+                          </span>
+                        )}
                       </td>
                     );
 

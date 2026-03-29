@@ -264,6 +264,16 @@ export class KaitenClient {
     return await this.request<Record<string, unknown>>(`/cards/${cardId}`);
   }
 
+  async createCard(payload: Record<string, unknown>) {
+    return await this.request<Record<string, unknown>>("/cards", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  }
+
   async getCardMembers(cardId: number): Promise<DevelopmentParticipantInput[]> {
     const payload = await this.request<unknown>(`/cards/${cardId}/members`);
     return asArray<Record<string, unknown>>(payload)
@@ -304,6 +314,14 @@ export class KaitenClient {
       },
       body: JSON.stringify(payload),
     });
+  }
+
+  async archiveCard(cardId: number) {
+    return await this.updateCard(cardId, { condition: 2 });
+  }
+
+  async unarchiveCard(cardId: number) {
+    return await this.updateCard(cardId, { condition: 1 });
   }
 
   async addCardMember(cardId: number, userId: number) {

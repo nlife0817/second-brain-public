@@ -53,6 +53,7 @@ export function Sidebar() {
   const activeCategory = useBrainStore((s) => s.activeCategory);
   const setActiveCategory = useBrainStore((s) => s.setActiveCategory);
   const items = useBrainStore((s) => s.items);
+  const showArchived = useBrainStore((s) => s.filters.showArchived);
   const storeCategories = useBrainStore((s) => s.categories);
   const viewMode = useBrainStore((s) => s.viewMode);
   const setViewMode = useBrainStore((s) => s.setViewMode);
@@ -77,12 +78,13 @@ export function Sidebar() {
   const counts = useMemo(() => {
     const map: Record<string, number> = { all: 0 };
     for (const item of items) {
-      if (item.status === "archived") continue;
+      if (showArchived && item.status !== "archived") continue;
+      if (!showArchived && item.status === "archived") continue;
       map.all = (map.all ?? 0) + 1;
       map[item.category] = (map[item.category] ?? 0) + 1;
     }
     return map;
-  }, [items]);
+  }, [items, showArchived]);
 
   const handleServicesSync = useCallback(async () => {
     setSyncLoading(true);
@@ -97,12 +99,18 @@ export function Sidebar() {
       }
 
       await Promise.all([fetchItems(), fetchStagingItems()]);
-      const changedCount =
-        Number(payload.exported ?? 0) + Number(payload.remote_overrides ?? 0);
+      const exported = Number(payload.exported ?? 0);
+      const remoteOverrides = Number(payload.remote_overrides ?? 0);
+      const errors = Number(payload.errors ?? 0);
+      const processed = Number(payload.processed ?? 0);
       setSyncFeedback(
-        changedCount > 0
-          ? `Изменений: ${changedCount}`
-          : "Изменений не найдено"
+        errors > 0
+          ? `Ошибок: ${errors}, обработано: ${processed}`
+          : exported + remoteOverrides > 0
+            ? `Изменений: ${exported + remoteOverrides}`
+            : processed > 0
+              ? "Очередь обработана"
+              : "В очереди нет изменений"
       );
     } catch (error) {
       setSyncFeedback(
@@ -151,7 +159,9 @@ export function Sidebar() {
           )}
           {sections.map(({ key, label, icon: Icon }) => {
             const isActive = appSection === key;
-            const count = key === "tasks" ? items.filter((i) => i.status !== "archived").length : key === "clients" ? clients.length : key === "staging" ? stagingItems.length : 0;
+            const count = key === "tasks"
+              ? items.filter((i) => showArchived ? i.status === "archived" : i.status !== "archived").length
+              : key === "clients" ? clients.length : key === "staging" ? stagingItems.length : 0;
 
             const button = (
               <button

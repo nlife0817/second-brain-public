@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useBrainStore, useCategoryConfig } from "@/lib/store";
 import {
+  DevelopmentParticipantInput,
   ItemStatus,
   ItemPriority,
   ItemType,
@@ -40,10 +41,16 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 
 import { CalendarIcon, Plus } from "lucide-react";
+import {
+  KaitenDevelopmentStageSelect,
+  KaitenParticipantsSelect,
+  useKaitenCatalog,
+} from "@/components/kaiten/KaitenValueControls";
 
 export function CreateTaskDialog() {
   const { isCreateOpen, closeCreate, createDefaults, createItem } =
     useBrainStore();
+  const { catalog, loading: kaitenCatalogLoading } = useKaitenCatalog();
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -51,6 +58,10 @@ export function CreateTaskDialog() {
   const [status, setStatus] = useState<ItemStatus>("inbox");
   const [priority, setPriority] = useState<ItemPriority>("none");
   const [category, setCategory] = useState<string>("other");
+  const [developmentStage, setDevelopmentStage] = useState<string | null>(null);
+  const [participants, setParticipants] = useState<DevelopmentParticipantInput[]>(
+    []
+  );
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const categoryConfig = useCategoryConfig();
@@ -66,6 +77,12 @@ export function CreateTaskDialog() {
       setStatus((createDefaults.status as ItemStatus) || "inbox");
       setPriority((createDefaults.priority as ItemPriority) || "none");
       setCategory(createDefaults.category || "other");
+      setDevelopmentStage(createDefaults.development_stage ?? null);
+      setParticipants(
+        Array.isArray(createDefaults.participants)
+          ? createDefaults.participants
+          : []
+      );
       setDueDate(
         createDefaults.due_date ? new Date(createDefaults.due_date) : undefined
       );
@@ -85,7 +102,10 @@ export function CreateTaskDialog() {
         status,
         priority,
         category,
+        development_stage:
+          category === "development" ? developmentStage ?? null : null,
         due_date: dueDate ? dueDate.toISOString() : null,
+        participants: category === "development" ? participants : [],
       });
       closeCreate();
     } finally {
@@ -98,8 +118,10 @@ export function CreateTaskDialog() {
     status,
     priority,
     category,
+    developmentStage,
     dueDate,
     isSubmitting,
+    participants,
     createItem,
     closeCreate,
   ]);
@@ -126,7 +148,7 @@ export function CreateTaskDialog() {
       }}
     >
       <DialogContent
-        className="border-slate-200 bg-white sm:max-w-md"
+        className="border-slate-200 bg-white sm:max-w-lg"
         onKeyDown={handleKeyDown}
       >
         <DialogHeader>
@@ -269,6 +291,43 @@ export function CreateTaskDialog() {
               </SelectContent>
             </Select>
           </div>
+
+          {category === "development" && (
+            <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium text-slate-600">
+                    Этап разработки
+                  </div>
+                  <KaitenDevelopmentStageSelect
+                    value={developmentStage}
+                    options={catalog.development_stages}
+                    onChange={setDevelopmentStage}
+                    className="bg-white"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium text-slate-600">
+                    Участники
+                  </div>
+                  <KaitenParticipantsSelect
+                    value={participants}
+                    options={catalog.participants}
+                    onChange={setParticipants}
+                    buttonClassName="bg-white"
+                  />
+                </div>
+              </div>
+
+              {kaitenCatalogLoading && (
+                <div className="text-xs text-slate-500">
+                  Каталог Kaiten загружается. Если список пока пустой, он появится
+                  автоматически после загрузки профиля синхронизации.
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Due date */}
           <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>

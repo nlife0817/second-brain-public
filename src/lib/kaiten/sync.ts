@@ -1,10 +1,13 @@
 import type {
+  Item,
   ItemPriority,
   ItemStatus,
+  KaitenStageOption,
   SyncProfile,
 } from "@/types";
 import {
   deleteSyncOutboxJob,
+  getAllSyncProfiles,
   getDueSyncOutboxJobs,
   getExternalEntityLinkByLocal,
   getIntegrationSettings,
@@ -24,6 +27,7 @@ import {
 import {
   buildBoardStageOptions,
   createKaitenClient,
+  extractCardArchived,
   extractCardColumnId,
   extractCardDescription,
   extractCardDevelopmentStage,
@@ -61,6 +65,107 @@ function mapPriority(value: string): ItemPriority | null {
   return null;
 }
 
+function getEligibleExportProfiles(preferredProfileId?: string | null) {
+  const preferredProfile = preferredProfileId
+    ? getSyncProfileById(preferredProfileId)
+    : undefined;
+
+  const profiles = preferredProfile
+    ? [preferredProfile]
+    : getAllSyncProfiles("kaiten");
+
+  return profiles.filter(
+    (profile): profile is SyncProfile =>
+      Boolean(
+        profile
+        && profile.export_enabled
+        && profile.source_space_id
+        && profile.source_board_id
+      )
+  );
+}
+
+function findProfileStageMatch(profile: SyncProfile, value?: string | null) {
+  const normalized = value?.trim();
+  if (!normalized) return undefined;
+
+  return profile.available_development_stages.find(
+    (option) => option.value === normalized || option.label === normalized
+  );
+}
+
+function pickKaitenExportProfile(
+  item: Item,
+  preferredProfileId?: string | null
+) {
+  const profiles = getEligibleExportProfiles(preferredProfileId);
+  if (profiles.length === 0) return undefined;
+
+  const directMatch = profiles.find((profile) =>
+    Boolean(findProfileStageMatch(profile, item.development_stage))
+  );
+  if (directMatch) return directMatch;
+
+  return profiles[0];
+}
+
+function resolveStageOption(
+  profile: SyncProfile,
+  stageValue?: string | null
+): KaitenStageOption | null {
+  const directMatch = findProfileStageMatch(profile, stageValue);
+  if (directMatch) return directMatch;
+
+  const filteredMatch = profile.available_development_stages.find((option) => {
+    const columnMatches =
+      profile.source_columns.length === 0
+      || (option.column_title
+        ? profile.source_columns.includes(option.column_title)
+        : false)
+      || profile.source_columns.includes(option.label);
+    const laneMatches =
+      profile.source_lanes.length === 0
+      || option.lane_title === null
+      || profile.source_lanes.includes(option.lane_title);
+    return columnMatches && laneMatches;
+  });
+  if (filteredMatch) return filteredMatch;
+
+  return profile.available_development_stages[0] ?? null;
+}
+
+async function createRemoteCardForItem(
+  client: ReturnType<typeof createKaitenClient>,
+  profile: SyncProfile,
+  item: Item
+) {
+  if (!profile.source_board_id) {
+    throw new Error("Board is not configured for the sync profile.");
+  }
+
+  const stageOption = resolveStageOption(profile, item.development_stage);
+  const payload: Record<string, unknown> = {
+    board_id: profile.source_board_id,
+    title: item.title,
+    position: 2,
+  };
+
+  if (item.description.trim()) {
+    payload.description = item.description;
+  }
+  if (item.due_date) {
+    payload.due_date = item.due_date;
+  }
+  if (stageOption?.column_id) {
+    payload.column_id = stageOption.column_id;
+  }
+  if (stageOption?.lane_id) {
+    payload.lane_id = stageOption.lane_id;
+  }
+
+  return await client.createCard(payload);
+}
+
 export async function refreshKaitenCatalogForProfile(profileId: string): Promise<SyncProfile> {
   const settings = getIntegrationSettings("kaiten");
   const token = getIntegrationToken("kaiten");
@@ -89,8 +194,31 @@ export async function refreshKaitenCatalogForProfile(profileId: string): Promise
 }
 
 export function queueKaitenItemSync(itemId: string) {
+  const item = getItemById(itemId);
+  if (!item) return false;
+
   const link = getExternalEntityLinkByLocal("kaiten", "item", itemId);
-  if (!link || link.remote_entity_type !== "card") return false;
+  if (!link || link.remote_entity_type !== "card") {
+    if (item.category !== "development") return false;
+
+    const profile = pickKaitenExportProfile(item);
+    if (!profile) return false;
+
+    upsertSyncOutboxJob({
+      provider: "kaiten",
+      profile_id: profile.id,
+      local_entity_type: "item",
+      local_entity_id: itemId,
+      remote_entity_type: "card",
+      remote_entity_id: "",
+      next_attempt_at: addMinutes(
+        new Date(),
+        profile.sync_interval_minutes || 60
+      ),
+    });
+
+    return true;
+  }
 
   const profile =
     (link.profile_id ? getSyncProfileById(link.profile_id) : undefined)
@@ -118,13 +246,17 @@ async function applyRemoteCardToItem(cardId: number, profile: SyncProfile, local
   const card = await client.getCard(cardId);
   const participants = await client.getCardMembers(cardId).catch(() => []);
 
+  const resolvedStatus = extractCardArchived(card)
+    ? "archived" as ItemStatus
+    : mapStatus(extractCardStatus(card)) ?? "inbox";
+
   updateItem(localItemId, {
     title: extractCardTitle(card) || `Kaiten #${cardId}`,
     description: extractCardDescription(card),
     type: "task",
     category: "development",
     development_stage: extractCardDevelopmentStage(card),
-    status: mapStatus(extractCardStatus(card)) ?? "inbox",
+    status: resolvedStatus,
     priority: mapPriority(extractCardPriority(card)) ?? "none",
     due_date: extractCardDueDate(card) ?? null,
   });
@@ -153,14 +285,14 @@ async function applyRemoteCardToItem(cardId: number, profile: SyncProfile, local
   });
 }
 
-export async function runDueKaitenSync() {
+export async function runDueKaitenSync(options?: { force?: boolean }) {
   const settings = getIntegrationSettings("kaiten");
   const token = getIntegrationToken("kaiten");
   if (!settings.enabled || !token) {
     return { processed: 0, exported: 0, remote_overrides: 0, errors: 0 };
   }
 
-  const jobs = getDueSyncOutboxJobs("kaiten");
+  const jobs = getDueSyncOutboxJobs("kaiten", 50, options?.force === true);
   if (jobs.length === 0) {
     return { processed: 0, exported: 0, remote_overrides: 0, errors: 0 };
   }
@@ -180,15 +312,16 @@ export async function runDueKaitenSync() {
       );
       const item = getItemById(job.local_entity_id);
 
-      if (!link || !item || job.local_entity_type !== "item") {
+      if (!item || job.local_entity_type !== "item") {
         deleteSyncOutboxJob(job.id);
         continue;
       }
 
       const profile =
         (job.profile_id ? getSyncProfileById(job.profile_id) : undefined)
-        ?? (link.profile_id ? getSyncProfileById(link.profile_id) : undefined)
-        ?? (link.remote_board_id ? getSyncProfileByBoard("kaiten", link.remote_board_id) : undefined);
+        ?? (link?.profile_id ? getSyncProfileById(link.profile_id) : undefined)
+        ?? (link?.remote_board_id ? getSyncProfileByBoard("kaiten", link.remote_board_id) : undefined)
+        ?? pickKaitenExportProfile(item, job.profile_id);
 
       if (!profile || !profile.export_enabled) {
         deleteSyncOutboxJob(job.id);
@@ -200,6 +333,46 @@ export async function runDueKaitenSync() {
         || profile.available_participants.length === 0
           ? await refreshKaitenCatalogForProfile(profile.id).catch(() => profile)
           : profile;
+
+      if (!link) {
+        const createdCard = await createRemoteCardForItem(
+          client,
+          syncedProfile,
+          item
+        );
+        const createdCardId = Number(createdCard.id);
+        if (!Number.isFinite(createdCardId)) {
+          throw new Error("Kaiten did not return created card id.");
+        }
+
+        await client.syncCardMembers(createdCardId, getItemParticipants(item.id));
+
+        upsertExternalEntityLink({
+          provider: "kaiten",
+          profile_id: syncedProfile.id,
+          local_entity_type: "item",
+          local_entity_id: item.id,
+          remote_entity_type: "card",
+          remote_entity_id: String(createdCardId),
+          remote_space_id: syncedProfile.source_space_id,
+          remote_board_id: syncedProfile.source_board_id,
+          remote_column_id: extractCardColumnId(createdCard),
+          remote_lane_id: extractCardLaneId(createdCard),
+          last_remote_updated_at:
+            typeof createdCard.updated === "string"
+              ? createdCard.updated
+              : typeof createdCard.updated_at === "string"
+                ? createdCard.updated_at
+                : nowIso(),
+          last_local_synced_at: nowIso(),
+          sync_state: "active",
+          last_error: null,
+        });
+
+        deleteSyncOutboxJob(job.id);
+        result.exported += 1;
+        continue;
+      }
 
       const remoteCardId = Number(link.remote_entity_id);
       if (!Number.isFinite(remoteCardId)) {
@@ -245,6 +418,15 @@ export async function runDueKaitenSync() {
 
       await client.updateCard(remoteCardId, updatePayload);
       await client.syncCardMembers(remoteCardId, getItemParticipants(item.id));
+
+      // Sync archive state: local archived → archive in Kaiten, local active → unarchive in Kaiten
+      const remoteIsArchived = extractCardArchived(remoteCard);
+      if (item.status === "archived" && !remoteIsArchived) {
+        await client.archiveCard(remoteCardId);
+      } else if (item.status !== "archived" && remoteIsArchived) {
+        await client.unarchiveCard(remoteCardId);
+      }
+
       const syncedCard = await client.getCard(remoteCardId);
       const syncedUpdatedAt =
         typeof syncedCard.updated === "string"
