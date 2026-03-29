@@ -116,6 +116,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { id: "title", label: "Название", width: "min-w-[250px] flex-1", sortable: true },
   { id: "status", label: "Статус", width: "w-28", sortable: true },
   { id: "category", label: "Категория", width: "w-28", sortable: true },
+  { id: "tags", label: "Теги", width: "w-36", sortable: false },
   { id: "type", label: "Тип", width: "w-24", sortable: true },
   { id: "due_date", label: "Дедлайн", width: "w-24", sortable: true },
   { id: "subtasks", label: "Подзадачи", width: "w-20", sortable: false },
@@ -651,6 +652,111 @@ function InlineSelectCell<T extends string>({
           )}
         >
           {opt.label}
+        </button>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Inline edit cell for tags (multi-select, portal-based)                    */
+/* -------------------------------------------------------------------------- */
+
+function InlineTagsCell({
+  selectedTagIds,
+  onCommit,
+  onCancel,
+  anchorRef,
+}: {
+  selectedTagIds: string[];
+  onCommit: (tagIds: string[]) => void;
+  onCancel: () => void;
+  anchorRef?: React.RefObject<HTMLElement | null>;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const allTags = useBrainStore((s) => s.tags);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set(selectedTagIds));
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef?.current;
+    if (anchor) {
+      const rect = anchor.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPos({ top, left: rect.left });
+    }
+  }, [anchorRef]);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onCommit(Array.from(selected));
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onCancel, onCommit, selected]);
+
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+      }
+    }
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onCancel]);
+
+  if (!pos || allTags.length === 0) return null;
+
+  const openUp = pos.top > window.innerHeight / 2;
+
+  const toggle = (tagId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(tagId)) next.delete(tagId);
+      else next.add(tagId);
+      return next;
+    });
+  };
+
+  return createPortal(
+    <div
+      ref={ref}
+      style={{
+        position: "fixed",
+        top: openUp ? undefined : pos.top,
+        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
+        left: pos.left,
+        zIndex: 9999,
+      }}
+      className="min-w-[160px] max-h-[220px] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {allTags.map((tag) => (
+        <button
+          key={tag.id}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggle(tag.id);
+          }}
+          className={cn(
+            "flex w-full items-center gap-2 px-3 py-1 text-[11px] hover:bg-slate-50 text-left",
+            selected.has(tag.id) && "bg-violet-50"
+          )}
+        >
+          <span
+            className="size-2.5 rounded-full shrink-0"
+            style={{ backgroundColor: tag.color }}
+          />
+          <span className="flex-1 truncate">{tag.name}</span>
+          {selected.has(tag.id) && (
+            <Check className="size-3 text-violet-600 shrink-0" />
+          )}
         </button>
       ))}
     </div>,
@@ -2787,6 +2893,47 @@ function ItemRow({
                 onCommit={(val) => commitFieldEdit("category", val)}
                 onCancel={cancelEdit}
                 anchorRef={{ current: cellRefs.current["category"] }}
+              />
+            )}
+          </td>
+        );
+      }
+
+      case "tags": {
+        const itemTags = ("tags" in item ? item.tags : undefined) ?? [];
+        return (
+          <td
+            key={colId}
+            ref={(el) => {
+              cellRefs.current["tags"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
+            onClick={(e) => handleCellClick("tags", e)}
+          >
+            {itemTags.length > 0 ? (
+              <div className="flex flex-wrap gap-0.5">
+                {itemTags.map((tag) => (
+                  <span
+                    key={tag.id}
+                    className="inline-block rounded px-1 py-0 text-[10px] font-medium"
+                    style={{
+                      backgroundColor: `${tag.color}18`,
+                      color: tag.color,
+                    }}
+                  >
+                    {tag.name}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-xs text-slate-300">--</span>
+            )}
+            {editingField === "tags" && (
+              <InlineTagsCell
+                selectedTagIds={itemTags.map((t) => t.id)}
+                onCommit={(tagIds) => commitFieldEdit("tags", tagIds)}
+                onCancel={cancelEdit}
+                anchorRef={{ current: cellRefs.current["tags"] }}
               />
             )}
           </td>

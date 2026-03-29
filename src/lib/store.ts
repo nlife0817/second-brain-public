@@ -917,6 +917,7 @@ export function useFilteredItems() {
       if (filters.categories.length && !filters.categories.includes(item.category)) return false;
       if (filters.priorities.length && !filters.priorities.includes(item.priority)) return false;
       if (filters.types.length && !filters.types.includes(item.type)) return false;
+      if (filters.tags.length && !item.tags?.some((t) => filters.tags.includes(t.id))) return false;
     }
 
     // Search always applies

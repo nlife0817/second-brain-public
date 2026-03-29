@@ -18,7 +18,7 @@ import {
   PopoverTrigger,
   PopoverContent,
 } from "@/components/ui/popover";
-import { Pencil, Trash2, Plus, Check } from "lucide-react";
+import { Pencil, Trash2, Plus, Check, ChevronUp, ChevronDown } from "lucide-react";
 
 const PRESET_COLORS = [
   "#ef4444",
@@ -190,6 +190,18 @@ export function CategoryManager({ open, onOpenChange }: CategoryManagerProps) {
   /* ---- sorted categories ---- */
   const sorted = [...categories].sort((a, b) => a.position - b.position);
 
+  const moveCategory = useCallback(
+    async (index: number, direction: -1 | 1) => {
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= sorted.length) return;
+      const a = sorted[index];
+      const b = sorted[targetIndex];
+      await updateCategory(a.id, { position: b.position });
+      await updateCategory(b.id, { position: a.position });
+    },
+    [sorted, updateCategory]
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="border-slate-200 bg-white sm:max-w-md">
@@ -202,7 +214,7 @@ export function CategoryManager({ open, onOpenChange }: CategoryManagerProps) {
         {/* ---------- existing categories ---------- */}
         <ScrollArea className="max-h-[50vh]">
           <div className="flex flex-col gap-1">
-            {sorted.map((cat) => {
+            {sorted.map((cat, idx) => {
               const CatIcon = getIcon(cat.icon);
               const isEditing = editingId === cat.id;
 
@@ -271,6 +283,22 @@ export function CategoryManager({ open, onOpenChange }: CategoryManagerProps) {
                   </span>
                   {/* actions: visible on hover */}
                   <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      disabled={idx === 0}
+                      onClick={() => moveCategory(idx, -1)}
+                    >
+                      <ChevronUp className="size-3.5 text-slate-400" />
+                    </Button>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      disabled={idx === sorted.length - 1}
+                      onClick={() => moveCategory(idx, 1)}
+                    >
+                      <ChevronDown className="size-3.5 text-slate-400" />
+                    </Button>
                     <Button
                       size="icon-xs"
                       variant="ghost"

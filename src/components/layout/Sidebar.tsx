@@ -54,6 +54,8 @@ export function Sidebar() {
   const setActiveCategory = useBrainStore((s) => s.setActiveCategory);
   const items = useBrainStore((s) => s.items);
   const tags = useBrainStore((s) => s.tags);
+  const filters = useBrainStore((s) => s.filters);
+  const setFilters = useBrainStore((s) => s.setFilters);
   const storeCategories = useBrainStore((s) => s.categories);
   const viewMode = useBrainStore((s) => s.viewMode);
   const setViewMode = useBrainStore((s) => s.setViewMode);
@@ -322,27 +324,37 @@ export function Sidebar() {
                 </div>
 
                 <div className="flex flex-wrap gap-1.5 px-1">
-                  {tags.map((tag) => (
-                    <Badge
-                      key={tag.id}
-                      variant="outline"
-                      className={cn(
-                        "cursor-pointer border-slate-200 bg-white text-[11px] text-slate-600",
-                        "transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800"
-                      )}
-                      style={
-                        tag.color
-                          ? {
-                              borderColor: `${tag.color}40`,
-                              color: tag.color,
-                              backgroundColor: `${tag.color}10`,
-                            }
-                          : undefined
-                      }
-                    >
-                      {tag.name}
-                    </Badge>
-                  ))}
+                  {tags.map((tag) => {
+                    const isActive = filters.tags.includes(tag.id);
+                    return (
+                      <Badge
+                        key={tag.id}
+                        variant="outline"
+                        className={cn(
+                          "cursor-pointer text-[11px]",
+                          "transition-colors hover:brightness-95",
+                          isActive
+                            ? "ring-1 ring-offset-1 font-semibold"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                        )}
+                        style={{
+                          borderColor: isActive ? tag.color : `${tag.color}40`,
+                          color: tag.color,
+                          backgroundColor: isActive ? `${tag.color}20` : `${tag.color}10`,
+                          ...(isActive ? { ringColor: tag.color } : {}),
+                        }}
+                        onClick={() => {
+                          const current = filters.tags;
+                          const next = isActive
+                            ? current.filter((id) => id !== tag.id)
+                            : [...current, tag.id];
+                          setFilters({ tags: next });
+                        }}
+                      >
+                        {tag.name}
+                      </Badge>
+                    );
+                  })}
                 </div>
               </div>
             </>
