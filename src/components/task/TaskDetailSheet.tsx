@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useBrainStore, useSelectedItem } from "@/lib/store";
+import { useBrainStore, useSelectedItem, useCategoryConfig } from "@/lib/store";
 import {
   ItemWithSubtasks,
   ItemStatus,
@@ -10,7 +10,6 @@ import {
   ItemType,
   STATUS_CONFIG,
   PRIORITY_CONFIG,
-  CATEGORY_CONFIG,
   TYPE_CONFIG,
 } from "@/types";
 import { cn } from "@/lib/utils";
@@ -57,6 +56,7 @@ import {
   ListOrdered,
   X,
 } from "lucide-react";
+import { TagSelector } from "./TagSelector";
 
 /* ------------------------------------------------------------------ */
 /*  RichEditor                                                         */
@@ -228,6 +228,8 @@ function FieldSelectors({
   onDateChange: (d: Date | undefined) => void;
   onClearDate: () => void;
 }) {
+  const categoryConfig = useCategoryConfig();
+  const categories = useBrainStore((s) => s.categories);
   const dueDate = item.due_date ? new Date(item.due_date) : undefined;
   const isOverdue =
     dueDate && dueDate < new Date() && item.status !== "done";
@@ -332,17 +334,12 @@ function FieldSelectors({
             <span className={labelCls}>Категория</span>
             <Select value={item.category} onValueChange={onCategoryChange}>
               <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white text-xs")}>
-                <SelectValue>{CATEGORY_CONFIG[item.category].label}</SelectValue>
+                <SelectValue>{categoryConfig[item.category]?.label ?? item.category}</SelectValue>
               </SelectTrigger>
               <SelectContent className="border-slate-200 bg-white">
-                {(
-                  Object.entries(CATEGORY_CONFIG) as [
-                    ItemCategory,
-                    (typeof CATEGORY_CONFIG)[ItemCategory],
-                  ][]
-                ).map(([key, config]) => (
-                  <SelectItem key={key} value={key}>
-                    {config.label}
+                {categories.map((cat) => (
+                  <SelectItem key={cat.id} value={cat.id}>
+                    {cat.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -516,17 +513,12 @@ function FieldSelectors({
       <span className={labelCls}>Категория</span>
       <Select value={item.category} onValueChange={onCategoryChange}>
         <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white")}>
-          <SelectValue>{CATEGORY_CONFIG[item.category].label}</SelectValue>
+          <SelectValue>{categoryConfig[item.category]?.label ?? item.category}</SelectValue>
         </SelectTrigger>
         <SelectContent className="border-slate-200 bg-white">
-          {(
-            Object.entries(CATEGORY_CONFIG) as [
-              ItemCategory,
-              (typeof CATEGORY_CONFIG)[ItemCategory],
-            ][]
-          ).map(([key, config]) => (
-            <SelectItem key={key} value={key}>
-              {config.label}
+          {categories.map((cat) => (
+            <SelectItem key={cat.id} value={cat.id}>
+              {cat.name}
             </SelectItem>
           ))}
         </SelectContent>
@@ -844,6 +836,7 @@ function TaskDetailContent({
   const isSubtask = !!item.parent_id;
   const allItems = useBrainStore((s) => s.items);
   const openDetail = useBrainStore((s) => s.openDetail);
+  const updateItem = useBrainStore((s) => s.updateItem);
   const parentItem = isSubtask ? allItems.find((i) => i.id === item.parent_id) : null;
 
   /* ---- Title block ---- */
@@ -898,6 +891,14 @@ function TaskDetailContent({
       onTypeChange={handleTypeChange}
       onDateChange={handleDateChange}
       onClearDate={handleClearDate}
+    />
+  );
+
+  /* ---- Tags block ---- */
+  const tagsBlock = (
+    <TagSelector
+      selectedTags={item.tags ?? []}
+      onTagsChange={(tagIds) => updateItem(item.id, { tags: tagIds })}
     />
   );
 
@@ -979,6 +980,7 @@ function TaskDetailContent({
         {/* RIGHT column — fields sidebar, stacks below on small screens */}
         <div className="w-full md:w-[260px] lg:w-[280px] shrink-0 flex flex-col gap-4">
           {fieldsBlock}
+          {tagsBlock}
           <Separator className="bg-slate-200" />
           {timestampsBlock}
           <Separator className="bg-slate-200" />
@@ -994,6 +996,7 @@ function TaskDetailContent({
       {titleBlock}
       <Separator className="bg-slate-200" />
       {fieldsBlock}
+      {tagsBlock}
       {developmentSyncBlock}
       {descriptionBlock}
       {subtasksBlock && <Separator className="bg-slate-200" />}

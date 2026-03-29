@@ -31,7 +31,9 @@ import {
   Download,
   PlugZap,
   Settings2,
+  FolderKanban,
 } from "lucide-react";
+import { CategoryManager } from "./CategoryManager";
 
 const PRESET_COLORS = [
   "#6b7280", "#ef4444", "#f97316", "#eab308", "#22c55e",
@@ -227,6 +229,7 @@ export function SettingsView() {
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState("#6b7280");
   const [showNewColors, setShowNewColors] = useState(false);
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
 
   const [settings, setSettings] = useState<IntegrationSettings>(DEFAULT_SETTINGS);
   const [tokenInput, setTokenInput] = useState("");
@@ -330,10 +333,12 @@ export function SettingsView() {
 
       const activeProfile = profilesPayload[0] ?? null;
       applyProfile(activeProfile);
-      await loadFieldMappings(activeProfile?.id ?? null);
+      setLoading(false);
+
+      void loadFieldMappings(activeProfile?.id ?? null);
 
       if (settingsPayload.company_domain && settingsPayload.has_token) {
-        await loadBoards({
+        void loadBoards({
           settingsValue: settingsPayload,
           spaceIdValue: activeProfile?.source_space_id ?? null,
         });
@@ -346,7 +351,6 @@ export function SettingsView() {
         tone: "error",
         text: error instanceof Error ? error.message : "Не удалось загрузить настройки Kaiten",
       });
-    } finally {
       setLoading(false);
     }
   }, [applyProfile, fetchJson, loadBoards, loadFieldMappings]);
@@ -380,13 +384,16 @@ export function SettingsView() {
     if (!profileId) return;
     const profile = profiles.find((entry) => entry.id === profileId) ?? null;
     applyProfile(profile);
-    await loadFieldMappings(profile?.id ?? null);
+    const tasks = [loadFieldMappings(profile?.id ?? null)];
     if (profile?.source_space_id) {
-      await loadBoards({
+      tasks.push(loadBoards({
         settingsValue: settings,
         spaceIdValue: profile.source_space_id,
-      });
+      }));
+    } else {
+      setBoards([]);
     }
+    await Promise.all(tasks);
   };
 
   const persistSettingsOnly = async () => {
@@ -880,6 +887,27 @@ export function SettingsView() {
               </div>
             </div>
           </div>
+        </div>
+
+        <div>
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FolderKanban className="size-5 text-violet-500" />
+              <h2 className="text-base font-semibold text-slate-800">Категории</h2>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 border-slate-200 text-sm text-slate-600"
+              onClick={() => setCategoryManagerOpen(true)}
+            >
+              Управлять
+            </Button>
+          </div>
+          <p className="text-sm text-slate-500">
+            Настройте категории для задач: названия, цвета и иконки.
+          </p>
+          <CategoryManager open={categoryManagerOpen} onOpenChange={setCategoryManagerOpen} />
         </div>
 
         <div>

@@ -1,15 +1,13 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { useBrainStore } from "@/lib/store";
+import { useBrainStore, useCategoryConfig } from "@/lib/store";
 import {
   ItemStatus,
   ItemPriority,
-  ItemCategory,
   ItemType,
   STATUS_CONFIG,
   PRIORITY_CONFIG,
-  CATEGORY_CONFIG,
   TYPE_CONFIG,
 } from "@/types";
 import { cn } from "@/lib/utils";
@@ -52,9 +50,11 @@ export function CreateTaskDialog() {
   const [type, setType] = useState<ItemType>("task");
   const [status, setStatus] = useState<ItemStatus>("inbox");
   const [priority, setPriority] = useState<ItemPriority>("none");
-  const [category, setCategory] = useState<ItemCategory>("other");
+  const [category, setCategory] = useState<string>("other");
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const categoryConfig = useCategoryConfig();
+  const storeCategories = useBrainStore((s) => s.categories);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Reset form when dialog opens with defaults
@@ -65,7 +65,7 @@ export function CreateTaskDialog() {
       setType((createDefaults.type as ItemType) || "task");
       setStatus((createDefaults.status as ItemStatus) || "inbox");
       setPriority((createDefaults.priority as ItemPriority) || "none");
-      setCategory((createDefaults.category as ItemCategory) || "other");
+      setCategory(createDefaults.category || "other");
       setDueDate(
         createDefaults.due_date ? new Date(createDefaults.due_date) : undefined
       );
@@ -176,18 +176,13 @@ export function CreateTaskDialog() {
             >
               <SelectTrigger size="sm" className="w-auto border-slate-200 bg-white">
                 <SelectValue>
-                  {CATEGORY_CONFIG[category].label}
+                  {categoryConfig[category]?.label ?? category}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent className="border-slate-200 bg-white">
-                {(
-                  Object.entries(CATEGORY_CONFIG) as [
-                    ItemCategory,
-                    (typeof CATEGORY_CONFIG)[ItemCategory],
-                  ][]
-                ).map(([key, config]) => (
-                  <SelectItem key={key} value={key}>
-                    {config.label}
+                {storeCategories.map((cat) => (
+                  <SelectItem key={cat.id} value={cat.id}>
+                    {cat.name}
                   </SelectItem>
                 ))}
               </SelectContent>

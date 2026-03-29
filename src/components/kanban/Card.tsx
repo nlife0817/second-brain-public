@@ -6,15 +6,13 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   ItemWithSubtasks,
   ItemPriority,
-  ItemCategory,
   ItemType,
   PRIORITY_CONFIG,
-  CATEGORY_CONFIG,
   STATUS_CONFIG,
   TYPE_CONFIG,
   KANBAN_COLUMNS,
 } from "@/types";
-import { useBrainStore } from "@/lib/store";
+import { useBrainStore, useCategoryConfig } from "@/lib/store";
 import { format, isPast, isToday } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Badge } from "@/components/ui/badge";
@@ -30,8 +28,21 @@ import {
   ChevronRight,
   Link,
   MessageSquare,
+  ExternalLink,
+  Sparkles,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const sourceIcons: Record<string, LucideIcon> = {
+  kaiten: ExternalLink,
+  claude: Sparkles,
+};
+
+const sourceLabels: Record<string, string> = {
+  kaiten: "Kaiten",
+  claude: "Claude",
+};
 
 interface KanbanCardProps {
   item: ItemWithSubtasks;
@@ -59,6 +70,7 @@ interface InlineFieldEditorProps {
 function InlineFieldEditor({ item, field }: InlineFieldEditorProps) {
   const updateItem = useBrainStore((s) => s.updateItem);
   const setEditingItem = useBrainStore((s) => s.setEditingItem);
+  const categories = useBrainStore((s) => s.categories);
   const containerRef = useRef<HTMLDivElement>(null);
   const dateRef = useRef<HTMLInputElement>(null);
 
@@ -179,9 +191,9 @@ function InlineFieldEditor({ item, field }: InlineFieldEditorProps) {
   if (field === "category") {
     return renderOptionList(
       item.category,
-      (Object.keys(CATEGORY_CONFIG) as ItemCategory[]).map((c) => ({
-        key: c,
-        label: CATEGORY_CONFIG[c].label,
+      categories.map((c) => ({
+        key: c.id,
+        label: c.name,
       }))
     );
   }
@@ -428,7 +440,8 @@ export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
   };
 
   const priorityConfig = PRIORITY_CONFIG[item.priority];
-  const categoryConfig = CATEGORY_CONFIG[item.category];
+  const allCategoryConfig = useCategoryConfig();
+  const catConfig = allCategoryConfig[item.category];
   const typeConfig = TYPE_CONFIG[item.type];
 
   const completedSubtasks = item.subtasks.filter(
@@ -531,9 +544,13 @@ export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
 
         {/* Title — always shown */}
         <span
-          className="flex-1 text-[13px] font-medium leading-snug text-slate-800 line-clamp-2 cursor-pointer hover:text-violet-600 hover:underline"
+          className="flex-1 text-[13px] font-medium leading-snug text-slate-800 line-clamp-2 cursor-pointer hover:text-violet-600 hover:underline inline-flex items-center gap-1"
           onClick={handleTitleClick}
         >
+          {item.source && item.source !== "system" && (() => {
+            const SrcIcon = sourceIcons[item.source];
+            return SrcIcon ? <span title={sourceLabels[item.source]}><SrcIcon className="size-3 text-slate-300 shrink-0" /></span> : null;
+          })()}
           {item.title}
         </span>
 
@@ -568,7 +585,7 @@ export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
                     handleFieldClick(e, "category")
                   }
                 >
-                  {categoryConfig.label}
+                  {catConfig?.label ?? item.category}
                 </Badge>
               )}
             </>

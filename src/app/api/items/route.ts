@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
       status: body.status ?? "inbox",
       priority: body.priority ?? "none",
       category: body.category ?? "other",
+      source: body.source ?? "system",
       development_stage: body.development_stage ?? null,
       due_date: body.due_date ?? null,
       position: 0,

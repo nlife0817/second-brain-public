@@ -5,7 +5,8 @@ import { X, Clock, CheckCircle2, XCircle, ArrowRight, Calendar, ChevronDown } fr
 import { cn } from "@/lib/utils";
 import { useBrainStore } from "@/lib/store";
 import type { WeeklyPlanEntryWithItem, EntryResultStatus, Item } from "@/types";
-import { PRIORITY_CONFIG, RESULT_STATUS_CONFIG, STATUS_CONFIG, CATEGORY_CONFIG } from "@/types";
+import { PRIORITY_CONFIG, RESULT_STATUS_CONFIG, STATUS_CONFIG } from "@/types";
+import { useCategoryConfig } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 
 const statusIcons: Record<EntryResultStatus, typeof Clock> = {
@@ -196,6 +197,7 @@ function TriageRow({ item, onRemove }: { entry?: WeeklyPlanEntryWithItem; item: 
   const openDetail = useBrainStore((s) => s.openDetail);
   const items = useBrainStore((s) => s.items);
   const subtaskDisplayMode = useBrainStore((s) => s.subtaskDisplayMode);
+  const catCfg = useCategoryConfig();
   const [expanded, setExpanded] = useState(false);
 
   const priorityCfg = PRIORITY_CONFIG[item.priority];
@@ -245,7 +247,7 @@ function TriageRow({ item, onRemove }: { entry?: WeeklyPlanEntryWithItem; item: 
             {formatDueDate(item.due_date)}
           </span>
         )}
-        <span className="text-[10px] text-slate-400 shrink-0">{CATEGORY_CONFIG[item.category].label}</span>
+        <span className="text-[10px] text-slate-400 shrink-0">{catCfg[item.category]?.label ?? item.category}</span>
         {onRemove && (
           <Button
             variant="ghost" size="icon-xs"

@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { useBrainStore } from "@/lib/store";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useBrainStore, useCategoryConfig } from "@/lib/store";
 import {
-  CheckCircle2, XCircle, Pencil, Trash2, ChevronDown, ChevronRight,
+  CheckCircle2, XCircle, Pencil, Trash2, ChevronDown, ChevronRight, X,
   ClipboardCheck, CheckSquare, StickyNote, Calendar, Map, Lightbulb, Users,
   Link as LinkIcon,
 } from "lucide-react";
@@ -11,6 +11,7 @@ import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,7 +29,7 @@ import {
   TooltipProvider,
 } from "@/components/ui/tooltip";
 import type { StagingItemParsed, StagingParsedData, ItemType, ItemPriority, ItemCategory, ItemStatus, StagingEntityType } from "@/types";
-import { TYPE_CONFIG, PRIORITY_CONFIG, CATEGORY_CONFIG, STATUS_CONFIG } from "@/types";
+import { TYPE_CONFIG, PRIORITY_CONFIG, STATUS_CONFIG } from "@/types";
 
 const ENTITY_TYPE_CONFIG: Record<StagingEntityType, { label: string; icon: LucideIcon; color: string }> = {
   item: { label: "Элемент", icon: CheckSquare, color: "text-violet-500" },
@@ -50,9 +51,12 @@ export function StagingView() {
   const updateStagingItem = useBrainStore((s) => s.updateStagingItem);
   const deleteStagingItem = useBrainStore((s) => s.deleteStagingItem);
   const fetchStagingItems = useBrainStore((s) => s.fetchStagingItems);
+  const storeCategories = useBrainStore((s) => s.categories);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [collapsedBatches, setCollapsedBatches] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   const grouped = useMemo(() => {
     const map: Record<string, StagingItemParsed[]> = {};
@@ -65,6 +69,13 @@ export function StagingView() {
       const da = new Date(a[0]?.created_at || 0).getTime();
       const db = new Date(b[0]?.created_at || 0).getTime();
       return db - da;
+    });
+  }, [stagingItems]);
+
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const next = new Set(Array.from(current).filter((id) => stagingItems.some((item) => item.id === id)));
+      return next.size === current.size ? current : next;
     });
   }, [stagingItems]);
 
@@ -88,6 +99,87 @@ export function StagingView() {
       await rejectStagingItem(item.id);
     }
   }, [rejectStagingItem]);
+
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const handleBulkUpdate = useCallback(async (
+    field: "entity_type" | "type" | "status" | "priority" | "category",
+    value: string | null
+  ) => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+
+    setBulkLoading(true);
+    try {
+      await Promise.all(ids.map(async (id) => {
+        const item = stagingItems.find((entry) => entry.id === id);
+        if (!item) return;
+
+        if (field === "entity_type") {
+          await updateStagingItem(id, { entity_type: value as StagingEntityType });
+          return;
+        }
+
+        if (item.entity_type !== "item") return;
+
+        await updateStagingItem(id, {
+          parsed_data: {
+            ...item.parsed_data,
+            [field]: value,
+          },
+        });
+      }));
+    } finally {
+      setBulkLoading(false);
+    }
+  }, [selectedIds, stagingItems, updateStagingItem]);
+
+  const handleBulkApprove = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setBulkLoading(true);
+    try {
+      await Promise.all(ids.map((id) => approveStagingItem(id)));
+      setSelectedIds(new Set());
+    } finally {
+      setBulkLoading(false);
+    }
+  }, [approveStagingItem, selectedIds]);
+
+  const handleBulkReject = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setBulkLoading(true);
+    try {
+      await Promise.all(ids.map((id) => rejectStagingItem(id)));
+      setSelectedIds(new Set());
+    } finally {
+      setBulkLoading(false);
+    }
+  }, [rejectStagingItem, selectedIds]);
+
+  const handleBulkDelete = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setBulkLoading(true);
+    try {
+      await Promise.all(ids.map((id) => deleteStagingItem(id)));
+      setSelectedIds(new Set());
+    } finally {
+      setBulkLoading(false);
+    }
+  }, [deleteStagingItem, selectedIds]);
 
   if (stagingItems.length === 0) {
     return (
@@ -122,6 +214,78 @@ export function StagingView() {
             Обновить
           </Button>
         </div>
+
+        {selectedIds.size > 0 && (
+          <div className="border-b border-blue-200 bg-blue-50/80 px-6 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-blue-700">
+                Выбрано: {selectedIds.size}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="text-blue-500 hover:text-blue-700 hover:bg-blue-100"
+                onClick={clearSelection}
+                disabled={bulkLoading}
+              >
+                <X className="size-3.5" />
+              </Button>
+              <div className="h-4 w-px bg-blue-200" />
+              <BulkActionSelect
+                label="Сущность"
+                options={[
+                  { value: "item", label: "Элемент" },
+                  { value: "client", label: "Клиент" },
+                ]}
+                onSelect={(value) => handleBulkUpdate("entity_type", value)}
+                disabled={bulkLoading}
+              />
+              <BulkActionSelect
+                label="Тип"
+                options={Object.entries(TYPE_CONFIG).map(([value, config]) => ({ value, label: config.label }))}
+                onSelect={(value) => handleBulkUpdate("type", value)}
+                disabled={bulkLoading}
+              />
+              <BulkActionSelect
+                label="Статус"
+                options={Object.entries(STATUS_CONFIG).map(([value, config]) => ({ value, label: config.label }))}
+                onSelect={(value) => handleBulkUpdate("status", value)}
+                disabled={bulkLoading}
+              />
+              <BulkActionSelect
+                label="Приоритет"
+                options={Object.entries(PRIORITY_CONFIG).map(([value, config]) => ({ value, label: config.label }))}
+                onSelect={(value) => handleBulkUpdate("priority", value)}
+                disabled={bulkLoading}
+              />
+              <BulkActionSelect
+                label="Категория"
+                options={storeCategories.map((c) => ({ value: c.id, label: c.name }))}
+                onSelect={(value) => handleBulkUpdate("category", value)}
+                disabled={bulkLoading}
+              />
+              <div className="h-4 w-px bg-blue-200" />
+              <Button variant="outline" size="sm" onClick={handleBulkApprove} disabled={bulkLoading}>
+                <CheckCircle2 className="size-4" />
+                Одобрить
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleBulkReject} disabled={bulkLoading}>
+                <XCircle className="size-4" />
+                Отклонить
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-red-600 hover:bg-red-100 hover:text-red-700"
+                onClick={handleBulkDelete}
+                disabled={bulkLoading}
+              >
+                <Trash2 className="size-4" />
+                Удалить
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Content */}
         <ScrollArea className="flex-1">
@@ -205,6 +369,8 @@ export function StagingView() {
                             <StagingCard
                               key={item.id}
                               item={item}
+                              selected={selectedIds.has(item.id)}
+                              onToggleSelected={() => toggleSelected(item.id)}
                               isEditing={editingId === item.id}
                               onEdit={() => setEditingId(editingId === item.id ? null : item.id)}
                               onApprove={() => approveStagingItem(item.id)}
@@ -259,6 +425,8 @@ function groupByType(items: StagingItemParsed[]): [string, React.ReactNode, Stag
 
 function StagingCard({
   item,
+  selected,
+  onToggleSelected,
   isEditing,
   onEdit,
   onApprove,
@@ -267,6 +435,8 @@ function StagingCard({
   onUpdate,
 }: {
   item: StagingItemParsed;
+  selected: boolean;
+  onToggleSelected: () => void;
   isEditing: boolean;
   onEdit: () => void;
   onApprove: () => void;
@@ -274,19 +444,24 @@ function StagingCard({
   onDelete: () => void;
   onUpdate: (updates: Partial<Pick<StagingItemParsed, "title" | "description" | "entity_type"> & { parsed_data: StagingParsedData }>) => void;
 }) {
+  const catCfg = useCategoryConfig();
   const pd = item.parsed_data;
   const isItem = item.entity_type === "item";
   const typeLabel = isItem ? (TYPE_CONFIG[pd.type || "task"]?.label || "Задача") : "Клиент";
   const TypeIcon = isItem ? (TYPE_ICONS[pd.type || "task"] || CheckSquare) : Users;
   const priorityLabel = pd.priority ? PRIORITY_CONFIG[pd.priority]?.label : null;
   const priorityIcon = pd.priority ? PRIORITY_CONFIG[pd.priority]?.icon : null;
-  const categoryLabel = pd.category ? CATEGORY_CONFIG[pd.category]?.label : null;
+  const categoryLabel = pd.category ? catCfg[pd.category]?.label ?? pd.category : null;
   const statusLabel = pd.status ? STATUS_CONFIG[pd.status]?.label : null;
   const statusColor = pd.status ? STATUS_CONFIG[pd.status]?.color : "";
 
   return (
-    <div className="group/card px-4 py-3 hover:bg-slate-50/50 transition-colors">
+    <div className={cn("group/card px-4 py-3 transition-colors", selected ? "bg-blue-50/70" : "hover:bg-slate-50/50")}>
       <div className="flex items-start gap-3">
+        <div className="pt-1" onClick={(e) => e.stopPropagation()}>
+          <Checkbox checked={selected} onCheckedChange={onToggleSelected} />
+        </div>
+
         {/* Type icon */}
         <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-400">
           <TypeIcon className="size-3.5" />
@@ -444,6 +619,7 @@ function StagingEditForm({
   const [status, setStatus] = useState<string>(item.parsed_data.status ?? "__none__");
   const [priority, setPriority] = useState<string>(item.parsed_data.priority ?? "__none__");
   const [category, setCategory] = useState<string>(item.parsed_data.category ?? "__none__");
+  const editCategories = useBrainStore((s) => s.categories);
 
   const handleSave = () => {
     const parsed_data: StagingParsedData = {
@@ -518,8 +694,8 @@ function StagingEditForm({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">Не выбрано</SelectItem>
-              {Object.entries(CATEGORY_CONFIG).map(([k, v]) => (
-                <SelectItem key={k} value={k}>{v.label}</SelectItem>
+              {editCategories.map((cat) => (
+                <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -549,6 +725,44 @@ function StagingEditForm({
         </Button>
       </div>
     </div>
+  );
+}
+
+function BulkActionSelect({
+  label,
+  options,
+  onSelect,
+  disabled = false,
+}: {
+  label: string;
+  options: Array<{ value: string; label: string }>;
+  onSelect: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const [value, setValue] = useState("__placeholder__");
+
+  return (
+    <Select
+      value={value}
+      onValueChange={(next) => {
+        if (!next || next === "__placeholder__") return;
+        onSelect(next);
+        setValue("__placeholder__");
+      }}
+      disabled={disabled}
+    >
+      <SelectTrigger className="h-7 min-w-[140px] bg-white text-xs">
+        <SelectValue placeholder={label} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__placeholder__">{label}</SelectItem>
+        {options.map((option) => (
+          <SelectItem key={`${label}-${option.value}`} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

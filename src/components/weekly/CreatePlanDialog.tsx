@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { useBrainStore } from "@/lib/store";
-import type { WeeklyPlanEntryWithItem, ItemCategory } from "@/types";
-import { CATEGORY_CONFIG, PRIORITY_CONFIG } from "@/types";
+import { useBrainStore, useCategoryConfig } from "@/lib/store";
+import type { WeeklyPlanEntryWithItem } from "@/types";
+import { PRIORITY_CONFIG } from "@/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +31,7 @@ function formatDate(d: Date): string {
 export function CreatePlanDialog({ open, onOpenChange }: Props) {
   const createWeeklyPlan = useBrainStore((s) => s.createWeeklyPlan);
   const weeklyPlans = useBrainStore((s) => s.weeklyPlans);
+  const categoryConfig = useCategoryConfig();
 
   const monday = getMonday(new Date());
   const sunday = new Date(monday);
@@ -69,11 +70,11 @@ export function CreatePlanDialog({ open, onOpenChange }: Props) {
   }, [open, lastPlanId]);
 
   const transferByCategory = useMemo(() => {
-    const grouped: Partial<Record<ItemCategory, WeeklyPlanEntryWithItem[]>> = {};
+    const grouped: Record<string, WeeklyPlanEntryWithItem[]> = {};
     for (const entry of transferableEntries) {
       const cat = entry.item.category;
       if (!grouped[cat]) grouped[cat] = [];
-      grouped[cat]!.push(entry);
+      grouped[cat].push(entry);
     }
     return grouped;
   }, [transferableEntries]);
@@ -178,7 +179,7 @@ export function CreatePlanDialog({ open, onOpenChange }: Props) {
                   {Object.entries(transferByCategory).map(([cat, entries]) => (
                     <div key={cat}>
                       <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
-                        {CATEGORY_CONFIG[cat as ItemCategory].label}
+                        {categoryConfig[cat]?.label ?? cat}
                       </p>
                       {entries!.map((entry) => (
                         <label key={entry.id} className="flex items-center gap-2 py-1 px-1 hover:bg-slate-50 rounded cursor-pointer">

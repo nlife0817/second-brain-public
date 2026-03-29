@@ -1,7 +1,17 @@
 export type ItemType = "task" | "note" | "meeting" | "plan" | "idea";
 export type ItemStatus = "inbox" | "todo" | "in_progress" | "review" | "done" | "archived";
 export type ItemPriority = "urgent" | "high" | "medium" | "low" | "none";
-export type ItemCategory = "projects" | "development" | "clients" | "research" | "other";
+export type ItemCategory = string;
+
+export type ItemSource = "kaiten" | "system" | "claude";
+
+export interface Category {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  position: number;
+}
 export type ViewMode = "kanban" | "list" | "weekly";
 export type SubtaskDisplayMode = "inline" | "accordion" | "detached";
 export type ListGroupByField = "none" | "status" | "priority" | "category" | "type" | "development_stage";
@@ -47,6 +57,7 @@ export interface Item {
   status: ItemStatus;
   priority: ItemPriority;
   category: ItemCategory;
+  source: ItemSource;
   development_stage: string | null;
   due_date: string | null;
   position: number;
@@ -79,6 +90,7 @@ export interface CreateItemPayload {
   status?: ItemStatus;
   priority?: ItemPriority;
   category?: ItemCategory;
+  source?: ItemSource;
   development_stage?: string | null;
   due_date?: string | null;
   parent_id?: string | null;
@@ -93,6 +105,7 @@ export interface UpdateItemPayload {
   status?: ItemStatus;
   priority?: ItemPriority;
   category?: ItemCategory;
+  source?: ItemSource;
   development_stage?: string | null;
   due_date?: string | null;
   position?: number;
@@ -129,12 +142,10 @@ export const PRIORITY_CONFIG: Record<ItemPriority, { label: string; color: strin
   none: { label: "Без приоритета", color: "text-gray-400", icon: "⚪" },
 };
 
-export const CATEGORY_CONFIG: Record<ItemCategory, { label: string; icon: string }> = {
-  projects: { label: "Проекты", icon: "FolderKanban" },
-  development: { label: "Разработка", icon: "Code2" },
-  clients: { label: "Клиенты", icon: "Users" },
-  research: { label: "Исследования", icon: "FlaskConical" },
-  other: { label: "Другое", icon: "MoreHorizontal" },
+export const SOURCE_CONFIG: Record<ItemSource, { label: string; icon: string }> = {
+  system: { label: "Система", icon: "Monitor" },
+  kaiten: { label: "Kaiten", icon: "ExternalLink" },
+  claude: { label: "Claude", icon: "Sparkles" },
 };
 
 export const TYPE_CONFIG: Record<ItemType, { label: string; icon: string }> = {

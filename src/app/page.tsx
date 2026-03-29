@@ -18,6 +18,7 @@ import { StagingView } from "@/components/staging/StagingView";
 export default function Home() {
   const fetchItems = useBrainStore((s) => s.fetchItems);
   const fetchTags = useBrainStore((s) => s.fetchTags);
+  const fetchCategories = useBrainStore((s) => s.fetchCategories);
   const fetchClients = useBrainStore((s) => s.fetchClients);
   const fetchClientStatuses = useBrainStore((s) => s.fetchClientStatuses);
   const fetchRelationTypes = useBrainStore((s) => s.fetchRelationTypes);
@@ -32,13 +33,14 @@ export default function Home() {
   useEffect(() => {
     fetchItems();
     fetchTags();
+    fetchCategories();
     fetchClients();
     fetchClientStatuses();
     fetchRelationTypes();
     fetchEntityCounts("item");
     fetchEntityCounts("client");
     fetchStagingItems();
-  }, [fetchItems, fetchTags, fetchClients, fetchClientStatuses, fetchRelationTypes, fetchEntityCounts, fetchStagingItems]);
+  }, [fetchItems, fetchTags, fetchCategories, fetchClients, fetchClientStatuses, fetchRelationTypes, fetchEntityCounts, fetchStagingItems]);
 
   return (
     <div className="flex h-screen bg-background">

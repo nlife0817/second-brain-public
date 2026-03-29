@@ -9,11 +9,10 @@ import {
   useLayoutEffect,
 } from "react";
 import { createPortal } from "react-dom";
-import { useFilteredItems, useBrainStore } from "@/lib/store";
+import { useFilteredItems, useBrainStore, useCategoryConfig } from "@/lib/store";
 import {
   STATUS_CONFIG,
   PRIORITY_CONFIG,
-  CATEGORY_CONFIG,
   TYPE_CONFIG,
   ItemWithSubtasks,
   ItemStatus,
@@ -51,8 +50,16 @@ import {
   Link,
   MessageSquare,
   ChevronsUpDown,
+  ExternalLink as ExternalLinkIcon,
+  Sparkles as SparklesIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+function SourceIcon({ source }: { source: string }) {
+  if (source === "kaiten") return <span title="Kaiten"><ExternalLinkIcon className="size-3 text-slate-300 shrink-0 mr-0.5" /></span>;
+  if (source === "claude") return <span title="Claude"><SparklesIcon className="size-3 text-slate-300 shrink-0 mr-0.5" /></span>;
+  return null;
+}
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -224,11 +231,11 @@ function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField): string {
   }
 }
 
-function getGroupLabel(field: ListGroupByField, key: string): string {
+function getGroupLabel(field: ListGroupByField, key: string, categoryConfig: Record<string, { label: string; icon: string; color: string }>): string {
   switch (field) {
     case "status": return STATUS_CONFIG[key as ItemStatus]?.label ?? key;
     case "priority": return PRIORITY_CONFIG[key as ItemPriority]?.label ?? key;
-    case "category": return CATEGORY_CONFIG[key as ItemCategory]?.label ?? key;
+    case "category": return categoryConfig[key]?.label ?? key;
     case "type": return TYPE_CONFIG[key as ItemType]?.label ?? key;
     case "development_stage": return key === "__none__" ? "Не указано" : key;
     default: return key;
@@ -256,7 +263,8 @@ interface ItemGroup {
 
 function groupItems(
   items: ItemWithSubtasks[],
-  field: ListGroupByField
+  field: ListGroupByField,
+  categoryConfig: Record<string, { label: string; icon: string; color: string }>
 ): ItemGroup[] {
   if (field === "none") return [];
 
@@ -271,7 +279,7 @@ function groupItems(
   for (const [key, groupItems] of map) {
     groups.push({
       key,
-      label: getGroupLabel(field, key),
+      label: getGroupLabel(field, key, categoryConfig),
       icon: getGroupIcon(field, key),
       items: groupItems,
     });
@@ -921,6 +929,8 @@ export function ListView() {
   const listGroupBy = useBrainStore((s) => s.listGroupBy);
   const setListGroupBy = useBrainStore((s) => s.setListGroupBy);
   const fetchItems = useBrainStore((s) => s.fetchItems);
+  const categories = useBrainStore((s) => s.categories);
+  const categoryConfig = useCategoryConfig();
 
   const [sort, setSort] = useState<SortState>({
     column: "created_at",
@@ -1010,8 +1020,8 @@ export function ListView() {
             (PRIORITY_WEIGHT[b.priority] ?? 99);
           break;
         case "category":
-          cmp = (CATEGORY_CONFIG[a.category]?.label ?? "").localeCompare(
-            CATEGORY_CONFIG[b.category]?.label ?? "",
+          cmp = (categoryConfig[a.category]?.label ?? "").localeCompare(
+            categoryConfig[b.category]?.label ?? "",
             "ru"
           );
           break;
@@ -1039,13 +1049,13 @@ export function ListView() {
     });
 
     return sorted;
-  }, [items, sort, manualOrder]);
+  }, [items, sort, manualOrder, categoryConfig]);
 
   /* ----- grouping ---------------------------------------------------------- */
 
   const groups = useMemo(
-    () => groupItems(sortedItems, listGroupBy[0]),
-    [sortedItems, listGroupBy]
+    () => groupItems(sortedItems, listGroupBy[0], categoryConfig),
+    [sortedItems, listGroupBy, categoryConfig]
   );
 
   const isGrouped = listGroupBy[0] !== "none" && groups.length > 0;
@@ -1056,13 +1066,13 @@ export function ListView() {
     for (const g of groups) {
       keys.push(g.key);
       if (hasLevel2) {
-        for (const sub of groupItems(g.items, listGroupBy[1])) {
+        for (const sub of groupItems(g.items, listGroupBy[1], categoryConfig)) {
           keys.push(`${g.key}::${sub.key}`);
         }
       }
     }
     return keys;
-  }, [groups, hasLevel2, listGroupBy]);
+  }, [groups, hasLevel2, listGroupBy, categoryConfig]);
 
   const allGroupsCollapsed = isGrouped && allGroupKeys.length > 0 && allGroupKeys.every((k) => collapsedGroups.has(k));
 
@@ -1451,13 +1461,8 @@ export function ListView() {
 
   const categoryOptions = useMemo(
     () =>
-      (
-        Object.entries(CATEGORY_CONFIG) as [
-          ItemCategory,
-          (typeof CATEGORY_CONFIG)[ItemCategory],
-        ][]
-      ).map(([key, cfg]) => ({ key, label: cfg.label })),
-    []
+      categories.map((cat) => ({ key: cat.id, label: cat.name })),
+    [categories]
   );
 
   const typeOptions = useMemo(
@@ -1578,7 +1583,7 @@ export function ListView() {
       }
 
       case "category": {
-        const cfg = CATEGORY_CONFIG[newItem.category];
+        const cfg = categoryConfig[newItem.category];
         return (
           <td
             key={colId}
@@ -1597,7 +1602,7 @@ export function ListView() {
               variant="outline"
               className="text-[10px] font-normal rounded-md border-slate-200 text-slate-600"
             >
-              {cfg.label}
+              {cfg?.label ?? newItem.category}
             </Badge>
             {createDropdown === "category" && (
               <CreationSelectDropdown
@@ -1991,7 +1996,7 @@ export function ListView() {
 
                       // Level 2 sub-groups
                       const level2Groups = hasLevel2
-                        ? groupItems(group.items, listGroupBy[1])
+                        ? groupItems(group.items, listGroupBy[1], categoryConfig)
                         : null;
 
                       return (
@@ -2226,6 +2231,7 @@ function ItemRowGroup({
   categoryOptions: { key: ItemCategory; label: string }[];
   typeOptions: { key: ItemType; label: string }[];
 }) {
+  const catConfig = useCategoryConfig();
   const colCount = visibleColumns.length + 4; // drag + expand + checkbox + settings
 
   return (
@@ -2392,7 +2398,7 @@ function ItemRowGroup({
                   }
 
                   case "category": {
-                    const cfg = CATEGORY_CONFIG[newSubtask.category];
+                    const cfg = catConfig[newSubtask.category];
                     return (
                       <td
                         key={col.id}
@@ -2411,7 +2417,7 @@ function ItemRowGroup({
                           variant="outline"
                           className="text-[10px] font-normal rounded-md border-slate-200 text-slate-600"
                         >
-                          {cfg.label}
+                          {cfg?.label ?? newSubtask.category}
                         </Badge>
                         {subtaskDropdown === "category" && (
                           <CreationSelectDropdown
@@ -2582,9 +2588,10 @@ function ItemRow({
     transition: isDragging ? undefined : transition,
   };
 
+  const itemCategoryConfig = useCategoryConfig();
   const statusCfg = STATUS_CONFIG[item.status as ItemStatus];
   const priorityCfg = PRIORITY_CONFIG[item.priority as ItemPriority];
-  const categoryCfg = CATEGORY_CONFIG[item.category as ItemCategory];
+  const categoryCfg = itemCategoryConfig[item.category];
   const typeCfg = TYPE_CONFIG[item.type as ItemType];
 
   /* Due date logic */
@@ -2700,6 +2707,9 @@ function ItemRow({
                   {"\u21B3"}
                 </span>
               )}
+              {item.source && item.source !== "system" && (
+                <SourceIcon source={item.source} />
+              )}
               {item.title}
               {(relCount > 0 || commentCount > 0) && (
                 <span className="inline-flex items-center gap-1.5 ml-2">
@@ -2768,7 +2778,7 @@ function ItemRow({
               variant="outline"
               className="text-[10px] font-normal rounded-md border-slate-200 text-slate-600"
             >
-              {categoryCfg.label}
+              {categoryCfg?.label ?? item.category}
             </Badge>
             {editingField === "category" && (
               <InlineSelectCell

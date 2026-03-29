@@ -3,31 +3,31 @@
 import { useMemo, useEffect } from "react";
 import { Star } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useBrainStore } from "@/lib/store";
-import type { WeeklyPlanFull, ItemCategory, Item } from "@/types";
-import { CATEGORY_CONFIG, PRIORITY_CONFIG } from "@/types";
+import { useBrainStore, useCategoryConfig } from "@/lib/store";
+import type { WeeklyPlanFull, Item } from "@/types";
+import { PRIORITY_CONFIG } from "@/types";
 import { WeeklyPlanCategoryGroup } from "./WeeklyPlanCategoryGroup";
 import { ScrollArea } from "@/components/ui/scroll-area";
-
-const CATEGORIES: ItemCategory[] = ["projects", "development", "clients", "research", "other"];
 
 interface Props {
   plan: WeeklyPlanFull;
 }
 
 export function WeeklyReviewTable({ plan }: Props) {
+  const storeCategories = useBrainStore((s) => s.categories);
+  const categoryConfig = useCategoryConfig();
   const fetchUnplannedDone = useBrainStore((s) => s.fetchUnplannedDone);
   const unplannedDoneItems = useBrainStore((s) => s.unplannedDoneItems);
 
   const entriesByCategory = useMemo(() => {
-    const grouped: Record<ItemCategory, typeof plan.entries> = {
-      projects: [], development: [], clients: [], research: [], other: [],
-    };
+    const grouped: Record<string, typeof plan.entries> = {};
+    for (const cat of storeCategories) grouped[cat.id] = [];
     for (const entry of plan.entries) {
+      if (!grouped[entry.item.category]) grouped[entry.item.category] = [];
       grouped[entry.item.category].push(entry);
     }
     return grouped;
-  }, [plan]);
+  }, [plan, storeCategories]);
 
   // Fetch unplanned done items
   useEffect(() => {
@@ -36,10 +36,10 @@ export function WeeklyReviewTable({ plan }: Props) {
 
   // Group unplanned by category
   const unplannedByCategory = useMemo(() => {
-    const grouped: Partial<Record<ItemCategory, Item[]>> = {};
+    const grouped: Record<string, Item[]> = {};
     for (const item of unplannedDoneItems) {
       if (!grouped[item.category]) grouped[item.category] = [];
-      grouped[item.category]!.push(item);
+      grouped[item.category].push(item);
     }
     return grouped;
   }, [unplannedDoneItems]);
@@ -87,11 +87,11 @@ export function WeeklyReviewTable({ plan }: Props) {
                   </div>
                 </div>
 
-                {CATEGORIES.map((cat) => (
+                {storeCategories.map((cat) => (
                   <WeeklyPlanCategoryGroup
-                    key={cat}
-                    category={cat}
-                    entries={entriesByCategory[cat]}
+                    key={cat.id}
+                    category={cat.id}
+                    entries={entriesByCategory[cat.id] ?? []}
                     planId={plan.id}
                     mode="review"
                   />
@@ -111,7 +111,7 @@ export function WeeklyReviewTable({ plan }: Props) {
                   {Object.entries(unplannedByCategory).map(([cat, items]) => (
                     <div key={cat} className="mb-2 last:mb-0">
                       <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1 px-1">
-                        {CATEGORY_CONFIG[cat as ItemCategory].label}
+                        {categoryConfig[cat]?.label ?? cat}
                       </p>
                       {items!.map((item) => (
                         <UnplannedRow key={item.id} item={item} />

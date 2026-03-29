@@ -3,11 +3,6 @@
 import { useMemo, useState } from "react";
 import {
   Brain,
-  FolderKanban,
-  Code2,
-  Users,
-  FlaskConical,
-  MoreHorizontal,
   LayoutGrid,
   List,
   Tag,
@@ -20,7 +15,8 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBrainStore } from "@/lib/store";
-import type { ItemCategory, AppSection } from "@/types";
+import { getIcon } from "@/lib/icon-map";
+import type { AppSection } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -31,25 +27,6 @@ import {
   TooltipContent,
   TooltipProvider,
 } from "@/components/ui/tooltip";
-
-/* -------------------------------------------------------------------------- */
-/*  Categories config                                                          */
-/* -------------------------------------------------------------------------- */
-
-interface CategoryEntry {
-  key: ItemCategory | "all";
-  label: string;
-  icon: LucideIcon;
-}
-
-const categories: CategoryEntry[] = [
-  { key: "all", label: "Все", icon: LayoutGrid },
-  { key: "projects", label: "Проекты", icon: FolderKanban },
-  { key: "development", label: "Разработка", icon: Code2 },
-  { key: "clients", label: "Клиенты", icon: Users },
-  { key: "research", label: "Исследования", icon: FlaskConical },
-  { key: "other", label: "Другое", icon: MoreHorizontal },
-];
 
 /* -------------------------------------------------------------------------- */
 /*  Component                                                                  */
@@ -77,10 +54,21 @@ export function Sidebar() {
   const setActiveCategory = useBrainStore((s) => s.setActiveCategory);
   const items = useBrainStore((s) => s.items);
   const tags = useBrainStore((s) => s.tags);
+  const storeCategories = useBrainStore((s) => s.categories);
   const viewMode = useBrainStore((s) => s.viewMode);
   const setViewMode = useBrainStore((s) => s.setViewMode);
   const clients = useBrainStore((s) => s.clients);
   const stagingItems = useBrainStore((s) => s.stagingItems);
+
+  const categoryEntries = useMemo(() => {
+    const entries: { key: string; label: string; icon: LucideIcon }[] = [
+      { key: "all", label: "Все", icon: LayoutGrid },
+    ];
+    for (const cat of storeCategories) {
+      entries.push({ key: cat.id, label: cat.name, icon: getIcon(cat.icon) });
+    }
+    return entries;
+  }, [storeCategories]);
 
   /* Count items by category */
   const counts = useMemo(() => {
@@ -251,7 +239,7 @@ export function Sidebar() {
               {collapsed ? "—" : "Категории"}
             </span>
 
-            {categories.map(({ key, label, icon: Icon }) => {
+            {categoryEntries.map(({ key, label, icon: Icon }) => {
               const isActive = activeCategory === key;
               const count = counts[key] ?? 0;
 

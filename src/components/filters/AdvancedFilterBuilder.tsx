@@ -10,7 +10,6 @@ import {
   FilterLogic,
   STATUS_CONFIG,
   PRIORITY_CONFIG,
-  CATEGORY_CONFIG,
   TYPE_CONFIG,
 } from "@/types";
 import { v4 as uuid } from "uuid";
@@ -70,14 +69,14 @@ const OPERATOR_OPTIONS: Record<FieldKind, { value: FilterOperator; label: string
   ],
 };
 
-function getEnumValues(field: FilterField): { value: string; label: string }[] {
+function getEnumValues(field: FilterField, categoryOptions?: { value: string; label: string }[]): { value: string; label: string }[] {
   switch (field) {
     case "status":
       return Object.entries(STATUS_CONFIG).map(([k, v]) => ({ value: k, label: v.label }));
     case "priority":
       return Object.entries(PRIORITY_CONFIG).map(([k, v]) => ({ value: k, label: v.label }));
     case "category":
-      return Object.entries(CATEGORY_CONFIG).map(([k, v]) => ({ value: k, label: v.label }));
+      return categoryOptions ?? [];
     case "type":
       return Object.entries(TYPE_CONFIG).map(([k, v]) => ({ value: k, label: v.label }));
     case "has_parent":
@@ -122,6 +121,8 @@ export function AdvancedFilterBuilder() {
   const useAdvanced = useBrainStore((s) => s.filters.useAdvanced);
   const setAdvancedFilters = useBrainStore((s) => s.setAdvancedFilters);
   const toggleAdvancedFilters = useBrainStore((s) => s.toggleAdvancedFilters);
+  const storeCategories = useBrainStore((s) => s.categories);
+  const categoryOptions = storeCategories.map((c) => ({ value: c.id, label: c.name }));
 
   /* ---- preset store selectors ------------------------------------------- */
   const savedFilters = useBrainStore((s) => s.savedFilters);
@@ -554,7 +555,7 @@ export function AdvancedFilterBuilder() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="border-slate-200 bg-white">
-                            {getEnumValues(cond.field).map((opt) => (
+                            {getEnumValues(cond.field, categoryOptions).map((opt) => (
                               <SelectItem key={opt.value} value={opt.value}>
                                 {opt.label}
                               </SelectItem>

@@ -7,6 +7,7 @@ import {
   Item,
   ItemWithSubtasks,
   Tag,
+  Category,
   Filters,
   ViewMode,
   ItemCategory,
@@ -41,6 +42,7 @@ import {
 interface BrainStore {
   items: ItemWithSubtasks[];
   tags: Tag[];
+  categories: Category[];
   filters: Filters;
   viewMode: ViewMode;
   activeCategory: ItemCategory | "all";
@@ -61,6 +63,10 @@ interface BrainStore {
 
   fetchItems: () => Promise<void>;
   fetchTags: () => Promise<void>;
+  fetchCategories: () => Promise<void>;
+  createCategory: (name: string, color?: string, icon?: string) => Promise<Category>;
+  updateCategory: (id: string, updates: Partial<Category>) => Promise<void>;
+  deleteCategory: (id: string) => Promise<void>;
   createItem: (payload: CreateItemPayload) => Promise<ItemWithSubtasks>;
   updateItem: (id: string, payload: UpdateItemPayload) => Promise<void>;
   deleteItem: (id: string) => Promise<void>;
@@ -195,6 +201,7 @@ export const useBrainStore = create<BrainStore>()(
   (set, get) => ({
   items: [],
   tags: [],
+  categories: [],
   filters: { ...defaultFilters },
   viewMode: "kanban",
   activeCategory: "all",
@@ -252,6 +259,41 @@ export const useBrainStore = create<BrainStore>()(
     if (!res.ok) return;
     const tags = await res.json();
     set({ tags });
+  },
+
+  fetchCategories: async () => {
+    const res = await fetch("/api/categories");
+    if (!res.ok) return;
+    const categories = await res.json();
+    set({ categories });
+  },
+
+  createCategory: async (name, color, icon) => {
+    const res = await fetch("/api/categories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, color, icon }),
+    });
+    if (!res.ok) throw new Error("Failed to create category");
+    const cat = await res.json();
+    await get().fetchCategories();
+    return cat;
+  },
+
+  updateCategory: async (id, updates) => {
+    const res = await fetch(`/api/categories/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error("Failed to update category");
+    await get().fetchCategories();
+  },
+
+  deleteCategory: async (id) => {
+    const res = await fetch(`/api/categories/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Failed to delete category");
+    await get().fetchCategories();
   },
 
   createItem: async (payload) => {
@@ -942,6 +984,17 @@ export function useSelectedClient(): ClientFull | null {
   const selectedId = useBrainStore((s) => s.selectedClientId);
   if (!selectedId) return null;
   return clients.find((c) => c.id === selectedId) ?? null;
+}
+
+export function useCategoryConfig(): Record<string, { label: string; icon: string; color: string }> {
+  const categories = useBrainStore((s) => s.categories);
+  return useMemo(() => {
+    const map: Record<string, { label: string; icon: string; color: string }> = {};
+    for (const cat of categories) {
+      map[cat.id] = { label: cat.name, icon: cat.icon, color: cat.color };
+    }
+    return map;
+  }, [categories]);
 }
 
 export function useItemsByStatus(status: ItemStatus): ItemWithSubtasks[] {

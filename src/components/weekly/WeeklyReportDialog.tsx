@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import { useBrainStore } from "@/lib/store";
-import type { WeeklyPlanEntryWithItem, Item, ItemCategory } from "@/types";
-import { CATEGORY_CONFIG, PRIORITY_CONFIG } from "@/types";
+import { useBrainStore, useCategoryConfig } from "@/lib/store";
+import type { WeeklyPlanEntryWithItem, Item } from "@/types";
+import { PRIORITY_CONFIG } from "@/types";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -129,12 +129,13 @@ function StatCard({ label, value, color, bg }: { label: string; value: number; c
 }
 
 function ReportSection({ icon, title, entries }: { icon: React.ReactNode; title: string; entries: WeeklyPlanEntryWithItem[] }) {
+  const categoryConfig = useCategoryConfig();
   // Group by category
-  const byCategory: Partial<Record<ItemCategory, WeeklyPlanEntryWithItem[]>> = {};
+  const byCategory: Record<string, WeeklyPlanEntryWithItem[]> = {};
   for (const entry of entries) {
     const cat = entry.item.category;
     if (!byCategory[cat]) byCategory[cat] = [];
-    byCategory[cat]!.push(entry);
+    byCategory[cat].push(entry);
   }
 
   return (
@@ -148,7 +149,7 @@ function ReportSection({ icon, title, entries }: { icon: React.ReactNode; title:
         {Object.entries(byCategory).map(([cat, catEntries]) => (
           <div key={cat}>
             <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-0.5">
-              {CATEGORY_CONFIG[cat as ItemCategory].label}
+              {categoryConfig[cat]?.label ?? cat}
             </p>
             {catEntries!.map((entry) => (
               <div key={entry.id} className="flex items-center gap-2 py-0.5">
@@ -171,6 +172,7 @@ function ReportSection({ icon, title, entries }: { icon: React.ReactNode; title:
 }
 
 function UnplannedItemRow({ item }: { item: Item }) {
+  const catCfg = useCategoryConfig();
   return (
     <div className="flex items-center gap-2 py-0.5">
       {item.priority !== "none" && (
@@ -180,7 +182,7 @@ function UnplannedItemRow({ item }: { item: Item }) {
       )}
       <span className="text-sm text-slate-700">{item.title}</span>
       <span className="text-[10px] text-slate-400">
-        {CATEGORY_CONFIG[item.category].label}
+        {catCfg[item.category]?.label ?? item.category}
       </span>
     </div>
   );

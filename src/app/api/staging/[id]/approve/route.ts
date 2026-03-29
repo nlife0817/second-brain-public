@@ -29,6 +29,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (staging.entity_type === "item") {
       const itemId = uuid();
+      const source = parsed.external_source === "kaiten" ? "kaiten" : "system";
       const item = createItem({
         id: itemId,
         title: staging.title,
@@ -37,6 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         status: parsed.status ?? "inbox",
         priority: parsed.priority ?? "none",
         category: parsed.category ?? "other",
+        source,
         development_stage: parsed.development_stage ?? null,
         due_date: parsed.due_date ?? null,
         position: 0,
@@ -59,6 +61,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             status: "inbox",
             priority: "none",
             category: parsed.category ?? "other",
+            source,
             development_stage: parsed.development_stage ?? null,
             due_date: null,
             position: i,

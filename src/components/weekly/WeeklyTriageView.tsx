@@ -3,9 +3,9 @@
 import { memo, useState, useMemo, useCallback } from "react";
 import { Search, ChevronRight, X, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useBrainStore } from "@/lib/store";
-import type { ItemWithSubtasks, ItemCategory, WeeklyPlanFull } from "@/types";
-import { PRIORITY_CONFIG, CATEGORY_CONFIG, STATUS_CONFIG } from "@/types";
+import { useBrainStore, useCategoryConfig } from "@/lib/store";
+import type { ItemWithSubtasks, WeeklyPlanFull } from "@/types";
+import { PRIORITY_CONFIG, STATUS_CONFIG } from "@/types";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,20 +13,19 @@ import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/comp
 import { WeeklyPlanCategoryGroup } from "./WeeklyPlanCategoryGroup";
 import { Calendar } from "lucide-react";
 
-const CATEGORIES: ItemCategory[] = ["projects", "development", "clients", "research", "other"];
-
 interface Props {
   plan: WeeklyPlanFull;
 }
 
 export function WeeklyTriageView({ plan }: Props) {
   const items = useBrainStore((s) => s.items);
+  const storeCategories = useBrainStore((s) => s.categories);
   const addItemsToPlan = useBrainStore((s) => s.addItemsToPlan);
   const removeItemFromPlan = useBrainStore((s) => s.removeItemFromPlan);
   const openDetail = useBrainStore((s) => s.openDetail);
 
   const [search, setSearch] = useState("");
-  const [filterCategory, setFilterCategory] = useState<ItemCategory | "all">("all");
+  const [filterCategory, setFilterCategory] = useState<string | "all">("all");
 
   const isCompleted = plan.status === "completed";
 
@@ -51,14 +50,14 @@ export function WeeklyTriageView({ plan }: Props) {
   }, [items, plannedItemIds, filterCategory, search]);
 
   const entriesByCategory = useMemo(() => {
-    const grouped: Record<ItemCategory, typeof plan.entries> = {
-      projects: [], development: [], clients: [], research: [], other: [],
-    };
+    const grouped: Record<string, typeof plan.entries> = {};
+    for (const cat of storeCategories) grouped[cat.id] = [];
     for (const entry of plan.entries) {
+      if (!grouped[entry.item.category]) grouped[entry.item.category] = [];
       grouped[entry.item.category].push(entry);
     }
     return grouped;
-  }, [plan]);
+  }, [plan, storeCategories]);
 
   const handleAddToPlan = useCallback((itemId: string) => {
     if (isCompleted) return;
@@ -115,16 +114,16 @@ export function WeeklyTriageView({ plan }: Props) {
               >
                 Все
               </button>
-              {CATEGORIES.map((cat) => (
+              {storeCategories.map((cat) => (
                 <button
-                  key={cat}
+                  key={cat.id}
                   className={cn(
                     "px-2 py-0.5 rounded text-[10px] font-medium transition-colors",
-                    filterCategory === cat ? "bg-slate-200 text-slate-700" : "text-slate-500 hover:bg-slate-100"
+                    filterCategory === cat.id ? "bg-slate-200 text-slate-700" : "text-slate-500 hover:bg-slate-100"
                   )}
-                  onClick={() => setFilterCategory(cat)}
+                  onClick={() => setFilterCategory(cat.id)}
                 >
-                  {CATEGORY_CONFIG[cat].label}
+                  {cat.name}
                 </button>
               ))}
             </div>
@@ -164,11 +163,11 @@ export function WeeklyTriageView({ plan }: Props) {
                   Добавьте задачи из пула слева
                 </p>
               ) : (
-                CATEGORIES.map((cat) => (
+                storeCategories.map((cat) => (
                   <WeeklyPlanCategoryGroup
-                    key={cat}
-                    category={cat}
-                    entries={entriesByCategory[cat]}
+                    key={cat.id}
+                    category={cat.id}
+                    entries={entriesByCategory[cat.id]}
                     planId={plan.id}
                     mode="triage"
                     onRemoveEntry={isCompleted ? undefined : handleRemoveFromPlan}
@@ -185,7 +184,8 @@ export function WeeklyTriageView({ plan }: Props) {
 
 const PoolItemRow = memo(function PoolItemRow({ item, onAdd, onOpenDetail }: { item: ItemWithSubtasks; onAdd?: () => void; onOpenDetail: () => void }) {
   const priorityCfg = PRIORITY_CONFIG[item.priority];
-  const categoryCfg = CATEGORY_CONFIG[item.category];
+  const catConfig = useCategoryConfig();
+  const categoryCfg = catConfig[item.category];
   const statusCfg = STATUS_CONFIG[item.status];
 
   const formatDueDate = (d: string | null) => {

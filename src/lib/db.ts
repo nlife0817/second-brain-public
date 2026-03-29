@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 import {
-  Item, Tag, WeeklyPlan, WeeklyPlanEntry, WeeklyPlanEntryWithItem, WeeklyPlanFull, WeeklyPlanReport, EntryComment,
+  Item, Tag, Category, WeeklyPlan, WeeklyPlanEntry, WeeklyPlanEntryWithItem, WeeklyPlanFull, WeeklyPlanReport, EntryComment,
   Client, ClientFull, ClientStatus, ClientCompany, ClientContact, ClientContactField, ClientNote, ClientLink,
   ContactFieldType,
   RelationType, Relation, RelationWithTarget, Comment, EntityType,
@@ -35,6 +35,14 @@ function getDb(): Database.Database {
 
 function initSchema(db: Database.Database) {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS categories (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT '#6b7280',
+      icon TEXT NOT NULL DEFAULT 'Folder',
+      position INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT '',
@@ -42,7 +50,8 @@ function initSchema(db: Database.Database) {
       type TEXT NOT NULL DEFAULT 'task' CHECK(type IN ('task','note','meeting','plan','idea')),
       status TEXT NOT NULL DEFAULT 'inbox' CHECK(status IN ('inbox','todo','in_progress','review','done','archived')),
       priority TEXT NOT NULL DEFAULT 'none' CHECK(priority IN ('urgent','high','medium','low','none')),
-      category TEXT NOT NULL DEFAULT 'other' CHECK(category IN ('projects','development','clients','research','other')),
+      category TEXT NOT NULL DEFAULT 'other',
+      source TEXT NOT NULL DEFAULT 'system',
       development_stage TEXT,
       due_date TEXT,
       position INTEGER NOT NULL DEFAULT 0,
@@ -359,6 +368,133 @@ function migrateSchema(db: Database.Database) {
       db.exec(`ALTER TABLE clients ADD COLUMN ${col.name} ${col.def}`);
     }
   }
+
+  // --- Categories table + items table recreation (remove CHECK on category, add source) ---
+  const categoriesExists = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='categories'"
+  ).get();
+
+  if (!categoriesExists) {
+    db.exec(`
+      CREATE TABLE categories (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL DEFAULT '#6b7280',
+        icon TEXT NOT NULL DEFAULT 'Folder',
+        position INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+  }
+  seedDefaultCategories(db);
+
+  // Check if items table has CHECK constraint on category (needs recreation)
+  const itemsSql = (db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='items'"
+  ).get() as { sql: string } | undefined)?.sql ?? "";
+
+  const needsRecreation = itemsSql.includes("CHECK(category");
+
+  if (needsRecreation) {
+    const hasSource = itemColNames.has("source");
+
+    db.pragma("foreign_keys = OFF");
+    db.exec("BEGIN TRANSACTION");
+    try {
+      db.exec(`
+        CREATE TABLE items_new (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL DEFAULT '',
+          description TEXT NOT NULL DEFAULT '',
+          type TEXT NOT NULL DEFAULT 'task' CHECK(type IN ('task','note','meeting','plan','idea')),
+          status TEXT NOT NULL DEFAULT 'inbox' CHECK(status IN ('inbox','todo','in_progress','review','done','archived')),
+          priority TEXT NOT NULL DEFAULT 'none' CHECK(priority IN ('urgent','high','medium','low','none')),
+          category TEXT NOT NULL DEFAULT 'other',
+          source TEXT NOT NULL DEFAULT 'system',
+          development_stage TEXT,
+          due_date TEXT,
+          position INTEGER NOT NULL DEFAULT 0,
+          parent_id TEXT REFERENCES items(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+
+      if (hasSource) {
+        db.exec(`
+          INSERT INTO items_new (id, title, description, type, status, priority, category, source, development_stage, due_date, position, parent_id, created_at, updated_at)
+          SELECT id, title, description, type, status, priority, category, source, development_stage, due_date, position, parent_id, created_at, updated_at FROM items;
+        `);
+      } else {
+        db.exec(`
+          INSERT INTO items_new (id, title, description, type, status, priority, category, source, development_stage, due_date, position, parent_id, created_at, updated_at)
+          SELECT id, title, description, type, status, priority, category, 'system', development_stage, due_date, position, parent_id, created_at, updated_at FROM items;
+        `);
+      }
+
+      db.exec("DROP TABLE items");
+      db.exec("ALTER TABLE items_new RENAME TO items");
+
+      // Recreate indexes
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
+        CREATE INDEX IF NOT EXISTS idx_items_category ON items(category);
+        CREATE INDEX IF NOT EXISTS idx_items_parent ON items(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_items_priority ON items(priority);
+        CREATE INDEX IF NOT EXISTS idx_items_development_stage ON items(development_stage);
+      `);
+
+      // Backfill source for Kaiten-imported items
+      db.exec(`
+        UPDATE items SET source = 'kaiten'
+        WHERE id IN (
+          SELECT DISTINCT local_entity_id FROM external_entity_links
+          WHERE local_entity_type = 'item' AND provider = 'kaiten'
+        );
+      `);
+
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+    db.pragma("foreign_keys = ON");
+  } else if (!itemColNames.has("source")) {
+    // Items table already recreated but source missing (fresh DB shouldn't hit this)
+    db.exec("ALTER TABLE items ADD COLUMN source TEXT NOT NULL DEFAULT 'system'");
+
+    db.exec(`
+      UPDATE items SET source = 'kaiten'
+      WHERE id IN (
+        SELECT DISTINCT local_entity_id FROM external_entity_links
+        WHERE local_entity_type = 'item' AND provider = 'kaiten'
+      );
+    `);
+  }
+}
+
+function seedDefaultCategories(db: Database.Database) {
+  const count = (db.prepare("SELECT COUNT(*) as c FROM categories").get() as { c: number }).c;
+  if (count > 0) return;
+
+  const stmt = db.prepare("INSERT INTO categories (id, name, color, icon, position) VALUES (?, ?, ?, ?, ?)");
+  const defaults = [
+    ["projects", "Проекты", "#8b5cf6", "FolderKanban", 0],
+    ["development", "Разработка", "#3b82f6", "Code2", 1],
+    ["clients", "Клиенты", "#22c55e", "Users", 2],
+    ["research", "Исследования", "#06b6d4", "FlaskConical", 3],
+    ["other", "Другое", "#6b7280", "MoreHorizontal", 4],
+    ["prodactstvo", "Продактство", "#f97316", "Target", 5],
+    ["launches", "Запуски", "#ef4444", "Rocket", 6],
+    ["sales", "Продажи", "#eab308", "TrendingUp", 7],
+    ["eva", "EVA", "#ec4899", "Sparkles", 8],
+    ["accounting", "Аккаунтинг", "#14b8a6", "BookOpen", 9],
+  ];
+  const transaction = db.transaction(() => {
+    for (const [id, name, color, icon, position] of defaults) {
+      stmt.run(id, name, color, icon, position);
+    }
+  });
+  transaction();
 }
 
 function parseJsonArray(value: string | null | undefined): string[] {
@@ -518,11 +654,11 @@ export function createItem(item: Omit<Item, "created_at" | "updated_at">): Item 
   ).get(item.status, item.parent_id ?? null) as { next_pos: number };
 
   db.prepare(`
-    INSERT INTO items (id, title, description, type, status, priority, category, development_stage, due_date, position, parent_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO items (id, title, description, type, status, priority, category, source, development_stage, due_date, position, parent_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     item.id, item.title, item.description, item.type, item.status,
-    item.priority, item.category, item.development_stage ?? null, item.due_date ?? null,
+    item.priority, item.category, item.source ?? "system", item.development_stage ?? null, item.due_date ?? null,
     item.position ?? maxPos.next_pos, item.parent_id ?? null, now, now
   );
 
@@ -585,6 +721,52 @@ export function setItemTags(itemId: string, tagIds: string[]) {
   transaction();
 }
 
+// --- Categories CRUD ---
+
+export function getAllCategories(): Category[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM categories ORDER BY position ASC").all() as Category[];
+}
+
+export function getCategoryById(id: string): Category | undefined {
+  const db = getDb();
+  return db.prepare("SELECT * FROM categories WHERE id = ?").get(id) as Category | undefined;
+}
+
+export function createCategory(cat: Omit<Category, "position">): Category {
+  const db = getDb();
+  const maxPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 as next_pos FROM categories").get() as { next_pos: number };
+  db.prepare("INSERT INTO categories (id, name, color, icon, position) VALUES (?, ?, ?, ?, ?)").run(
+    cat.id, cat.name, cat.color, cat.icon, maxPos.next_pos
+  );
+  return getCategoryById(cat.id)!;
+}
+
+export function updateCategory(id: string, updates: Partial<Pick<Category, "name" | "color" | "icon" | "position">>): Category | undefined {
+  const db = getDb();
+  const existing = getCategoryById(id);
+  if (!existing) return undefined;
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (fields.length === 0) return existing;
+  values.push(id);
+  db.prepare(`UPDATE categories SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  return getCategoryById(id);
+}
+
+export function deleteCategory(id: string): boolean {
+  const db = getDb();
+  // Move items from deleted category to 'other'
+  db.prepare("UPDATE items SET category = 'other' WHERE category = ?").run(id);
+  const result = db.prepare("DELETE FROM categories WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+
 export function reorderItems(items: { id: string; position: number; status?: string }[]) {
   const db = getDb();
   const stmt = db.prepare("UPDATE items SET position = ?, status = COALESCE(?, status), updated_at = ? WHERE id = ?");
@@ -619,7 +801,7 @@ export function getWeeklyPlanFull(id: string): WeeklyPlanFull | undefined {
   const rows = db.prepare(`
     SELECT e.*, i.title as item_title, i.description as item_description,
            i.type as item_type, i.status as item_status, i.priority as item_priority,
-           i.category as item_category, i.development_stage as item_development_stage, i.due_date as item_due_date,
+           i.category as item_category, i.source as item_source, i.development_stage as item_development_stage, i.due_date as item_due_date,
            i.position as item_position, i.parent_id as item_parent_id,
            i.created_at as item_created_at, i.updated_at as item_updated_at
     FROM weekly_plan_entries e
@@ -653,6 +835,7 @@ export function getWeeklyPlanFull(id: string): WeeklyPlanFull | undefined {
         status: row.item_status as Item["status"],
         priority: row.item_priority as Item["priority"],
         category: row.item_category as Item["category"],
+        source: (row.item_source as Item["source"]) || "system",
         development_stage: (row.item_development_stage as string) || null,
         due_date: (row.item_due_date as string) || null,
         position: row.item_position as number,
@@ -778,7 +961,7 @@ export function getTransferableEntries(planId: string): WeeklyPlanEntryWithItem[
   const rows = db.prepare(`
     SELECT e.*, i.title as item_title, i.description as item_description,
            i.type as item_type, i.status as item_status, i.priority as item_priority,
-           i.category as item_category, i.development_stage as item_development_stage, i.due_date as item_due_date,
+           i.category as item_category, i.source as item_source, i.development_stage as item_development_stage, i.due_date as item_due_date,
            i.position as item_position, i.parent_id as item_parent_id,
            i.created_at as item_created_at, i.updated_at as item_updated_at
     FROM weekly_plan_entries e
@@ -811,6 +994,7 @@ export function getTransferableEntries(planId: string): WeeklyPlanEntryWithItem[
         status: row.item_status as Item["status"],
         priority: row.item_priority as Item["priority"],
         category: row.item_category as Item["category"],
+        source: (row.item_source as Item["source"]) || "system",
         development_stage: (row.item_development_stage as string) || null,
         due_date: (row.item_due_date as string) || null,
         position: row.item_position as number,
