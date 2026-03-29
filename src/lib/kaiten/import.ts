@@ -96,7 +96,7 @@ function applyMapping(card: Record<string, unknown>, mappings: SyncFieldMapping[
     type: null,
     status: null,
     priority: null,
-    category: null,
+    category: "development",
     due_date: null,
   };
 
@@ -191,6 +191,8 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
             description,
             parsed_data: JSON.stringify(parsed),
             entity_type: "item",
+            staging_status: "pending",
+            batch_id: batchId,
           });
           result.updated += 1;
           result.imported_ids.push(staging.id);

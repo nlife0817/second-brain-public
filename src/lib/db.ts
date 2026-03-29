@@ -1579,7 +1579,7 @@ export function createStagingItem(item: {
   return db.prepare("SELECT * FROM staging_items WHERE id = ?").get(item.id) as StagingItem;
 }
 
-export function updateStagingItem(id: string, updates: Partial<Pick<StagingItem, "title" | "description" | "parsed_data" | "staging_status" | "entity_type">>): StagingItem | undefined {
+export function updateStagingItem(id: string, updates: Partial<Pick<StagingItem, "title" | "description" | "parsed_data" | "staging_status" | "entity_type" | "batch_id">>): StagingItem | undefined {
   const db = getDb();
   const fields: string[] = [];
   const values: unknown[] = [];

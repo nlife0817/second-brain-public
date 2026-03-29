@@ -234,8 +234,25 @@ export class KaitenClient {
   }
 
   async getCards(boardId: number): Promise<Record<string, unknown>[]> {
-    const payload = await this.request<unknown>(`/cards?board_id=${boardId}&additional_card_fields=description`);
-    return asArray<Record<string, unknown>>(payload);
+    const pageSize = 100;
+    const cards: Record<string, unknown>[] = [];
+    let offset = 0;
+
+    while (true) {
+      const payload = await this.request<unknown>(
+        `/cards?board_id=${boardId}&additional_card_fields=description&limit=${pageSize}&offset=${offset}`
+      );
+      const page = asArray<Record<string, unknown>>(payload);
+      cards.push(...page);
+
+      if (page.length < pageSize) {
+        break;
+      }
+
+      offset += pageSize;
+    }
+
+    return cards;
   }
 
   async getCard(cardId: number): Promise<Record<string, unknown>> {
