@@ -18,7 +18,7 @@ export type ListGroupByField = "none" | "status" | "priority" | "category" | "ty
 export type ListGroupByConfig = [ListGroupByField, ListGroupByField];
 
 export type FilterOperator = "is" | "is_not" | "contains" | "not_contains" | "before" | "after" | "is_empty" | "is_not_empty";
-export type FilterField = "status" | "priority" | "category" | "type" | "title" | "description" | "due_date" | "has_parent" | "development_stage";
+export type FilterField = "status" | "priority" | "category" | "type" | "tags" | "title" | "description" | "due_date" | "has_parent" | "development_stage";
 export type FilterLogic = "and" | "or";
 
 export interface DevelopmentParticipant {

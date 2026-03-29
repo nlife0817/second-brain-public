@@ -875,6 +875,18 @@ export const useBrainStore = create<BrainStore>()(
 ));
 
 function matchCondition(item: ItemWithSubtasks, cond: FilterCondition): boolean {
+  // Tags are multi-value: "is" means "has this tag", "is_not" means "doesn't have this tag"
+  if (cond.field === "tags") {
+    const tagIds = item.tags?.map((t) => t.id) ?? [];
+    switch (cond.operator) {
+      case "is": return tagIds.includes(cond.value);
+      case "is_not": return !tagIds.includes(cond.value);
+      case "is_empty": return tagIds.length === 0;
+      case "is_not_empty": return tagIds.length > 0;
+      default: return true;
+    }
+  }
+
   const fieldValue = (() => {
     switch (cond.field) {
       case "status": return item.status;
@@ -917,7 +929,6 @@ export function useFilteredItems() {
       if (filters.categories.length && !filters.categories.includes(item.category)) return false;
       if (filters.priorities.length && !filters.priorities.includes(item.priority)) return false;
       if (filters.types.length && !filters.types.includes(item.type)) return false;
-      if (filters.tags.length && !item.tags?.some((t) => filters.tags.includes(t.id))) return false;
     }
 
     // Search always applies

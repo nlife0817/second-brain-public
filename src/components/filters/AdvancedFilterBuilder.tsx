@@ -35,6 +35,7 @@ const FIELD_OPTIONS: { value: FilterField; label: string }[] = [
   { value: "priority", label: "Приоритет" },
   { value: "category", label: "Категория" },
   { value: "type", label: "Тип" },
+  { value: "tags", label: "Теги" },
   { value: "development_stage", label: "Этап разработки" },
   { value: "title", label: "Название" },
   { value: "description", label: "Описание" },
@@ -45,7 +46,7 @@ const FIELD_OPTIONS: { value: FilterField; label: string }[] = [
 type FieldKind = "enum" | "text" | "date";
 
 function getFieldKind(field: FilterField): FieldKind {
-  if (["status", "priority", "category", "type", "has_parent"].includes(field)) return "enum";
+  if (["status", "priority", "category", "type", "tags", "has_parent"].includes(field)) return "enum";
   if (["title", "description", "development_stage"].includes(field)) return "text";
   return "date";
 }
@@ -69,14 +70,21 @@ const OPERATOR_OPTIONS: Record<FieldKind, { value: FilterOperator; label: string
   ],
 };
 
-function getEnumValues(field: FilterField, categoryOptions?: { value: string; label: string }[]): { value: string; label: string }[] {
+interface DynamicEnumOptions {
+  categoryOptions?: { value: string; label: string }[];
+  tagOptions?: { value: string; label: string }[];
+}
+
+function getEnumValues(field: FilterField, dynamic?: DynamicEnumOptions): { value: string; label: string }[] {
   switch (field) {
     case "status":
       return Object.entries(STATUS_CONFIG).map(([k, v]) => ({ value: k, label: v.label }));
     case "priority":
       return Object.entries(PRIORITY_CONFIG).map(([k, v]) => ({ value: k, label: v.label }));
     case "category":
-      return categoryOptions ?? [];
+      return dynamic?.categoryOptions ?? [];
+    case "tags":
+      return dynamic?.tagOptions ?? [];
     case "type":
       return Object.entries(TYPE_CONFIG).map(([k, v]) => ({ value: k, label: v.label }));
     case "has_parent":
@@ -122,7 +130,11 @@ export function AdvancedFilterBuilder() {
   const setAdvancedFilters = useBrainStore((s) => s.setAdvancedFilters);
   const toggleAdvancedFilters = useBrainStore((s) => s.toggleAdvancedFilters);
   const storeCategories = useBrainStore((s) => s.categories);
-  const categoryOptions = storeCategories.map((c) => ({ value: c.id, label: c.name }));
+  const storeTags = useBrainStore((s) => s.tags);
+  const dynamicOptions: DynamicEnumOptions = {
+    categoryOptions: storeCategories.map((c) => ({ value: c.id, label: c.name })),
+    tagOptions: storeTags.map((t) => ({ value: t.id, label: t.name })),
+  };
 
   /* ---- preset store selectors ------------------------------------------- */
   const savedFilters = useBrainStore((s) => s.savedFilters);
@@ -555,7 +567,7 @@ export function AdvancedFilterBuilder() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="border-slate-200 bg-white">
-                            {getEnumValues(cond.field, categoryOptions).map((opt) => (
+                            {getEnumValues(cond.field, dynamicOptions).map((opt) => (
                               <SelectItem key={opt.value} value={opt.value}>
                                 {opt.label}
                               </SelectItem>
