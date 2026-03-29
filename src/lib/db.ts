@@ -1,10 +1,15 @@
 import Database from "better-sqlite3";
+import fs from "fs";
 import path from "path";
 import {
   Item, Tag, WeeklyPlan, WeeklyPlanEntry, WeeklyPlanEntryWithItem, WeeklyPlanFull, WeeklyPlanReport, EntryComment,
   Client, ClientFull, ClientStatus, ClientCompany, ClientContact, ClientContactField, ClientNote, ClientLink,
   ContactFieldType,
   RelationType, Relation, RelationWithTarget, Comment, EntityType,
+  StagingItem, StagingEntityType, StagingStatus,
+  IntegrationProvider, IntegrationSettings, IntegrationSettingsInput,
+  SyncProfile, SyncProfileInput, SyncFieldMapping, SyncFieldMappingInput,
+  ExternalEntityLink, ExternalSyncState, SyncEntityType, SyncDirection, KaitenImportResult,
 } from "@/types";
 
 const DB_PATH = path.join(process.cwd(), "data", "brain.db");
@@ -13,7 +18,6 @@ let db: Database.Database | null = null;
 
 function getDb(): Database.Database {
   if (!db) {
-    const fs = require("fs");
     const dir = path.dirname(DB_PATH);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
@@ -211,6 +215,84 @@ function initSchema(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_staging_status ON staging_items(staging_status);
     CREATE INDEX IF NOT EXISTS idx_staging_batch ON staging_items(batch_id);
+
+    -- Integrations / external sync
+    CREATE TABLE IF NOT EXISTS integration_settings (
+      provider TEXT PRIMARY KEY,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      company_domain TEXT NOT NULL DEFAULT '',
+      api_base_url TEXT NOT NULL DEFAULT '',
+      token_secret TEXT NOT NULL DEFAULT '',
+      default_import_target TEXT NOT NULL DEFAULT 'staging' CHECK(default_import_target IN ('staging')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS sync_profiles (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      entity_type TEXT NOT NULL DEFAULT 'item' CHECK(entity_type IN ('item','client')),
+      source_space_id INTEGER,
+      source_board_id INTEGER,
+      import_enabled INTEGER NOT NULL DEFAULT 1,
+      export_enabled INTEGER NOT NULL DEFAULT 0,
+      source_statuses TEXT NOT NULL DEFAULT '[]',
+      source_columns TEXT NOT NULL DEFAULT '[]',
+      source_lanes TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sync_profiles_provider ON sync_profiles(provider);
+
+    CREATE TABLE IF NOT EXISTS sync_field_mappings (
+      id TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL REFERENCES sync_profiles(id) ON DELETE CASCADE,
+      local_entity_type TEXT NOT NULL DEFAULT 'item' CHECK(local_entity_type IN ('item','client')),
+      local_field TEXT NOT NULL,
+      remote_field TEXT NOT NULL,
+      direction TEXT NOT NULL DEFAULT 'import' CHECK(direction IN ('import','export','bidirectional')),
+      transform_rule TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sync_field_mappings_profile ON sync_field_mappings(profile_id);
+
+    CREATE TABLE IF NOT EXISTS external_entity_links (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      local_entity_type TEXT NOT NULL CHECK(local_entity_type IN ('item','client')),
+      local_entity_id TEXT NOT NULL,
+      remote_entity_type TEXT NOT NULL DEFAULT 'card',
+      remote_entity_id TEXT NOT NULL,
+      remote_space_id INTEGER,
+      remote_board_id INTEGER,
+      remote_column_id INTEGER,
+      remote_lane_id INTEGER,
+      last_remote_updated_at TEXT,
+      last_local_synced_at TEXT,
+      sync_state TEXT NOT NULL DEFAULT 'pending' CHECK(sync_state IN ('active','pending','error','archived')),
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(provider, remote_entity_type, remote_entity_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_external_links_local ON external_entity_links(local_entity_type, local_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_external_links_provider ON external_entity_links(provider);
+
+    CREATE TABLE IF NOT EXISTS sync_import_runs (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      profile_id TEXT NOT NULL REFERENCES sync_profiles(id) ON DELETE CASCADE,
+      batch_id TEXT NOT NULL,
+      stats_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sync_import_runs_profile ON sync_import_runs(profile_id, created_at DESC);
   `);
 }
 
@@ -230,6 +312,53 @@ function migrateSchema(db: Database.Database) {
       db.exec(`ALTER TABLE clients ADD COLUMN ${col.name} ${col.def}`);
     }
   }
+}
+
+function parseJsonArray(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function maskToken(token: string): string | null {
+  if (!token) return null;
+  if (token.length <= 8) return "********";
+  return `${token.slice(0, 4)}...${token.slice(-4)}`;
+}
+
+function buildApiBaseUrl(companyDomain: string): string {
+  if (!companyDomain.trim()) return "";
+  const sanitized = companyDomain.trim().replace(/^https?:\/\//, "").replace(/\.kaiten\.ru\/?$/, "").replace(/\/+$/, "");
+  return sanitized ? `https://${sanitized}.kaiten.ru/api/latest` : "";
+}
+
+function mapIntegrationSettings(row?: {
+  provider: string;
+  enabled: number;
+  company_domain: string;
+  api_base_url: string;
+  token_secret: string;
+  default_import_target: "staging";
+  created_at: string;
+  updated_at: string;
+}): IntegrationSettings {
+  const provider = (row?.provider ?? "kaiten") as IntegrationProvider;
+  const token = row?.token_secret ?? "";
+  return {
+    provider,
+    enabled: !!row?.enabled,
+    company_domain: row?.company_domain ?? "",
+    api_base_url: row?.api_base_url ?? buildApiBaseUrl(row?.company_domain ?? ""),
+    has_token: token.length > 0,
+    token_masked: maskToken(token),
+    default_import_target: "staging",
+    created_at: row?.created_at ?? new Date(0).toISOString(),
+    updated_at: row?.updated_at ?? new Date(0).toISOString(),
+  };
 }
 
 export function getAllItems(includeArchived = false, includeChildren = false): Item[] {
@@ -1030,9 +1159,395 @@ export function deleteComment(id: string): boolean {
   return db.prepare("DELETE FROM comments WHERE id = ?").run(id).changes > 0;
 }
 
-// ======================== Staging ========================
+// ======================== Integrations ========================
 
-import type { StagingItem, StagingEntityType, StagingStatus } from "@/types";
+export function getIntegrationSettings(provider: IntegrationProvider = "kaiten"): IntegrationSettings {
+  const db = getDb();
+  const row = db.prepare("SELECT * FROM integration_settings WHERE provider = ?").get(provider) as {
+    provider: string;
+    enabled: number;
+    company_domain: string;
+    api_base_url: string;
+    token_secret: string;
+    default_import_target: "staging";
+    created_at: string;
+    updated_at: string;
+  } | undefined;
+  return mapIntegrationSettings(row);
+}
+
+export function getIntegrationToken(provider: IntegrationProvider = "kaiten"): string {
+  const db = getDb();
+  const row = db.prepare("SELECT token_secret FROM integration_settings WHERE provider = ?").get(provider) as { token_secret: string } | undefined;
+  return row?.token_secret ?? "";
+}
+
+export function upsertIntegrationSettings(provider: IntegrationProvider, input: IntegrationSettingsInput): IntegrationSettings {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const existing = db.prepare("SELECT * FROM integration_settings WHERE provider = ?").get(provider) as {
+    token_secret: string;
+  } | undefined;
+  const companyDomain = input.company_domain.trim().replace(/^https?:\/\//, "").replace(/\.kaiten\.ru\/?$/, "");
+  const tokenSecret = input.clear_token ? "" : (input.token !== undefined ? input.token.trim() : existing?.token_secret ?? "");
+  const apiBaseUrl = buildApiBaseUrl(companyDomain);
+
+  db.prepare(`
+    INSERT INTO integration_settings (provider, enabled, company_domain, api_base_url, token_secret, default_import_target, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 'staging', ?, ?)
+    ON CONFLICT(provider) DO UPDATE SET
+      enabled = excluded.enabled,
+      company_domain = excluded.company_domain,
+      api_base_url = excluded.api_base_url,
+      token_secret = excluded.token_secret,
+      default_import_target = excluded.default_import_target,
+      updated_at = excluded.updated_at
+  `).run(provider, input.enabled ? 1 : 0, companyDomain, apiBaseUrl, tokenSecret, now, now);
+
+  return getIntegrationSettings(provider);
+}
+
+function mapSyncProfile(row: {
+  id: string;
+  provider: string;
+  name: string;
+  entity_type: SyncEntityType;
+  source_space_id: number | null;
+  source_board_id: number | null;
+  import_enabled: number;
+  export_enabled: number;
+  source_statuses: string;
+  source_columns: string;
+  source_lanes: string;
+  created_at: string;
+  updated_at: string;
+}): SyncProfile {
+  return {
+    id: row.id,
+    provider: row.provider as IntegrationProvider,
+    name: row.name,
+    entity_type: row.entity_type,
+    source_space_id: row.source_space_id,
+    source_board_id: row.source_board_id,
+    import_enabled: !!row.import_enabled,
+    export_enabled: !!row.export_enabled,
+    source_statuses: parseJsonArray(row.source_statuses),
+    source_columns: parseJsonArray(row.source_columns),
+    source_lanes: parseJsonArray(row.source_lanes),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export function getAllSyncProfiles(provider: IntegrationProvider = "kaiten"): SyncProfile[] {
+  const db = getDb();
+  const rows = db.prepare("SELECT * FROM sync_profiles WHERE provider = ? ORDER BY created_at ASC").all(provider) as {
+    id: string;
+    provider: string;
+    name: string;
+    entity_type: SyncEntityType;
+    source_space_id: number | null;
+    source_board_id: number | null;
+    import_enabled: number;
+    export_enabled: number;
+    source_statuses: string;
+    source_columns: string;
+    source_lanes: string;
+    created_at: string;
+    updated_at: string;
+  }[];
+  return rows.map(mapSyncProfile);
+}
+
+export function getSyncProfileById(id: string): SyncProfile | undefined {
+  const db = getDb();
+  const row = db.prepare("SELECT * FROM sync_profiles WHERE id = ?").get(id) as {
+    id: string;
+    provider: string;
+    name: string;
+    entity_type: SyncEntityType;
+    source_space_id: number | null;
+    source_board_id: number | null;
+    import_enabled: number;
+    export_enabled: number;
+    source_statuses: string;
+    source_columns: string;
+    source_lanes: string;
+    created_at: string;
+    updated_at: string;
+  } | undefined;
+  return row ? mapSyncProfile(row) : undefined;
+}
+
+export function upsertSyncProfile(provider: IntegrationProvider, input: SyncProfileInput): SyncProfile {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const id = input.id ?? crypto.randomUUID();
+  db.prepare(`
+    INSERT INTO sync_profiles (
+      id, provider, name, entity_type, source_space_id, source_board_id,
+      import_enabled, export_enabled, source_statuses, source_columns, source_lanes,
+      created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      entity_type = excluded.entity_type,
+      source_space_id = excluded.source_space_id,
+      source_board_id = excluded.source_board_id,
+      import_enabled = excluded.import_enabled,
+      export_enabled = excluded.export_enabled,
+      source_statuses = excluded.source_statuses,
+      source_columns = excluded.source_columns,
+      source_lanes = excluded.source_lanes,
+      updated_at = excluded.updated_at
+  `).run(
+    id,
+    provider,
+    input.name.trim(),
+    input.entity_type ?? "item",
+    input.source_space_id ?? null,
+    input.source_board_id ?? null,
+    input.import_enabled === false ? 0 : 1,
+    input.export_enabled ? 1 : 0,
+    JSON.stringify(input.source_statuses ?? []),
+    JSON.stringify(input.source_columns ?? []),
+    JSON.stringify(input.source_lanes ?? []),
+    now,
+    now
+  );
+
+  return getSyncProfileById(id)!;
+}
+
+export function mapSyncField(row: {
+  id: string;
+  profile_id: string;
+  local_entity_type: SyncEntityType;
+  local_field: string;
+  remote_field: string;
+  direction: SyncDirection;
+  transform_rule: string | null;
+  created_at: string;
+  updated_at: string;
+}): SyncFieldMapping {
+  return {
+    id: row.id,
+    profile_id: row.profile_id,
+    local_entity_type: row.local_entity_type,
+    local_field: row.local_field,
+    remote_field: row.remote_field,
+    direction: row.direction,
+    transform_rule: row.transform_rule,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export function getSyncFieldMappings(profileId: string): SyncFieldMapping[] {
+  const db = getDb();
+  const rows = db.prepare("SELECT * FROM sync_field_mappings WHERE profile_id = ? ORDER BY created_at ASC").all(profileId) as {
+    id: string;
+    profile_id: string;
+    local_entity_type: SyncEntityType;
+    local_field: string;
+    remote_field: string;
+    direction: SyncDirection;
+    transform_rule: string | null;
+    created_at: string;
+    updated_at: string;
+  }[];
+  return rows.map(mapSyncField);
+}
+
+export function replaceSyncFieldMappings(profileId: string, mappings: SyncFieldMappingInput[]): SyncFieldMapping[] {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const deleteStmt = db.prepare("DELETE FROM sync_field_mappings WHERE profile_id = ?");
+  const insertStmt = db.prepare(`
+    INSERT INTO sync_field_mappings (
+      id, profile_id, local_entity_type, local_field, remote_field, direction, transform_rule, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  db.transaction(() => {
+    deleteStmt.run(profileId);
+    for (const mapping of mappings) {
+      insertStmt.run(
+        mapping.id ?? crypto.randomUUID(),
+        profileId,
+        mapping.local_entity_type ?? "item",
+        mapping.local_field,
+        mapping.remote_field,
+        mapping.direction ?? "import",
+        mapping.transform_rule ?? null,
+        now,
+        now
+      );
+    }
+  })();
+
+  return getSyncFieldMappings(profileId);
+}
+
+function mapExternalEntityLink(row: {
+  id: string;
+  provider: string;
+  local_entity_type: SyncEntityType;
+  local_entity_id: string;
+  remote_entity_type: string;
+  remote_entity_id: string;
+  remote_space_id: number | null;
+  remote_board_id: number | null;
+  remote_column_id: number | null;
+  remote_lane_id: number | null;
+  last_remote_updated_at: string | null;
+  last_local_synced_at: string | null;
+  sync_state: ExternalSyncState;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}): ExternalEntityLink {
+  return {
+    id: row.id,
+    provider: row.provider as IntegrationProvider,
+    local_entity_type: row.local_entity_type,
+    local_entity_id: row.local_entity_id,
+    remote_entity_type: row.remote_entity_type,
+    remote_entity_id: row.remote_entity_id,
+    remote_space_id: row.remote_space_id,
+    remote_board_id: row.remote_board_id,
+    remote_column_id: row.remote_column_id,
+    remote_lane_id: row.remote_lane_id,
+    last_remote_updated_at: row.last_remote_updated_at,
+    last_local_synced_at: row.last_local_synced_at,
+    sync_state: row.sync_state,
+    last_error: row.last_error,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export function getExternalEntityLinkByRemote(provider: IntegrationProvider, remoteEntityType: string, remoteEntityId: string): ExternalEntityLink | undefined {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT * FROM external_entity_links WHERE provider = ? AND remote_entity_type = ? AND remote_entity_id = ?"
+  ).get(provider, remoteEntityType, remoteEntityId) as {
+    id: string;
+    provider: string;
+    local_entity_type: SyncEntityType;
+    local_entity_id: string;
+    remote_entity_type: string;
+    remote_entity_id: string;
+    remote_space_id: number | null;
+    remote_board_id: number | null;
+    remote_column_id: number | null;
+    remote_lane_id: number | null;
+    last_remote_updated_at: string | null;
+    last_local_synced_at: string | null;
+    sync_state: ExternalSyncState;
+    last_error: string | null;
+    created_at: string;
+    updated_at: string;
+  } | undefined;
+  return row ? mapExternalEntityLink(row) : undefined;
+}
+
+export function upsertExternalEntityLink(input: {
+  provider: IntegrationProvider;
+  local_entity_type: SyncEntityType;
+  local_entity_id: string;
+  remote_entity_type: string;
+  remote_entity_id: string;
+  remote_space_id?: number | null;
+  remote_board_id?: number | null;
+  remote_column_id?: number | null;
+  remote_lane_id?: number | null;
+  last_remote_updated_at?: string | null;
+  last_local_synced_at?: string | null;
+  sync_state?: ExternalSyncState;
+  last_error?: string | null;
+}): ExternalEntityLink {
+  const db = getDb();
+  const existing = getExternalEntityLinkByRemote(input.provider, input.remote_entity_type, input.remote_entity_id);
+  const id = existing?.id ?? crypto.randomUUID();
+  const createdAt = existing?.created_at ?? new Date().toISOString();
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    INSERT INTO external_entity_links (
+      id, provider, local_entity_type, local_entity_id, remote_entity_type, remote_entity_id,
+      remote_space_id, remote_board_id, remote_column_id, remote_lane_id,
+      last_remote_updated_at, last_local_synced_at, sync_state, last_error, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(provider, remote_entity_type, remote_entity_id) DO UPDATE SET
+      local_entity_type = excluded.local_entity_type,
+      local_entity_id = excluded.local_entity_id,
+      remote_space_id = excluded.remote_space_id,
+      remote_board_id = excluded.remote_board_id,
+      remote_column_id = excluded.remote_column_id,
+      remote_lane_id = excluded.remote_lane_id,
+      last_remote_updated_at = excluded.last_remote_updated_at,
+      last_local_synced_at = excluded.last_local_synced_at,
+      sync_state = excluded.sync_state,
+      last_error = excluded.last_error,
+      updated_at = excluded.updated_at
+  `).run(
+    id,
+    input.provider,
+    input.local_entity_type,
+    input.local_entity_id,
+    input.remote_entity_type,
+    input.remote_entity_id,
+    input.remote_space_id ?? null,
+    input.remote_board_id ?? null,
+    input.remote_column_id ?? null,
+    input.remote_lane_id ?? null,
+    input.last_remote_updated_at ?? null,
+    input.last_local_synced_at ?? null,
+    input.sync_state ?? "pending",
+    input.last_error ?? null,
+    createdAt,
+    now
+  );
+
+  return getExternalEntityLinkByRemote(input.provider, input.remote_entity_type, input.remote_entity_id)!;
+}
+
+export function rebindExternalEntityLinks(localEntityType: SyncEntityType, oldLocalEntityId: string, newLocalEntityId: string) {
+  const db = getDb();
+  db.prepare(`
+    UPDATE external_entity_links
+    SET local_entity_id = ?, sync_state = 'active', last_local_synced_at = ?, updated_at = ?
+    WHERE local_entity_type = ? AND local_entity_id = ?
+  `).run(newLocalEntityId, new Date().toISOString(), new Date().toISOString(), localEntityType, oldLocalEntityId);
+}
+
+export function saveSyncImportRun(provider: IntegrationProvider, profileId: string, result: KaitenImportResult) {
+  const db = getDb();
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO sync_import_runs (id, provider, profile_id, batch_id, stats_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(crypto.randomUUID(), provider, profileId, result.batch_id, JSON.stringify(result), now);
+}
+
+export function getLatestSyncImportRun(profileId: string): KaitenImportResult | null {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT stats_json FROM sync_import_runs WHERE profile_id = ? ORDER BY created_at DESC LIMIT 1"
+  ).get(profileId) as { stats_json: string } | undefined;
+  if (!row?.stats_json) return null;
+  try {
+    return JSON.parse(row.stats_json) as KaitenImportResult;
+  } catch {
+    return null;
+  }
+}
+
+// ======================== Staging ========================
 
 export function getAllStagingItems(status?: StagingStatus): StagingItem[] {
   const db = getDb();

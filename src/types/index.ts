@@ -385,4 +385,162 @@ export interface StagingParsedData {
   notes?: { text: string }[];
   links?: { url: string; title: string }[];
   status_id?: string | null;
+
+  // External sync metadata
+  external_source?: "kaiten";
+  external_id?: string;
+  external_title?: string;
+  external_url?: string | null;
+  external_status?: string | null;
+  external_board_id?: number | null;
+  external_board_name?: string | null;
+  external_space_id?: number | null;
+  external_space_name?: string | null;
+  external_column_id?: number | null;
+  external_column_name?: string | null;
+  external_lane_id?: number | null;
+  external_lane_name?: string | null;
+  external_updated_at?: string | null;
+  remote_payload?: Record<string, unknown>;
 }
+
+// --- Integrations / Kaiten sync ---
+
+export type IntegrationProvider = "kaiten";
+export type SyncEntityType = "item" | "client";
+export type SyncDirection = "import" | "export" | "bidirectional";
+export type ExternalSyncState = "active" | "pending" | "error" | "archived";
+
+export interface IntegrationSettings {
+  provider: IntegrationProvider;
+  enabled: boolean;
+  company_domain: string;
+  api_base_url: string;
+  has_token: boolean;
+  token_masked: string | null;
+  default_import_target: "staging";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IntegrationSettingsInput {
+  enabled: boolean;
+  company_domain: string;
+  token?: string;
+  clear_token?: boolean;
+  default_import_target?: "staging";
+}
+
+export interface SyncProfile {
+  id: string;
+  provider: IntegrationProvider;
+  name: string;
+  entity_type: SyncEntityType;
+  source_space_id: number | null;
+  source_board_id: number | null;
+  import_enabled: boolean;
+  export_enabled: boolean;
+  source_statuses: string[];
+  source_columns: string[];
+  source_lanes: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SyncProfileInput {
+  id?: string;
+  name: string;
+  entity_type?: SyncEntityType;
+  source_space_id?: number | null;
+  source_board_id?: number | null;
+  import_enabled?: boolean;
+  export_enabled?: boolean;
+  source_statuses?: string[];
+  source_columns?: string[];
+  source_lanes?: string[];
+}
+
+export interface SyncFieldMapping {
+  id: string;
+  profile_id: string;
+  local_entity_type: SyncEntityType;
+  local_field: string;
+  remote_field: string;
+  direction: SyncDirection;
+  transform_rule: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SyncFieldMappingInput {
+  id?: string;
+  profile_id: string;
+  local_entity_type?: SyncEntityType;
+  local_field: string;
+  remote_field: string;
+  direction?: SyncDirection;
+  transform_rule?: string | null;
+}
+
+export interface ExternalEntityLink {
+  id: string;
+  provider: IntegrationProvider;
+  local_entity_type: SyncEntityType;
+  local_entity_id: string;
+  remote_entity_type: string;
+  remote_entity_id: string;
+  remote_space_id: number | null;
+  remote_board_id: number | null;
+  remote_column_id: number | null;
+  remote_lane_id: number | null;
+  last_remote_updated_at: string | null;
+  last_local_synced_at: string | null;
+  sync_state: ExternalSyncState;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KaitenSpace {
+  id: number;
+  title: string;
+}
+
+export interface KaitenBoard {
+  id: number;
+  title: string;
+  space_id: number | null;
+}
+
+export interface KaitenBoardOption extends KaitenBoard {
+  statuses: string[];
+  columns: { id: string; title: string }[];
+  lanes: { id: string; title: string }[];
+}
+
+export interface KaitenImportStats {
+  found: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+}
+
+export interface KaitenImportResult extends KaitenImportStats {
+  batch_id: string;
+  profile_id: string;
+  imported_ids: string[];
+  errors_detail: string[];
+}
+
+export const KAITEN_DEFAULT_FIELD_MAPPINGS: Array<{
+  local_field: "title" | "description" | "status" | "priority" | "due_date" | "tags";
+  remote_field: string;
+}> = [
+  { local_field: "title", remote_field: "title" },
+  { local_field: "description", remote_field: "description" },
+  { local_field: "status", remote_field: "status" },
+  { local_field: "priority", remote_field: "priority" },
+  { local_field: "due_date", remote_field: "due_date" },
+  { local_field: "tags", remote_field: "tags" },
+];

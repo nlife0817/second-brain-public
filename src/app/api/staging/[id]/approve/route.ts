@@ -3,6 +3,7 @@ import {
   getStagingItemById, approveStagingItem, rejectStagingItem,
   createItem, getSubtasks, getItemTags,
   createClient as dbCreateClient,
+  rebindExternalEntityLinks,
 } from "@/lib/db";
 import { v4 as uuid } from "uuid";
 import type { StagingParsedData } from "@/types";
@@ -59,6 +60,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
 
       approveStagingItem(id);
+      rebindExternalEntityLinks("item", id, itemId);
 
       const full = {
         ...item,
@@ -81,6 +83,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
 
       approveStagingItem(id);
+      rebindExternalEntityLinks("client", id, client.id);
       return NextResponse.json(client, { status: 201 });
     }
 
