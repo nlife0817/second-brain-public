@@ -37,6 +37,8 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { CategoryManager } from "./CategoryManager";
+import { OrderableListSection } from "./OrderableListSection";
+import { Tag } from "lucide-react";
 
 const PRESET_COLORS = [
   "#6b7280", "#ef4444", "#f97316", "#eab308", "#22c55e",
@@ -70,6 +72,32 @@ type FieldMappingsResponse = {
   defaults: typeof KAITEN_DEFAULT_FIELD_MAPPINGS;
   mappings: SyncFieldMapping[];
 };
+
+function TagsSection() {
+  const tags = useBrainStore((s) => s.tags);
+  const createTag = useBrainStore((s) => s.createTag);
+  const updateTag = useBrainStore((s) => s.updateTag);
+  const deleteTag = useBrainStore((s) => s.deleteTag);
+
+  return (
+    <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center gap-2">
+        <Tag className="size-4 text-violet-500" />
+        <span className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Теги</span>
+        {tags.length > 0 && <span className="text-xs text-slate-400">({tags.length})</span>}
+      </div>
+      <OrderableListSection
+        items={tags}
+        onCreate={(name, color) => createTag(name, color)}
+        onUpdate={(id, updates) => updateTag(id, updates)}
+        onDelete={(id) => deleteTag(id)}
+        hasColor
+        emptyText="Нет тегов"
+        addPlaceholder="Название тега..."
+      />
+    </section>
+  );
+}
 
 function CrmSystemsSection() {
   const crmSystems = useBrainStore((s) => s.crmSystems);
@@ -1324,6 +1352,8 @@ export function SettingsView() {
           <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-sm">
             <CrmSystemsSection />
           </section>
+
+          <TagsSection />
 
           <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-start justify-between gap-4">

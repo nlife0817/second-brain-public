@@ -73,6 +73,8 @@ interface BrainStore {
   deleteItem: (id: string) => Promise<void>;
   reorderItems: (items: { id: string; position: number; status?: string }[]) => Promise<void>;
   createTag: (name: string, color?: string) => Promise<Tag>;
+  updateTag: (id: string, updates: Partial<Tag>) => Promise<void>;
+  deleteTag: (id: string) => Promise<void>;
   detachSubtask: (subtaskId: string) => Promise<void>;
 
   setViewMode: (mode: ViewMode) => void;
@@ -374,6 +376,23 @@ export const useBrainStore = create<BrainStore>()(
     const tag = await res.json();
     await get().fetchTags();
     return tag;
+  },
+
+  updateTag: async (id, updates) => {
+    const res = await fetch(`/api/tags/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error("Failed to update tag");
+    await get().fetchTags();
+  },
+
+  deleteTag: async (id) => {
+    const res = await fetch(`/api/tags/${id}`, { method: "DELETE" });
+    if (!res.ok) return;
+    await get().fetchTags();
+    await get().fetchItems();
   },
 
   detachSubtask: async (subtaskId) => {

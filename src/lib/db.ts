@@ -76,7 +76,8 @@ function initSchema(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS tags (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
-      color TEXT NOT NULL DEFAULT '#6b7280'
+      color TEXT NOT NULL DEFAULT '#6b7280',
+      position INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS item_tags (
@@ -626,6 +627,20 @@ function migrateSchema(db: Database.Database) {
       transaction();
     }
   }
+
+  // --- Tags position migration ---
+  const tagCols = db.prepare("PRAGMA table_info(tags)").all() as { name: string }[];
+  const tagColNames = new Set(tagCols.map((c) => c.name));
+  if (!tagColNames.has("position")) {
+    db.exec("ALTER TABLE tags ADD COLUMN position INTEGER NOT NULL DEFAULT 0");
+    // Assign positions based on existing name order
+    const tags = db.prepare("SELECT id FROM tags ORDER BY name ASC").all() as { id: string }[];
+    const updateStmt = db.prepare("UPDATE tags SET position = ? WHERE id = ?");
+    const txn = db.transaction(() => {
+      tags.forEach((t, i) => updateStmt.run(i, t.id));
+    });
+    txn();
+  }
 }
 
 function seedDefaultCategories(db: Database.Database) {
@@ -862,13 +877,35 @@ export function deleteItem(id: string): boolean {
 
 export function getAllTags(): Tag[] {
   const db = getDb();
-  return db.prepare("SELECT * FROM tags ORDER BY name ASC").all() as Tag[];
+  return db.prepare("SELECT * FROM tags ORDER BY position ASC, name ASC").all() as Tag[];
 }
 
-export function createTag(tag: Tag): Tag {
+export function createTag(tag: Pick<Tag, "id" | "name" | "color">): Tag {
   const db = getDb();
-  db.prepare("INSERT OR IGNORE INTO tags (id, name, color) VALUES (?, ?, ?)").run(tag.id, tag.name, tag.color);
-  return tag;
+  const maxPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 as p FROM tags").get() as { p: number };
+  db.prepare("INSERT OR IGNORE INTO tags (id, name, color, position) VALUES (?, ?, ?, ?)").run(tag.id, tag.name, tag.color, maxPos.p);
+  return db.prepare("SELECT * FROM tags WHERE id = ?").get(tag.id) as Tag;
+}
+
+export function updateTag(id: string, updates: Partial<Pick<Tag, "name" | "color" | "position">>): Tag | undefined {
+  const db = getDb();
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (fields.length === 0) return db.prepare("SELECT * FROM tags WHERE id = ?").get(id) as Tag | undefined;
+  values.push(id);
+  db.prepare(`UPDATE tags SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  return db.prepare("SELECT * FROM tags WHERE id = ?").get(id) as Tag | undefined;
+}
+
+export function deleteTag(id: string): boolean {
+  const db = getDb();
+  db.prepare("DELETE FROM item_tags WHERE tag_id = ?").run(id);
+  const result = db.prepare("DELETE FROM tags WHERE id = ?").run(id);
+  return result.changes > 0;
 }
 
 export function setItemTags(itemId: string, tagIds: string[]) {
@@ -2309,14 +2346,25 @@ export function getSyncOutboxJobByLocal(provider: IntegrationProvider, localEnti
   } : undefined;
 }
 
-export function getDueSyncOutboxJobs(provider: IntegrationProvider, limit = 50): SyncOutboxJob[] {
+export function getDueSyncOutboxJobs(
+  provider: IntegrationProvider,
+  limit = 50,
+  includeFuture = false
+): SyncOutboxJob[] {
   const db = getDb();
-  const rows = db.prepare(`
-    SELECT * FROM sync_outbox
-    WHERE provider = ? AND status IN ('pending', 'error') AND next_attempt_at <= ?
-    ORDER BY next_attempt_at ASC
-    LIMIT ?
-  `).all(provider, new Date().toISOString(), limit) as {
+  const rows = includeFuture
+    ? db.prepare(`
+        SELECT * FROM sync_outbox
+        WHERE provider = ? AND status IN ('pending', 'error')
+        ORDER BY requested_at ASC
+        LIMIT ?
+      `).all(provider, limit)
+    : db.prepare(`
+        SELECT * FROM sync_outbox
+        WHERE provider = ? AND status IN ('pending', 'error') AND next_attempt_at <= ?
+        ORDER BY next_attempt_at ASC
+        LIMIT ?
+      `).all(provider, new Date().toISOString(), limit) as {
     id: string;
     provider: string;
     profile_id: string | null;
@@ -2332,7 +2380,23 @@ export function getDueSyncOutboxJobs(provider: IntegrationProvider, limit = 50):
     created_at: string;
     updated_at: string;
   }[];
-  return rows.map((row) => ({
+  const typedRows = rows as {
+    id: string;
+    provider: string;
+    profile_id: string | null;
+    local_entity_type: SyncEntityType;
+    local_entity_id: string;
+    remote_entity_type: string;
+    remote_entity_id: string;
+    status: SyncOutboxStatus;
+    attempts: number;
+    requested_at: string;
+    next_attempt_at: string;
+    last_error: string | null;
+    created_at: string;
+    updated_at: string;
+  }[];
+  return typedRows.map((row) => ({
     id: row.id,
     provider: row.provider as IntegrationProvider,
     profile_id: row.profile_id,
