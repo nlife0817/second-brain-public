@@ -488,9 +488,24 @@ export function SettingsView() {
 
   const fetchJson = useCallback(async <T,>(url: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(url, init);
-    const payload = await response.json();
+    const raw = await response.text();
+    if (!raw.trim()) {
+      throw new Error(`Сервер вернул пустой ответ для ${url}`);
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      throw new Error(`Сервер вернул некорректный ответ для ${url}`);
+    }
+
     if (!response.ok) {
-      throw new Error(payload.error || "Request failed");
+      const message =
+        payload && typeof payload === "object" && "error" in payload
+          ? String((payload as { error?: unknown }).error ?? "Request failed")
+          : "Request failed";
+      throw new Error(message);
     }
     return payload as T;
   }, []);

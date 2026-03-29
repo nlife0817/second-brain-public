@@ -29,9 +29,9 @@ function getDb(): Database.Database {
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
     initSchema(db);
-    migrateSchema(db);
     initBackupSchedule(db, DB_PATH);
   }
+  migrateSchema(db);
   return db;
 }
 

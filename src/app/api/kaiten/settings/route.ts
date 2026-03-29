@@ -19,7 +19,15 @@ export async function PUT(req: NextRequest) {
       default_import_target: "staging",
     });
     return NextResponse.json(settings);
-  } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to save Kaiten settings",
+      },
+      { status: 400 }
+    );
   }
 }

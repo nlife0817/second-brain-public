@@ -31,7 +31,15 @@ export async function PUT(req: NextRequest) {
       defaults: KAITEN_DEFAULT_FIELD_MAPPINGS,
       mappings,
     });
-  } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to save field mappings",
+      },
+      { status: 400 }
+    );
   }
 }
