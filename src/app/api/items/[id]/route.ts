@@ -1,22 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getItemById, updateItem, deleteItem, getSubtasks, getItemParticipants, getItemTags, setItemParticipants, setItemTags } from "@/lib/db";
-import { UpdateItemPayload, ItemWithSubtasks } from "@/types";
+import { updateItem, deleteItem, getItemFull, setItemParticipants, setItemTags } from "@/lib/db";
+import { UpdateItemPayload } from "@/types";
 import { ensureKaitenSyncScheduler, queueKaitenItemSync } from "@/lib/kaiten/sync";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   ensureKaitenSyncScheduler();
   const { id } = await params;
-  const item = getItemById(id);
+  const item = getItemFull(id);
   if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const result: ItemWithSubtasks = {
-    ...item,
-    subtasks: getSubtasks(item.id),
-    tags: getItemTags(item.id),
-    participants: getItemParticipants(item.id),
-  };
-
-  return NextResponse.json(result);
+  return NextResponse.json(item);
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -41,14 +33,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       queueKaitenItemSync(id);
     }
 
-    const result: ItemWithSubtasks = {
-      ...updated,
-      subtasks: getSubtasks(updated.id),
-      tags: getItemTags(updated.id),
-      participants: getItemParticipants(updated.id),
-    };
-
-    return NextResponse.json(result);
+    return NextResponse.json(getItemFull(id));
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }

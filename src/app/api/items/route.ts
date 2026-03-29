@@ -1,23 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllItems, createItem, getSubtasks, getItemParticipants, getItemTags, reorderItems, setItemParticipants } from "@/lib/db";
+import { getAllItemsFull, createItem, getItemFull, reorderItems, setItemParticipants, setItemTags } from "@/lib/db";
 import { v4 as uuid } from "uuid";
-import { CreateItemPayload, ItemWithSubtasks } from "@/types";
+import { CreateItemPayload } from "@/types";
 import { ensureKaitenSyncScheduler, queueKaitenItemSync } from "@/lib/kaiten/sync";
 
 export async function GET(req: NextRequest) {
   ensureKaitenSyncScheduler();
   const showArchived = req.nextUrl.searchParams.get("archived") === "true";
   const includeChildren = req.nextUrl.searchParams.get("children") === "true";
-  const items = getAllItems(showArchived, includeChildren);
 
-  const itemsWithSubtasks: ItemWithSubtasks[] = items.map((item) => ({
-    ...item,
-    subtasks: getSubtasks(item.id),
-    tags: getItemTags(item.id),
-    participants: getItemParticipants(item.id),
-  }));
-
-  return NextResponse.json(itemsWithSubtasks);
+  return NextResponse.json(getAllItemsFull(showArchived, includeChildren));
 }
 
 export async function POST(req: NextRequest) {
@@ -44,16 +36,14 @@ export async function POST(req: NextRequest) {
       parent_id: body.parent_id ?? null,
     });
 
+    if (body.tags?.length) {
+      setItemTags(item.id, body.tags);
+    }
     if (body.participants?.length) {
       setItemParticipants(item.id, body.participants);
     }
     queueKaitenItemSync(item.id);
-    return NextResponse.json({
-      ...item,
-      subtasks: getSubtasks(item.id),
-      tags: getItemTags(item.id),
-      participants: getItemParticipants(item.id),
-    }, { status: 201 });
+    return NextResponse.json(getItemFull(item.id), { status: 201 });
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }

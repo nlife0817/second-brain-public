@@ -16,17 +16,7 @@ import { SettingsView } from "@/components/settings/SettingsView";
 import { StagingView } from "@/components/staging/StagingView";
 
 export default function Home() {
-  const fetchItems = useBrainStore((s) => s.fetchItems);
-  const fetchTags = useBrainStore((s) => s.fetchTags);
-  const fetchCategories = useBrainStore((s) => s.fetchCategories);
-  const fetchClients = useBrainStore((s) => s.fetchClients);
-  const fetchClientStatuses = useBrainStore((s) => s.fetchClientStatuses);
-  const fetchCrmSystems = useBrainStore((s) => s.fetchCrmSystems);
-  const fetchRelationTypes = useBrainStore((s) => s.fetchRelationTypes);
-  const fetchDevelopmentStages = useBrainStore((s) => s.fetchDevelopmentStages);
-  const fetchAllParticipants = useBrainStore((s) => s.fetchAllParticipants);
-  const fetchEntityCounts = useBrainStore((s) => s.fetchEntityCounts);
-  const fetchStagingItems = useBrainStore((s) => s.fetchStagingItems);
+  const fetchInit = useBrainStore((s) => s.fetchInit);
   const viewMode = useBrainStore((s) => s.viewMode);
   const detailMode = useBrainStore((s) => s.detailMode);
   const isDetailOpen = useBrainStore((s) => s.isDetailOpen);
@@ -34,19 +24,8 @@ export default function Home() {
   const appSection = useBrainStore((s) => s.appSection);
 
   useEffect(() => {
-    fetchItems();
-    fetchTags();
-    fetchCategories();
-    fetchClients();
-    fetchClientStatuses();
-    fetchCrmSystems();
-    fetchRelationTypes();
-    fetchDevelopmentStages();
-    fetchAllParticipants();
-    fetchEntityCounts("item");
-    fetchEntityCounts("client");
-    fetchStagingItems();
-  }, [fetchItems, fetchTags, fetchCategories, fetchClients, fetchClientStatuses, fetchCrmSystems, fetchRelationTypes, fetchDevelopmentStages, fetchAllParticipants, fetchEntityCounts, fetchStagingItems]);
+    fetchInit();
+  }, [fetchInit]);
 
   return (
     <div className="flex h-screen bg-background">

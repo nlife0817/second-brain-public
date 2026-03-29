@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { initBackupSchedule } from "./backup";
 import {
-  Item, Tag, Category, CrmSystem, WeeklyPlan, WeeklyPlanEntry, WeeklyPlanEntryWithItem, WeeklyPlanFull, WeeklyPlanReport, EntryComment,
+  Item, ItemWithSubtasks, Tag, Category, CrmSystem, WeeklyPlan, WeeklyPlanEntry, WeeklyPlanEntryWithItem, WeeklyPlanFull, WeeklyPlanReport, EntryComment,
   Client, ClientFull, ClientStatus, ClientCompany, ClientContact, ClientContactField, ClientNote, ClientLink,
   ContactFieldType,
   RelationType, Relation, RelationWithTarget, Comment, EntityType,
@@ -27,11 +27,15 @@ function getDb(): Database.Database {
 
     db = new Database(DB_PATH);
     db.pragma("journal_mode = WAL");
+    db.pragma("synchronous = NORMAL");
+    db.pragma("cache_size = -8000");
+    db.pragma("temp_store = MEMORY");
+    db.pragma("mmap_size = 268435456");
     db.pragma("foreign_keys = ON");
     initSchema(db);
+    migrateSchema(db);
     initBackupSchedule(db, DB_PATH);
   }
-  migrateSchema(db);
   return db;
 }
 
@@ -386,6 +390,22 @@ function initSchema(db: Database.Database) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_sync_outbox_due ON sync_outbox(provider, status, next_attempt_at);
+
+    -- Additional performance indexes
+    CREATE INDEX IF NOT EXISTS idx_items_position ON items(position);
+    CREATE INDEX IF NOT EXISTS idx_items_status_parent ON items(status, parent_id);
+    CREATE INDEX IF NOT EXISTS idx_items_source ON items(source);
+    CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
+    CREATE INDEX IF NOT EXISTS idx_items_due_date ON items(due_date);
+    CREATE INDEX IF NOT EXISTS idx_items_created_at ON items(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_item_tags_tag ON item_tags(tag_id);
+    CREATE INDEX IF NOT EXISTS idx_item_dev_participants_participant ON item_development_participants(participant_id);
+    CREATE INDEX IF NOT EXISTS idx_clients_position ON clients(position);
+    CREATE INDEX IF NOT EXISTS idx_clients_created_at ON clients(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_client_crm_systems_crm ON client_crm_systems(crm_system_id);
+    CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_staging_entity_type ON staging_items(entity_type);
+    CREATE INDEX IF NOT EXISTS idx_staging_updated_at ON staging_items(updated_at DESC);
   `);
 }
 
@@ -803,6 +823,81 @@ export function getItemParticipants(itemId: string): DevelopmentParticipant[] {
     WHERE ip.item_id = ?
     ORDER BY p.name COLLATE NOCASE ASC
   `).all(itemId) as DevelopmentParticipant[];
+}
+
+/** Batch-оптимизированная загрузка всех items с subtasks, tags, participants за 4 запроса вместо N*3 */
+export function getAllItemsFull(includeArchived = false, includeChildren = false): ItemWithSubtasks[] {
+  const db = getDb();
+
+  // 1. Все top-level items
+  const conditions: string[] = [];
+  if (!includeArchived) conditions.push("i.status != 'archived'");
+  if (!includeChildren) conditions.push("i.parent_id IS NULL");
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const items = db.prepare(`SELECT * FROM items i ${where} ORDER BY position ASC, created_at DESC`).all() as Item[];
+
+  if (items.length === 0) return [];
+
+  const itemIds = items.map((i) => i.id);
+
+  // 2. Все subtasks одним запросом
+  const allSubtasks = db.prepare(
+    `SELECT * FROM items WHERE parent_id IS NOT NULL ORDER BY position ASC`
+  ).all() as Item[];
+  const subtaskMap = new Map<string, Item[]>();
+  for (const sub of allSubtasks) {
+    if (!sub.parent_id) continue;
+    const list = subtaskMap.get(sub.parent_id);
+    if (list) list.push(sub);
+    else subtaskMap.set(sub.parent_id, [sub]);
+  }
+
+  // 3. Все tags одним запросом
+  const allItemTags = db.prepare(`
+    SELECT it.item_id, t.* FROM tags t
+    JOIN item_tags it ON t.id = it.tag_id
+  `).all() as (Tag & { item_id: string })[];
+  const tagMap = new Map<string, Tag[]>();
+  for (const row of allItemTags) {
+    const list = tagMap.get(row.item_id);
+    const tag: Tag = { id: row.id, name: row.name, color: row.color, position: row.position };
+    if (list) list.push(tag);
+    else tagMap.set(row.item_id, [tag]);
+  }
+
+  // 4. Все participants одним запросом
+  const allItemParticipants = db.prepare(`
+    SELECT ip.item_id, p.* FROM development_participants p
+    JOIN item_development_participants ip ON p.id = ip.participant_id
+    ORDER BY p.name COLLATE NOCASE ASC
+  `).all() as (DevelopmentParticipant & { item_id: string })[];
+  const participantMap = new Map<string, DevelopmentParticipant[]>();
+  for (const row of allItemParticipants) {
+    const p: DevelopmentParticipant = { id: row.id, provider: row.provider, remote_id: row.remote_id, name: row.name, position: row.position, created_at: row.created_at, updated_at: row.updated_at };
+    const list = participantMap.get(row.item_id);
+    if (list) list.push(p);
+    else participantMap.set(row.item_id, [p]);
+  }
+
+  // Собираем результат
+  return items.map((item) => ({
+    ...item,
+    subtasks: subtaskMap.get(item.id) ?? [],
+    tags: tagMap.get(item.id) ?? [],
+    participants: participantMap.get(item.id) ?? [],
+  }));
+}
+
+/** Возвращает один item с subtasks/tags/participants (для ответа на create/update) */
+export function getItemFull(id: string): ItemWithSubtasks | undefined {
+  const item = getItemById(id);
+  if (!item) return undefined;
+  return {
+    ...item,
+    subtasks: getSubtasks(item.id),
+    tags: getItemTags(item.id),
+    participants: getItemParticipants(item.id),
+  };
 }
 
 export function setItemParticipants(itemId: string, participants: DevelopmentParticipantInput[]): DevelopmentParticipant[] {
@@ -1483,37 +1578,72 @@ export function getClientFull(id: string): ClientFull | undefined {
 export function getAllClientsFull(): ClientFull[] {
   const db = getDb();
   const clients = getAllClients();
+  if (clients.length === 0) return [];
+
   const statusMap = new Map<string, ClientStatus>();
   for (const s of getAllClientStatuses()) statusMap.set(s.id, s);
 
-  const companyStmt = db.prepare("SELECT * FROM client_companies WHERE client_id = ?");
-  const contactStmt = db.prepare("SELECT * FROM client_contacts WHERE client_id = ? ORDER BY position ASC");
-  const fieldStmt = db.prepare("SELECT * FROM client_contact_fields WHERE contact_id = ?");
-  const noteStmt = db.prepare("SELECT * FROM client_notes WHERE client_id = ? ORDER BY created_at DESC");
-  const linkStmt = db.prepare("SELECT * FROM client_links WHERE client_id = ?");
-  const crmStmt = db.prepare(`
-    SELECT cs.* FROM crm_systems cs
+  // Batch: все companies
+  const allCompanies = db.prepare("SELECT * FROM client_companies").all() as ClientCompany[];
+  const companyMap = new Map<string, ClientCompany[]>();
+  for (const c of allCompanies) {
+    const list = companyMap.get(c.client_id);
+    if (list) list.push(c); else companyMap.set(c.client_id, [c]);
+  }
+
+  // Batch: все contacts + fields
+  const allContacts = db.prepare("SELECT * FROM client_contacts ORDER BY position ASC").all() as ClientContact[];
+  const allFields = db.prepare("SELECT * FROM client_contact_fields").all() as ClientContactField[];
+  const fieldMap = new Map<string, ClientContactField[]>();
+  for (const f of allFields) {
+    const list = fieldMap.get(f.contact_id);
+    if (list) list.push(f); else fieldMap.set(f.contact_id, [f]);
+  }
+  const contactMap = new Map<string, ClientContact[]>();
+  for (const c of allContacts) {
+    const contact = { ...c, fields: fieldMap.get(c.id) ?? [] };
+    const list = contactMap.get(c.client_id);
+    if (list) list.push(contact); else contactMap.set(c.client_id, [contact]);
+  }
+
+  // Batch: все notes
+  const allNotes = db.prepare("SELECT * FROM client_notes ORDER BY created_at DESC").all() as ClientNote[];
+  const noteMap = new Map<string, ClientNote[]>();
+  for (const n of allNotes) {
+    const list = noteMap.get(n.client_id);
+    if (list) list.push(n); else noteMap.set(n.client_id, [n]);
+  }
+
+  // Batch: все links
+  const allLinks = db.prepare("SELECT * FROM client_links").all() as ClientLink[];
+  const linkMap = new Map<string, ClientLink[]>();
+  for (const l of allLinks) {
+    const list = linkMap.get(l.client_id);
+    if (list) list.push(l); else linkMap.set(l.client_id, [l]);
+  }
+
+  // Batch: все crm systems
+  const allCrmLinks = db.prepare(`
+    SELECT ccs.client_id, cs.* FROM crm_systems cs
     JOIN client_crm_systems ccs ON cs.id = ccs.crm_system_id
-    WHERE ccs.client_id = ? ORDER BY cs.position ASC
-  `);
+    ORDER BY cs.position ASC
+  `).all() as (CrmSystem & { client_id: string })[];
+  const crmMap = new Map<string, CrmSystem[]>();
+  for (const row of allCrmLinks) {
+    const crm: CrmSystem = { id: row.id, name: row.name, position: row.position };
+    const list = crmMap.get(row.client_id);
+    if (list) list.push(crm); else crmMap.set(row.client_id, [crm]);
+  }
 
-  return clients.map((client) => {
-    const contactRows = contactStmt.all(client.id) as ClientContact[];
-    const contacts = contactRows.map((c) => ({
-      ...c,
-      fields: fieldStmt.all(c.id) as ClientContactField[],
-    }));
-
-    return {
-      ...client,
-      status: client.status_id ? statusMap.get(client.status_id) ?? null : null,
-      companies: companyStmt.all(client.id) as ClientCompany[],
-      contacts,
-      notes: noteStmt.all(client.id) as ClientNote[],
-      links: linkStmt.all(client.id) as ClientLink[],
-      crm_systems: crmStmt.all(client.id) as CrmSystem[],
-    };
-  });
+  return clients.map((client) => ({
+    ...client,
+    status: client.status_id ? statusMap.get(client.status_id) ?? null : null,
+    companies: companyMap.get(client.id) ?? [],
+    contacts: contactMap.get(client.id) ?? [],
+    notes: noteMap.get(client.id) ?? [],
+    links: linkMap.get(client.id) ?? [],
+    crm_systems: crmMap.get(client.id) ?? [],
+  }));
 }
 
 export function createClient(data: {

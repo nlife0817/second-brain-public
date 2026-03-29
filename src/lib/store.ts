@@ -63,6 +63,7 @@ interface BrainStore {
   detailMode: "modal" | "panel";
   listGroupBy: ListGroupByConfig;
 
+  fetchInit: () => Promise<void>;
   fetchItems: () => Promise<void>;
   fetchTags: () => Promise<void>;
   fetchCategories: () => Promise<void>;
@@ -273,6 +274,38 @@ export const useBrainStore = create<BrainStore>()(
   currentPlanReport: null,
   unplannedDoneItems: [],
 
+  fetchInit: async () => {
+    set({ loading: true });
+    const mode = get().subtaskDisplayMode;
+    const qs = new URLSearchParams();
+    qs.set("archived", "true");
+    if (mode === "detached") qs.set("children", "true");
+    const res = await fetch(`/api/init?${qs}`);
+    if (!res.ok) { set({ loading: false }); return; }
+    const data = await res.json();
+    const parsed = (data.stagingItems ?? []).map((item: StagingItem) => ({
+      ...item,
+      parsed_data: JSON.parse(item.parsed_data || "{}") as StagingParsedData,
+    }));
+    set({
+      items: data.items,
+      tags: data.tags,
+      categories: data.categories,
+      clients: data.clients,
+      clientStatuses: data.clientStatuses,
+      crmSystems: data.crmSystems,
+      developmentStages: data.developmentStages,
+      allParticipants: data.allParticipants,
+      relationTypes: data.relationTypes,
+      stagingItems: parsed,
+      itemRelationCounts: data.itemRelationCounts,
+      itemCommentCounts: data.itemCommentCounts,
+      clientRelationCounts: data.clientRelationCounts,
+      clientCommentCounts: data.clientCommentCounts,
+      loading: false,
+    });
+  },
+
   fetchItems: async () => {
     set({ loading: true });
     const mode = get().subtaskDisplayMode;
@@ -306,8 +339,8 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify({ name, color, icon }),
     });
     if (!res.ok) throw new Error("Failed to create category");
-    const cat = await res.json();
-    await get().fetchCategories();
+    const cat: Category = await res.json();
+    set((s) => ({ categories: [...s.categories, cat] }));
     return cat;
   },
 
@@ -318,13 +351,14 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify(updates),
     });
     if (!res.ok) throw new Error("Failed to update category");
-    await get().fetchCategories();
+    const updated: Category = await res.json();
+    set((s) => ({ categories: s.categories.map((c) => c.id === id ? updated : c) }));
   },
 
   deleteCategory: async (id) => {
     const res = await fetch(`/api/categories/${id}`, { method: "DELETE" });
     if (!res.ok) throw new Error("Failed to delete category");
-    await get().fetchCategories();
+    set((s) => ({ categories: s.categories.filter((c) => c.id !== id) }));
   },
 
   createItem: async (payload) => {
@@ -334,8 +368,20 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to create item");
-    const item = await res.json();
-    await get().fetchItems();
+    const item: ItemWithSubtasks = await res.json();
+    // Optimistic: add to store without refetch
+    if (!item.parent_id) {
+      set((s) => ({ items: [item, ...s.items] }));
+    } else {
+      // Subtask: update parent's subtask list
+      set((s) => ({
+        items: s.items.map((i) =>
+          i.id === item.parent_id
+            ? { ...i, subtasks: [...(i.subtasks ?? []), item] }
+            : i
+        ),
+      }));
+    }
     return item;
   },
 
@@ -346,7 +392,18 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to update item");
-    await get().fetchItems();
+    const updated: ItemWithSubtasks = await res.json();
+    // Optimistic: replace in store
+    set((s) => ({
+      items: s.items.map((i) => {
+        if (i.id === id) return updated;
+        // Also check subtasks
+        if (i.subtasks?.some((sub) => sub.id === id)) {
+          return { ...i, subtasks: i.subtasks.map((sub) => sub.id === id ? updated : sub) };
+        }
+        return i;
+      }),
+    }));
   },
 
   deleteItem: async (id) => {
@@ -376,13 +433,13 @@ export const useBrainStore = create<BrainStore>()(
       }),
     }));
 
-    await fetch("/api/items", {
+    const res = await fetch("/api/items", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items: updates }),
     });
-    // Always re-fetch to sync with server (corrects on error too)
-    await get().fetchItems();
+    // Only refetch on error to correct state
+    if (!res.ok) await get().fetchItems();
   },
 
   createTag: async (name, color) => {
@@ -392,8 +449,8 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify({ name, color }),
     });
     if (!res.ok) throw new Error("Failed to create tag");
-    const tag = await res.json();
-    await get().fetchTags();
+    const tag: Tag = await res.json();
+    set((s) => ({ tags: [...s.tags, tag] }));
     return tag;
   },
 
@@ -404,14 +461,20 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify(updates),
     });
     if (!res.ok) throw new Error("Failed to update tag");
-    await get().fetchTags();
+    const updated: Tag = await res.json();
+    set((s) => ({ tags: s.tags.map((t) => t.id === id ? updated : t) }));
   },
 
   deleteTag: async (id) => {
     const res = await fetch(`/api/tags/${id}`, { method: "DELETE" });
     if (!res.ok) return;
-    await get().fetchTags();
-    await get().fetchItems();
+    set((s) => ({
+      tags: s.tags.filter((t) => t.id !== id),
+      items: s.items.map((item) => ({
+        ...item,
+        tags: item.tags?.filter((t) => t.id !== id),
+      })),
+    }));
   },
 
   detachSubtask: async (subtaskId) => {
@@ -421,7 +484,16 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify({ parent_id: null }),
     });
     if (!res.ok) return;
-    await get().fetchItems();
+    const detached: ItemWithSubtasks = await res.json();
+    set((s) => ({
+      items: [
+        ...s.items.map((i) => ({
+          ...i,
+          subtasks: i.subtasks?.filter((sub) => sub.id !== subtaskId) ?? [],
+        })),
+        { ...detached, subtasks: [], tags: detached.tags ?? [], participants: detached.participants ?? [] },
+      ],
+    }));
   },
 
   setViewMode: (viewMode) => set({ viewMode }),
@@ -572,7 +644,8 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to create client");
-    const client = await res.json();
+    const client: ClientFull = await res.json();
+    // Refetch to get full nested data (companies, contacts, etc.)
     await get().fetchClients();
     return client;
   },
@@ -584,7 +657,8 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to update client");
-    await get().fetchClients();
+    const updated: ClientFull = await res.json();
+    set((s) => ({ clients: s.clients.map((c) => c.id === id ? { ...c, ...updated } : c) }));
   },
 
   deleteClient: async (id) => {
@@ -604,8 +678,8 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify({ name, color }),
     });
     if (!res.ok) throw new Error("Failed to create client status");
-    const status = await res.json();
-    await get().fetchClientStatuses();
+    const status: ClientStatus = await res.json();
+    set((s) => ({ clientStatuses: [...s.clientStatuses, status] }));
     return status;
   },
 
@@ -616,15 +690,20 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify(updates),
     });
     if (!res.ok) return;
-    await get().fetchClientStatuses();
-    await get().fetchClients();
+    const updated: ClientStatus = await res.json();
+    set((s) => ({
+      clientStatuses: s.clientStatuses.map((cs) => cs.id === id ? updated : cs),
+      clients: s.clients.map((c) => c.status_id === id ? { ...c, status: updated } : c),
+    }));
   },
 
   deleteClientStatus: async (id) => {
     const res = await fetch(`/api/client-statuses/${id}`, { method: "DELETE" });
     if (!res.ok) return;
-    await get().fetchClientStatuses();
-    await get().fetchClients();
+    set((s) => ({
+      clientStatuses: s.clientStatuses.filter((cs) => cs.id !== id),
+      clients: s.clients.map((c) => c.status_id === id ? { ...c, status_id: null, status: null } : c),
+    }));
   },
 
   // CRM systems
@@ -642,8 +721,8 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify({ name }),
     });
     if (!res.ok) throw new Error("Failed to create CRM system");
-    const crm = await res.json();
-    await get().fetchCrmSystems();
+    const crm: CrmSystem = await res.json();
+    set((s) => ({ crmSystems: [...s.crmSystems, crm] }));
     return crm;
   },
 
@@ -654,14 +733,20 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify(updates),
     });
     if (!res.ok) throw new Error("Failed to update CRM system");
-    await get().fetchCrmSystems();
+    const updated: CrmSystem = await res.json();
+    set((s) => ({ crmSystems: s.crmSystems.map((c) => c.id === id ? updated : c) }));
   },
 
   deleteCrmSystem: async (id) => {
     const res = await fetch(`/api/crm-systems/${id}`, { method: "DELETE" });
     if (!res.ok) return;
-    await get().fetchCrmSystems();
-    await get().fetchClients();
+    set((s) => ({
+      crmSystems: s.crmSystems.filter((c) => c.id !== id),
+      clients: s.clients.map((cl) => ({
+        ...cl,
+        crm_systems: cl.crm_systems?.filter((c) => c.id !== id) ?? [],
+      })),
+    }));
   },
 
   // Development stages
@@ -671,16 +756,20 @@ export const useBrainStore = create<BrainStore>()(
     set({ developmentStages: await res.json() });
   },
   createDevelopmentStage: async (name) => {
-    await fetch("/api/development-stages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-    await get().fetchDevelopmentStages();
+    const res = await fetch("/api/development-stages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    if (!res.ok) return;
+    const stage = await res.json();
+    set((s) => ({ developmentStages: [...s.developmentStages, stage] }));
   },
   updateDevelopmentStage: async (id, updates) => {
-    await fetch(`/api/development-stages/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
-    await get().fetchDevelopmentStages();
+    const res = await fetch(`/api/development-stages/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
+    if (!res.ok) return;
+    const updated = await res.json();
+    set((s) => ({ developmentStages: s.developmentStages.map((d) => d.id === id ? updated : d) }));
   },
   deleteDevelopmentStage: async (id) => {
     await fetch(`/api/development-stages/${id}`, { method: "DELETE" });
-    await get().fetchDevelopmentStages();
+    set((s) => ({ developmentStages: s.developmentStages.filter((d) => d.id !== id) }));
   },
 
   // Development participants (all)
@@ -690,17 +779,26 @@ export const useBrainStore = create<BrainStore>()(
     set({ allParticipants: await res.json() });
   },
   createParticipant: async (name) => {
-    await fetch("/api/development-participants", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-    await get().fetchAllParticipants();
+    const res = await fetch("/api/development-participants", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    if (!res.ok) return;
+    const p = await res.json();
+    set((s) => ({ allParticipants: [...s.allParticipants, p] }));
   },
   updateParticipant: async (id, updates) => {
-    await fetch(`/api/development-participants/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
-    await get().fetchAllParticipants();
+    const res = await fetch(`/api/development-participants/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
+    if (!res.ok) return;
+    const updated = await res.json();
+    set((s) => ({ allParticipants: s.allParticipants.map((p) => p.id === id ? updated : p) }));
   },
   deleteParticipant: async (id) => {
     await fetch(`/api/development-participants/${id}`, { method: "DELETE" });
-    await get().fetchAllParticipants();
-    await get().fetchItems();
+    set((s) => ({
+      allParticipants: s.allParticipants.filter((p) => p.id !== id),
+      items: s.items.map((item) => ({
+        ...item,
+        participants: item.participants?.filter((p) => p.id !== id),
+      })),
+    }));
   },
 
   setClientViewMode: (clientViewMode) => set({ clientViewMode }),
@@ -723,12 +821,12 @@ export const useBrainStore = create<BrainStore>()(
         return c;
       }),
     }));
-    await fetch("/api/clients", {
+    const res = await fetch("/api/clients", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clients: updates }),
     });
-    await get().fetchClients();
+    if (!res.ok) await get().fetchClients();
   },
 
   openClientDetail: (id) => set({ selectedClientId: id, isClientDetailOpen: true }),
@@ -878,8 +976,8 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify({ name, color, icon }),
     });
     if (!res.ok) throw new Error("Failed to create relation type");
-    const rt = await res.json();
-    await get().fetchRelationTypes();
+    const rt: RelationType = await res.json();
+    set((s) => ({ relationTypes: [...s.relationTypes, rt] }));
     return rt;
   },
 
@@ -890,13 +988,14 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify(updates),
     });
     if (!res.ok) return;
-    await get().fetchRelationTypes();
+    const updated: RelationType = await res.json();
+    set((s) => ({ relationTypes: s.relationTypes.map((rt) => rt.id === id ? updated : rt) }));
   },
 
   deleteRelationType: async (id) => {
     const res = await fetch(`/api/relation-types/${id}`, { method: "DELETE" });
     if (!res.ok) return;
-    await get().fetchRelationTypes();
+    set((s) => ({ relationTypes: s.relationTypes.filter((rt) => rt.id !== id) }));
   },
 
   // --- Relations ---
