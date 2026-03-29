@@ -47,6 +47,8 @@ import {
   Layers,
   Trash2,
   Archive,
+  Link,
+  MessageSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -2511,6 +2513,8 @@ function ItemRow({
 }) {
   const { item, isSubtask, hasSubtasks, totalSubtasks, doneSubtasks } = row;
   const allItems = useBrainStore((s) => s.items);
+  const relCount = useBrainStore((s) => s.itemRelationCounts[item.id] ?? 0);
+  const commentCount = useBrainStore((s) => s.itemCommentCounts[item.id] ?? 0);
   const isDetachedSubtask = !isSubtask && !!item.parent_id;
   const parentItem = isDetachedSubtask ? allItems.find((i) => i.id === item.parent_id) : null;
 
@@ -2655,6 +2659,22 @@ function ItemRow({
                 </span>
               )}
               {item.title}
+              {(relCount > 0 || commentCount > 0) && (
+                <span className="inline-flex items-center gap-1.5 ml-2">
+                  {relCount > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400">
+                      <Link className="size-2.5" />
+                      {relCount}
+                    </span>
+                  )}
+                  {commentCount > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400">
+                      <MessageSquare className="size-2.5" />
+                      {commentCount}
+                    </span>
+                  )}
+                </span>
+              )}
             </span>
           </td>
         );

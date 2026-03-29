@@ -22,6 +22,21 @@ import {
   WeeklyPlanReport,
   EntryResultStatus,
   ListGroupByConfig,
+  AppSection,
+  ClientViewMode,
+  ClientGroupByConfig,
+  ClientGroupByField,
+  ClientFull,
+  ClientStatus,
+  CreateClientPayload,
+  UpdateClientPayload,
+  RelationType,
+  RelationWithTarget,
+  Comment,
+  EntityType,
+  StagingItem,
+  StagingItemParsed,
+  StagingParsedData,
 } from "@/types";
 
 interface BrainStore {
@@ -76,6 +91,40 @@ interface BrainStore {
   setDetailMode: (mode: "modal" | "panel") => void;
   setListGroupBy: (config: ListGroupByConfig) => void;
 
+  // App section
+  appSection: AppSection;
+  setAppSection: (section: AppSection) => void;
+
+  // Clients
+  clients: ClientFull[];
+  clientStatuses: ClientStatus[];
+  selectedClientId: string | null;
+  isClientDetailOpen: boolean;
+  isCreateClientOpen: boolean;
+  clientSearch: string;
+  clientViewMode: ClientViewMode;
+  clientStatusFilter: string | null;
+  clientGroupBy: ClientGroupByConfig;
+
+  setClientViewMode: (mode: ClientViewMode) => void;
+  setClientStatusFilter: (statusId: string | null) => void;
+  setClientGroupBy: (config: ClientGroupByConfig) => void;
+  reorderClients: (updates: { id: string; position: number; status_id?: string }[]) => Promise<void>;
+
+  fetchClients: () => Promise<void>;
+  fetchClientStatuses: () => Promise<void>;
+  createClient: (payload: CreateClientPayload) => Promise<ClientFull>;
+  updateClient: (id: string, payload: UpdateClientPayload) => Promise<void>;
+  deleteClient: (id: string) => Promise<void>;
+  createClientStatus: (name: string, color?: string) => Promise<ClientStatus>;
+  updateClientStatus: (id: string, updates: Partial<ClientStatus>) => Promise<void>;
+  deleteClientStatus: (id: string) => Promise<void>;
+  openClientDetail: (id: string) => void;
+  closeClientDetail: () => void;
+  openCreateClient: () => void;
+  closeCreateClient: () => void;
+  setClientSearch: (search: string) => void;
+
   // Weekly plans
   weeklyPlans: WeeklyPlan[];
   currentPlan: WeeklyPlanFull | null;
@@ -95,6 +144,40 @@ interface BrainStore {
   fetchPlanReport: (planId: string) => Promise<void>;
   fetchUnplannedDone: (planId: string) => Promise<void>;
   unplannedDoneItems: Item[];
+
+  // Entity counts (relations + comments per item/client)
+  itemRelationCounts: Record<string, number>;
+  itemCommentCounts: Record<string, number>;
+  clientRelationCounts: Record<string, number>;
+  clientCommentCounts: Record<string, number>;
+  fetchEntityCounts: (entityType: EntityType) => Promise<void>;
+
+  // Relation types
+  relationTypes: RelationType[];
+  fetchRelationTypes: () => Promise<void>;
+  createRelationType: (name: string, color?: string, icon?: string) => Promise<RelationType>;
+  updateRelationType: (id: string, updates: Partial<RelationType>) => Promise<void>;
+  deleteRelationType: (id: string) => Promise<void>;
+
+  // Staging
+  stagingItems: StagingItemParsed[];
+  fetchStagingItems: () => Promise<void>;
+  approveStagingItem: (id: string) => Promise<void>;
+  rejectStagingItem: (id: string) => Promise<void>;
+  updateStagingItem: (id: string, updates: Partial<Pick<StagingItem, "title" | "description" | "entity_type"> & { parsed_data: StagingParsedData }>) => Promise<void>;
+  deleteStagingItem: (id: string) => Promise<void>;
+
+  // Relations (fetched per-entity, not global)
+  fetchRelations: (entityType: EntityType, entityId: string) => Promise<RelationWithTarget[]>;
+  createRelation: (source_type: EntityType, source_id: string, target_type: EntityType, target_id: string, relation_type_id?: string | null) => Promise<void>;
+  updateRelationType_: (relationId: string, relation_type_id: string | null) => Promise<void>;
+  deleteRelation: (id: string) => Promise<void>;
+
+  // Comments (fetched per-entity, not global)
+  fetchComments: (entityType: EntityType, entityId: string) => Promise<Comment[]>;
+  createComment: (entityType: EntityType, entityId: string, text: string) => Promise<Comment>;
+  updateComment: (commentId: string, text: string) => Promise<Comment | null>;
+  deleteComment: (commentId: string) => Promise<void>;
 }
 
 const defaultFilters: Filters = {
@@ -130,6 +213,23 @@ export const useBrainStore = create<BrainStore>()(
   activeFilterId: null,
   detailMode: "modal" as "modal" | "panel",
   listGroupBy: ["none", "none"] as ListGroupByConfig,
+
+  // App section
+  appSection: "tasks" as AppSection,
+
+  // Staging
+  stagingItems: [],
+
+  // Clients
+  clients: [],
+  clientStatuses: [],
+  selectedClientId: null,
+  isClientDetailOpen: false,
+  isCreateClientOpen: false,
+  clientSearch: "",
+  clientViewMode: "list" as ClientViewMode,
+  clientStatusFilter: null,
+  clientGroupBy: ["none", "none"] as ClientGroupByConfig,
 
   // Weekly plans
   weeklyPlans: [],
@@ -288,6 +388,7 @@ export const useBrainStore = create<BrainStore>()(
   },
   resetActiveFilter: () => set({ activeFilterId: null }),
   setDetailMode: (detailMode) => set({ detailMode }),
+  setAppSection: (appSection) => set({ appSection }),
   setListGroupBy: (listGroupBy) => {
     // If level 1 is "none", level 2 must also be "none"
     if (listGroupBy[0] === "none") {
@@ -298,6 +399,178 @@ export const useBrainStore = create<BrainStore>()(
       set({ listGroupBy: [listGroupBy[0], l2] as ListGroupByConfig });
     }
   },
+
+  // Staging
+  fetchStagingItems: async () => {
+    const res = await fetch("/api/staging?status=pending");
+    if (!res.ok) return;
+    const items: StagingItem[] = await res.json();
+    const parsed: StagingItemParsed[] = items.map((item) => ({
+      ...item,
+      parsed_data: JSON.parse(item.parsed_data || "{}") as StagingParsedData,
+    }));
+    set({ stagingItems: parsed });
+  },
+
+  approveStagingItem: async (id: string) => {
+    const res = await fetch(`/api/staging/${id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "approve" }),
+    });
+    if (!res.ok) return;
+    set({ stagingItems: get().stagingItems.filter((i) => i.id !== id) });
+    get().fetchItems();
+    get().fetchClients();
+  },
+
+  rejectStagingItem: async (id: string) => {
+    const res = await fetch(`/api/staging/${id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reject" }),
+    });
+    if (!res.ok) return;
+    set({ stagingItems: get().stagingItems.filter((i) => i.id !== id) });
+  },
+
+  updateStagingItem: async (id: string, updates) => {
+    const body: Record<string, unknown> = {};
+    if (updates.title !== undefined) body.title = updates.title;
+    if (updates.description !== undefined) body.description = updates.description;
+    if (updates.entity_type !== undefined) body.entity_type = updates.entity_type;
+    if (updates.parsed_data !== undefined) body.parsed_data = updates.parsed_data;
+
+    const res = await fetch(`/api/staging/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return;
+    const updated: StagingItem = await res.json();
+    set({
+      stagingItems: get().stagingItems.map((i) =>
+        i.id === id ? { ...updated, parsed_data: JSON.parse(updated.parsed_data || "{}") } : i
+      ),
+    });
+  },
+
+  deleteStagingItem: async (id: string) => {
+    const res = await fetch(`/api/staging/${id}`, { method: "DELETE" });
+    if (!res.ok) return;
+    set({ stagingItems: get().stagingItems.filter((i) => i.id !== id) });
+  },
+
+  // Clients
+  fetchClients: async () => {
+    const res = await fetch("/api/clients");
+    if (!res.ok) return;
+    const clients = await res.json();
+    set({ clients });
+  },
+
+  fetchClientStatuses: async () => {
+    const res = await fetch("/api/client-statuses");
+    if (!res.ok) return;
+    const clientStatuses = await res.json();
+    set({ clientStatuses });
+  },
+
+  createClient: async (payload) => {
+    const res = await fetch("/api/clients", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error("Failed to create client");
+    const client = await res.json();
+    await get().fetchClients();
+    return client;
+  },
+
+  updateClient: async (id, payload) => {
+    const res = await fetch(`/api/clients/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error("Failed to update client");
+    await get().fetchClients();
+  },
+
+  deleteClient: async (id) => {
+    const res = await fetch(`/api/clients/${id}`, { method: "DELETE" });
+    if (!res.ok) return;
+    set((s) => ({
+      clients: s.clients.filter((c) => c.id !== id),
+      isClientDetailOpen: s.selectedClientId === id ? false : s.isClientDetailOpen,
+      selectedClientId: s.selectedClientId === id ? null : s.selectedClientId,
+    }));
+  },
+
+  createClientStatus: async (name, color) => {
+    const res = await fetch("/api/client-statuses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, color }),
+    });
+    if (!res.ok) throw new Error("Failed to create client status");
+    const status = await res.json();
+    await get().fetchClientStatuses();
+    return status;
+  },
+
+  updateClientStatus: async (id, updates) => {
+    const res = await fetch(`/api/client-statuses/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) return;
+    await get().fetchClientStatuses();
+    await get().fetchClients();
+  },
+
+  deleteClientStatus: async (id) => {
+    const res = await fetch(`/api/client-statuses/${id}`, { method: "DELETE" });
+    if (!res.ok) return;
+    await get().fetchClientStatuses();
+    await get().fetchClients();
+  },
+
+  setClientViewMode: (clientViewMode) => set({ clientViewMode }),
+  setClientStatusFilter: (clientStatusFilter) => set({ clientStatusFilter }),
+  setClientGroupBy: (clientGroupBy) => {
+    if (clientGroupBy[0] === "none") {
+      set({ clientGroupBy: ["none", "none"] });
+    } else {
+      const l2 = clientGroupBy[1] === clientGroupBy[0] ? "none" : clientGroupBy[1];
+      set({ clientGroupBy: [clientGroupBy[0], l2] as ClientGroupByConfig });
+    }
+  },
+
+  reorderClients: async (updates) => {
+    const posMap = new Map(updates.map((u) => [u.id, u]));
+    set((s) => ({
+      clients: s.clients.map((c) => {
+        const upd = posMap.get(c.id);
+        if (upd) return { ...c, position: upd.position, ...(upd.status_id !== undefined ? { status_id: upd.status_id } : {}) };
+        return c;
+      }),
+    }));
+    await fetch("/api/clients", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clients: updates }),
+    });
+    await get().fetchClients();
+  },
+
+  openClientDetail: (id) => set({ selectedClientId: id, isClientDetailOpen: true }),
+  closeClientDetail: () => set({ isClientDetailOpen: false, selectedClientId: null }),
+  openCreateClient: () => set({ isCreateClientOpen: true }),
+  closeCreateClient: () => set({ isCreateClientOpen: false }),
+  setClientSearch: (clientSearch) => set({ clientSearch }),
 
   // Weekly plans
   fetchWeeklyPlans: async () => {
@@ -405,11 +678,137 @@ export const useBrainStore = create<BrainStore>()(
     const report = await res.json();
     set({ unplannedDoneItems: report.unplanned_done || [] });
   },
+
+  // --- Entity counts ---
+  itemRelationCounts: {},
+  itemCommentCounts: {},
+  clientRelationCounts: {},
+  clientCommentCounts: {},
+
+  fetchEntityCounts: async (entityType) => {
+    const res = await fetch(`/api/entity-counts?entity_type=${entityType}`);
+    if (!res.ok) return;
+    const { relations, comments } = await res.json();
+    if (entityType === "item") {
+      set({ itemRelationCounts: relations, itemCommentCounts: comments });
+    } else {
+      set({ clientRelationCounts: relations, clientCommentCounts: comments });
+    }
+  },
+
+  // --- Relation Types ---
+  relationTypes: [],
+
+  fetchRelationTypes: async () => {
+    const res = await fetch("/api/relation-types");
+    if (!res.ok) return;
+    const relationTypes = await res.json();
+    set({ relationTypes });
+  },
+
+  createRelationType: async (name, color, icon) => {
+    const res = await fetch("/api/relation-types", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, color, icon }),
+    });
+    if (!res.ok) throw new Error("Failed to create relation type");
+    const rt = await res.json();
+    await get().fetchRelationTypes();
+    return rt;
+  },
+
+  updateRelationType: async (id, updates) => {
+    const res = await fetch(`/api/relation-types/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) return;
+    await get().fetchRelationTypes();
+  },
+
+  deleteRelationType: async (id) => {
+    const res = await fetch(`/api/relation-types/${id}`, { method: "DELETE" });
+    if (!res.ok) return;
+    await get().fetchRelationTypes();
+  },
+
+  // --- Relations ---
+
+  fetchRelations: async (entityType, entityId) => {
+    const res = await fetch(`/api/relations?entity_type=${entityType}&entity_id=${entityId}`);
+    if (!res.ok) return [];
+    return await res.json();
+  },
+
+  createRelation: async (source_type, source_id, target_type, target_id, relation_type_id) => {
+    await fetch("/api/relations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_type, source_id, target_type, target_id, relation_type_id }),
+    });
+  },
+
+  updateRelationType_: async (relationId, relation_type_id) => {
+    await fetch("/api/relations", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: relationId, relation_type_id }),
+    });
+  },
+
+  deleteRelation: async (id) => {
+    await fetch("/api/relations", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+  },
+
+  // --- Comments ---
+
+  fetchComments: async (entityType, entityId) => {
+    const res = await fetch(`/api/comments?entity_type=${entityType}&entity_id=${entityId}`);
+    if (!res.ok) return [];
+    return await res.json();
+  },
+
+  createComment: async (entityType, entityId, text) => {
+    const res = await fetch("/api/comments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entity_type: entityType, entity_id: entityId, text }),
+    });
+    if (!res.ok) throw new Error("Failed to create comment");
+    return await res.json();
+  },
+
+  updateComment: async (commentId, text) => {
+    const res = await fetch("/api/comments", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: commentId, text }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  },
+
+  deleteComment: async (commentId) => {
+    await fetch("/api/comments", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: commentId }),
+    });
+  },
 }),
   {
     name: "second-brain-settings",
     storage: createJSONStorage(() => localStorage),
     partialize: (state) => ({
+      appSection: state.appSection,
+      clientViewMode: state.clientViewMode,
+      clientGroupBy: state.clientGroupBy,
       viewMode: state.viewMode,
       activeCategory: state.activeCategory,
       subtaskDisplayMode: state.subtaskDisplayMode,
@@ -515,6 +914,34 @@ export function useSelectedItem(): ItemWithSubtasks | null {
     if (sub) return { ...sub, subtasks: [], tags: [] } as ItemWithSubtasks;
   }
   return null;
+}
+
+export function useFilteredClients() {
+  const clients = useBrainStore((s) => s.clients);
+  const search = useBrainStore((s) => s.clientSearch);
+  const statusFilter = useBrainStore((s) => s.clientStatusFilter);
+
+  return useMemo(() => {
+    return clients.filter((c) => {
+      if (statusFilter !== null && c.status_id !== statusFilter) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        if (
+          !c.name.toLowerCase().includes(q) &&
+          !c.companies?.some((co) => co.name.toLowerCase().includes(q)) &&
+          !c.contacts?.some((co) => co.name.toLowerCase().includes(q))
+        ) return false;
+      }
+      return true;
+    });
+  }, [clients, search, statusFilter]);
+}
+
+export function useSelectedClient(): ClientFull | null {
+  const clients = useBrainStore((s) => s.clients);
+  const selectedId = useBrainStore((s) => s.selectedClientId);
+  if (!selectedId) return null;
+  return clients.find((c) => c.id === selectedId) ?? null;
 }
 
 export function useItemsByStatus(status: ItemStatus): ItemWithSubtasks[] {

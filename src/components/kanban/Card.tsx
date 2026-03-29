@@ -29,6 +29,8 @@ import {
   Lightbulb,
   ChevronDown,
   ChevronRight,
+  Link,
+  MessageSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -398,6 +400,8 @@ export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
   const setEditingItem = useBrainStore((s) => s.setEditingItem);
   const subtaskDisplayMode = useBrainStore((s) => s.subtaskDisplayMode);
   const cardVisibleFields = useBrainStore((s) => s.cardVisibleFields);
+  const relCount = useBrainStore((s) => s.itemRelationCounts[item.id] ?? 0);
+  const commentCount = useBrainStore((s) => s.itemCommentCounts[item.id] ?? 0);
 
   const isEditingThis = editingItemId === item.id;
 
@@ -621,6 +625,20 @@ export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
                   item.status === "done" && "bg-emerald-400"
                 )}
               />
+            </span>
+          )}
+
+          {/* Relation & comment indicators */}
+          {relCount > 0 && (
+            <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400" title={`Связи: ${relCount}`}>
+              <Link className="size-2.5" />
+              <span>{relCount}</span>
+            </span>
+          )}
+          {commentCount > 0 && (
+            <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400" title={`Комментарии: ${commentCount}`}>
+              <MessageSquare className="size-2.5" />
+              <span>{commentCount}</span>
             </span>
           )}
         </div>

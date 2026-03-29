@@ -11,13 +11,16 @@ import {
   LayoutGrid,
   List,
   Tag,
-  Plus,
   ChevronLeft,
+  ClipboardList,
+  Contact,
+  Settings,
+  ClipboardCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBrainStore } from "@/lib/store";
-import type { ItemCategory } from "@/types";
+import type { ItemCategory, AppSection } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -52,15 +55,32 @@ const categories: CategoryEntry[] = [
 /*  Component                                                                  */
 /* -------------------------------------------------------------------------- */
 
+interface SectionEntry {
+  key: AppSection;
+  label: string;
+  icon: LucideIcon;
+}
+
+const sections: SectionEntry[] = [
+  { key: "tasks", label: "Задачи", icon: ClipboardList },
+  { key: "clients", label: "Клиенты", icon: Contact },
+  { key: "staging", label: "Согласование", icon: ClipboardCheck },
+  { key: "settings", label: "Настройки", icon: Settings },
+];
+
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
 
+  const appSection = useBrainStore((s) => s.appSection);
+  const setAppSection = useBrainStore((s) => s.setAppSection);
   const activeCategory = useBrainStore((s) => s.activeCategory);
   const setActiveCategory = useBrainStore((s) => s.setActiveCategory);
   const items = useBrainStore((s) => s.items);
   const tags = useBrainStore((s) => s.tags);
   const viewMode = useBrainStore((s) => s.viewMode);
   const setViewMode = useBrainStore((s) => s.setViewMode);
+  const clients = useBrainStore((s) => s.clients);
+  const stagingItems = useBrainStore((s) => s.stagingItems);
 
   /* Count items by category */
   const counts = useMemo(() => {
@@ -99,9 +119,79 @@ export function Sidebar() {
         <Separator className="bg-slate-200" />
 
         {/* ------------------------------------------------------------------ */}
-        {/*  View mode toggle                                                   */}
+        {/*  Section navigation (Tasks / Clients)                               */}
         {/* ------------------------------------------------------------------ */}
-        {!collapsed && (
+        <div className="flex flex-col gap-0.5 px-2 py-2">
+          {!collapsed && (
+            <span className="mb-1 px-2 text-[11px] font-medium uppercase tracking-widest text-slate-400">
+              Разделы
+            </span>
+          )}
+          {sections.map(({ key, label, icon: Icon }) => {
+            const isActive = appSection === key;
+            const count = key === "tasks" ? items.filter((i) => i.status !== "archived").length : key === "clients" ? clients.length : key === "staging" ? stagingItems.length : 0;
+
+            const button = (
+              <button
+                key={key}
+                onClick={() => setAppSection(key)}
+                className={cn(
+                  "group/sec relative flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-all duration-150",
+                  "outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50",
+                  isActive
+                    ? "bg-white text-slate-900 shadow-sm border border-slate-200"
+                    : "text-slate-600 hover:bg-white/60 hover:text-slate-800",
+                  collapsed && "justify-center px-0"
+                )}
+              >
+                {isActive && (
+                  <span className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-gradient-to-b from-violet-400 to-indigo-500" />
+                )}
+                <Icon
+                  className={cn(
+                    "size-4 shrink-0 transition-colors",
+                    isActive ? "text-violet-500" : "text-slate-400 group-hover/sec:text-slate-500"
+                  )}
+                />
+                {!collapsed && (
+                  <>
+                    <span className="flex-1 truncate text-left">{label}</span>
+                    {count > 0 && (
+                      <span
+                        className={cn(
+                          "min-w-[20px] rounded-md px-1.5 py-0.5 text-center text-[10px] font-semibold tabular-nums leading-none",
+                          isActive ? "bg-violet-100 text-violet-600" : "bg-slate-200/70 text-slate-400"
+                        )}
+                      >
+                        {count}
+                      </span>
+                    )}
+                  </>
+                )}
+              </button>
+            );
+
+            if (collapsed) {
+              return (
+                <Tooltip key={key}>
+                  <TooltipTrigger render={button} />
+                  <TooltipContent side="right">
+                    {label}
+                    {count > 0 && <span className="ml-1.5 opacity-60">{count}</span>}
+                  </TooltipContent>
+                </Tooltip>
+              );
+            }
+            return button;
+          })}
+        </div>
+
+        <Separator className="bg-slate-200" />
+
+        {/* ------------------------------------------------------------------ */}
+        {/*  View mode toggle (tasks only)                                      */}
+        {/* ------------------------------------------------------------------ */}
+        {!collapsed && appSection === "tasks" && (
           <div className="flex items-center gap-1 px-3 pt-4 pb-1">
             <span className="mr-auto text-[11px] font-medium uppercase tracking-widest text-slate-400">
               Вид
@@ -148,10 +238,10 @@ export function Sidebar() {
         )}
 
         {/* ------------------------------------------------------------------ */}
-        {/*  Category navigation                                                */}
+        {/*  Category navigation (tasks only)                                   */}
         {/* ------------------------------------------------------------------ */}
         <ScrollArea className="flex-1 overflow-hidden">
-          <nav className="flex flex-col gap-0.5 px-2 py-3">
+          {appSection === "tasks" && <nav className="flex flex-col gap-0.5 px-2 py-3">
             <span
               className={cn(
                 "mb-1 text-[11px] font-medium uppercase tracking-widest text-slate-400",
@@ -226,12 +316,12 @@ export function Sidebar() {
               }
               return button;
             })}
-          </nav>
+          </nav>}
 
           {/* ---------------------------------------------------------------- */}
-          {/*  Tags section                                                     */}
+          {/*  Tags section (tasks only)                                        */}
           {/* ---------------------------------------------------------------- */}
-          {!collapsed && tags.length > 0 && (
+          {appSection === "tasks" && !collapsed && tags.length > 0 && (
             <>
               <Separator className="mx-3 bg-slate-200" />
 

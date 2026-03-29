@@ -1,6 +1,11 @@
 import Database from "better-sqlite3";
 import path from "path";
-import { Item, Tag, WeeklyPlan, WeeklyPlanEntry, WeeklyPlanEntryWithItem, WeeklyPlanFull, WeeklyPlanReport, EntryComment } from "@/types";
+import {
+  Item, Tag, WeeklyPlan, WeeklyPlanEntry, WeeklyPlanEntryWithItem, WeeklyPlanFull, WeeklyPlanReport, EntryComment,
+  Client, ClientFull, ClientStatus, ClientCompany, ClientContact, ClientContactField, ClientNote, ClientLink,
+  ContactFieldType,
+  RelationType, Relation, RelationWithTarget, Comment, EntityType,
+} from "@/types";
 
 const DB_PATH = path.join(process.cwd(), "data", "brain.db");
 
@@ -18,6 +23,7 @@ function getDb(): Database.Database {
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
     initSchema(db);
+    migrateSchema(db);
   }
   return db;
 }
@@ -90,7 +96,140 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_wpe_plan ON weekly_plan_entries(plan_id);
     CREATE INDEX IF NOT EXISTS idx_wpe_item ON weekly_plan_entries(item_id);
     CREATE INDEX IF NOT EXISTS idx_ec_entry ON entry_comments(entry_id);
+
+    -- Clients
+    CREATE TABLE IF NOT EXISTS client_statuses (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT '#6b7280',
+      position INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS clients (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      status_id TEXT REFERENCES client_statuses(id) ON DELETE SET NULL,
+      budget TEXT NOT NULL DEFAULT '',
+      operators_per_shift TEXT NOT NULL DEFAULT '',
+      operators_total TEXT NOT NULL DEFAULT '',
+      calls_per_month TEXT NOT NULL DEFAULT '',
+      crm_system TEXT NOT NULL DEFAULT '',
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS client_companies (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      name TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS client_contacts (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      name TEXT NOT NULL DEFAULT '',
+      position INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS client_contact_fields (
+      id TEXT PRIMARY KEY,
+      contact_id TEXT NOT NULL REFERENCES client_contacts(id) ON DELETE CASCADE,
+      type TEXT NOT NULL DEFAULT 'email' CHECK(type IN ('email','phone','telegram','note')),
+      value TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS client_notes (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      text TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS client_links (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      url TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status_id);
+    CREATE INDEX IF NOT EXISTS idx_cc_client ON client_companies(client_id);
+    CREATE INDEX IF NOT EXISTS idx_ccon_client ON client_contacts(client_id);
+    CREATE INDEX IF NOT EXISTS idx_ccf_contact ON client_contact_fields(contact_id);
+    CREATE INDEX IF NOT EXISTS idx_cn_client ON client_notes(client_id);
+    CREATE INDEX IF NOT EXISTS idx_cl_client ON client_links(client_id);
+
+    -- Relation types (user-configurable)
+    CREATE TABLE IF NOT EXISTS relation_types (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT '#6b7280',
+      icon TEXT NOT NULL DEFAULT 'Link',
+      position INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- Relations between entities (polymorphic: item <-> item, item <-> client, client <-> client)
+    CREATE TABLE IF NOT EXISTS relations (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL CHECK(source_type IN ('item','client')),
+      source_id TEXT NOT NULL,
+      target_type TEXT NOT NULL CHECK(target_type IN ('item','client')),
+      target_id TEXT NOT NULL,
+      relation_type_id TEXT REFERENCES relation_types(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(source_type, source_id, target_type, target_id)
+    );
+
+    -- Comments on any entity (item or client)
+    CREATE TABLE IF NOT EXISTS comments (
+      id TEXT PRIMARY KEY,
+      entity_type TEXT NOT NULL CHECK(entity_type IN ('item','client')),
+      entity_id TEXT NOT NULL,
+      text TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rel_source ON relations(source_type, source_id);
+    CREATE INDEX IF NOT EXISTS idx_rel_target ON relations(target_type, target_id);
+    CREATE INDEX IF NOT EXISTS idx_rel_type ON relations(relation_type_id);
+    CREATE INDEX IF NOT EXISTS idx_comments_entity ON comments(entity_type, entity_id);
+
+    -- Staging (approval queue)
+    CREATE TABLE IF NOT EXISTS staging_items (
+      id TEXT PRIMARY KEY,
+      entity_type TEXT NOT NULL DEFAULT 'item' CHECK(entity_type IN ('item','client')),
+      title TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      parsed_data TEXT NOT NULL DEFAULT '{}',
+      staging_status TEXT NOT NULL DEFAULT 'pending' CHECK(staging_status IN ('pending','approved','rejected')),
+      batch_id TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_staging_status ON staging_items(staging_status);
+    CREATE INDEX IF NOT EXISTS idx_staging_batch ON staging_items(batch_id);
   `);
+}
+
+function migrateSchema(db: Database.Database) {
+  // Add client params columns if they don't exist
+  const cols = db.prepare("PRAGMA table_info(clients)").all() as { name: string }[];
+  const colNames = new Set(cols.map((c) => c.name));
+  const newCols = [
+    { name: "budget", def: "TEXT NOT NULL DEFAULT ''" },
+    { name: "operators_per_shift", def: "TEXT NOT NULL DEFAULT ''" },
+    { name: "operators_total", def: "TEXT NOT NULL DEFAULT ''" },
+    { name: "calls_per_month", def: "TEXT NOT NULL DEFAULT ''" },
+    { name: "crm_system", def: "TEXT NOT NULL DEFAULT ''" },
+  ];
+  for (const col of newCols) {
+    if (!colNames.has(col.name)) {
+      db.exec(`ALTER TABLE clients ADD COLUMN ${col.name} ${col.def}`);
+    }
+  }
 }
 
 export function getAllItems(includeArchived = false, includeChildren = false): Item[] {
@@ -510,4 +649,453 @@ export function getWeeklyPlanReport(planId: string): WeeklyPlanReport | undefine
     done_count: done.length,
     completion_rate: total > 0 ? Math.round((done.length / total) * 100) : 0,
   };
+}
+
+// --- Client Statuses ---
+
+export function getAllClientStatuses(): ClientStatus[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM client_statuses ORDER BY position ASC").all() as ClientStatus[];
+}
+
+export function createClientStatus(status: Pick<ClientStatus, "id" | "name" | "color">): ClientStatus {
+  const db = getDb();
+  const maxPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 as p FROM client_statuses").get() as { p: number };
+  db.prepare("INSERT INTO client_statuses (id, name, color, position) VALUES (?, ?, ?, ?)").run(status.id, status.name, status.color, maxPos.p);
+  return db.prepare("SELECT * FROM client_statuses WHERE id = ?").get(status.id) as ClientStatus;
+}
+
+export function updateClientStatus(id: string, updates: Partial<Pick<ClientStatus, "name" | "color" | "position">>): ClientStatus | undefined {
+  const db = getDb();
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (fields.length === 0) return db.prepare("SELECT * FROM client_statuses WHERE id = ?").get(id) as ClientStatus | undefined;
+  values.push(id);
+  db.prepare(`UPDATE client_statuses SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  return db.prepare("SELECT * FROM client_statuses WHERE id = ?").get(id) as ClientStatus | undefined;
+}
+
+export function deleteClientStatus(id: string): boolean {
+  const db = getDb();
+  return db.prepare("DELETE FROM client_statuses WHERE id = ?").run(id).changes > 0;
+}
+
+// --- Clients ---
+
+export function getAllClients(): Client[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM clients ORDER BY position ASC, created_at DESC").all() as Client[];
+}
+
+export function getClientById(id: string): Client | undefined {
+  const db = getDb();
+  return db.prepare("SELECT * FROM clients WHERE id = ?").get(id) as Client | undefined;
+}
+
+export function getClientFull(id: string): ClientFull | undefined {
+  const db = getDb();
+  const client = getClientById(id);
+  if (!client) return undefined;
+
+  const status = client.status_id
+    ? (db.prepare("SELECT * FROM client_statuses WHERE id = ?").get(client.status_id) as ClientStatus | undefined) ?? null
+    : null;
+
+  const companies = db.prepare("SELECT * FROM client_companies WHERE client_id = ?").all(id) as ClientCompany[];
+
+  const contactRows = db.prepare("SELECT * FROM client_contacts WHERE client_id = ? ORDER BY position ASC").all(id) as ClientContact[];
+  const fieldStmt = db.prepare("SELECT * FROM client_contact_fields WHERE contact_id = ?");
+  const contacts: ClientContact[] = contactRows.map((c) => ({
+    ...c,
+    fields: fieldStmt.all(c.id) as ClientContactField[],
+  }));
+
+  const notes = db.prepare("SELECT * FROM client_notes WHERE client_id = ? ORDER BY created_at DESC").all(id) as ClientNote[];
+  const links = db.prepare("SELECT * FROM client_links WHERE client_id = ?").all(id) as ClientLink[];
+
+  return { ...client, status, companies, contacts, notes, links };
+}
+
+export function getAllClientsFull(): ClientFull[] {
+  const db = getDb();
+  const clients = getAllClients();
+  const statusMap = new Map<string, ClientStatus>();
+  for (const s of getAllClientStatuses()) statusMap.set(s.id, s);
+
+  const companyStmt = db.prepare("SELECT * FROM client_companies WHERE client_id = ?");
+  const contactStmt = db.prepare("SELECT * FROM client_contacts WHERE client_id = ? ORDER BY position ASC");
+  const fieldStmt = db.prepare("SELECT * FROM client_contact_fields WHERE contact_id = ?");
+  const noteStmt = db.prepare("SELECT * FROM client_notes WHERE client_id = ? ORDER BY created_at DESC");
+  const linkStmt = db.prepare("SELECT * FROM client_links WHERE client_id = ?");
+
+  return clients.map((client) => {
+    const contactRows = contactStmt.all(client.id) as ClientContact[];
+    const contacts = contactRows.map((c) => ({
+      ...c,
+      fields: fieldStmt.all(c.id) as ClientContactField[],
+    }));
+
+    return {
+      ...client,
+      status: client.status_id ? statusMap.get(client.status_id) ?? null : null,
+      companies: companyStmt.all(client.id) as ClientCompany[],
+      contacts,
+      notes: noteStmt.all(client.id) as ClientNote[],
+      links: linkStmt.all(client.id) as ClientLink[],
+    };
+  });
+}
+
+export function createClient(data: {
+  id: string; name: string; status_id?: string | null;
+  budget?: string; operators_per_shift?: string; operators_total?: string;
+  calls_per_month?: string; crm_system?: string;
+}): Client {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const maxPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 as p FROM clients").get() as { p: number };
+  db.prepare(`INSERT INTO clients (id, name, status_id, budget, operators_per_shift, operators_total, calls_per_month, crm_system, position, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(data.id, data.name, data.status_id ?? null,
+      data.budget ?? "", data.operators_per_shift ?? "", data.operators_total ?? "",
+      data.calls_per_month ?? "", data.crm_system ?? "",
+      maxPos.p, now, now);
+  return getClientById(data.id)!;
+}
+
+export function updateClient(id: string, updates: Partial<Omit<Client, "id" | "created_at">>): Client | undefined {
+  const db = getDb();
+  const existing = getClientById(id);
+  if (!existing) return undefined;
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (key === "id" || key === "created_at") continue;
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (fields.length === 0) return existing;
+  fields.push("updated_at = ?");
+  values.push(new Date().toISOString());
+  values.push(id);
+  db.prepare(`UPDATE clients SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  return getClientById(id);
+}
+
+export function deleteClient(id: string): boolean {
+  const db = getDb();
+  return db.prepare("DELETE FROM clients WHERE id = ?").run(id).changes > 0;
+}
+
+export function reorderClients(updates: { id: string; position: number; status_id?: string }[]) {
+  const db = getDb();
+  const stmt = db.prepare("UPDATE clients SET position = ?, status_id = COALESCE(?, status_id), updated_at = ? WHERE id = ?");
+  const transaction = db.transaction(() => {
+    const now = new Date().toISOString();
+    for (const u of updates) {
+      stmt.run(u.position, u.status_id ?? null, now, u.id);
+    }
+  });
+  transaction();
+}
+
+// Sync nested client data (replace-all strategy within a transaction)
+export function syncClientNested(clientId: string, data: {
+  companies?: { id?: string; name: string }[];
+  contacts?: { id?: string; name: string; fields?: { id?: string; type: ContactFieldType; value: string }[] }[];
+  notes?: { id?: string; text: string }[];
+  links?: { id?: string; url: string; title: string }[];
+}) {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const transaction = db.transaction(() => {
+    if (data.companies !== undefined) {
+      db.prepare("DELETE FROM client_companies WHERE client_id = ?").run(clientId);
+      const stmt = db.prepare("INSERT INTO client_companies (id, client_id, name) VALUES (?, ?, ?)");
+      for (const c of data.companies) {
+        stmt.run(c.id ?? crypto.randomUUID(), clientId, c.name);
+      }
+    }
+
+    if (data.contacts !== undefined) {
+      // Get existing contact IDs to cascade-delete their fields
+      db.prepare("DELETE FROM client_contacts WHERE client_id = ?").run(clientId);
+      const contactStmt = db.prepare("INSERT INTO client_contacts (id, client_id, name, position) VALUES (?, ?, ?, ?)");
+      const fieldStmt = db.prepare("INSERT INTO client_contact_fields (id, contact_id, type, value) VALUES (?, ?, ?, ?)");
+      for (let i = 0; i < data.contacts.length; i++) {
+        const contact = data.contacts[i];
+        const contactId = contact.id ?? crypto.randomUUID();
+        contactStmt.run(contactId, clientId, contact.name, i);
+        if (contact.fields) {
+          for (const f of contact.fields) {
+            fieldStmt.run(f.id ?? crypto.randomUUID(), contactId, f.type, f.value);
+          }
+        }
+      }
+    }
+
+    if (data.notes !== undefined) {
+      db.prepare("DELETE FROM client_notes WHERE client_id = ?").run(clientId);
+      const stmt = db.prepare("INSERT INTO client_notes (id, client_id, text, created_at) VALUES (?, ?, ?, ?)");
+      for (const n of data.notes) {
+        stmt.run(n.id ?? crypto.randomUUID(), clientId, n.text, now);
+      }
+    }
+
+    if (data.links !== undefined) {
+      db.prepare("DELETE FROM client_links WHERE client_id = ?").run(clientId);
+      const stmt = db.prepare("INSERT INTO client_links (id, client_id, url, title) VALUES (?, ?, ?, ?)");
+      for (const l of data.links) {
+        stmt.run(l.id ?? crypto.randomUUID(), clientId, l.url, l.title);
+      }
+    }
+
+    db.prepare("UPDATE clients SET updated_at = ? WHERE id = ?").run(now, clientId);
+  });
+
+  transaction();
+}
+
+// --- Relation Types ---
+
+export function getAllRelationTypes(): RelationType[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM relation_types ORDER BY position ASC").all() as RelationType[];
+}
+
+export function createRelationType(rt: Pick<RelationType, "id" | "name" | "color" | "icon">): RelationType {
+  const db = getDb();
+  const maxPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 as p FROM relation_types").get() as { p: number };
+  db.prepare("INSERT INTO relation_types (id, name, color, icon, position) VALUES (?, ?, ?, ?, ?)").run(rt.id, rt.name, rt.color, rt.icon, maxPos.p);
+  return db.prepare("SELECT * FROM relation_types WHERE id = ?").get(rt.id) as RelationType;
+}
+
+export function updateRelationType(id: string, updates: Partial<Pick<RelationType, "name" | "color" | "icon" | "position">>): RelationType | undefined {
+  const db = getDb();
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (fields.length === 0) return db.prepare("SELECT * FROM relation_types WHERE id = ?").get(id) as RelationType | undefined;
+  values.push(id);
+  db.prepare(`UPDATE relation_types SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  return db.prepare("SELECT * FROM relation_types WHERE id = ?").get(id) as RelationType | undefined;
+}
+
+export function deleteRelationType(id: string): boolean {
+  const db = getDb();
+  return db.prepare("DELETE FROM relation_types WHERE id = ?").run(id).changes > 0;
+}
+
+// --- Relations ---
+
+function resolveRelationTarget(r: Relation): RelationWithTarget {
+  const db = getDb();
+  let targetTitle = "";
+  if (r.target_type === "item") {
+    const item = db.prepare("SELECT title FROM items WHERE id = ?").get(r.target_id) as { title: string } | undefined;
+    targetTitle = item?.title ?? "";
+  } else {
+    const client = db.prepare("SELECT name FROM clients WHERE id = ?").get(r.target_id) as { name: string } | undefined;
+    targetTitle = client?.name ?? "";
+  }
+  const relType = r.relation_type_id
+    ? (db.prepare("SELECT * FROM relation_types WHERE id = ?").get(r.relation_type_id) as RelationType | undefined) ?? null
+    : null;
+  return { ...r, target_title: targetTitle, relation_type: relType };
+}
+
+export function getRelationsForEntity(entityType: EntityType, entityId: string): RelationWithTarget[] {
+  const db = getDb();
+  // Get relations where this entity is source OR target
+  const asSource = db.prepare(
+    "SELECT * FROM relations WHERE source_type = ? AND source_id = ? ORDER BY created_at DESC"
+  ).all(entityType, entityId) as Relation[];
+
+  const asTarget = db.prepare(
+    "SELECT * FROM relations WHERE target_type = ? AND target_id = ? ORDER BY created_at DESC"
+  ).all(entityType, entityId) as Relation[];
+
+  // For "as target" rows, flip so the "other" side becomes the target in our view
+  const flipped: Relation[] = asTarget.map((r) => ({
+    ...r,
+    source_type: r.target_type,
+    source_id: r.target_id,
+    target_type: r.source_type,
+    target_id: r.source_id,
+  }));
+
+  const all = [...asSource, ...flipped];
+  // Deduplicate (in case source→target and target→source both exist, shouldn't normally)
+  const seen = new Set<string>();
+  const unique: Relation[] = [];
+  for (const r of all) {
+    const key = `${r.target_type}:${r.target_id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(r);
+    }
+  }
+
+  return unique.map(resolveRelationTarget);
+}
+
+export function getRelationCount(entityType: EntityType, entityId: string): number {
+  const db = getDb();
+  const r1 = db.prepare("SELECT COUNT(*) as c FROM relations WHERE source_type = ? AND source_id = ?").get(entityType, entityId) as { c: number };
+  const r2 = db.prepare("SELECT COUNT(*) as c FROM relations WHERE target_type = ? AND target_id = ?").get(entityType, entityId) as { c: number };
+  return r1.c + r2.c;
+}
+
+export function getRelationCountsBatch(entityType: EntityType): Record<string, number> {
+  const db = getDb();
+  const counts: Record<string, number> = {};
+  const asSource = db.prepare("SELECT source_id, COUNT(*) as c FROM relations WHERE source_type = ? GROUP BY source_id").all(entityType) as { source_id: string; c: number }[];
+  const asTarget = db.prepare("SELECT target_id, COUNT(*) as c FROM relations WHERE target_type = ? GROUP BY target_id").all(entityType) as { target_id: string; c: number }[];
+  for (const r of asSource) counts[r.source_id] = (counts[r.source_id] ?? 0) + r.c;
+  for (const r of asTarget) counts[r.target_id] = (counts[r.target_id] ?? 0) + r.c;
+  return counts;
+}
+
+export function getCommentCountsBatch(entityType: EntityType): Record<string, number> {
+  const db = getDb();
+  const rows = db.prepare("SELECT entity_id, COUNT(*) as c FROM comments WHERE entity_type = ? GROUP BY entity_id").all(entityType) as { entity_id: string; c: number }[];
+  const counts: Record<string, number> = {};
+  for (const r of rows) counts[r.entity_id] = r.c;
+  return counts;
+}
+
+export function createRelation(data: { id: string; source_type: EntityType; source_id: string; target_type: EntityType; target_id: string; relation_type_id?: string | null }): Relation | null {
+  const db = getDb();
+  const now = new Date().toISOString();
+  try {
+    db.prepare(
+      "INSERT INTO relations (id, source_type, source_id, target_type, target_id, relation_type_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(data.id, data.source_type, data.source_id, data.target_type, data.target_id, data.relation_type_id ?? null, now);
+    return db.prepare("SELECT * FROM relations WHERE id = ?").get(data.id) as Relation;
+  } catch {
+    return null; // UNIQUE constraint
+  }
+}
+
+export function updateRelation(id: string, updates: { relation_type_id?: string | null }): Relation | undefined {
+  const db = getDb();
+  if (updates.relation_type_id !== undefined) {
+    db.prepare("UPDATE relations SET relation_type_id = ? WHERE id = ?").run(updates.relation_type_id, id);
+  }
+  return db.prepare("SELECT * FROM relations WHERE id = ?").get(id) as Relation | undefined;
+}
+
+export function deleteRelation(id: string): boolean {
+  const db = getDb();
+  return db.prepare("DELETE FROM relations WHERE id = ?").run(id).changes > 0;
+}
+
+// --- Comments (universal) ---
+
+export function getComments(entityType: EntityType, entityId: string): Comment[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM comments WHERE entity_type = ? AND entity_id = ? ORDER BY created_at ASC").all(entityType, entityId) as Comment[];
+}
+
+export function getCommentCount(entityType: EntityType, entityId: string): number {
+  const db = getDb();
+  const r = db.prepare("SELECT COUNT(*) as c FROM comments WHERE entity_type = ? AND entity_id = ?").get(entityType, entityId) as { c: number };
+  return r.c;
+}
+
+export function createComment(data: { id: string; entity_type: EntityType; entity_id: string; text: string }): Comment {
+  const db = getDb();
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO comments (id, entity_type, entity_id, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(data.id, data.entity_type, data.entity_id, data.text, now, now);
+  return db.prepare("SELECT * FROM comments WHERE id = ?").get(data.id) as Comment;
+}
+
+export function updateComment(id: string, text: string): Comment | undefined {
+  const db = getDb();
+  const now = new Date().toISOString();
+  db.prepare("UPDATE comments SET text = ?, updated_at = ? WHERE id = ?").run(text, now, id);
+  return db.prepare("SELECT * FROM comments WHERE id = ?").get(id) as Comment | undefined;
+}
+
+export function deleteComment(id: string): boolean {
+  const db = getDb();
+  return db.prepare("DELETE FROM comments WHERE id = ?").run(id).changes > 0;
+}
+
+// ======================== Staging ========================
+
+import type { StagingItem, StagingEntityType, StagingStatus } from "@/types";
+
+export function getAllStagingItems(status?: StagingStatus): StagingItem[] {
+  const db = getDb();
+  if (status) {
+    return db.prepare("SELECT * FROM staging_items WHERE staging_status = ? ORDER BY created_at DESC").all(status) as StagingItem[];
+  }
+  return db.prepare("SELECT * FROM staging_items ORDER BY created_at DESC").all() as StagingItem[];
+}
+
+export function getStagingItemById(id: string): StagingItem | undefined {
+  const db = getDb();
+  return db.prepare("SELECT * FROM staging_items WHERE id = ?").get(id) as StagingItem | undefined;
+}
+
+export function createStagingItem(item: {
+  id: string;
+  entity_type: StagingEntityType;
+  title: string;
+  description: string;
+  parsed_data: string;
+  batch_id: string;
+}): StagingItem {
+  const db = getDb();
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO staging_items (id, entity_type, title, description, parsed_data, staging_status, batch_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+  `).run(item.id, item.entity_type, item.title, item.description, item.parsed_data, item.batch_id, now, now);
+  return db.prepare("SELECT * FROM staging_items WHERE id = ?").get(item.id) as StagingItem;
+}
+
+export function updateStagingItem(id: string, updates: Partial<Pick<StagingItem, "title" | "description" | "parsed_data" | "staging_status" | "entity_type">>): StagingItem | undefined {
+  const db = getDb();
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (value !== undefined) {
+      fields.push(`${key} = ?`);
+      values.push(value);
+    }
+  }
+  if (fields.length === 0) return getStagingItemById(id);
+  const now = new Date().toISOString();
+  fields.push("updated_at = ?");
+  values.push(now, id);
+  db.prepare(`UPDATE staging_items SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  return getStagingItemById(id);
+}
+
+export function deleteStagingItem(id: string): boolean {
+  const db = getDb();
+  return db.prepare("DELETE FROM staging_items WHERE id = ?").run(id).changes > 0;
+}
+
+export function deleteStagingBatch(batchId: string): boolean {
+  const db = getDb();
+  return db.prepare("DELETE FROM staging_items WHERE batch_id = ?").run(batchId).changes > 0;
+}
+
+export function approveStagingItem(id: string): StagingItem | undefined {
+  return updateStagingItem(id, { staging_status: "approved" });
+}
+
+export function rejectStagingItem(id: string): StagingItem | undefined {
+  return updateStagingItem(id, { staging_status: "rejected" });
 }

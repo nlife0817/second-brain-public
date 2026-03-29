@@ -40,6 +40,8 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { Separator } from "@/components/ui/separator";
 import { SubtaskList } from "./SubtaskList";
+import { RelationsList } from "@/components/relations/RelationsList";
+import { CommentsList } from "@/components/comments/CommentsList";
 
 import {
   CalendarIcon,
@@ -913,6 +915,16 @@ function TaskDetailContent({
     <SubtaskList parentId={item.id} subtasks={item.subtasks || []} />
   );
 
+  /* ---- Relations block ---- */
+  const relationsBlock = (
+    <RelationsList entityType="item" entityId={item.id} />
+  );
+
+  /* ---- Comments block ---- */
+  const commentsBlock = (
+    <CommentsList entityType="item" entityId={item.id} />
+  );
+
   /* ---- Timestamps block ---- */
   const timestampsBlock = <Timestamps item={item} />;
 
@@ -936,6 +948,10 @@ function TaskDetailContent({
           {descriptionBlock}
           {subtasksBlock && <Separator className="bg-slate-200" />}
           {subtasksBlock}
+          <Separator className="bg-slate-200" />
+          {relationsBlock}
+          <Separator className="bg-slate-200" />
+          {commentsBlock}
         </div>
 
         {/* RIGHT column — fields sidebar, stacks below on small screens */}
@@ -959,6 +975,10 @@ function TaskDetailContent({
       {descriptionBlock}
       {subtasksBlock && <Separator className="bg-slate-200" />}
       {subtasksBlock}
+      <Separator className="bg-slate-200" />
+      {relationsBlock}
+      <Separator className="bg-slate-200" />
+      {commentsBlock}
       <Separator className="bg-slate-200" />
       <div className="flex items-center justify-between">
         {timestampsBlock}
