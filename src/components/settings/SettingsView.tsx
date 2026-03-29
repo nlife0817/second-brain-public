@@ -32,6 +32,9 @@ import {
   PlugZap,
   Settings2,
   FolderKanban,
+  Database,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { CategoryManager } from "./CategoryManager";
 
@@ -67,6 +70,111 @@ type FieldMappingsResponse = {
   defaults: typeof KAITEN_DEFAULT_FIELD_MAPPINGS;
   mappings: SyncFieldMapping[];
 };
+
+function CrmSystemsSection() {
+  const crmSystems = useBrainStore((s) => s.crmSystems);
+  const createCrm = useBrainStore((s) => s.createCrmSystem);
+  const updateCrm = useBrainStore((s) => s.updateCrmSystem);
+  const deleteCrm = useBrainStore((s) => s.deleteCrmSystem);
+  const [newName, setNewName] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+
+  const sorted = [...crmSystems].sort((a, b) => a.position - b.position);
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return;
+    await createCrm(newName.trim());
+    setNewName("");
+  };
+
+  const handleUpdate = async (id: string) => {
+    if (!editName.trim()) return;
+    await updateCrm(id, { name: editName.trim() });
+    setEditingId(null);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Удалить эту CRM-систему?")) return;
+    await deleteCrm(id);
+  };
+
+  const move = async (idx: number, dir: -1 | 1) => {
+    const target = idx + dir;
+    if (target < 0 || target >= sorted.length) return;
+    const a = sorted[idx];
+    const b = sorted[target];
+    await updateCrm(a.id, { position: b.position });
+    await updateCrm(b.id, { position: a.position });
+  };
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center gap-2">
+        <Database className="size-5 text-violet-500" />
+        <h2 className="text-base font-semibold text-slate-800">CRM-системы</h2>
+        {sorted.length > 0 && <span className="text-xs text-slate-400">({sorted.length})</span>}
+      </div>
+
+      {sorted.length > 0 && (
+        <div className="flex flex-col gap-1 mb-3">
+          {sorted.map((crm, idx) => (
+            <div key={crm.id} className="group flex items-center gap-2 rounded-lg border border-slate-100 px-3 py-1.5">
+              {editingId === crm.id ? (
+                <>
+                  <Input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="h-7 flex-1 text-sm"
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === "Enter") handleUpdate(crm.id); if (e.key === "Escape") setEditingId(null); }}
+                  />
+                  <Button size="icon-xs" variant="ghost" onClick={() => handleUpdate(crm.id)} className="text-green-600">
+                    <Check className="size-3.5" />
+                  </Button>
+                  <Button size="icon-xs" variant="ghost" onClick={() => setEditingId(null)}>
+                    <X className="size-3.5 text-slate-400" />
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <span className="flex-1 text-sm text-slate-700">{crm.name}</span>
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button size="icon-xs" variant="ghost" disabled={idx === 0} onClick={() => move(idx, -1)}>
+                      <ChevronUp className="size-3.5 text-slate-400" />
+                    </Button>
+                    <Button size="icon-xs" variant="ghost" disabled={idx === sorted.length - 1} onClick={() => move(idx, 1)}>
+                      <ChevronDown className="size-3.5 text-slate-400" />
+                    </Button>
+                    <Button size="icon-xs" variant="ghost" onClick={() => { setEditingId(crm.id); setEditName(crm.name); }}>
+                      <Pencil className="size-3.5 text-slate-400" />
+                    </Button>
+                    <Button size="icon-xs" variant="ghost" onClick={() => handleDelete(crm.id)}>
+                      <Trash2 className="size-3.5 text-slate-400 hover:text-red-500" />
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <Input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="Название CRM-системы..."
+          className="h-8 flex-1 text-sm"
+          onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
+        />
+        <Button size="sm" onClick={handleCreate} disabled={!newName.trim()}>
+          <Plus className="size-4 mr-1" /> Добавить
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function RelationTypeRow({
   rt,
@@ -546,6 +654,9 @@ export function SettingsView() {
           source_space_id: sourceSpaceId,
           source_board_id: sourceBoardId,
           import_enabled: importEnabled,
+          export_enabled: true,
+          sync_interval_minutes: 60,
+          remote_wins_on_conflict: true,
           source_statuses: sourceStatuses,
           source_columns: sourceColumns,
           source_lanes: sourceLanes,
@@ -757,12 +868,12 @@ export function SettingsView() {
               <div>
                 <h2 className="text-lg font-semibold tracking-tight text-slate-900">Kaiten Sync</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Импорт карточек из выбранной доски Kaiten в очередь согласования.
+                  Импорт карточек в согласование и двусторонняя синхронизация изменений раз в час. При конфликте приоритет у Kaiten.
                 </p>
               </div>
             </div>
             <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-500">
-              target: staging
+              staging + двусторонний sync
             </div>
           </div>
 
@@ -1193,6 +1304,10 @@ export function SettingsView() {
               в списках, на канбане и в деталке задачи.
             </div>
             <CategoryManager open={categoryManagerOpen} onOpenChange={setCategoryManagerOpen} />
+          </section>
+
+          <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-sm">
+            <CrmSystemsSection />
           </section>
 
           <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-sm">

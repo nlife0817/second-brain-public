@@ -482,9 +482,14 @@ export interface SyncProfile {
   source_board_id: number | null;
   import_enabled: boolean;
   export_enabled: boolean;
+  sync_interval_minutes: number;
+  remote_wins_on_conflict: boolean;
   source_statuses: string[];
   source_columns: string[];
   source_lanes: string[];
+  available_development_stages: KaitenStageOption[];
+  available_participants: DevelopmentParticipantInput[];
+  last_catalog_synced_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -497,9 +502,14 @@ export interface SyncProfileInput {
   source_board_id?: number | null;
   import_enabled?: boolean;
   export_enabled?: boolean;
+  sync_interval_minutes?: number;
+  remote_wins_on_conflict?: boolean;
   source_statuses?: string[];
   source_columns?: string[];
   source_lanes?: string[];
+  available_development_stages?: KaitenStageOption[];
+  available_participants?: DevelopmentParticipantInput[];
+  last_catalog_synced_at?: string | null;
 }
 
 export interface SyncFieldMapping {
@@ -527,6 +537,7 @@ export interface SyncFieldMappingInput {
 export interface ExternalEntityLink {
   id: string;
   provider: IntegrationProvider;
+  profile_id: string | null;
   local_entity_type: SyncEntityType;
   local_entity_id: string;
   remote_entity_type: string;
@@ -558,6 +569,47 @@ export interface KaitenBoardOption extends KaitenBoard {
   statuses: string[];
   columns: { id: string; title: string }[];
   lanes: { id: string; title: string }[];
+}
+
+export interface KaitenStageOption {
+  value: string;
+  label: string;
+  column_id: number | null;
+  lane_id: number | null;
+  column_title: string | null;
+  lane_title: string | null;
+}
+
+export interface KaitenSyncCatalog {
+  development_stages: KaitenStageOption[];
+  participants: DevelopmentParticipantInput[];
+  profiles: Array<{
+    profile_id: string;
+    profile_name: string;
+    board_id: number | null;
+    development_stages: KaitenStageOption[];
+    participants: DevelopmentParticipantInput[];
+    last_catalog_synced_at: string | null;
+  }>;
+}
+
+export type SyncOutboxStatus = "pending" | "processing" | "error";
+
+export interface SyncOutboxJob {
+  id: string;
+  provider: IntegrationProvider;
+  profile_id: string | null;
+  local_entity_type: SyncEntityType;
+  local_entity_id: string;
+  remote_entity_type: string;
+  remote_entity_id: string;
+  status: SyncOutboxStatus;
+  attempts: number;
+  requested_at: string;
+  next_attempt_at: string;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface KaitenImportStats {

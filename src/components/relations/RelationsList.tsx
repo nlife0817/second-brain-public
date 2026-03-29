@@ -285,8 +285,57 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
                   </button>
                 );
               })}
-              {!search && (
+              {!search && !showCreateForm && (
                 <div className="px-3 py-4 text-center text-xs text-slate-400">Начните вводить для поиска</div>
+              )}
+            </div>
+
+            {/* Create + link inline form */}
+            <div className="border-t border-slate-100">
+              {!showCreateForm ? (
+                <button
+                  onClick={() => { setShowCreateForm(true); setNewTitle(search); }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-xs text-violet-600 hover:bg-violet-50 transition-colors"
+                >
+                  <Plus className="size-3.5" />
+                  Создать задачу и привязать
+                </button>
+              ) : (
+                <div className="p-2 space-y-2">
+                  <Input
+                    value={newTitle}
+                    onChange={(e) => setNewTitle(e.target.value)}
+                    placeholder="Заголовок задачи..."
+                    className="h-7 text-sm"
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === "Enter") handleCreateAndLink(); if (e.key === "Escape") setShowCreateForm(false); }}
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <Select value={newType} onValueChange={(v) => setNewType(v as ItemType)}>
+                      <SelectTrigger className="h-6 text-[10px] w-auto flex-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(Object.entries(TYPE_CONFIG) as [ItemType, { label: string }][]).map(([k, v]) => (
+                          <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={newStatus} onValueChange={(v) => setNewStatus(v as ItemStatus)}>
+                      <SelectTrigger className="h-6 text-[10px] w-auto flex-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(Object.entries(STATUS_CONFIG) as [ItemStatus, { label: string; color: string }][]).map(([k, v]) => (
+                          <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button size="sm" className="h-6 text-[10px] px-2" disabled={!newTitle.trim() || creating} onClick={handleCreateAndLink}>
+                      {creating ? "..." : "Создать"}
+                    </Button>
+                  </div>
+                </div>
               )}
             </div>
           </PopoverContent>

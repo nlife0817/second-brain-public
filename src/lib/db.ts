@@ -11,7 +11,7 @@ import {
   IntegrationProvider, IntegrationSettings, IntegrationSettingsInput,
   SyncProfile, SyncProfileInput, SyncFieldMapping, SyncFieldMappingInput,
   ExternalEntityLink, ExternalSyncState, SyncEntityType, SyncDirection, KaitenImportResult,
-  DevelopmentParticipant, DevelopmentParticipantInput,
+  DevelopmentParticipant, DevelopmentParticipantInput, KaitenStageOption, SyncOutboxJob, SyncOutboxStatus,
 } from "@/types";
 
 export const DB_PATH = path.join(process.cwd(), "data", "brain.db");
@@ -295,9 +295,14 @@ function initSchema(db: Database.Database) {
       source_board_id INTEGER,
       import_enabled INTEGER NOT NULL DEFAULT 1,
       export_enabled INTEGER NOT NULL DEFAULT 0,
+      sync_interval_minutes INTEGER NOT NULL DEFAULT 60,
+      remote_wins_on_conflict INTEGER NOT NULL DEFAULT 1,
       source_statuses TEXT NOT NULL DEFAULT '[]',
       source_columns TEXT NOT NULL DEFAULT '[]',
       source_lanes TEXT NOT NULL DEFAULT '[]',
+      available_development_stages TEXT NOT NULL DEFAULT '[]',
+      available_participants TEXT NOT NULL DEFAULT '[]',
+      last_catalog_synced_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -321,6 +326,7 @@ function initSchema(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS external_entity_links (
       id TEXT PRIMARY KEY,
       provider TEXT NOT NULL,
+      profile_id TEXT REFERENCES sync_profiles(id) ON DELETE SET NULL,
       local_entity_type TEXT NOT NULL CHECK(local_entity_type IN ('item','client')),
       local_entity_id TEXT NOT NULL,
       remote_entity_type TEXT NOT NULL DEFAULT 'card',
@@ -340,6 +346,7 @@ function initSchema(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_external_links_local ON external_entity_links(local_entity_type, local_entity_id);
     CREATE INDEX IF NOT EXISTS idx_external_links_provider ON external_entity_links(provider);
+    CREATE INDEX IF NOT EXISTS idx_external_links_profile ON external_entity_links(profile_id);
 
     CREATE TABLE IF NOT EXISTS sync_import_runs (
       id TEXT PRIMARY KEY,
@@ -351,6 +358,26 @@ function initSchema(db: Database.Database) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_sync_import_runs_profile ON sync_import_runs(profile_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS sync_outbox (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      profile_id TEXT REFERENCES sync_profiles(id) ON DELETE SET NULL,
+      local_entity_type TEXT NOT NULL CHECK(local_entity_type IN ('item','client')),
+      local_entity_id TEXT NOT NULL,
+      remote_entity_type TEXT NOT NULL DEFAULT 'card',
+      remote_entity_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','error')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+      next_attempt_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(provider, local_entity_type, local_entity_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sync_outbox_due ON sync_outbox(provider, status, next_attempt_at);
   `);
 }
 
@@ -379,6 +406,63 @@ function migrateSchema(db: Database.Database) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_item_development_participants_item ON item_development_participants(item_id);
+  `);
+
+  const syncProfileCols = db.prepare("PRAGMA table_info(sync_profiles)").all() as { name: string }[];
+  const syncProfileColNames = new Set(syncProfileCols.map((c) => c.name));
+  if (!syncProfileColNames.has("sync_interval_minutes")) {
+    db.exec("ALTER TABLE sync_profiles ADD COLUMN sync_interval_minutes INTEGER NOT NULL DEFAULT 60");
+  }
+  if (!syncProfileColNames.has("remote_wins_on_conflict")) {
+    db.exec("ALTER TABLE sync_profiles ADD COLUMN remote_wins_on_conflict INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!syncProfileColNames.has("available_development_stages")) {
+    db.exec("ALTER TABLE sync_profiles ADD COLUMN available_development_stages TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!syncProfileColNames.has("available_participants")) {
+    db.exec("ALTER TABLE sync_profiles ADD COLUMN available_participants TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!syncProfileColNames.has("last_catalog_synced_at")) {
+    db.exec("ALTER TABLE sync_profiles ADD COLUMN last_catalog_synced_at TEXT");
+  }
+  db.exec(`
+    UPDATE sync_profiles
+    SET export_enabled = 1,
+        sync_interval_minutes = CASE
+          WHEN sync_interval_minutes IS NULL OR sync_interval_minutes < 5 THEN 60
+          ELSE sync_interval_minutes
+        END,
+        remote_wins_on_conflict = 1
+    WHERE provider = 'kaiten'
+  `);
+
+  const externalLinkCols = db.prepare("PRAGMA table_info(external_entity_links)").all() as { name: string }[];
+  const externalLinkColNames = new Set(externalLinkCols.map((c) => c.name));
+  if (!externalLinkColNames.has("profile_id")) {
+    db.exec("ALTER TABLE external_entity_links ADD COLUMN profile_id TEXT REFERENCES sync_profiles(id) ON DELETE SET NULL");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_external_links_profile ON external_entity_links(profile_id)");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sync_outbox (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      profile_id TEXT REFERENCES sync_profiles(id) ON DELETE SET NULL,
+      local_entity_type TEXT NOT NULL CHECK(local_entity_type IN ('item','client')),
+      local_entity_id TEXT NOT NULL,
+      remote_entity_type TEXT NOT NULL DEFAULT 'card',
+      remote_entity_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','error')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+      next_attempt_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(provider, local_entity_type, local_entity_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sync_outbox_due ON sync_outbox(provider, status, next_attempt_at);
   `);
 
   // Add client params columns if they don't exist
@@ -576,6 +660,15 @@ function parseJsonArray(value: string | null | undefined): string[] {
     return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
   } catch {
     return [];
+  }
+}
+
+function parseJsonValue<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
   }
 }
 
@@ -1657,9 +1750,14 @@ function mapSyncProfile(row: {
   source_board_id: number | null;
   import_enabled: number;
   export_enabled: number;
+  sync_interval_minutes: number;
+  remote_wins_on_conflict: number;
   source_statuses: string;
   source_columns: string;
   source_lanes: string;
+  available_development_stages: string;
+  available_participants: string;
+  last_catalog_synced_at: string | null;
   created_at: string;
   updated_at: string;
 }): SyncProfile {
@@ -1672,9 +1770,14 @@ function mapSyncProfile(row: {
     source_board_id: row.source_board_id,
     import_enabled: !!row.import_enabled,
     export_enabled: !!row.export_enabled,
+    sync_interval_minutes: row.sync_interval_minutes ?? 60,
+    remote_wins_on_conflict: row.remote_wins_on_conflict !== 0,
     source_statuses: parseJsonArray(row.source_statuses),
     source_columns: parseJsonArray(row.source_columns),
     source_lanes: parseJsonArray(row.source_lanes),
+    available_development_stages: parseJsonValue<KaitenStageOption[]>(row.available_development_stages, []),
+    available_participants: parseJsonValue<DevelopmentParticipantInput[]>(row.available_participants, []),
+    last_catalog_synced_at: row.last_catalog_synced_at ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -1691,9 +1794,14 @@ export function getAllSyncProfiles(provider: IntegrationProvider = "kaiten"): Sy
     source_board_id: number | null;
     import_enabled: number;
     export_enabled: number;
+    sync_interval_minutes: number;
+    remote_wins_on_conflict: number;
     source_statuses: string;
     source_columns: string;
     source_lanes: string;
+    available_development_stages: string;
+    available_participants: string;
+    last_catalog_synced_at: string | null;
     created_at: string;
     updated_at: string;
   }[];
@@ -1711,9 +1819,14 @@ export function getSyncProfileById(id: string): SyncProfile | undefined {
     source_board_id: number | null;
     import_enabled: number;
     export_enabled: number;
+    sync_interval_minutes: number;
+    remote_wins_on_conflict: number;
     source_statuses: string;
     source_columns: string;
     source_lanes: string;
+    available_development_stages: string;
+    available_participants: string;
+    last_catalog_synced_at: string | null;
     created_at: string;
     updated_at: string;
   } | undefined;
@@ -1727,10 +1840,12 @@ export function upsertSyncProfile(provider: IntegrationProvider, input: SyncProf
   db.prepare(`
     INSERT INTO sync_profiles (
       id, provider, name, entity_type, source_space_id, source_board_id,
-      import_enabled, export_enabled, source_statuses, source_columns, source_lanes,
+      import_enabled, export_enabled, sync_interval_minutes, remote_wins_on_conflict,
+      source_statuses, source_columns, source_lanes,
+      available_development_stages, available_participants, last_catalog_synced_at,
       created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       entity_type = excluded.entity_type,
@@ -1738,9 +1853,14 @@ export function upsertSyncProfile(provider: IntegrationProvider, input: SyncProf
       source_board_id = excluded.source_board_id,
       import_enabled = excluded.import_enabled,
       export_enabled = excluded.export_enabled,
+      sync_interval_minutes = excluded.sync_interval_minutes,
+      remote_wins_on_conflict = excluded.remote_wins_on_conflict,
       source_statuses = excluded.source_statuses,
       source_columns = excluded.source_columns,
       source_lanes = excluded.source_lanes,
+      available_development_stages = excluded.available_development_stages,
+      available_participants = excluded.available_participants,
+      last_catalog_synced_at = excluded.last_catalog_synced_at,
       updated_at = excluded.updated_at
   `).run(
     id,
@@ -1751,9 +1871,14 @@ export function upsertSyncProfile(provider: IntegrationProvider, input: SyncProf
     input.source_board_id ?? null,
     input.import_enabled === false ? 0 : 1,
     input.export_enabled ? 1 : 0,
+    Math.max(5, input.sync_interval_minutes ?? 60),
+    input.remote_wins_on_conflict === false ? 0 : 1,
     JSON.stringify(input.source_statuses ?? []),
     JSON.stringify(input.source_columns ?? []),
     JSON.stringify(input.source_lanes ?? []),
+    JSON.stringify(input.available_development_stages ?? []),
+    JSON.stringify(input.available_participants ?? []),
+    input.last_catalog_synced_at ?? null,
     now,
     now
   );
@@ -1835,6 +1960,7 @@ export function replaceSyncFieldMappings(profileId: string, mappings: SyncFieldM
 function mapExternalEntityLink(row: {
   id: string;
   provider: string;
+  profile_id: string | null;
   local_entity_type: SyncEntityType;
   local_entity_id: string;
   remote_entity_type: string;
@@ -1853,6 +1979,7 @@ function mapExternalEntityLink(row: {
   return {
     id: row.id,
     provider: row.provider as IntegrationProvider,
+    profile_id: row.profile_id,
     local_entity_type: row.local_entity_type,
     local_entity_id: row.local_entity_id,
     remote_entity_type: row.remote_entity_type,
@@ -1877,6 +2004,33 @@ export function getExternalEntityLinkByRemote(provider: IntegrationProvider, rem
   ).get(provider, remoteEntityType, remoteEntityId) as {
     id: string;
     provider: string;
+    profile_id: string | null;
+    local_entity_type: SyncEntityType;
+    local_entity_id: string;
+    remote_entity_type: string;
+    remote_entity_id: string;
+    remote_space_id: number | null;
+    remote_board_id: number | null;
+    remote_column_id: number | null;
+    remote_lane_id: number | null;
+    last_remote_updated_at: string | null;
+    last_local_synced_at: string | null;
+    sync_state: ExternalSyncState;
+    last_error: string | null;
+    created_at: string;
+    updated_at: string;
+  } | undefined;
+  return row ? mapExternalEntityLink(row) : undefined;
+}
+
+export function getExternalEntityLinkByLocal(provider: IntegrationProvider, localEntityType: SyncEntityType, localEntityId: string): ExternalEntityLink | undefined {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT * FROM external_entity_links WHERE provider = ? AND local_entity_type = ? AND local_entity_id = ?"
+  ).get(provider, localEntityType, localEntityId) as {
+    id: string;
+    provider: string;
+    profile_id: string | null;
     local_entity_type: SyncEntityType;
     local_entity_id: string;
     remote_entity_type: string;
@@ -1897,6 +2051,7 @@ export function getExternalEntityLinkByRemote(provider: IntegrationProvider, rem
 
 export function upsertExternalEntityLink(input: {
   provider: IntegrationProvider;
+  profile_id?: string | null;
   local_entity_type: SyncEntityType;
   local_entity_id: string;
   remote_entity_type: string;
@@ -1918,12 +2073,13 @@ export function upsertExternalEntityLink(input: {
 
   db.prepare(`
     INSERT INTO external_entity_links (
-      id, provider, local_entity_type, local_entity_id, remote_entity_type, remote_entity_id,
+      id, provider, profile_id, local_entity_type, local_entity_id, remote_entity_type, remote_entity_id,
       remote_space_id, remote_board_id, remote_column_id, remote_lane_id,
       last_remote_updated_at, last_local_synced_at, sync_state, last_error, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(provider, remote_entity_type, remote_entity_id) DO UPDATE SET
+      profile_id = excluded.profile_id,
       local_entity_type = excluded.local_entity_type,
       local_entity_id = excluded.local_entity_id,
       remote_space_id = excluded.remote_space_id,
@@ -1938,6 +2094,7 @@ export function upsertExternalEntityLink(input: {
   `).run(
     id,
     input.provider,
+    input.profile_id ?? existing?.profile_id ?? null,
     input.local_entity_type,
     input.local_entity_id,
     input.remote_entity_type,
@@ -1986,6 +2143,226 @@ export function getLatestSyncImportRun(profileId: string): KaitenImportResult | 
   } catch {
     return null;
   }
+}
+
+export function getSyncProfileByBoard(provider: IntegrationProvider, boardId: number): SyncProfile | undefined {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT * FROM sync_profiles WHERE provider = ? AND source_board_id = ? ORDER BY export_enabled DESC, created_at ASC LIMIT 1"
+  ).get(provider, boardId) as {
+    id: string;
+    provider: string;
+    name: string;
+    entity_type: SyncEntityType;
+    source_space_id: number | null;
+    source_board_id: number | null;
+    import_enabled: number;
+    export_enabled: number;
+    sync_interval_minutes: number;
+    remote_wins_on_conflict: number;
+    source_statuses: string;
+    source_columns: string;
+    source_lanes: string;
+    available_development_stages: string;
+    available_participants: string;
+    last_catalog_synced_at: string | null;
+    created_at: string;
+    updated_at: string;
+  } | undefined;
+  return row ? mapSyncProfile(row) : undefined;
+}
+
+export function getKaitenSyncCatalog(): {
+  development_stages: KaitenStageOption[];
+  participants: DevelopmentParticipantInput[];
+  profiles: Array<{
+    profile_id: string;
+    profile_name: string;
+    board_id: number | null;
+    development_stages: KaitenStageOption[];
+    participants: DevelopmentParticipantInput[];
+    last_catalog_synced_at: string | null;
+  }>;
+} {
+  const profiles = getAllSyncProfiles("kaiten");
+  const stagesMap = new Map<string, KaitenStageOption>();
+  const participantsMap = new Map<string, DevelopmentParticipantInput>();
+
+  for (const profile of profiles) {
+    for (const stage of profile.available_development_stages) {
+      stagesMap.set(stage.value, stage);
+    }
+    for (const participant of profile.available_participants) {
+      const key = participant.remote_id ?? participant.name;
+      participantsMap.set(key, participant);
+    }
+  }
+
+  return {
+    development_stages: Array.from(stagesMap.values()).sort((a, b) =>
+      a.label.localeCompare(b.label, "ru")
+    ),
+    participants: Array.from(participantsMap.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, "ru")
+    ),
+    profiles: profiles.map((profile) => ({
+      profile_id: profile.id,
+      profile_name: profile.name,
+      board_id: profile.source_board_id,
+      development_stages: profile.available_development_stages,
+      participants: profile.available_participants,
+      last_catalog_synced_at: profile.last_catalog_synced_at,
+    })),
+  };
+}
+
+export function upsertSyncOutboxJob(input: {
+  provider: IntegrationProvider;
+  profile_id?: string | null;
+  local_entity_type: SyncEntityType;
+  local_entity_id: string;
+  remote_entity_type: string;
+  remote_entity_id: string;
+  next_attempt_at: string;
+  last_error?: string | null;
+}): SyncOutboxJob {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const existing = db.prepare(
+    "SELECT * FROM sync_outbox WHERE provider = ? AND local_entity_type = ? AND local_entity_id = ?"
+  ).get(input.provider, input.local_entity_type, input.local_entity_id) as {
+    id: string;
+    created_at: string;
+  } | undefined;
+
+  const id = existing?.id ?? crypto.randomUUID();
+  const createdAt = existing?.created_at ?? now;
+
+  db.prepare(`
+    INSERT INTO sync_outbox (
+      id, provider, profile_id, local_entity_type, local_entity_id, remote_entity_type, remote_entity_id,
+      status, attempts, requested_at, next_attempt_at, last_error, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?)
+    ON CONFLICT(provider, local_entity_type, local_entity_id) DO UPDATE SET
+      profile_id = excluded.profile_id,
+      remote_entity_type = excluded.remote_entity_type,
+      remote_entity_id = excluded.remote_entity_id,
+      status = 'pending',
+      requested_at = excluded.requested_at,
+      next_attempt_at = excluded.next_attempt_at,
+      last_error = excluded.last_error,
+      updated_at = excluded.updated_at
+  `).run(
+    id,
+    input.provider,
+    input.profile_id ?? null,
+    input.local_entity_type,
+    input.local_entity_id,
+    input.remote_entity_type,
+    input.remote_entity_id,
+    now,
+    input.next_attempt_at,
+    input.last_error ?? null,
+    createdAt,
+    now
+  );
+
+  return getSyncOutboxJobByLocal(input.provider, input.local_entity_type, input.local_entity_id)!;
+}
+
+export function getSyncOutboxJobByLocal(provider: IntegrationProvider, localEntityType: SyncEntityType, localEntityId: string): SyncOutboxJob | undefined {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT * FROM sync_outbox WHERE provider = ? AND local_entity_type = ? AND local_entity_id = ?"
+  ).get(provider, localEntityType, localEntityId) as {
+    id: string;
+    provider: string;
+    profile_id: string | null;
+    local_entity_type: SyncEntityType;
+    local_entity_id: string;
+    remote_entity_type: string;
+    remote_entity_id: string;
+    status: SyncOutboxStatus;
+    attempts: number;
+    requested_at: string;
+    next_attempt_at: string;
+    last_error: string | null;
+    created_at: string;
+    updated_at: string;
+  } | undefined;
+  return row ? {
+    id: row.id,
+    provider: row.provider as IntegrationProvider,
+    profile_id: row.profile_id,
+    local_entity_type: row.local_entity_type,
+    local_entity_id: row.local_entity_id,
+    remote_entity_type: row.remote_entity_type,
+    remote_entity_id: row.remote_entity_id,
+    status: row.status,
+    attempts: row.attempts,
+    requested_at: row.requested_at,
+    next_attempt_at: row.next_attempt_at,
+    last_error: row.last_error,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  } : undefined;
+}
+
+export function getDueSyncOutboxJobs(provider: IntegrationProvider, limit = 50): SyncOutboxJob[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT * FROM sync_outbox
+    WHERE provider = ? AND status IN ('pending', 'error') AND next_attempt_at <= ?
+    ORDER BY next_attempt_at ASC
+    LIMIT ?
+  `).all(provider, new Date().toISOString(), limit) as {
+    id: string;
+    provider: string;
+    profile_id: string | null;
+    local_entity_type: SyncEntityType;
+    local_entity_id: string;
+    remote_entity_type: string;
+    remote_entity_id: string;
+    status: SyncOutboxStatus;
+    attempts: number;
+    requested_at: string;
+    next_attempt_at: string;
+    last_error: string | null;
+    created_at: string;
+    updated_at: string;
+  }[];
+  return rows.map((row) => ({
+    id: row.id,
+    provider: row.provider as IntegrationProvider,
+    profile_id: row.profile_id,
+    local_entity_type: row.local_entity_type,
+    local_entity_id: row.local_entity_id,
+    remote_entity_type: row.remote_entity_type,
+    remote_entity_id: row.remote_entity_id,
+    status: row.status,
+    attempts: row.attempts,
+    requested_at: row.requested_at,
+    next_attempt_at: row.next_attempt_at,
+    last_error: row.last_error,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+}
+
+export function markSyncOutboxProcessing(id: string) {
+  const db = getDb();
+  db.prepare("UPDATE sync_outbox SET status = 'processing', attempts = attempts + 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+}
+
+export function markSyncOutboxError(id: string, nextAttemptAt: string, lastError: string) {
+  const db = getDb();
+  db.prepare("UPDATE sync_outbox SET status = 'error', next_attempt_at = ?, last_error = ?, updated_at = ? WHERE id = ?").run(nextAttemptAt, lastError, new Date().toISOString(), id);
+}
+
+export function deleteSyncOutboxJob(id: string) {
+  const db = getDb();
+  db.prepare("DELETE FROM sync_outbox WHERE id = ?").run(id);
 }
 
 // ======================== Staging ========================

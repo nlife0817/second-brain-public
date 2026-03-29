@@ -106,6 +106,19 @@ function getGroupValue(
   }
 }
 
+function getGroupValues(
+  client: ClientFull,
+  field: ClientGroupByField
+): string[] {
+  if (field === "crm_system") {
+    if (client.crm_systems && client.crm_systems.length > 0) {
+      return client.crm_systems.map((c) => c.name);
+    }
+    return ["Не указана"];
+  }
+  return [getGroupValue(client, field)];
+}
+
 interface ClientGroup {
   key: string;
   label: string;
@@ -120,9 +133,11 @@ function groupClients(
 
   const map = new Map<string, ClientFull[]>();
   for (const client of clients) {
-    const key = getGroupValue(client, field);
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(client);
+    const keys = getGroupValues(client, field);
+    for (const key of keys) {
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(client);
+    }
   }
 
   const groups: ClientGroup[] = [];
