@@ -6,9 +6,60 @@ import {
   rebindExternalEntityLinks,
   getItemParticipants,
   setItemParticipants,
+  setItemTags,
+  syncClientNested,
+  setClientCrmSystems,
+  createRelation,
+  getAllItems,
+  getAllClients,
 } from "@/lib/db";
 import { v4 as uuid } from "uuid";
 import type { StagingParsedData } from "@/types";
+
+interface StagingRelation {
+  target_type: "item" | "client";
+  target_id?: string;
+  target_title?: string;
+  relation_type_id?: string | null;
+}
+
+function resolveAndCreateRelations(
+  sourceType: "item" | "client",
+  sourceId: string,
+  relations: StagingRelation[]
+) {
+  for (const rel of relations) {
+    let targetId = rel.target_id;
+
+    // If no target_id, try to resolve by title
+    if (!targetId && rel.target_title) {
+      if (rel.target_type === "item") {
+        const items = getAllItems(false, false);
+        const match = items.find(
+          (i) => i.title.toLowerCase() === rel.target_title!.toLowerCase()
+        );
+        if (match) targetId = match.id;
+      } else {
+        const clients = getAllClients();
+        const match = clients.find(
+          (c) => c.name.toLowerCase() === rel.target_title!.toLowerCase()
+        );
+        if (match) targetId = match.id;
+      }
+    }
+
+    if (!targetId) continue;
+
+    createRelation({
+      id: uuid(),
+      source_type: sourceType,
+      source_id: sourceId,
+      target_type: rel.target_type,
+      target_id: targetId,
+      relation_type_id: rel.relation_type_id ?? null,
+    });
+  }
+}
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -49,6 +100,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         setItemParticipants(itemId, parsed.participants);
       }
 
+      // Set tags if any
+      if (parsed.tags?.length) {
+        setItemTags(itemId, parsed.tags);
+      }
+
       // Create subtasks if any
       if (parsed.subtasks?.length) {
         for (let i = 0; i < parsed.subtasks.length; i++) {
@@ -70,6 +126,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
       }
 
+      // Create relations if any
+      if (parsed.relations?.length) {
+        resolveAndCreateRelations("item", itemId, parsed.relations);
+      }
+
       approveStagingItem(id);
       rebindExternalEntityLinks("item", id, itemId);
 
@@ -83,8 +144,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     if (staging.entity_type === "client") {
+      const clientId = uuid();
       const client = dbCreateClient({
-        id: uuid(),
+        id: clientId,
         name: staging.title,
         status_id: parsed.status_id ?? null,
         budget: parsed.budget ?? "",
@@ -94,8 +156,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         crm_system: parsed.crm_system ?? "",
       });
 
+      // Sync nested client data (companies, contacts, notes, links)
+      const nestedData: Parameters<typeof syncClientNested>[1] = {};
+      if (parsed.companies?.length) nestedData.companies = parsed.companies;
+      if (parsed.contacts?.length) nestedData.contacts = parsed.contacts;
+      if (parsed.notes?.length) nestedData.notes = parsed.notes;
+      if (parsed.links?.length) nestedData.links = parsed.links;
+      if (Object.keys(nestedData).length > 0) {
+        syncClientNested(clientId, nestedData);
+      }
+
+      // Set CRM systems if any
+      if (parsed.crm_system_ids?.length) {
+        setClientCrmSystems(clientId, parsed.crm_system_ids);
+      }
+
+      // Create relations if any
+      if (parsed.relations?.length) {
+        resolveAndCreateRelations("client", clientId, parsed.relations);
+      }
+
       approveStagingItem(id);
-      rebindExternalEntityLinks("client", id, client.id);
+      rebindExternalEntityLinks("client", id, clientId);
       return NextResponse.json(client, { status: 201 });
     }
 

@@ -416,7 +416,7 @@ export interface StagingParsedData {
   participants?: DevelopmentParticipantInput[];
   parent_id?: string | null;
   subtasks?: { title: string; description?: string }[];
-  relations?: { target_type: EntityType; target_title: string; relation_type?: string }[];
+  relations?: { target_type: EntityType; target_id?: string; target_title?: string; relation_type_id?: string | null; relation_type?: string }[];
 
   // Client fields
   budget?: string;
@@ -424,6 +424,7 @@ export interface StagingParsedData {
   operators_total?: string;
   calls_per_month?: string;
   crm_system?: string;
+  crm_system_ids?: string[];
   companies?: { name: string }[];
   contacts?: { name: string; fields?: { type: ContactFieldType; value: string }[] }[];
   notes?: { text: string }[];
