@@ -108,6 +108,8 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
   const clients = useBrainStore((s) => s.clients);
   const openDetail = useBrainStore((s) => s.openDetail);
   const openClientDetail = useBrainStore((s) => s.openClientDetail);
+  const closeDetail = useBrainStore((s) => s.closeDetail);
+  const closeClientDetail = useBrainStore((s) => s.closeClientDetail);
 
   const loadRelations = useCallback(async () => {
     setLoading(true);
@@ -226,9 +228,16 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
   }, [updateRelationType_, loadRelations]);
 
   const handleClickTarget = useCallback((rel: RelationWithTarget) => {
-    if (rel.target_type === "item") openDetail(rel.target_id);
-    else openClientDetail(rel.target_id);
-  }, [openDetail, openClientDetail]);
+    // Close current detail before opening target
+    if (entityType === "item") closeDetail();
+    else closeClientDetail();
+
+    // Open target after a tick so the closing animation doesn't conflict
+    setTimeout(() => {
+      if (rel.target_type === "item") openDetail(rel.target_id);
+      else openClientDetail(rel.target_id);
+    }, 0);
+  }, [entityType, closeDetail, closeClientDetail, openDetail, openClientDetail]);
 
   return (
     <div className="space-y-2">

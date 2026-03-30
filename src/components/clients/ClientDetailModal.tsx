@@ -811,7 +811,7 @@ export function ClientDetailModal() {
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) closeDetail(); }}>
       <DialogContent
-        className="max-w-[calc(100%-1rem)] sm:max-w-2xl w-full max-h-[90vh] p-0 bg-white overflow-hidden"
+        className="max-w-[calc(100%-1rem)] sm:max-w-[92vw] md:max-w-[90vw] lg:max-w-5xl xl:max-w-7xl w-full max-h-[90vh] p-0 bg-white overflow-hidden"
         showCloseButton
       >
         <DialogTitle className="sr-only">{client?.name ?? "Клиент"}</DialogTitle>

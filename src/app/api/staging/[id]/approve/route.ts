@@ -160,7 +160,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const nestedData: Parameters<typeof syncClientNested>[1] = {};
       if (parsed.companies?.length) nestedData.companies = parsed.companies;
       if (parsed.contacts?.length) nestedData.contacts = parsed.contacts;
-      if (parsed.notes?.length) nestedData.notes = parsed.notes;
+      // Merge staging description into notes
+      const allNotes = [...(parsed.notes ?? [])];
+      if (staging.description?.trim()) {
+        allNotes.unshift({ text: staging.description.trim() });
+      }
+      if (allNotes.length > 0) nestedData.notes = allNotes;
       if (parsed.links?.length) nestedData.links = parsed.links;
       if (Object.keys(nestedData).length > 0) {
         syncClientNested(clientId, nestedData);
