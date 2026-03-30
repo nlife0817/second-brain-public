@@ -4,6 +4,7 @@ import type {
   KaitenSpace,
   KaitenStageOption,
 } from "@/types";
+import MarkdownIt from "markdown-it";
 
 export class KaitenApiError extends Error {
   status: number;
@@ -21,6 +22,11 @@ type KaitenClientOptions = {
 };
 
 let lastKaitenRequestAt = 0;
+const markdownRenderer = new MarkdownIt({
+  breaks: true,
+  html: false,
+  linkify: true,
+});
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,38 +67,11 @@ function looksLikeHtml(value: string) {
   return /<\/?[a-z][\s\S]*>/i.test(value);
 }
 
-function imageMarkdownToHtml(value: string) {
-  return value.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)/g, (_match, alt, src) => {
-    return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" />`;
-  });
-}
-
-function plainTextToHtml(value: string) {
-  const normalized = value.trim();
-  if (!normalized) return "";
-  return normalized
-    .split(/\n{2,}/)
-    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br />")}</p>`)
-    .join("");
-}
-
 function normalizeDescriptionMarkup(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return "";
   if (looksLikeHtml(trimmed)) return trimmed;
-
-  const markdownWithImages = imageMarkdownToHtml(trimmed);
-  if (markdownWithImages !== trimmed) {
-    return markdownWithImages
-      .split(/\n{2,}/)
-      .map((paragraph) => {
-        if (/<img[\s\S]*>/i.test(paragraph)) return `<p>${paragraph.replace(/\n/g, "<br />")}</p>`;
-        return `<p>${escapeHtml(paragraph).replace(/\n/g, "<br />")}</p>`;
-      })
-      .join("");
-  }
-
-  return plainTextToHtml(trimmed);
+  return markdownRenderer.render(trimmed);
 }
 
 function isImageFile(file: Record<string, unknown>) {
@@ -271,6 +250,28 @@ export class KaitenClient {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
+    });
+  }
+
+  async uploadCardFile(
+    cardId: number,
+    file: {
+      filename: string;
+      mimeType: string;
+      bytes: Uint8Array;
+    }
+  ) {
+    const formData = new FormData();
+    const normalizedBytes = Uint8Array.from(file.bytes);
+    formData.append(
+      "file",
+      new Blob([normalizedBytes], { type: file.mimeType }),
+      file.filename
+    );
+
+    return await this.request<Record<string, unknown>>(`/cards/${cardId}/files`, {
+      method: "PUT",
+      body: formData,
     });
   }
 

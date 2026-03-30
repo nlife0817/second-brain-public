@@ -46,6 +46,110 @@ function addMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() + minutes * 60_000).toISOString();
 }
 
+const IMG_TAG_SRC_PATTERN = /(<img\b[^>]*\bsrc=(["']))([^"']+)(\2[^>]*>)/gi;
+
+function looksLikeDataUrl(value: string) {
+  return value.startsWith("data:");
+}
+
+function stripEmbeddedDataImages(description: string) {
+  if (!description.trim()) return description;
+  return description.replace(
+    /<img\b[^>]*\bsrc=(["'])data:[^"']+\1[^>]*>/gi,
+    ""
+  );
+}
+
+function mimeTypeToExtension(mimeType: string) {
+  switch (mimeType.toLowerCase()) {
+    case "image/jpeg":
+      return "jpg";
+    case "image/png":
+      return "png";
+    case "image/gif":
+      return "gif";
+    case "image/webp":
+      return "webp";
+    case "image/svg+xml":
+      return "svg";
+    case "image/bmp":
+      return "bmp";
+    default:
+      return "bin";
+  }
+}
+
+function parseDataUrl(value: string) {
+  const match = value.match(/^data:([^;,]+)?(?:;charset=[^;,]+)?(;base64)?,([\s\S]+)$/i);
+  if (!match) return null;
+
+  const mimeType = match[1] || "application/octet-stream";
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3] || "";
+
+  return {
+    mimeType,
+    bytes: isBase64
+      ? Uint8Array.from(Buffer.from(payload, "base64"))
+      : Uint8Array.from(Buffer.from(decodeURIComponent(payload), "utf8")),
+  };
+}
+
+async function syncEmbeddedImagesToKaitenCard(
+  client: ReturnType<typeof createKaitenClient>,
+  cardId: number,
+  description: string
+) {
+  if (!description.trim() || !description.includes("<img")) {
+    return description;
+  }
+
+  const uploads = new Map<string, string>();
+  let imageIndex = 0;
+  const matches = Array.from(description.matchAll(IMG_TAG_SRC_PATTERN));
+
+  for (const match of matches) {
+    const src = match[3];
+    if (!src || !looksLikeDataUrl(src) || uploads.has(src)) {
+      continue;
+    }
+
+    const parsed = parseDataUrl(src);
+    if (!parsed) {
+      throw new Error("Unable to parse embedded image for Kaiten sync.");
+    }
+
+    imageIndex += 1;
+    const uploaded = await client.uploadCardFile(cardId, {
+      filename: `second-brain-${cardId}-${imageIndex}.${mimeTypeToExtension(parsed.mimeType)}`,
+      mimeType: parsed.mimeType,
+      bytes: parsed.bytes,
+    });
+    const uploadedUrl =
+      typeof uploaded.url === "string"
+        ? uploaded.url
+        : typeof uploaded.thumbnail_url === "string"
+          ? uploaded.thumbnail_url
+          : null;
+
+    if (!uploadedUrl) {
+      throw new Error("Kaiten did not return uploaded image url.");
+    }
+
+    uploads.set(src, uploadedUrl);
+  }
+
+  if (uploads.size === 0) {
+    return description;
+  }
+
+  return description.replace(
+    IMG_TAG_SRC_PATTERN,
+    (_full, prefix: string, quote: string, src: string, suffix: string) =>
+      `${prefix}${uploads.get(src) ?? src}${suffix}`
+  );
+}
+
 function mapStatus(value: string): ItemStatus | null {
   if (!value.trim()) return null;
   const normalized = value.toLowerCase().replace(/\s+/g, "_");
@@ -151,7 +255,7 @@ async function createRemoteCardForItem(
   };
 
   if (item.description.trim()) {
-    payload.description = item.description;
+    payload.description = stripEmbeddedDataImages(item.description);
   }
   if (item.due_date) {
     payload.due_date = item.due_date;
@@ -345,6 +449,20 @@ export async function runDueKaitenSync(options?: { force?: boolean }) {
           throw new Error("Kaiten did not return created card id.");
         }
 
+        const createdDescription = await syncEmbeddedImagesToKaitenCard(
+          client,
+          createdCardId,
+          item.description
+        );
+        if (createdDescription !== stripEmbeddedDataImages(item.description)) {
+          await client.updateCard(createdCardId, {
+            description: createdDescription,
+          });
+        }
+        if (createdDescription !== item.description) {
+          updateItem(item.id, { description: createdDescription });
+        }
+
         await client.syncCardMembers(createdCardId, getItemParticipants(item.id));
 
         upsertExternalEntityLink({
@@ -405,9 +523,14 @@ export async function runDueKaitenSync(options?: { force?: boolean }) {
 
       const updatePayload: Record<string, unknown> = {
         title: item.title,
-        description: item.description,
         due_date: item.due_date,
       };
+      const syncedDescription = await syncEmbeddedImagesToKaitenCard(
+        client,
+        remoteCardId,
+        item.description
+      );
+      updatePayload.description = syncedDescription;
 
       if (stageMatch?.column_id) {
         updatePayload.column_id = stageMatch.column_id;
@@ -418,6 +541,9 @@ export async function runDueKaitenSync(options?: { force?: boolean }) {
 
       await client.updateCard(remoteCardId, updatePayload);
       await client.syncCardMembers(remoteCardId, getItemParticipants(item.id));
+      if (syncedDescription !== item.description) {
+        updateItem(item.id, { description: syncedDescription });
+      }
 
       // Sync archive state: local archived → archive in Kaiten, local active → unarchive in Kaiten
       const remoteIsArchived = extractCardArchived(remoteCard);
