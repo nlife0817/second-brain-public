@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRelationCountsBatch, getCommentCountsBatch } from "@/lib/db";
+import { getRelationCountsBatch, getCommentCountsBatch, getRelationTitlesBatch } from "@/lib/db";
 import type { EntityType } from "@/types";
 
 export async function GET(req: NextRequest) {
@@ -9,5 +9,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     relations: getRelationCountsBatch(entityType),
     comments: getCommentCountsBatch(entityType),
+    relationTitles: getRelationTitlesBatch(entityType),
   });
 }

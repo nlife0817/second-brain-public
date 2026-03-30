@@ -182,6 +182,7 @@ interface BrainStore {
   itemCommentCounts: Record<string, number>;
   clientRelationCounts: Record<string, number>;
   clientCommentCounts: Record<string, number>;
+  itemRelationTitles: Record<string, string[]>;
   fetchEntityCounts: (entityType: EntityType) => Promise<void>;
 
   // Relation types
@@ -302,6 +303,7 @@ export const useBrainStore = create<BrainStore>()(
       itemCommentCounts: data.itemCommentCounts,
       clientRelationCounts: data.clientRelationCounts,
       clientCommentCounts: data.clientCommentCounts,
+      itemRelationTitles: data.itemRelationTitles ?? {},
       loading: false,
     });
   },
@@ -947,13 +949,14 @@ export const useBrainStore = create<BrainStore>()(
   itemCommentCounts: {},
   clientRelationCounts: {},
   clientCommentCounts: {},
+  itemRelationTitles: {},
 
   fetchEntityCounts: async (entityType) => {
     const res = await fetch(`/api/entity-counts?entity_type=${entityType}`);
     if (!res.ok) return;
-    const { relations, comments } = await res.json();
+    const { relations, comments, relationTitles } = await res.json();
     if (entityType === "item") {
-      set({ itemRelationCounts: relations, itemCommentCounts: comments });
+      set({ itemRelationCounts: relations, itemCommentCounts: comments, itemRelationTitles: relationTitles ?? {} });
     } else {
       set({ clientRelationCounts: relations, clientCommentCounts: comments });
     }

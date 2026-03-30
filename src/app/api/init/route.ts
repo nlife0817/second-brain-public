@@ -12,6 +12,7 @@ import {
   getAllStagingItems,
   getRelationCountsBatch,
   getCommentCountsBatch,
+  getRelationTitlesBatch,
 } from "@/lib/db";
 import { ensureKaitenSyncScheduler } from "@/lib/kaiten/sync";
 
@@ -36,6 +37,7 @@ export async function GET(req: NextRequest) {
   const itemCommentCounts = getCommentCountsBatch("item");
   const clientRelationCounts = getRelationCountsBatch("client");
   const clientCommentCounts = getCommentCountsBatch("client");
+  const itemRelationTitles = getRelationTitlesBatch("item");
 
   return NextResponse.json({
     items,
@@ -52,5 +54,6 @@ export async function GET(req: NextRequest) {
     itemCommentCounts,
     clientRelationCounts,
     clientCommentCounts,
+    itemRelationTitles,
   });
 }

@@ -1924,6 +1924,46 @@ export function getCommentCountsBatch(entityType: EntityType): Record<string, nu
   return counts;
 }
 
+export function getRelationTitlesBatch(entityType: EntityType): Record<string, string[]> {
+  const db = getDb();
+  const result: Record<string, string[]> = {};
+
+  const asSource = db.prepare(
+    "SELECT source_id, target_type, target_id FROM relations WHERE source_type = ?"
+  ).all(entityType) as { source_id: string; target_type: string; target_id: string }[];
+
+  const asTarget = db.prepare(
+    "SELECT target_id, source_type, source_id FROM relations WHERE target_type = ?"
+  ).all(entityType) as { target_id: string; source_type: string; source_id: string }[];
+
+  function resolveTitle(type: string, id: string): string {
+    if (type === "item") {
+      const row = db.prepare("SELECT title FROM items WHERE id = ?").get(id) as { title: string } | undefined;
+      return row?.title ?? "";
+    }
+    const row = db.prepare("SELECT name FROM clients WHERE id = ?").get(id) as { name: string } | undefined;
+    return row?.name ?? "";
+  }
+
+  for (const r of asSource) {
+    const title = resolveTitle(r.target_type, r.target_id);
+    if (title) {
+      if (!result[r.source_id]) result[r.source_id] = [];
+      result[r.source_id].push(title);
+    }
+  }
+
+  for (const r of asTarget) {
+    const title = resolveTitle(r.source_type, r.source_id);
+    if (title) {
+      if (!result[r.target_id]) result[r.target_id] = [];
+      if (!result[r.target_id].includes(title)) result[r.target_id].push(title);
+    }
+  }
+
+  return result;
+}
+
 export function createRelation(data: { id: string; source_type: EntityType; source_id: string; target_type: EntityType; target_id: string; relation_type_id?: string | null }): Relation | null {
   const db = getDb();
   const now = new Date().toISOString();

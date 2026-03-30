@@ -797,6 +797,10 @@ function InlineDateCell({
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [localValue, setLocalValue] = useState(value);
+  const localRef = useRef(value);
+  const committedRef = useRef(false);
+  const initialValueRef = useRef(value);
 
   useLayoutEffect(() => {
     const anchor = anchorRef?.current;
@@ -822,17 +826,36 @@ function InlineDateCell({
     }
   }, [pos]);
 
+  const finish = useCallback(
+    (cleared?: boolean) => {
+      if (committedRef.current) return;
+      committedRef.current = true;
+      if (cleared) {
+        onCommit(null);
+        return;
+      }
+      const cur = localRef.current || null;
+      const orig = initialValueRef.current || null;
+      if (cur !== orig) {
+        onCommit(cur);
+      } else {
+        onCancel();
+      }
+    },
+    [onCommit, onCancel]
+  );
+
   useEffect(() => {
     function handler(e: MouseEvent) {
       if (
         containerRef.current &&
         !containerRef.current.contains(e.target as Node)
       )
-        onCancel();
+        finish();
     }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [onCancel]);
+  }, [finish]);
 
   useEffect(() => {
     function handler(e: KeyboardEvent) {
@@ -864,12 +887,22 @@ function InlineDateCell({
       <input
         ref={inputRef}
         type="date"
-        value={value}
-        onChange={(e) => onCommit(e.target.value || null)}
+        value={localValue}
+        onChange={(e) => {
+          const v = e.target.value;
+          localRef.current = v;
+          setLocalValue(v);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.preventDefault();
             onCancel();
+          } else if (e.key === "Delete" || e.key === "Backspace") {
+            e.preventDefault();
+            finish(true);
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            finish();
           }
         }}
         className="h-6 rounded-md border border-slate-200 bg-white px-1.5 text-[10px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
@@ -2794,6 +2827,8 @@ function ItemRowGroup({
 /*  Table row                                                                 */
 /* -------------------------------------------------------------------------- */
 
+const EMPTY_REL_TITLES: string[] = [];
+
 function ItemRow({
   row,
   selected,
@@ -2832,6 +2867,7 @@ function ItemRow({
   const { item, isSubtask, totalSubtasks, doneSubtasks } = row;
   const allItems = useBrainStore((s) => s.items);
   const relCount = useBrainStore((s) => s.itemRelationCounts[item.id] ?? 0);
+  const relTitles = useBrainStore((s) => s.itemRelationTitles[item.id] ?? EMPTY_REL_TITLES);
   const commentCount = useBrainStore((s) => s.itemCommentCounts[item.id] ?? 0);
   const isDetachedSubtask = !isSubtask && !!item.parent_id;
   const parentItem = isDetachedSubtask ? allItems.find((i) => i.id === item.parent_id) : null;
@@ -2981,12 +3017,15 @@ function ItemRow({
                 <SourceIcon source={item.source} />
               )}
               {item.title}
-              {(relCount > 0 || commentCount > 0) && (
+              {(relTitles.length > 0 || commentCount > 0) && (
                 <span className="inline-flex items-center gap-1.5 ml-2">
-                  {relCount > 0 && (
-                    <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400">
-                      <Link className="size-2.5" />
-                      {relCount}
+                  {relTitles.length > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400" title={relTitles.join(", ")}>
+                      <Link className="size-2.5 shrink-0" />
+                      {relTitles.map((t) => {
+                        const words = t.split(/\s+/);
+                        return words.length > 2 ? words.slice(0, 2).join(" ") + "..." : t;
+                      }).join(", ")}
                     </span>
                   )}
                   {commentCount > 0 && (
