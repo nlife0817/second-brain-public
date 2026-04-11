@@ -737,11 +737,12 @@ export function ClientsView() {
   const clientGroupBy = useBrainStore((s) => s.clientGroupBy);
   const setClientGroupBy = useBrainStore((s) => s.setClientGroupBy);
   const reorderClients = useBrainStore((s) => s.reorderClients);
+  const clientsCollapsedGroupsArr = useBrainStore((s) => s.clientsCollapsedGroups);
+  const setClientsCollapsedGroups = useBrainStore((s) => s.setClientsCollapsedGroups);
+
+  const collapsedGroups = useMemo(() => new Set(clientsCollapsedGroupsArr), [clientsCollapsedGroupsArr]);
 
   const [statusManagerOpen, setStatusManagerOpen] = useState(false);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    new Set()
-  );
 
   const handleDelete = useCallback(
     (id: string) => {
@@ -751,13 +752,12 @@ export function ClientsView() {
   );
 
   const toggleGroup = useCallback((key: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
+    setClientsCollapsedGroups(
+      collapsedGroups.has(key)
+        ? clientsCollapsedGroupsArr.filter((k) => k !== key)
+        : [...clientsCollapsedGroupsArr, key]
+    );
+  }, [collapsedGroups, clientsCollapsedGroupsArr, setClientsCollapsedGroups]);
 
   /* ----- DnD sensors ------------------------------------------------------- */
 

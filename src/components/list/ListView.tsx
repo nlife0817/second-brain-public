@@ -1405,6 +1405,8 @@ export function ListView() {
   const setListColumnOrder = useBrainStore((s) => s.setListColumnOrder);
   const listGroupBy = useBrainStore((s) => s.listGroupBy);
   const setListGroupBy = useBrainStore((s) => s.setListGroupBy);
+  const listCollapsedGroupsArr = useBrainStore((s) => s.listCollapsedGroups);
+  const setListCollapsedGroups = useBrainStore((s) => s.setListCollapsedGroups);
   const fetchItems = useBrainStore((s) => s.fetchItems);
   const categories = useBrainStore((s) => s.categories);
   const developmentStages = useBrainStore((s) => s.developmentStages);
@@ -1428,7 +1430,7 @@ export function ListView() {
   const [manualOrder, setManualOrder] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const collapsedGroups = useMemo(() => new Set(listCollapsedGroupsArr), [listCollapsedGroupsArr]);
 
   /* ----- Inline task creation state -------------------------------------- */
   const [isCreating, setIsCreating] = useState(false);
@@ -1573,20 +1575,19 @@ export function ListView() {
 
   const toggleAllGroups = useCallback(() => {
     if (allGroupsCollapsed) {
-      setCollapsedGroups(new Set());
+      setListCollapsedGroups([]);
     } else {
-      setCollapsedGroups(new Set(allGroupKeys));
+      setListCollapsedGroups([...allGroupKeys]);
     }
-  }, [allGroupsCollapsed, allGroupKeys]);
+  }, [allGroupsCollapsed, allGroupKeys, setListCollapsedGroups]);
 
   const toggleGroup = useCallback((key: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
+    setListCollapsedGroups(
+      collapsedGroups.has(key)
+        ? listCollapsedGroupsArr.filter((k) => k !== key)
+        : [...listCollapsedGroupsArr, key]
+    );
+  }, [collapsedGroups, listCollapsedGroupsArr, setListCollapsedGroups]);
 
   /* Build a set of item IDs per group key (for DnD restriction) */
   const groupItemIdSets = useMemo(() => {

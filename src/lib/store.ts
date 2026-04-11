@@ -117,8 +117,12 @@ interface BrainStore {
   clientViewMode: ClientViewMode;
   clientStatusFilter: string | null;
   clientGroupBy: ClientGroupByConfig;
+  clientsCollapsedGroups: string[];
+  listCollapsedGroups: string[];
 
   setClientViewMode: (mode: ClientViewMode) => void;
+  setClientsCollapsedGroups: (groups: string[]) => void;
+  setListCollapsedGroups: (groups: string[]) => void;
   setClientStatusFilter: (statusId: string | null) => void;
   setClientGroupBy: (config: ClientGroupByConfig) => void;
   reorderClients: (updates: { id: string; position: number; status_id?: string }[]) => Promise<void>;
@@ -280,6 +284,8 @@ export const useBrainStore = create<BrainStore>()(
   clientViewMode: "list" as ClientViewMode,
   clientStatusFilter: null,
   clientGroupBy: ["none", "none"] as ClientGroupByConfig,
+  clientsCollapsedGroups: [] as string[],
+  listCollapsedGroups: [] as string[],
 
   // Weekly plans
   weeklyPlans: [],
@@ -576,6 +582,8 @@ export const useBrainStore = create<BrainStore>()(
       set({ listGroupBy: [listGroupBy[0], l2] as ListGroupByConfig });
     }
   },
+  setListCollapsedGroups: (groups) => set({ listCollapsedGroups: groups }),
+  setClientsCollapsedGroups: (groups) => set({ clientsCollapsedGroups: groups }),
 
   // Staging
   fetchStagingItems: async () => {
@@ -1155,6 +1163,8 @@ export const useBrainStore = create<BrainStore>()(
       activeFilterId: state.activeFilterId,
       detailMode: state.detailMode,
       listGroupBy: state.listGroupBy,
+      listCollapsedGroups: state.listCollapsedGroups,
+      clientsCollapsedGroups: state.clientsCollapsedGroups,
       currentPlanId: state.currentPlanId,
       filters: {
         categories: state.filters.categories,
