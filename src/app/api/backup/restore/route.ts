@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { restoreFromBackup } from "@/lib/backup";
 import { ensureDb, resetDb } from "@/lib/db";
+import { getAuthUser } from "@/lib/auth";
 
 function reinitDb() {
   ensureDb();
 }
 
 export async function POST(req: NextRequest) {
+  const user = getAuthUser(req.headers);
+  if (!user || user.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   try {
     ensureDb();
     const { filename } = await req.json();

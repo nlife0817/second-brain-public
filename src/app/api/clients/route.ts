@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllClientsFull, createClient, syncClientNested, reorderClients } from "@/lib/db";
 import { CreateClientPayload } from "@/types";
+import { getAuthUser } from "@/lib/auth";
 
 export async function GET() {
   return NextResponse.json(getAllClientsFull());
 }
 
 export async function POST(req: NextRequest) {
+  const user = getAuthUser(req.headers);
+  if (!user || user.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   try {
     const body: CreateClientPayload = await req.json();
     if (!body.name?.trim()) return NextResponse.json({ error: "Name required" }, { status: 400 });
@@ -28,6 +33,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const user = getAuthUser(req.headers);
+  if (!user || user.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   try {
     const body = await req.json();
     if (body.clients && Array.isArray(body.clients)) {

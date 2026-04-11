@@ -394,6 +394,7 @@ export interface Comment {
   entity_type: EntityType;
   entity_id: string;
   text: string;
+  author_email: string;
   created_at: string;
   updated_at: string;
 }

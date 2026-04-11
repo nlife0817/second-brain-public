@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllWeeklyPlans, createWeeklyPlan, getTransferableEntries, bulkAddItemsToPlan } from "@/lib/db";
+import { getAuthUser } from "@/lib/auth";
 import { v4 as uuid } from "uuid";
 
 export async function GET() {
@@ -8,6 +9,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const user = getAuthUser(req.headers);
+  if (!user || user.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   try {
     const body = await req.json();
 

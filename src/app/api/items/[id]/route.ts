@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { updateItem, deleteItem, getItemFull, setItemParticipants, setItemTags } from "@/lib/db";
 import { UpdateItemPayload } from "@/types";
 import { ensureKaitenSyncScheduler, queueKaitenItemSync } from "@/lib/kaiten/sync";
+import { getAuthUser } from "@/lib/auth";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   ensureKaitenSyncScheduler();
@@ -12,6 +13,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = getAuthUser(req.headers);
+  if (!user || user.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   try {
     ensureKaitenSyncScheduler();
     const { id } = await params;
@@ -39,7 +44,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = getAuthUser(req.headers);
+  if (!user || user.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   ensureKaitenSyncScheduler();
   const { id } = await params;
   const deleted = deleteItem(id);

@@ -3,6 +3,7 @@ import { getAllItemsFull, createItem, getItemFull, reorderItems, setItemParticip
 import { v4 as uuid } from "uuid";
 import { CreateItemPayload } from "@/types";
 import { ensureKaitenSyncScheduler, queueKaitenItemSync } from "@/lib/kaiten/sync";
+import { getAuthUser } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
   ensureKaitenSyncScheduler();
@@ -13,6 +14,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const user = getAuthUser(req.headers);
+  if (!user || user.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   try {
     ensureKaitenSyncScheduler();
     const body: CreateItemPayload = await req.json();
@@ -50,6 +55,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const user = getAuthUser(req.headers);
+  if (!user || user.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   try {
     ensureKaitenSyncScheduler();
     const body: { items: { id: string; position: number; status?: string }[] } = await req.json();

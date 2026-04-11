@@ -263,6 +263,7 @@ function initSchema(db: Database.Database) {
       entity_type TEXT NOT NULL CHECK(entity_type IN ('item','client')),
       entity_id TEXT NOT NULL,
       text TEXT NOT NULL DEFAULT '',
+      author_email TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -735,6 +736,13 @@ function migrateSchema(db: Database.Database) {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // --- Add author_email to comments ---
+  const commentCols = db.prepare("PRAGMA table_info(comments)").all() as { name: string }[];
+  const commentColNames = new Set(commentCols.map((c) => c.name));
+  if (!commentColNames.has("author_email")) {
+    db.exec("ALTER TABLE comments ADD COLUMN author_email TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 function seedDefaultCategories(db: Database.Database) {
@@ -2075,10 +2083,10 @@ export function getCommentCount(entityType: EntityType, entityId: string): numbe
   return r.c;
 }
 
-export function createComment(data: { id: string; entity_type: EntityType; entity_id: string; text: string }): Comment {
+export function createComment(data: { id: string; entity_type: EntityType; entity_id: string; text: string; author_email?: string }): Comment {
   const db = getDb();
   const now = new Date().toISOString();
-  db.prepare("INSERT INTO comments (id, entity_type, entity_id, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(data.id, data.entity_type, data.entity_id, data.text, now, now);
+  db.prepare("INSERT INTO comments (id, entity_type, entity_id, text, author_email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(data.id, data.entity_type, data.entity_id, data.text, data.author_email || "", now, now);
   return db.prepare("SELECT * FROM comments WHERE id = ?").get(data.id) as Comment;
 }
 
