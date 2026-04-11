@@ -11,7 +11,7 @@ export interface AuthUser {
 export function getAuthUser(headers: Headers): AuthUser | null {
   let email = headers.get(CF_EMAIL_HEADER);
 
-  if (!email && process.env.NODE_ENV === "development") {
+  if (!email) {
     email = process.env.DEV_AUTH_EMAIL || null;
   }
 

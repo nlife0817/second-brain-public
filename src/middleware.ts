@@ -10,23 +10,11 @@ function isMobileUserAgent(ua: string): boolean {
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // In development — pass through (auth handled by DEV_AUTH_EMAIL env)
-  if (process.env.NODE_ENV === "development") {
-    // Still do mobile redirect in dev for testing
-    const ua = request.headers.get("user-agent") ?? "";
-    if (
-      pathname === "/" &&
-      isMobileUserAgent(ua) &&
-      !request.nextUrl.searchParams.has("desktop")
-    ) {
-      return NextResponse.redirect(new URL("/m/tasks", request.url));
-    }
-    return NextResponse.next();
-  }
+  const cfEmail = request.headers.get(CF_EMAIL_HEADER);
+  const devEmail = process.env.DEV_AUTH_EMAIL;
 
-  // In production — check that Cloudflare Access header is present
-  const email = request.headers.get(CF_EMAIL_HEADER);
-  if (!email) {
+  // Block access only when: no CF header AND no DEV_AUTH_EMAIL fallback
+  if (!cfEmail && !devEmail) {
     return new NextResponse("Access denied — Cloudflare Access required", {
       status: 401,
       headers: { "Content-Type": "text/plain; charset=utf-8" },
