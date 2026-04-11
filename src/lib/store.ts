@@ -39,6 +39,8 @@ import {
   StagingItem,
   StagingItemParsed,
   StagingParsedData,
+  User,
+  UserRole,
 } from "@/types";
 
 interface BrainStore {
@@ -201,6 +203,13 @@ interface BrainStore {
   updateStagingItem: (id: string, updates: Partial<Pick<StagingItem, "title" | "description" | "entity_type"> & { parsed_data: StagingParsedData }>) => Promise<void>;
   deleteStagingItem: (id: string) => Promise<void>;
 
+  // Users management
+  users: User[];
+  fetchUsers: () => Promise<void>;
+  createUser: (email: string, role: UserRole, name?: string) => Promise<User>;
+  updateUser: (email: string, updates: { role?: UserRole; name?: string }) => Promise<void>;
+  deleteUser: (email: string) => Promise<void>;
+
   // Relations (fetched per-entity, not global)
   fetchRelations: (entityType: EntityType, entityId: string) => Promise<RelationWithTarget[]>;
   createRelation: (source_type: EntityType, source_id: string, target_type: EntityType, target_id: string, relation_type_id?: string | null) => Promise<void>;
@@ -251,6 +260,9 @@ export const useBrainStore = create<BrainStore>()(
 
   // App section
   appSection: "tasks" as AppSection,
+
+  // Users
+  users: [],
 
   // Staging
   stagingItems: [],
@@ -1075,6 +1087,40 @@ export const useBrainStore = create<BrainStore>()(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: commentId }),
     });
+  },
+
+  // Users management
+  fetchUsers: async () => {
+    const res = await fetch("/api/users");
+    if (!res.ok) return;
+    const users: User[] = await res.json();
+    set({ users });
+  },
+  createUser: async (email, role, name) => {
+    const res = await fetch("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, role, name }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const user: User = await res.json();
+    set((s) => ({ users: [...s.users, user] }));
+    return user;
+  },
+  updateUser: async (email, updates) => {
+    const res = await fetch(`/api/users/${encodeURIComponent(email)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const updated: User = await res.json();
+    set((s) => ({ users: s.users.map((u) => u.email === email ? updated : u) }));
+  },
+  deleteUser: async (email) => {
+    const res = await fetch(`/api/users/${encodeURIComponent(email)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(await res.text());
+    set((s) => ({ users: s.users.filter((u) => u.email !== email) }));
   },
 }),
   {

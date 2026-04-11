@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { CategoryManager } from "./CategoryManager";
 import { OrderableListSection } from "./OrderableListSection";
+import { UserManager } from "./UserManager";
 import { Tag, Layers, Users } from "lucide-react";
 
 const PRESET_COLORS = [
@@ -1209,6 +1210,11 @@ export function SettingsView() {
 
           {/* Participants */}
           <DevelopmentParticipantsSection />
+
+          {/* Users */}
+          <section className="rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-sm">
+            <UserManager />
+          </section>
 
           {/* Relation Types */}
           <section className="rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-sm">
