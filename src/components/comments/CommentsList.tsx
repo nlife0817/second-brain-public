@@ -85,7 +85,7 @@ function CommentEditor({ initialContent, onSave, onCancel, placeholder }: {
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
-      StarterKit,
+      StarterKit.configure({ underline: false }),
       Underline,
       Placeholder.configure({ placeholder: placeholder ?? "Написать комментарий..." }),
     ],

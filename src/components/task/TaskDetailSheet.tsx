@@ -77,7 +77,7 @@ function RichEditor({
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
-      StarterKit,
+      StarterKit.configure({ underline: false }),
       Underline,
       Image,
       Placeholder.configure({ placeholder: "Добавьте описание..." }),
