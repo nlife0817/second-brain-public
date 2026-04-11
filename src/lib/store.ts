@@ -389,7 +389,11 @@ export const useBrainStore = create<BrainStore>()(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error("Failed to create item");
+    if (!res.ok) {
+      let msg = `Ошибка ${res.status}`;
+      try { const body = await res.json(); msg = body.error ?? msg; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
     const item: ItemWithSubtasks = await res.json();
     // Optimistic: add to store without refetch
     if (!item.parent_id) {

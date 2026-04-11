@@ -7,6 +7,7 @@ import { CheckSquare, ChevronLeft, ChevronRight, CalendarDays } from "lucide-rea
 import { format, addDays, subDays, isToday, isTomorrow, isYesterday } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
+import type { ItemWithSubtasks } from "@/types";
 
 function formatDayLabel(date: Date): string {
   if (isToday(date)) return "Сегодня";
@@ -15,9 +16,17 @@ function formatDayLabel(date: Date): string {
   return format(date, "d MMMM", { locale: ru });
 }
 
+interface CategoryGroup {
+  id: string;
+  name: string;
+  color: string;
+  items: ItemWithSubtasks[];
+}
+
 export default function MobileTasksPage() {
   const fetchInit = useBrainStore((s) => s.fetchInit);
   const items = useBrainStore((s) => s.items);
+  const categories = useBrainStore((s) => s.categories);
 
   const [selectedDate, setSelectedDate] = useState(new Date());
   const dateStr = format(selectedDate, "yyyy-MM-dd");
@@ -51,6 +60,24 @@ export default function MobileTasksPage() {
         : [],
     [items, dateStr, selectedDate]
   );
+
+  const categoryGroups = useMemo<CategoryGroup[]>(() => {
+    const map = new Map<string, CategoryGroup>();
+    for (const item of dayItems) {
+      const catId = item.category || "other";
+      if (!map.has(catId)) {
+        const cat = categories.find((c) => c.id === catId);
+        map.set(catId, {
+          id: catId,
+          name: cat?.name ?? "Другое",
+          color: cat?.color ?? "#6b7280",
+          items: [],
+        });
+      }
+      map.get(catId)!.items.push(item);
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  }, [dayItems, categories]);
 
   const isCurrentDay = isToday(selectedDate);
 
@@ -92,10 +119,7 @@ export default function MobileTasksPage() {
               <span className="text-base font-bold leading-tight">
                 {formatDayLabel(selectedDate)}
               </span>
-              <span className={cn(
-                "text-xs leading-none",
-                isCurrentDay ? "text-violet-200" : "text-muted-foreground"
-              )}>
+              <span className={cn("text-xs leading-none", isCurrentDay ? "text-violet-200" : "text-muted-foreground")}>
                 {format(selectedDate, "EEEE, d MMMM", { locale: ru })}
               </span>
             </button>
@@ -117,9 +141,7 @@ export default function MobileTasksPage() {
           <div>
             <div className="mb-3 flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-red-500" />
-              <p className="text-xs font-bold uppercase tracking-widest text-red-500">
-                Просрочено
-              </p>
+              <p className="text-xs font-bold uppercase tracking-widest text-red-500">Просрочено</p>
               <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-100 px-1.5 text-xs font-bold text-red-600 dark:bg-red-950 dark:text-red-400">
                 {overdueItems.length}
               </span>
@@ -132,23 +154,30 @@ export default function MobileTasksPage() {
           </div>
         )}
 
-        {/* Day tasks section */}
-        {dayItems.length > 0 ? (
-          <div>
-            <div className="mb-3 flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-violet-500" />
-              <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                {formatDayLabel(selectedDate)}
-              </p>
-              <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-violet-100 px-1.5 text-xs font-bold text-violet-600 dark:bg-violet-950 dark:text-violet-400">
-                {dayItems.length}
-              </span>
-            </div>
-            <div className="space-y-2.5">
-              {dayItems.map((item) => (
-                <MobileDayTaskCard key={item.id} item={item} />
-              ))}
-            </div>
+        {/* Day tasks grouped by category */}
+        {categoryGroups.length > 0 ? (
+          <div className="space-y-5">
+            {categoryGroups.map((group) => (
+              <div key={group.id}>
+                <div className="mb-3 flex items-center gap-2">
+                  <span
+                    className="h-2.5 w-2.5 flex-shrink-0 rounded-full"
+                    style={{ backgroundColor: group.color }}
+                  />
+                  <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                    {group.name}
+                  </p>
+                  <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-muted px-1.5 text-xs font-bold text-muted-foreground">
+                    {group.items.length}
+                  </span>
+                </div>
+                <div className="space-y-2.5">
+                  {group.items.map((item) => (
+                    <MobileDayTaskCard key={item.id} item={item} />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-16 text-center">
