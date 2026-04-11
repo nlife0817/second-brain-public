@@ -16,11 +16,14 @@ export default function MobileInboxPage() {
     <div className="min-h-full bg-background">
       {/* Header */}
       <div className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-100">
+        <div className="flex items-center gap-3 px-4 py-4">
+          <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-violet-100 dark:bg-violet-950">
             <Inbox className="h-4 w-4 text-violet-600" />
           </div>
-          <h1 className="text-lg font-semibold">Быстрый ввод</h1>
+          <div>
+            <h1 className="text-base font-bold leading-tight text-foreground">Быстрый ввод</h1>
+            <p className="text-xs text-muted-foreground">Добавьте задачу, заметку или встречу</p>
+          </div>
         </div>
       </div>
 
