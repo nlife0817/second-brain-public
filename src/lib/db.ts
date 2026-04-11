@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { initBackupSchedule } from "./backup";
 import {
+  User, UserRole,
   Item, ItemWithSubtasks, Tag, Category, CrmSystem, WeeklyPlan, WeeklyPlanEntry, WeeklyPlanEntryWithItem, WeeklyPlanFull, WeeklyPlanReport, EntryComment,
   Client, ClientFull, ClientStatus, ClientCompany, ClientContact, ClientContactField, ClientNote, ClientLink,
   ContactFieldType,
@@ -286,6 +287,15 @@ function initSchema(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_staging_status ON staging_items(staging_status);
     CREATE INDEX IF NOT EXISTS idx_staging_batch ON staging_items(batch_id);
+
+    -- Users & auth
+    CREATE TABLE IF NOT EXISTS users (
+      email TEXT PRIMARY KEY,
+      role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin','manager')),
+      name TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 
     -- Integrations / external sync
     CREATE TABLE IF NOT EXISTS integration_settings (
@@ -714,6 +724,17 @@ function migrateSchema(db: Database.Database) {
     // Mark existing "Клиент" type as system
     db.exec("UPDATE relation_types SET is_system = 1 WHERE name = 'Клиент'");
   }
+
+  // --- Users table migration ---
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      email TEXT PRIMARY KEY,
+      role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin','manager')),
+      name TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 }
 
 function seedDefaultCategories(db: Database.Database) {
@@ -2838,4 +2859,40 @@ export function approveStagingItem(id: string): StagingItem | undefined {
 
 export function rejectStagingItem(id: string): StagingItem | undefined {
   return updateStagingItem(id, { staging_status: "rejected" });
+}
+
+// --- Users ---
+
+export function getUserByEmail(email: string): User | undefined {
+  const db = getDb();
+  return db.prepare("SELECT * FROM users WHERE email = ?").get(email) as User | undefined;
+}
+
+export function getAllUsers(): User[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM users ORDER BY created_at ASC").all() as User[];
+}
+
+export function upsertUser(email: string, role: UserRole, name?: string): User {
+  const db = getDb();
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO users (email, role, name, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(email) DO UPDATE SET
+      role = excluded.role,
+      name = excluded.name,
+      updated_at = excluded.updated_at
+  `).run(email, role, name ?? "", now, now);
+  return getUserByEmail(email)!;
+}
+
+export function deleteUser(email: string): boolean {
+  const db = getDb();
+  return db.prepare("DELETE FROM users WHERE email = ?").run(email).changes > 0;
+}
+
+export function getUserCount(): number {
+  const db = getDb();
+  return (db.prepare("SELECT COUNT(*) as c FROM users").get() as { c: number }).c;
 }

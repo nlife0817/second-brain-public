@@ -1,3 +1,17 @@
+// --- Users & Auth ---
+
+export type UserRole = "admin" | "manager";
+
+export interface User {
+  email: string;
+  role: UserRole;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// --- Items ---
+
 export type ItemType = "task" | "note" | "meeting" | "plan" | "idea";
 export type ItemStatus = "inbox" | "todo" | "in_progress" | "review" | "done" | "archived";
 export type ItemPriority = "urgent" | "high" | "medium" | "low" | "none";
