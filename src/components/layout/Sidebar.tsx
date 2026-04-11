@@ -160,7 +160,7 @@ export function Sidebar() {
           {sections.map(({ key, label, icon: Icon }) => {
             const isActive = appSection === key;
             const count = key === "tasks"
-              ? items.filter((i) => showArchived ? i.status === "archived" : i.status !== "archived").length
+              ? (counts.all ?? 0)
               : key === "clients" ? clients.length : key === "staging" ? stagingItems.length : 0;
 
             const button = (

@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -35,7 +35,7 @@ const headerDot: Record<string, string> = {
   done: "bg-emerald-500",
 };
 
-export function KanbanColumn({ status, items }: KanbanColumnProps) {
+export const KanbanColumn = React.memo(function KanbanColumn({ status, items }: KanbanColumnProps) {
   const openCreate = useBrainStore((s) => s.openCreate);
   const config = STATUS_CONFIG[status];
 
@@ -47,7 +47,7 @@ export function KanbanColumn({ status, items }: KanbanColumnProps) {
     },
   });
 
-  const itemIds = items.map((item) => item.id);
+  const itemIds = useMemo(() => items.map((item) => item.id), [items]);
 
   return (
     <div
@@ -142,4 +142,4 @@ export function KanbanColumn({ status, items }: KanbanColumnProps) {
       </div>
     </div>
   );
-}
+});

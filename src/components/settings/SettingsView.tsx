@@ -354,13 +354,18 @@ function RelationTypeRow({
         >
           <Pencil className="size-3.5" />
         </button>
-        <button
-          onClick={() => onDelete(rt.id)}
-          className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
-        >
-          <Trash2 className="size-3.5" />
-        </button>
+        {!rt.is_system && (
+          <button
+            onClick={() => onDelete(rt.id)}
+            className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        )}
       </div>
+      {!!rt.is_system && (
+        <span className="text-[10px] text-slate-400 shrink-0">системный</span>
+      )}
     </div>
   );
 }
@@ -473,7 +478,7 @@ export function SettingsView() {
     KAITEN_DEFAULT_FIELD_MAPPINGS.map((mapping) => ({ ...mapping }))
   );
   const [lastImport, setLastImport] = useState<KaitenImportResult | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [kaitenLoading, setKaitenLoading] = useState(true);
   const [boardsLoading, setBoardsLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
@@ -564,7 +569,7 @@ export function SettingsView() {
   }, [fetchJson]);
 
   const loadKaitenState = useCallback(async () => {
-    setLoading(true);
+    setKaitenLoading(true);
     try {
       const [settingsPayload, profilesPayload] = await Promise.all([
         fetchJson<IntegrationSettings>("/api/kaiten/settings"),
@@ -577,7 +582,7 @@ export function SettingsView() {
 
       const activeProfile = profilesPayload[0] ?? null;
       applyProfile(activeProfile);
-      setLoading(false);
+      setKaitenLoading(false);
 
       void loadFieldMappings(activeProfile?.id ?? null);
 
@@ -595,7 +600,7 @@ export function SettingsView() {
         tone: "error",
         text: error instanceof Error ? error.message : "Не удалось загрузить настройки Kaiten",
       });
-      setLoading(false);
+      setKaitenLoading(false);
     }
   }, [applyProfile, fetchJson, loadBoards, loadFieldMappings]);
 
@@ -789,19 +794,6 @@ export function SettingsView() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <div className="rounded-xl border border-slate-200 bg-white/90 px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2 text-sm text-slate-500">
-            <Loader2 className="size-4 animate-spin" />
-            Загрузка настроек...
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const statusDotColor = connectionStatusTone === "emerald"
     ? "bg-emerald-500"
     : connectionStatusTone === "amber"
@@ -855,6 +847,14 @@ export function SettingsView() {
             </span>
           </div>
 
+          {kaitenLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <Loader2 className="size-4 animate-spin" />
+                Загрузка настроек Kaiten...
+              </div>
+            </div>
+          ) : (
           <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
             <div className="space-y-4">
               {/* Connection card */}
@@ -1172,6 +1172,7 @@ export function SettingsView() {
               </div>
             </div>
           </div>
+          )}
         </div>
 
         {/* ---- Bottom reference sections ---- */}

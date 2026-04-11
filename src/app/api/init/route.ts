@@ -13,6 +13,7 @@ import {
   getRelationCountsBatch,
   getCommentCountsBatch,
   getRelationTitlesBatch,
+  getItemLinkedClientsBatch,
 } from "@/lib/db";
 import { ensureKaitenSyncScheduler } from "@/lib/kaiten/sync";
 
@@ -38,6 +39,7 @@ export async function GET(req: NextRequest) {
   const clientRelationCounts = getRelationCountsBatch("client");
   const clientCommentCounts = getCommentCountsBatch("client");
   const itemRelationTitles = getRelationTitlesBatch("item");
+  const itemLinkedClients = getItemLinkedClientsBatch();
 
   return NextResponse.json({
     items,
@@ -55,5 +57,6 @@ export async function GET(req: NextRequest) {
     clientRelationCounts,
     clientCommentCounts,
     itemRelationTitles,
+    itemLinkedClients,
   });
 }

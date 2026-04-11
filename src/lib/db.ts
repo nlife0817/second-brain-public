@@ -240,7 +240,8 @@ function initSchema(db: Database.Database) {
       name TEXT NOT NULL,
       color TEXT NOT NULL DEFAULT '#6b7280',
       icon TEXT NOT NULL DEFAULT 'Link',
-      position INTEGER NOT NULL DEFAULT 0
+      position INTEGER NOT NULL DEFAULT 0,
+      is_system INTEGER NOT NULL DEFAULT 0
     );
 
     -- Relations between entities (polymorphic: item <-> item, item <-> client, client <-> client)
@@ -703,6 +704,15 @@ function migrateSchema(db: Database.Database) {
       parts.forEach((p, i) => updatePart.run(i, p.id));
     });
     txn3();
+  }
+
+  // Add is_system column to relation_types
+  const relTypeCols = db.prepare("PRAGMA table_info(relation_types)").all() as { name: string }[];
+  const relTypeColNames = new Set(relTypeCols.map((c) => c.name));
+  if (!relTypeColNames.has("is_system")) {
+    db.exec("ALTER TABLE relation_types ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0");
+    // Mark existing "Клиент" type as system
+    db.exec("UPDATE relation_types SET is_system = 1 WHERE name = 'Клиент'");
   }
 }
 
@@ -1229,13 +1239,22 @@ export function getWeeklyPlanFull(id: string): WeeklyPlanFull | undefined {
     ORDER BY e.position ASC
   `).all(id) as (WeeklyPlanEntry & Record<string, unknown>)[];
 
-  const commentsStmt = db.prepare(
-    "SELECT * FROM entry_comments WHERE entry_id = ? ORDER BY created_at ASC"
-  );
+  // Batch-load all comments for this plan's entries in one query
+  const entryIds = rows.map((r) => r.id as string);
+  const allComments = entryIds.length > 0
+    ? db.prepare(
+        `SELECT * FROM entry_comments WHERE entry_id IN (${entryIds.map(() => "?").join(",")}) ORDER BY created_at ASC`
+      ).all(...entryIds) as EntryComment[]
+    : [];
+  const commentsByEntry = new Map<string, EntryComment[]>();
+  for (const c of allComments) {
+    const list = commentsByEntry.get(c.entry_id);
+    if (list) list.push(c); else commentsByEntry.set(c.entry_id, [c]);
+  }
 
   const entries: WeeklyPlanEntryWithItem[] = rows.map((row) => {
     const entryId = row.id as string;
-    const comments = commentsStmt.all(entryId) as EntryComment[];
+    const comments = commentsByEntry.get(entryId) ?? [];
     return {
       id: entryId,
       plan_id: row.plan_id as string,
@@ -1820,10 +1839,10 @@ export function getAllRelationTypes(): RelationType[] {
   return db.prepare("SELECT * FROM relation_types ORDER BY position ASC").all() as RelationType[];
 }
 
-export function createRelationType(rt: Pick<RelationType, "id" | "name" | "color" | "icon">): RelationType {
+export function createRelationType(rt: Pick<RelationType, "id" | "name" | "color" | "icon"> & { is_system?: number }): RelationType {
   const db = getDb();
   const maxPos = db.prepare("SELECT COALESCE(MAX(position), -1) + 1 as p FROM relation_types").get() as { p: number };
-  db.prepare("INSERT INTO relation_types (id, name, color, icon, position) VALUES (?, ?, ?, ?, ?)").run(rt.id, rt.name, rt.color, rt.icon, maxPos.p);
+  db.prepare("INSERT INTO relation_types (id, name, color, icon, position, is_system) VALUES (?, ?, ?, ?, ?, ?)").run(rt.id, rt.name, rt.color, rt.icon, maxPos.p, rt.is_system ?? 0);
   return db.prepare("SELECT * FROM relation_types WHERE id = ?").get(rt.id) as RelationType;
 }
 
@@ -1841,8 +1860,10 @@ export function updateRelationType(id: string, updates: Partial<Pick<RelationTyp
   return db.prepare("SELECT * FROM relation_types WHERE id = ?").get(id) as RelationType | undefined;
 }
 
-export function deleteRelationType(id: string): boolean {
+export function deleteRelationType(id: string): boolean | "system" {
   const db = getDb();
+  const rt = db.prepare("SELECT is_system FROM relation_types WHERE id = ?").get(id) as { is_system: number } | undefined;
+  if (rt?.is_system) return "system";
   return db.prepare("DELETE FROM relation_types WHERE id = ?").run(id).changes > 0;
 }
 
@@ -1936,13 +1957,19 @@ export function getRelationTitlesBatch(entityType: EntityType): Record<string, s
     "SELECT target_id, source_type, source_id FROM relations WHERE target_type = ?"
   ).all(entityType) as { target_id: string; source_type: string; source_id: string }[];
 
+  // Batch-load all titles upfront instead of N individual queries
+  const allItemTitles = new Map<string, string>();
+  for (const row of db.prepare("SELECT id, title FROM items").all() as { id: string; title: string }[]) {
+    allItemTitles.set(row.id, row.title);
+  }
+  const allClientNames = new Map<string, string>();
+  for (const row of db.prepare("SELECT id, name FROM clients").all() as { id: string; name: string }[]) {
+    allClientNames.set(row.id, row.name);
+  }
+
   function resolveTitle(type: string, id: string): string {
-    if (type === "item") {
-      const row = db.prepare("SELECT title FROM items WHERE id = ?").get(id) as { title: string } | undefined;
-      return row?.title ?? "";
-    }
-    const row = db.prepare("SELECT name FROM clients WHERE id = ?").get(id) as { name: string } | undefined;
-    return row?.name ?? "";
+    if (type === "item") return allItemTitles.get(id) ?? "";
+    return allClientNames.get(id) ?? "";
   }
 
   for (const r of asSource) {
@@ -1959,6 +1986,30 @@ export function getRelationTitlesBatch(entityType: EntityType): Record<string, s
       if (!result[r.target_id]) result[r.target_id] = [];
       if (!result[r.target_id].includes(title)) result[r.target_id].push(title);
     }
+  }
+
+  return result;
+}
+
+/** For each item, get linked client names (via relations) */
+export function getItemLinkedClientsBatch(): Record<string, string[]> {
+  const db = getDb();
+  const result: Record<string, string[]> = {};
+
+  // Items as source linked to clients
+  const asSource = db.prepare(
+    "SELECT r.source_id as item_id, c.name as client_name FROM relations r JOIN clients c ON c.id = r.target_id WHERE r.source_type = 'item' AND r.target_type = 'client'"
+  ).all() as { item_id: string; client_name: string }[];
+
+  // Items as target linked from clients
+  const asTarget = db.prepare(
+    "SELECT r.target_id as item_id, c.name as client_name FROM relations r JOIN clients c ON c.id = r.source_id WHERE r.target_type = 'item' AND r.source_type = 'client'"
+  ).all() as { item_id: string; client_name: string }[];
+
+  for (const row of [...asSource, ...asTarget]) {
+    if (!row.client_name) continue;
+    if (!result[row.item_id]) result[row.item_id] = [];
+    if (!result[row.item_id].includes(row.client_name)) result[row.item_id].push(row.client_name);
   }
 
   return result;

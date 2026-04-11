@@ -405,7 +405,7 @@ function SubtasksProgressOnly({
 /*  Main KanbanCard                                                   */
 /* ------------------------------------------------------------------ */
 
-export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
+export const KanbanCard = React.memo(function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
   const openDetail = useBrainStore((s) => s.openDetail);
   const editingItemId = useBrainStore((s) => s.editingItemId);
   const editingField = useBrainStore((s) => s.editingField);
@@ -690,4 +690,4 @@ export function KanbanCard({ item, isDragOverlay = false }: KanbanCardProps) {
       )}
     </div>
   );
-}
+});

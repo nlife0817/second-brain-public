@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useBrainStore } from "@/lib/store";
-import type { EntityType, RelationWithTarget, Item, ClientFull, ItemType, ItemStatus } from "@/types";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useBrainStore, useCategoryConfig } from "@/lib/store";
+import type { EntityType, RelationWithTarget, Item, ClientFull, ItemType, ItemStatus, ItemPriority, ItemCategory } from "@/types";
 import { STATUS_CONFIG, PRIORITY_CONFIG, TYPE_CONFIG } from "@/types";
+import { format, parseISO } from "date-fns";
+import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +29,13 @@ import {
   Search,
   FileText,
   User,
+  ChevronDown,
+  ChevronUp,
+  ArrowUpDown,
+  Calendar,
+  Clock,
+  EyeOff,
+  Eye,
 } from "lucide-react";
 
 interface RelationsListProps {
@@ -39,6 +48,7 @@ function ItemBrief({ item }: { item: Item }) {
   const statusCfg = STATUS_CONFIG[item.status];
   const priorityCfg = PRIORITY_CONFIG[item.priority];
   const typeCfg = TYPE_CONFIG[item.type];
+  const dueDate = item.due_date ? parseISO(item.due_date) : null;
   return (
     <div className="flex items-center gap-1 shrink-0">
       <span
@@ -54,6 +64,11 @@ function ItemBrief({ item }: { item: Item }) {
       <span className="text-[10px] text-slate-400">{typeCfg.label}</span>
       {item.priority !== "none" && (
         <span className="text-[10px] leading-none">{priorityCfg.icon}</span>
+      )}
+      {dueDate && (
+        <span className="text-[9px] text-slate-400 tabular-nums" title={`Дедлайн: ${format(dueDate, "d MMM yyyy", { locale: ru })}`}>
+          {format(dueDate, "d.MM", { locale: ru })}
+        </span>
       )}
     </div>
   );
@@ -95,7 +110,17 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
   const [newTitle, setNewTitle] = useState("");
   const [newType, setNewType] = useState<ItemType>("task");
   const [newStatus, setNewStatus] = useState<ItemStatus>("inbox");
+  const [newPriority, setNewPriority] = useState<ItemPriority>("none");
+  const [newCategory, setNewCategory] = useState<ItemCategory>("other");
+  const [newDueDate, setNewDueDate] = useState("");
+  const [newTags, setNewTags] = useState<string[]>([]);
+  const [newDescription, setNewDescription] = useState("");
+  const [showExtraFields, setShowExtraFields] = useState(true);
   const [creating, setCreating] = useState(false);
+
+  type RelSortMode = "default" | "status" | "due_date" | "title";
+  const [relSort, setRelSort] = useState<RelSortMode>("default");
+  const [hideDone, setHideDone] = useState(false);
 
   const fetchRelations = useBrainStore((s) => s.fetchRelations);
   const createRelation = useBrainStore((s) => s.createRelation);
@@ -110,6 +135,9 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
   const openClientDetail = useBrainStore((s) => s.openClientDetail);
   const closeDetail = useBrainStore((s) => s.closeDetail);
   const closeClientDetail = useBrainStore((s) => s.closeClientDetail);
+  const tags = useBrainStore((s) => s.tags);
+  const categories = useBrainStore((s) => s.categories);
+  const categoryConfig = useCategoryConfig();
 
   const loadRelations = useCallback(async () => {
     setLoading(true);
@@ -123,19 +151,33 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
     loadRelations();
   }, [loadRelations]);
 
-  // Lookup helpers from store
-  const findItem = useCallback((id: string): Item | undefined => {
+  // Lookup helpers from store — O(1) Maps instead of O(N) linear search
+  const itemMap = useMemo(() => {
+    const map = new Map<string, Item>();
     for (const item of items) {
-      if (item.id === id) return item;
-      const sub = item.subtasks?.find((s) => s.id === id);
-      if (sub) return sub;
+      map.set(item.id, item);
+      if (item.subtasks) {
+        for (const sub of item.subtasks) {
+          map.set(sub.id, sub);
+        }
+      }
     }
-    return undefined;
+    return map;
   }, [items]);
 
-  const findClient = useCallback((id: string): ClientFull | undefined => {
-    return clients.find((c) => c.id === id);
+  const clientMap = useMemo(() => {
+    const map = new Map<string, ClientFull>();
+    for (const c of clients) map.set(c.id, c);
+    return map;
   }, [clients]);
+
+  const findItem = useCallback((id: string): Item | undefined => {
+    return itemMap.get(id);
+  }, [itemMap]);
+
+  const findClient = useCallback((id: string): ClientFull | undefined => {
+    return clientMap.get(id);
+  }, [clientMap]);
 
   // Search across items and clients — deduplicated
   const performSearch = useCallback((q: string) => {
@@ -182,40 +224,67 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
     debounceRef.current = setTimeout(() => performSearch(value), 150);
   }, [performSearch]);
 
+  // Helper: get or create "Клиент" relation type
+  const getOrCreateClientRelationType = useCallback(async () => {
+    let clientType = relationTypes.find((rt) => rt.name === "Клиент");
+    if (!clientType) {
+      clientType = await createRelationType("Клиент", "#22c55e", "User", 1);
+    }
+    return clientType.id;
+  }, [relationTypes, createRelationType]);
+
   const handleAdd = useCallback(async (targetType: EntityType, targetId: string) => {
     let relationTypeId: string | null = null;
-    if (targetType === "client") {
-      let clientType = relationTypes.find((rt) => rt.name === "Клиент");
-      if (!clientType) {
-        clientType = await createRelationType("Клиент", "#22c55e", "User");
-      }
-      relationTypeId = clientType.id;
+    if (targetType === "client" || entityType === "client") {
+      relationTypeId = await getOrCreateClientRelationType();
     }
     await createRelation(entityType, entityId, targetType, targetId, relationTypeId);
     setSearch("");
     setSearchResults([]);
     setAddOpen(false);
     await loadRelations();
-  }, [createRelation, createRelationType, entityType, entityId, relationTypes, loadRelations]);
+  }, [createRelation, getOrCreateClientRelationType, entityType, entityId, loadRelations]);
 
   const handleCreateAndLink = useCallback(async () => {
     if (!newTitle.trim() || creating) return;
     setCreating(true);
     try {
-      const created = await createItem({ title: newTitle.trim(), type: newType, status: newStatus });
-      await createRelation(entityType, entityId, "item", created.id);
+      const created = await createItem({
+        title: newTitle.trim(),
+        type: newType,
+        status: newStatus,
+        priority: newPriority,
+        category: newCategory,
+        description: newDescription.trim() || undefined,
+        due_date: newDueDate || null,
+        tags: newTags.length > 0 ? newTags : undefined,
+      });
+
+      // If creating from a client entity, auto-set "Клиент" relation type
+      let relationTypeId: string | null = null;
+      if (entityType === "client") {
+        relationTypeId = await getOrCreateClientRelationType();
+      }
+
+      await createRelation(entityType, entityId, "item", created.id, relationTypeId);
       setSearch("");
       setSearchResults([]);
       setNewTitle("");
       setNewType("task");
       setNewStatus("inbox");
+      setNewPriority("none");
+      setNewCategory("other");
+      setNewDueDate("");
+      setNewTags([]);
+      setNewDescription("");
+      setShowExtraFields(false);
       setShowCreateForm(false);
       setAddOpen(false);
       await loadRelations();
     } finally {
       setCreating(false);
     }
-  }, [newTitle, newType, newStatus, creating, createItem, createRelation, entityType, entityId, loadRelations]);
+  }, [newTitle, newType, newStatus, newPriority, newCategory, newDescription, newDueDate, newTags, creating, createItem, createRelation, entityType, entityId, getOrCreateClientRelationType, loadRelations]);
 
   const handleDelete = useCallback(async (relationId: string) => {
     await deleteRelation(relationId);
@@ -228,16 +297,84 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
   }, [updateRelationType_, loadRelations]);
 
   const handleClickTarget = useCallback((rel: RelationWithTarget) => {
-    // Close current detail before opening target
-    if (entityType === "item") closeDetail();
-    else closeClientDetail();
-
-    // Open target after a tick so the closing animation doesn't conflict
-    setTimeout(() => {
-      if (rel.target_type === "item") openDetail(rel.target_id);
-      else openClientDetail(rel.target_id);
-    }, 0);
+    if (rel.target_type === "item") {
+      if (entityType === "item") {
+        // item -> item: close current, open target
+        closeDetail();
+        setTimeout(() => openDetail(rel.target_id), 0);
+      } else {
+        // client -> item: open task detail on top (don't close client modal)
+        openDetail(rel.target_id);
+      }
+    } else {
+      // Opening a client target
+      if (entityType === "client") {
+        closeClientDetail();
+        setTimeout(() => openClientDetail(rel.target_id), 0);
+      } else {
+        closeDetail();
+        setTimeout(() => openClientDetail(rel.target_id), 0);
+      }
+    }
   }, [entityType, closeDetail, closeClientDetail, openDetail, openClientDetail]);
+
+  const toggleTag = useCallback((tagId: string) => {
+    setNewTags((prev) => prev.includes(tagId) ? prev.filter((t) => t !== tagId) : [...prev, tagId]);
+  }, []);
+
+  // Sort relations
+  const STATUS_WEIGHT: Record<string, number> = {
+    in_progress: 0, review: 1, todo: 2, inbox: 3, done: 4, archived: 5,
+  };
+
+  const sortedRelations = useMemo(() => {
+    let list = relations;
+    if (hideDone) {
+      list = list.filter((rel) => {
+        if (rel.target_type !== "item") return true;
+        const item = findItem(rel.target_id);
+        return !item || item.status !== "done";
+      });
+    }
+    if (relSort === "default") return list;
+    const sorted = [...list];
+    sorted.sort((a, b) => {
+      const aItem = a.target_type === "item" ? findItem(a.target_id) : undefined;
+      const bItem = b.target_type === "item" ? findItem(b.target_id) : undefined;
+      switch (relSort) {
+        case "status": {
+          const aW = aItem ? (STATUS_WEIGHT[aItem.status] ?? 99) : 99;
+          const bW = bItem ? (STATUS_WEIGHT[bItem.status] ?? 99) : 99;
+          return aW - bW;
+        }
+        case "due_date": {
+          const aD = aItem?.due_date ? new Date(aItem.due_date).getTime() : Infinity;
+          const bD = bItem?.due_date ? new Date(bItem.due_date).getTime() : Infinity;
+          return aD - bD;
+        }
+        case "title":
+          return (a.target_title || "").localeCompare(b.target_title || "", "ru");
+        default:
+          return 0;
+      }
+    });
+    return sorted;
+  }, [relations, relSort, hideDone, findItem]);
+
+  const cycleSortMode = useCallback(() => {
+    setRelSort((prev) => {
+      const modes: RelSortMode[] = ["default", "status", "due_date", "title"];
+      const idx = modes.indexOf(prev);
+      return modes[(idx + 1) % modes.length];
+    });
+  }, []);
+
+  const sortLabel: Record<RelSortMode, string> = {
+    default: "Без сортировки",
+    status: "По статусу",
+    due_date: "По дедлайну",
+    title: "По названию",
+  };
 
   return (
     <div className="space-y-2">
@@ -249,13 +386,45 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
             <span className="text-xs text-slate-400">({relations.length})</span>
           )}
         </div>
+        <div className="flex items-center gap-0.5">
+          {relations.length > 1 && (
+            <>
+              <button
+                onClick={() => setHideDone(!hideDone)}
+                className={cn(
+                  "flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors",
+                  hideDone
+                    ? "text-violet-600 bg-violet-50 hover:bg-violet-100"
+                    : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                )}
+                title={hideDone ? "Показать готовые" : "Скрыть готовые"}
+              >
+                {hideDone ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+              </button>
+              <button
+                onClick={cycleSortMode}
+                className={cn(
+                  "flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors",
+                  relSort !== "default"
+                    ? "text-violet-600 bg-violet-50 hover:bg-violet-100"
+                    : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                )}
+                title={sortLabel[relSort]}
+              >
+                <ArrowUpDown className="size-3" />
+                {relSort !== "default" && (
+                  <span>{sortLabel[relSort]}</span>
+                )}
+              </button>
+            </>
+          )}
         <Popover open={addOpen} onOpenChange={setAddOpen}>
           <PopoverTrigger
             render={<Button variant="ghost" size="icon-xs" className="text-slate-400 hover:text-slate-600" />}
           >
             <Plus className="size-3.5" />
           </PopoverTrigger>
-          <PopoverContent className="w-80 p-0" align="end">
+          <PopoverContent className="w-[420px] p-0" align="end">
             <div className="p-2">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-slate-400" />
@@ -317,8 +486,9 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
                     placeholder="Заголовок задачи..."
                     className="h-7 text-sm"
                     autoFocus
-                    onKeyDown={(e) => { if (e.key === "Enter") handleCreateAndLink(); if (e.key === "Escape") setShowCreateForm(false); }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) handleCreateAndLink(); if (e.key === "Escape") setShowCreateForm(false); }}
                   />
+                  {/* Row 1: type + status */}
                   <div className="flex items-center gap-1.5">
                     <Select value={newType} onValueChange={(v) => setNewType(v as ItemType)}>
                       <SelectTrigger className="h-6 text-[10px] w-auto flex-1">
@@ -340,24 +510,123 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
                         ))}
                       </SelectContent>
                     </Select>
-                    <Button size="sm" className="h-6 text-[10px] px-2" disabled={!newTitle.trim() || creating} onClick={handleCreateAndLink}>
-                      {creating ? "..." : "Создать"}
-                    </Button>
                   </div>
+                  {/* Row 2: priority + category */}
+                  <div className="flex items-center gap-1.5">
+                    <Select value={newPriority} onValueChange={(v) => setNewPriority(v as ItemPriority)}>
+                      <SelectTrigger className="h-6 text-[10px] w-auto flex-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(Object.entries(PRIORITY_CONFIG) as [ItemPriority, { label: string; icon: string }][]).map(([k, v]) => (
+                          <SelectItem key={k} value={k}>{v.icon} {v.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={newCategory} onValueChange={(v) => setNewCategory(v as ItemCategory)}>
+                      <SelectTrigger className="h-6 text-[10px] w-auto flex-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {categories.map((cat) => (
+                          <SelectItem key={cat.id} value={cat.id}>{categoryConfig[cat.id]?.label ?? cat.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Toggle extra fields */}
+                  <button
+                    type="button"
+                    onClick={() => setShowExtraFields(!showExtraFields)}
+                    className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    {showExtraFields ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+                    {showExtraFields ? "Скрыть" : "Ещё параметры"}
+                  </button>
+
+                  {showExtraFields && (
+                    <div className="space-y-2">
+                      {/* Due date */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-slate-500 w-14 shrink-0">Дедлайн</span>
+                        <input
+                          type="date"
+                          value={newDueDate}
+                          onChange={(e) => setNewDueDate(e.target.value)}
+                          className="h-6 flex-1 rounded border border-slate-200 px-1.5 text-[10px] text-slate-700 focus:border-violet-300 focus:outline-none focus:ring-1 focus:ring-violet-300"
+                        />
+                        {newDueDate && (
+                          <button
+                            type="button"
+                            onClick={() => setNewDueDate("")}
+                            className="text-slate-300 hover:text-slate-500"
+                          >
+                            <X className="size-3" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Tags */}
+                      {tags.length > 0 && (
+                        <div>
+                          <span className="text-[10px] text-slate-500 block mb-1">Теги</span>
+                          <div className="flex flex-wrap gap-1">
+                            {tags.map((tag) => (
+                              <button
+                                key={tag.id}
+                                type="button"
+                                onClick={() => toggleTag(tag.id)}
+                                className={cn(
+                                  "rounded px-1.5 py-0 text-[10px] font-medium transition-colors border",
+                                  newTags.includes(tag.id)
+                                    ? "border-current"
+                                    : "border-transparent opacity-60 hover:opacity-100"
+                                )}
+                                style={{
+                                  backgroundColor: `${tag.color}18`,
+                                  color: tag.color,
+                                }}
+                              >
+                                {tag.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Description */}
+                      <div>
+                        <span className="text-[10px] text-slate-500 block mb-1">Описание</span>
+                        <textarea
+                          value={newDescription}
+                          onChange={(e) => setNewDescription(e.target.value)}
+                          placeholder="Описание задачи..."
+                          className="w-full rounded border border-slate-200 px-2 py-1 text-[11px] text-slate-700 placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-1 focus:ring-violet-300 resize-none"
+                          rows={2}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <Button size="sm" className="h-6 text-[10px] px-2 w-full" disabled={!newTitle.trim() || creating} onClick={handleCreateAndLink}>
+                    {creating ? "..." : "Создать"}
+                  </Button>
                 </div>
               )}
             </div>
           </PopoverContent>
         </Popover>
+        </div>
       </div>
 
       {loading && relations.length === 0 && (
         <div className="text-xs text-slate-400">Загрузка...</div>
       )}
 
-      {relations.length > 0 && (
+      {sortedRelations.length > 0 && (
         <div className="space-y-1">
-          {relations.map((rel) => {
+          {sortedRelations.map((rel) => {
             const itemData = rel.target_type === "item" ? findItem(rel.target_id) : undefined;
             const clientData = rel.target_type === "client" ? findClient(rel.target_id) : undefined;
 

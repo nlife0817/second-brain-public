@@ -183,12 +183,13 @@ interface BrainStore {
   clientRelationCounts: Record<string, number>;
   clientCommentCounts: Record<string, number>;
   itemRelationTitles: Record<string, string[]>;
+  itemLinkedClients: Record<string, string[]>;
   fetchEntityCounts: (entityType: EntityType) => Promise<void>;
 
   // Relation types
   relationTypes: RelationType[];
   fetchRelationTypes: () => Promise<void>;
-  createRelationType: (name: string, color?: string, icon?: string) => Promise<RelationType>;
+  createRelationType: (name: string, color?: string, icon?: string, is_system?: number) => Promise<RelationType>;
   updateRelationType: (id: string, updates: Partial<RelationType>) => Promise<void>;
   deleteRelationType: (id: string) => Promise<void>;
 
@@ -242,7 +243,7 @@ export const useBrainStore = create<BrainStore>()(
   editingItemId: null,
   editingField: null,
   cardVisibleFields: ["priority", "category", "due_date", "subtasks", "type"],
-  listColumnOrder: ["priority", "title", "status", "category", "type", "due_date", "subtasks"],
+  listColumnOrder: ["priority", "title", "status", "category", "clients", "type", "due_date", "subtasks"],
   savedFilters: [],
   activeFilterId: null,
   detailMode: "modal" as "modal" | "panel",
@@ -304,6 +305,7 @@ export const useBrainStore = create<BrainStore>()(
       clientRelationCounts: data.clientRelationCounts,
       clientCommentCounts: data.clientCommentCounts,
       itemRelationTitles: data.itemRelationTitles ?? {},
+      itemLinkedClients: data.itemLinkedClients ?? {},
       loading: false,
     });
   },
@@ -950,13 +952,19 @@ export const useBrainStore = create<BrainStore>()(
   clientRelationCounts: {},
   clientCommentCounts: {},
   itemRelationTitles: {},
+  itemLinkedClients: {},
 
   fetchEntityCounts: async (entityType) => {
     const res = await fetch(`/api/entity-counts?entity_type=${entityType}`);
     if (!res.ok) return;
-    const { relations, comments, relationTitles } = await res.json();
+    const { relations, comments, relationTitles, linkedClients } = await res.json();
     if (entityType === "item") {
-      set({ itemRelationCounts: relations, itemCommentCounts: comments, itemRelationTitles: relationTitles ?? {} });
+      set({
+        itemRelationCounts: relations,
+        itemCommentCounts: comments,
+        itemRelationTitles: relationTitles ?? {},
+        itemLinkedClients: linkedClients ?? {},
+      });
     } else {
       set({ clientRelationCounts: relations, clientCommentCounts: comments });
     }
@@ -972,11 +980,11 @@ export const useBrainStore = create<BrainStore>()(
     set({ relationTypes });
   },
 
-  createRelationType: async (name, color, icon) => {
+  createRelationType: async (name, color, icon, is_system) => {
     const res = await fetch("/api/relation-types", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, color, icon }),
+      body: JSON.stringify({ name, color, icon, is_system }),
     });
     if (!res.ok) throw new Error("Failed to create relation type");
     const rt: RelationType = await res.json();
@@ -1071,7 +1079,23 @@ export const useBrainStore = create<BrainStore>()(
 }),
   {
     name: "second-brain-settings",
+    version: 3,
     storage: createJSONStorage(() => localStorage),
+    migrate: (persisted: unknown, version: number) => {
+      const state = persisted as Record<string, unknown> | null;
+      if (state && version < 3) {
+        const cols = state.listColumnOrder as string[] | undefined;
+        if (cols) {
+          const filtered = cols.filter((c) => c !== "development_stage" && c !== "participants");
+          if (!filtered.includes("clients")) {
+            const catIdx = filtered.indexOf("category");
+            filtered.splice(catIdx >= 0 ? catIdx + 1 : 2, 0, "clients");
+          }
+          state.listColumnOrder = filtered;
+        }
+      }
+      return state;
+    },
     partialize: (state) => ({
       appSection: state.appSection,
       clientViewMode: state.clientViewMode,
@@ -1252,5 +1276,8 @@ export function useCategoryConfig(): Record<string, { label: string; icon: strin
 
 export function useItemsByStatus(status: ItemStatus): ItemWithSubtasks[] {
   const items = useFilteredItems();
-  return items.filter((i) => i.status === status).sort((a, b) => a.position - b.position);
+  return useMemo(
+    () => items.filter((i) => i.status === status).sort((a, b) => a.position - b.position),
+    [items, status]
+  );
 }

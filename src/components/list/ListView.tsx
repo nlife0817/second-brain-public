@@ -26,6 +26,7 @@ import {
   ItemCategory,
   ItemType,
   Item,
+  ClientFull,
   KaitenStageOption,
   ListGroupByField,
   ListGroupByConfig,
@@ -57,6 +58,8 @@ import {
   Link,
   MessageSquare,
   ChevronsUpDown,
+  Search,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -96,7 +99,8 @@ type SortColumn =
   | "category"
   | "type"
   | "due_date"
-  | "created_at";
+  | "created_at"
+  | "clients";
 
 type SortDirection = "asc" | "desc";
 
@@ -121,6 +125,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { id: "title", label: "Название", width: "min-w-[250px] flex-1", sortable: true },
   { id: "status", label: "Статус", width: "w-28", sortable: true },
   { id: "category", label: "Категория", width: "w-28", sortable: true },
+  { id: "clients", label: "Клиенты", width: "w-36", sortable: true },
   { id: "development_stage", label: "Этап разработки", width: "w-44", sortable: false },
   { id: "participants", label: "Участники", width: "w-44", sortable: false },
   { id: "tags", label: "Теги", width: "w-36", sortable: false },
@@ -134,8 +139,7 @@ const DEFAULT_COLUMN_ORDER = [
   "title",
   "status",
   "category",
-  "development_stage",
-  "participants",
+  "clients",
   "type",
   "due_date",
   "subtasks",
@@ -227,11 +231,12 @@ const GROUP_BY_OPTIONS: { key: ListGroupByField; label: string }[] = [
   { key: "priority", label: "Приоритет" },
   { key: "category", label: "Категория" },
   { key: "type", label: "Тип" },
+  { key: "clients", label: "Клиенты" },
   { key: "development_stage", label: "Этап разработки" },
   { key: "participants", label: "Участники" },
 ];
 
-function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField): string {
+function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField, itemLinkedClients?: Record<string, string[]>): string {
   switch (field) {
     case "status": return item.status;
     case "priority": return item.priority;
@@ -242,6 +247,10 @@ function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField): string {
       return item.participants?.length
         ? item.participants.map((participant) => participant.name).sort((a, b) => a.localeCompare(b, "ru")).join(", ")
         : "__none__";
+    case "clients": {
+      const linkedClients = itemLinkedClients?.[item.id];
+      return linkedClients?.length ? linkedClients.sort((a, b) => a.localeCompare(b, "ru")).join(", ") : "__none__";
+    }
     default: return "";
   }
 }
@@ -254,6 +263,7 @@ function getGroupLabel(field: ListGroupByField, key: string, categoryConfig: Rec
     case "type": return TYPE_CONFIG[key as ItemType]?.label ?? key;
     case "development_stage": return key === "__none__" ? "Не указано" : key;
     case "participants": return key === "__none__" ? "Без участников" : key;
+    case "clients": return key === "__none__" ? "Без клиента" : key;
     default: return key;
   }
 }
@@ -265,9 +275,10 @@ function getGroupIcon(field: ListGroupByField, key: string): string {
   }
 }
 
-const GROUP_ORDER: Record<string, Record<string, number>> = {
+const GROUP_ORDER_STATIC: Record<string, Record<string, number>> = {
   status: STATUS_WEIGHT,
   priority: PRIORITY_WEIGHT,
+  type: { task: 0, note: 1, meeting: 2, plan: 3, idea: 4 },
 };
 
 interface ItemGroup {
@@ -280,34 +291,48 @@ interface ItemGroup {
 function groupItems(
   items: ItemWithSubtasks[],
   field: ListGroupByField,
-  categoryConfig: Record<string, { label: string; icon: string; color: string }>
+  categoryConfig: Record<string, { label: string; icon: string; color: string }>,
+  itemLinkedClients?: Record<string, string[]>,
+  dynamicPositionMap?: Record<string, number>
 ): ItemGroup[] {
   if (field === "none") return [];
 
   const map = new Map<string, ItemWithSubtasks[]>();
   for (const item of items) {
-    const key = getGroupKey(item, field);
+    const key = getGroupKey(item, field, itemLinkedClients);
     if (!map.has(key)) map.set(key, []);
     map.get(key)!.push(item);
   }
 
   const groups: ItemGroup[] = [];
-  for (const [key, groupItems] of map) {
+  for (const [key, grpItems] of map) {
     groups.push({
       key,
       label: getGroupLabel(field, key, categoryConfig),
       icon: getGroupIcon(field, key),
-      items: groupItems,
+      items: grpItems,
     });
   }
 
-  // Sort groups by predefined order if available, otherwise alphabetically
-  const orderMap = GROUP_ORDER[field];
-  if (orderMap) {
-    groups.sort((a, b) => (orderMap[a.key] ?? 99) - (orderMap[b.key] ?? 99));
-  } else {
-    groups.sort((a, b) => a.label.localeCompare(b.label, "ru"));
-  }
+  // Sort groups: static order > dynamic position > alphabetical; __none__ always last
+  const staticOrder = GROUP_ORDER_STATIC[field];
+  const posMap = dynamicPositionMap;
+
+  groups.sort((a, b) => {
+    // __none__ always goes to the bottom
+    if (a.key === "__none__" && b.key !== "__none__") return 1;
+    if (b.key === "__none__" && a.key !== "__none__") return -1;
+
+    if (staticOrder) {
+      return (staticOrder[a.key] ?? 99) - (staticOrder[b.key] ?? 99);
+    }
+    if (posMap) {
+      const aPos = posMap[a.key] ?? 9999;
+      const bPos = posMap[b.key] ?? 9999;
+      if (aPos !== bPos) return aPos - bPos;
+    }
+    return a.label.localeCompare(b.label, "ru");
+  });
 
   return groups;
 }
@@ -416,66 +441,168 @@ function GroupByPopover({
 /*  Column config popover                                                     */
 /* -------------------------------------------------------------------------- */
 
-function ColumnConfigPopover({
-  columnOrder,
-  onOrderChange,
-}: {
-  columnOrder: string[];
-  onOrderChange: (order: string[]) => void;
-}) {
-  const [open, setOpen] = useState(false);
+function ColumnConfigPopoverContent({ onClose }: { onClose: () => void }) {
+  // Read store ONCE at mount — then work only with local state
+  const [order, setOrder] = useState<string[]>(
+    () => [...useBrainStore.getState().listColumnOrder]
+  );
   const popoverRef = useRef<HTMLDivElement>(null);
 
+  // Persist to store on every change
+  const apply = (next: string[]) => {
+    setOrder(next);
+    useBrainStore.setState({ listColumnOrder: next });
+  };
+
   useEffect(() => {
-    if (!open) return;
     function handleClick(e: MouseEvent) {
-      if (
-        popoverRef.current &&
-        !popoverRef.current.contains(e.target as Node)
-      ) {
-        setOpen(false);
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        onClose();
       }
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
+  }, [onClose]);
 
   const allColIds = ALL_COLUMNS.map((c) => c.id);
-  const visibleSet = new Set(columnOrder);
+  const visibleSet = new Set(order);
+  const colMap = Object.fromEntries(ALL_COLUMNS.map((c) => [c.id, c]));
 
-  const toggleColumn = (colId: string) => {
+  const toggle = (colId: string) => {
     if (colId === "title") return;
     if (visibleSet.has(colId)) {
-      onOrderChange(columnOrder.filter((c) => c !== colId));
+      apply(order.filter((c) => c !== colId));
     } else {
-      onOrderChange([...columnOrder, colId]);
+      apply([...order, colId]);
     }
   };
 
   const moveUp = (colId: string) => {
-    const idx = columnOrder.indexOf(colId);
+    const idx = order.indexOf(colId);
     if (idx <= 0) return;
-    const next = [...columnOrder];
+    const next = [...order];
     [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-    onOrderChange(next);
+    apply(next);
   };
 
   const moveDown = (colId: string) => {
-    const idx = columnOrder.indexOf(colId);
-    if (idx < 0 || idx >= columnOrder.length - 1) return;
-    const next = [...columnOrder];
+    const idx = order.indexOf(colId);
+    if (idx < 0 || idx >= order.length - 1) return;
+    const next = [...order];
     [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
-    onOrderChange(next);
+    apply(next);
   };
 
-  const reset = () => {
-    onOrderChange([...DEFAULT_COLUMN_ORDER]);
-  };
-
-  const colMap = Object.fromEntries(ALL_COLUMNS.map((c) => [c.id, c]));
+  const reset = () => apply([...DEFAULT_COLUMN_ORDER]);
 
   return (
-    <div className="relative" ref={popoverRef}>
+    <div
+      ref={popoverRef}
+      className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-slate-200 bg-white shadow-lg p-3"
+    >
+      <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-2">
+        Колонки
+      </div>
+
+      <div className="space-y-0.5 mb-2">
+        {order.map((colId, idx) => {
+          const col = colMap[colId];
+          if (!col) return null;
+          const isTitle = colId === "title";
+          return (
+            <div
+              key={colId}
+              className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-slate-50 text-xs"
+            >
+              <button
+                type="button"
+                onClick={() => toggle(colId)}
+                className={cn(
+                  "shrink-0",
+                  isTitle
+                    ? "text-slate-300 cursor-not-allowed"
+                    : "text-blue-500 hover:text-blue-700"
+                )}
+                disabled={isTitle}
+                title={isTitle ? "Нельзя скрыть" : "Скрыть"}
+              >
+                <Eye className="size-3" />
+              </button>
+              <span className="flex-1 text-slate-700 truncate">
+                {col.label}
+              </span>
+              <button
+                type="button"
+                onClick={() => moveUp(colId)}
+                disabled={idx === 0}
+                className="text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <MoveUpIcon className="size-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => moveDown(colId)}
+                disabled={idx === order.length - 1}
+                className="text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <MoveDownIcon className="size-3" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {allColIds.filter((id) => !visibleSet.has(id)).length > 0 && (
+        <>
+          <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-1 mt-3">
+            Скрытые
+          </div>
+          <div className="space-y-0.5 mb-2">
+            {allColIds
+              .filter((id) => !visibleSet.has(id))
+              .map((colId) => {
+                const col = colMap[colId];
+                if (!col) return null;
+                return (
+                  <div
+                    key={colId}
+                    className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-slate-50 text-xs"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggle(colId)}
+                      className="shrink-0 text-slate-400 hover:text-slate-600"
+                      title="Показать"
+                    >
+                      <EyeOff className="size-3" />
+                    </button>
+                    <span className="flex-1 text-slate-400 truncate">
+                      {col.label}
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+        </>
+      )}
+
+      <button
+        type="button"
+        onClick={reset}
+        className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-700 mt-2 px-1.5 py-0.5 rounded hover:bg-slate-50 w-full"
+      >
+        <RotateCcw className="size-2.5" />
+        Сбросить
+      </button>
+    </div>
+  );
+}
+
+function ColumnConfigPopover() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
       <button
         type="button"
         onClick={() => setOpen(!open)}
@@ -484,105 +611,7 @@ function ColumnConfigPopover({
       >
         <Settings2 className="size-3.5" />
       </button>
-
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-lg border border-slate-200 bg-white shadow-lg p-3">
-          <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-2">
-            Колонки
-          </div>
-
-          <div className="space-y-0.5 mb-2">
-            {columnOrder.map((colId, idx) => {
-              const col = colMap[colId];
-              if (!col) return null;
-              const isTitle = colId === "title";
-              return (
-                <div
-                  key={colId}
-                  className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-slate-50 text-xs"
-                >
-                  <button
-                    type="button"
-                    onClick={() => toggleColumn(colId)}
-                    className={cn(
-                      "shrink-0",
-                      isTitle
-                        ? "text-slate-300 cursor-not-allowed"
-                        : "text-blue-500 hover:text-blue-700"
-                    )}
-                    disabled={isTitle}
-                    title={isTitle ? "Нельзя скрыть" : "Скрыть"}
-                  >
-                    <Eye className="size-3" />
-                  </button>
-                  <span className="flex-1 text-slate-700 truncate">
-                    {col.label}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => moveUp(colId)}
-                    disabled={idx === 0}
-                    className="text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <MoveUpIcon className="size-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moveDown(colId)}
-                    disabled={idx === columnOrder.length - 1}
-                    className="text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <MoveDownIcon className="size-3" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-
-          {allColIds.filter((id) => !visibleSet.has(id)).length > 0 && (
-            <>
-              <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-1 mt-3">
-                Скрытые
-              </div>
-              <div className="space-y-0.5 mb-2">
-                {allColIds
-                  .filter((id) => !visibleSet.has(id))
-                  .map((colId) => {
-                    const col = colMap[colId];
-                    if (!col) return null;
-                    return (
-                      <div
-                        key={colId}
-                        className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-slate-50 text-xs"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => toggleColumn(colId)}
-                          className="shrink-0 text-slate-400 hover:text-slate-600"
-                          title="Показать"
-                        >
-                          <EyeOff className="size-3" />
-                        </button>
-                        <span className="flex-1 text-slate-400 truncate">
-                          {col.label}
-                        </span>
-                      </div>
-                    );
-                  })}
-              </div>
-            </>
-          )}
-
-          <button
-            type="button"
-            onClick={reset}
-            className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-700 mt-2 px-1.5 py-0.5 rounded hover:bg-slate-50 w-full"
-          >
-            <RotateCcw className="size-2.5" />
-            Сбросить
-          </button>
-        </div>
-      )}
+      {open && <ColumnConfigPopoverContent onClose={() => setOpen(false)} />}
     </div>
   );
 }
@@ -892,6 +921,14 @@ function InlineDateCell({
           const v = e.target.value;
           localRef.current = v;
           setLocalValue(v);
+          // Apply and close immediately when a date is picked
+          if (v) {
+            if (committedRef.current) return;
+            committedRef.current = true;
+            inputRef.current?.blur();
+            onCommit(v);
+            return;
+          }
         }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -908,6 +945,287 @@ function InlineDateCell({
         className="h-6 rounded-md border border-slate-200 bg-white px-1.5 text-[10px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
         onClick={(e) => e.stopPropagation()}
       />
+    </div>,
+    document.body
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Inline client search cell (portal-based)                                  */
+/* -------------------------------------------------------------------------- */
+
+function InlineCompanyCell({
+  itemId,
+  currentClients,
+  onCancel,
+  anchorRef,
+}: {
+  itemId: string;
+  currentClients: string[];
+  onCancel: () => void;
+  anchorRef?: React.RefObject<HTMLElement | null>;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [query, setQuery] = useState("");
+  const [linking, setLinking] = useState(false);
+
+  const clients = useBrainStore((s) => s.clients);
+  const createRelation = useBrainStore((s) => s.createRelation);
+  const createRelationType = useBrainStore((s) => s.createRelationType);
+  const relationTypes = useBrainStore((s) => s.relationTypes);
+  const fetchEntityCounts = useBrainStore((s) => s.fetchEntityCounts);
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef?.current;
+    if (anchor) {
+      const rect = anchor.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const top = spaceBelow < 250 ? rect.top - 8 : rect.bottom + 4;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPos({ top, left: rect.left });
+    }
+  }, [anchorRef]);
+
+  useEffect(() => {
+    if (pos && inputRef.current) inputRef.current.focus();
+  }, [pos]);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onCancel();
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onCancel]);
+
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+    }
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onCancel]);
+
+  const filteredClients = useMemo(() => {
+    const lower = query.toLowerCase();
+    const results: { client: ClientFull; companyNames: string[] }[] = [];
+    for (const client of clients) {
+      const companyNames = client.companies?.map((c) => c.name) ?? [];
+      const nameMatch = client.name.toLowerCase().includes(lower);
+      const companyMatch = companyNames.some((n) => n.toLowerCase().includes(lower));
+      if (!query || nameMatch || companyMatch) {
+        results.push({ client, companyNames });
+      }
+      if (results.length >= 15) break;
+    }
+    return results;
+  }, [clients, query]);
+
+  const handleSelect = useCallback(async (clientId: string) => {
+    if (linking) return;
+    setLinking(true);
+    try {
+      let clientType = relationTypes.find((rt) => rt.name === "Клиент");
+      if (!clientType) {
+        clientType = await createRelationType("Клиент", "#22c55e", "User", 1);
+      }
+      await createRelation("item", itemId, "client", clientId, clientType.id);
+      await fetchEntityCounts("item");
+      onCancel();
+    } finally {
+      setLinking(false);
+    }
+  }, [linking, itemId, relationTypes, createRelation, createRelationType, fetchEntityCounts, onCancel]);
+
+  if (!pos) return null;
+
+  const openUp = pos.top > window.innerHeight / 2;
+
+  return createPortal(
+    <div
+      ref={ref}
+      style={{
+        position: "fixed",
+        top: openUp ? undefined : pos.top,
+        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
+        left: pos.left,
+        zIndex: 9999,
+      }}
+      className="w-[280px] rounded-lg border border-slate-200 bg-white shadow-xl overflow-hidden"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="p-1.5">
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-slate-400" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Поиск клиента..."
+            className="w-full rounded border border-slate-200 bg-white py-1 pl-7 pr-2 text-[11px] placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-1 focus:ring-violet-300"
+          />
+        </div>
+      </div>
+      <div className="max-h-[200px] overflow-y-auto border-t border-slate-100">
+        {filteredClients.length === 0 && (
+          <div className="px-3 py-3 text-center text-[10px] text-slate-400">Нет клиентов</div>
+        )}
+        {filteredClients.map(({ client, companyNames }) => {
+          const alreadyLinked = currentClients.includes(client.name);
+          return (
+            <button
+              key={client.id}
+              onClick={() => handleSelect(client.id)}
+              disabled={linking || alreadyLinked}
+              className={cn(
+                "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] hover:bg-slate-50 transition-colors",
+                alreadyLinked && "opacity-40 cursor-not-allowed"
+              )}
+            >
+              <Building2 className="size-3 text-violet-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="truncate text-slate-700">{client.name}</div>
+                {companyNames.length > 0 && (
+                  <div className="truncate text-[9px] text-slate-400">{companyNames.join(", ")}</div>
+                )}
+              </div>
+              {alreadyLinked && <Check className="size-3 text-emerald-500 shrink-0" />}
+            </button>
+          );
+        })}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Client picker for inline creation row (portal-based)                      */
+/* -------------------------------------------------------------------------- */
+
+function CreationClientDropdown({
+  selectedClientId,
+  onSelect,
+  onClose,
+  anchorRef,
+}: {
+  selectedClientId: string | null;
+  onSelect: (clientId: string, clientName: string) => void;
+  onClose: () => void;
+  anchorRef: React.RefObject<HTMLElement | null>;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [query, setQuery] = useState("");
+  const clients = useBrainStore((s) => s.clients);
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef?.current;
+    if (anchor) {
+      const rect = anchor.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const top = spaceBelow < 250 ? rect.top - 8 : rect.bottom + 4;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPos({ top, left: rect.left });
+    }
+  }, [anchorRef]);
+
+  useEffect(() => {
+    if (pos && inputRef.current) inputRef.current.focus();
+  }, [pos]);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose]);
+
+  useEffect(() => {
+    function handler(e: KeyboardEvent) {
+      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+    }
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const filtered = useMemo(() => {
+    const lower = query.toLowerCase();
+    const results: ClientFull[] = [];
+    for (const client of clients) {
+      const companyNames = client.companies?.map((c) => c.name) ?? [];
+      if (!query || client.name.toLowerCase().includes(lower) || companyNames.some((n) => n.toLowerCase().includes(lower))) {
+        results.push(client);
+      }
+      if (results.length >= 15) break;
+    }
+    return results;
+  }, [clients, query]);
+
+  if (!pos) return null;
+
+  const openUp = pos.top > window.innerHeight / 2;
+
+  return createPortal(
+    <div
+      ref={ref}
+      style={{
+        position: "fixed",
+        top: openUp ? undefined : pos.top,
+        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
+        left: pos.left,
+        zIndex: 9999,
+      }}
+      className="w-[250px] rounded-lg border border-slate-200 bg-white shadow-xl overflow-hidden"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="p-1.5">
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-slate-400" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Поиск клиента..."
+            className="w-full rounded border border-slate-200 bg-white py-1 pl-7 pr-2 text-[11px] placeholder:text-slate-400 focus:border-violet-300 focus:outline-none focus:ring-1 focus:ring-violet-300"
+          />
+        </div>
+      </div>
+      <div className="max-h-[180px] overflow-y-auto border-t border-slate-100">
+        {/* Option to clear selection */}
+        {selectedClientId && (
+          <button
+            onClick={() => onSelect("", "")}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-slate-400 hover:bg-slate-50"
+          >
+            <X className="size-3 shrink-0" />
+            Без клиента
+          </button>
+        )}
+        {filtered.length === 0 && (
+          <div className="px-3 py-3 text-center text-[10px] text-slate-400">Нет клиентов</div>
+        )}
+        {filtered.map((client) => (
+          <button
+            key={client.id}
+            onClick={() => onSelect(client.id, client.name)}
+            className={cn(
+              "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] hover:bg-slate-50 transition-colors",
+              selectedClientId === client.id && "bg-violet-50"
+            )}
+          >
+            <Building2 className="size-3 text-violet-400 shrink-0" />
+            <span className="truncate text-slate-700">{client.name}</span>
+            {selectedClientId === client.id && <Check className="size-3 text-violet-600 shrink-0" />}
+          </button>
+        ))}
+      </div>
     </div>,
     document.body
   );
@@ -1069,6 +1387,8 @@ const NEW_ITEM_DEFAULTS = {
   development_stage: null as string | null,
   participants: [] as DevelopmentParticipantInput[],
   due_date: "",
+  clientId: null as string | null,
+  clientName: "",
 };
 
 export function ListView() {
@@ -1087,7 +1407,18 @@ export function ListView() {
   const setListGroupBy = useBrainStore((s) => s.setListGroupBy);
   const fetchItems = useBrainStore((s) => s.fetchItems);
   const categories = useBrainStore((s) => s.categories);
+  const developmentStages = useBrainStore((s) => s.developmentStages);
   const categoryConfig = useCategoryConfig();
+  const itemLinkedClients = useBrainStore((s) => s.itemLinkedClients);
+
+  // Build position maps for group ordering
+  const groupPositionMaps = useMemo(() => {
+    const catMap: Record<string, number> = {};
+    for (const c of categories) catMap[c.id] = c.position;
+    const stageMap: Record<string, number> = {};
+    for (const s of developmentStages) stageMap[s.name] = s.position;
+    return { category: catMap, development_stage: stageMap } as Record<string, Record<string, number>>;
+  }, [categories, developmentStages]);
 
   const [sort, setSort] = useState<SortState>({
     column: "created_at",
@@ -1136,18 +1467,9 @@ export function ListView() {
   );
 
   const visibleColumns = useMemo(
-    () =>
-      listColumnOrder.map((id) => colMap[id]).filter(Boolean) as ColumnDef[],
+    () => listColumnOrder.map((id) => colMap[id]).filter(Boolean) as ColumnDef[],
     [listColumnOrder, colMap]
   );
-
-  useEffect(() => {
-    const required = ["development_stage", "participants"];
-    const missing = required.filter((id) => !listColumnOrder.includes(id));
-    if (missing.length > 0) {
-      setListColumnOrder([...listColumnOrder, ...missing]);
-    }
-  }, [listColumnOrder, setListColumnOrder]);
 
   /* ----- DnD sensors ----------------------------------------------------- */
 
@@ -1210,19 +1532,25 @@ export function ListView() {
             new Date(b.created_at).getTime();
           break;
         }
+        case "clients": {
+          const ca = (itemLinkedClients[a.id] ?? []).join(", ") || "\uffff";
+          const cb = (itemLinkedClients[b.id] ?? []).join(", ") || "\uffff";
+          cmp = ca.localeCompare(cb, "ru");
+          break;
+        }
       }
 
       return cmp * dir;
     });
 
     return sorted;
-  }, [items, sort, manualOrder, categoryConfig]);
+  }, [items, sort, manualOrder, categoryConfig, itemLinkedClients]);
 
   /* ----- grouping ---------------------------------------------------------- */
 
   const groups = useMemo(
-    () => groupItems(sortedItems, listGroupBy[0], categoryConfig),
-    [sortedItems, listGroupBy, categoryConfig]
+    () => groupItems(sortedItems, listGroupBy[0], categoryConfig, itemLinkedClients, groupPositionMaps[listGroupBy[0]]),
+    [sortedItems, listGroupBy, categoryConfig, itemLinkedClients, groupPositionMaps]
   );
 
   const isGrouped = listGroupBy[0] !== "none" && groups.length > 0;
@@ -1233,7 +1561,7 @@ export function ListView() {
     for (const g of groups) {
       keys.push(g.key);
       if (hasLevel2) {
-        for (const sub of groupItems(g.items, listGroupBy[1], categoryConfig)) {
+        for (const sub of groupItems(g.items, listGroupBy[1], categoryConfig, itemLinkedClients, groupPositionMaps[listGroupBy[1]])) {
           keys.push(`${g.key}::${sub.key}`);
         }
       }
@@ -1506,13 +1834,18 @@ export function ListView() {
     setCreateDropdown(null);
   }, []);
 
+  const createRelation = useBrainStore((s) => s.createRelation);
+  const createRelationType = useBrainStore((s) => s.createRelationType);
+  const relationTypes = useBrainStore((s) => s.relationTypes);
+  const fetchEntityCounts = useBrainStore((s) => s.fetchEntityCounts);
+
   const handleCommitCreate = useCallback(async () => {
     if (!newItem.title.trim()) {
       handleCancelCreate();
       return;
     }
     try {
-      await createItem({
+      const created = await createItem({
         title: newItem.title.trim(),
         status: newItem.status,
         priority: newItem.priority,
@@ -1526,13 +1859,22 @@ export function ListView() {
           newItem.category === "development" ? newItem.participants : [],
         due_date: newItem.due_date || null,
       });
+      // Link to client if selected
+      if (newItem.clientId && created) {
+        let clientType = relationTypes.find((rt) => rt.name === "Клиент");
+        if (!clientType) {
+          clientType = await createRelationType("Клиент", "#22c55e", "User", 1);
+        }
+        await createRelation("item", created.id, "client", newItem.clientId, clientType.id);
+        await fetchEntityCounts("item");
+      }
     } catch {
       // silently fail
     }
     setIsCreating(false);
     setNewItem({ ...NEW_ITEM_DEFAULTS });
     setCreateDropdown(null);
-  }, [newItem, createItem, handleCancelCreate]);
+  }, [newItem, createItem, createRelation, createRelationType, relationTypes, fetchEntityCounts, handleCancelCreate]);
 
   /* ----- Inline subtask creation handlers -------------------------------- */
 
@@ -1912,6 +2254,46 @@ export function ListView() {
           </td>
         );
 
+      case "clients": {
+        return (
+          <td
+            key={colId}
+            ref={(el) => {
+              createCellRefs.current["clients"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              setCreateDropdown(
+                createDropdown === "clients" ? null : "clients"
+              );
+            }}
+          >
+            {newItem.clientName ? (
+              <Badge
+                variant="outline"
+                className="text-[10px] font-normal rounded-md border-violet-200 text-violet-600 px-1.5 py-0"
+              >
+                {newItem.clientName}
+              </Badge>
+            ) : (
+              <span className="text-xs text-slate-300">+ клиент</span>
+            )}
+            {createDropdown === "clients" && (
+              <CreationClientDropdown
+                selectedClientId={newItem.clientId}
+                onSelect={(clientId, clientName) => {
+                  setNewItem((prev) => ({ ...prev, clientId, clientName }));
+                  setCreateDropdown(null);
+                }}
+                onClose={() => setCreateDropdown(null)}
+                anchorRef={{ current: createCellRefs.current["clients"] }}
+              />
+            )}
+          </td>
+        );
+      }
+
       case "tags":
 
       case "subtasks":
@@ -2096,10 +2478,7 @@ export function ListView() {
                         value={listGroupBy}
                         onChange={setListGroupBy}
                       />
-                      <ColumnConfigPopover
-                        columnOrder={listColumnOrder}
-                        onOrderChange={setListColumnOrder}
-                      />
+                      <ColumnConfigPopover />
                     </div>
                   </th>
                 </tr>
@@ -2239,7 +2618,7 @@ export function ListView() {
 
                       // Level 2 sub-groups
                       const level2Groups = hasLevel2
-                        ? groupItems(group.items, listGroupBy[1], categoryConfig)
+                        ? groupItems(group.items, listGroupBy[1], categoryConfig, itemLinkedClients, groupPositionMaps[listGroupBy[1]])
                         : null;
 
                       return (
@@ -2869,6 +3248,7 @@ function ItemRow({
   const relCount = useBrainStore((s) => s.itemRelationCounts[item.id] ?? 0);
   const relTitles = useBrainStore((s) => s.itemRelationTitles[item.id] ?? EMPTY_REL_TITLES);
   const commentCount = useBrainStore((s) => s.itemCommentCounts[item.id] ?? 0);
+  const linkedClientNames = useBrainStore((s) => s.itemLinkedClients[item.id] ?? EMPTY_REL_TITLES);
   const isDetachedSubtask = !isSubtask && !!item.parent_id;
   const parentItem = isDetachedSubtask ? allItems.find((i) => i.id === item.parent_id) : null;
 
@@ -3276,6 +3656,43 @@ function ItemRow({
               </div>
             ) : (
               <span className="text-xs text-slate-300">--</span>
+            )}
+          </td>
+        );
+      }
+
+      case "clients": {
+        return (
+          <td
+            key={colId}
+            ref={(el) => {
+              cellRefs.current["clients"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
+            onClick={(e) => handleCellClick("clients", e)}
+          >
+            {linkedClientNames.length > 0 ? (
+              <div className="flex flex-wrap gap-0.5">
+                {linkedClientNames.map((name) => (
+                  <Badge
+                    key={name}
+                    variant="outline"
+                    className="text-[10px] font-normal rounded-md border-violet-200 text-violet-600 px-1.5 py-0"
+                  >
+                    {name}
+                  </Badge>
+                ))}
+              </div>
+            ) : (
+              <span className="text-xs text-slate-300">--</span>
+            )}
+            {editingField === "clients" && (
+              <InlineCompanyCell
+                itemId={item.id}
+                currentClients={linkedClientNames}
+                onCancel={cancelEdit}
+                anchorRef={{ current: cellRefs.current["clients"] }}
+              />
             )}
           </td>
         );

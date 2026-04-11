@@ -11,7 +11,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ok = deleteRelationType(id);
-  if (!ok) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const result = deleteRelationType(id);
+  if (result === "system") return NextResponse.json({ error: "Системный тип связи нельзя удалить" }, { status: 403 });
+  if (!result) return NextResponse.json({ error: "not found" }, { status: 404 });
   return NextResponse.json({ success: true });
 }

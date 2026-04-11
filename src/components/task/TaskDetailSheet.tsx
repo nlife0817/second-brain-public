@@ -1079,14 +1079,14 @@ function TaskDetailContent({
 
 export { TaskDetailModal as TaskDetailSheet };
 
-export function TaskDetailModal() {
+export function TaskDetailModal({ forceModal }: { forceModal?: boolean } = {}) {
   const isDetailOpen = useBrainStore((s) => s.isDetailOpen);
   const closeDetail = useBrainStore((s) => s.closeDetail);
   const detailMode = useBrainStore((s) => s.detailMode);
   const item = useSelectedItem();
 
-  // Only render in modal mode
-  if (detailMode !== "modal") return null;
+  // Only render in modal mode (unless forced, e.g. opened from clients section)
+  if (!forceModal && detailMode !== "modal") return null;
   if (!item) return null;
 
   return (
@@ -1097,7 +1097,10 @@ export function TaskDetailModal() {
       }}
     >
       <DialogContent
-        className="max-w-[calc(100%-1rem)] sm:max-w-[92vw] md:max-w-[90vw] lg:max-w-5xl xl:max-w-7xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-6 lg:p-8 bg-white"
+        className={cn(
+          "max-w-[calc(100%-1rem)] sm:max-w-[92vw] md:max-w-[90vw] lg:max-w-5xl xl:max-w-7xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-6 lg:p-8 bg-white",
+          forceModal && "z-[60]"
+        )}
         showCloseButton
       >
         <DialogTitle className="sr-only">{item.title}</DialogTitle>

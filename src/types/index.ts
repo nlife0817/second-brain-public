@@ -14,7 +14,7 @@ export interface Category {
 }
 export type ViewMode = "kanban" | "list" | "weekly";
 export type SubtaskDisplayMode = "inline" | "accordion" | "detached";
-export type ListGroupByField = "none" | "status" | "priority" | "category" | "type" | "development_stage" | "participants";
+export type ListGroupByField = "none" | "status" | "priority" | "category" | "type" | "development_stage" | "participants" | "clients";
 export type ListGroupByConfig = [ListGroupByField, ListGroupByField];
 
 export type FilterOperator = "is" | "is_not" | "contains" | "not_contains" | "before" | "after" | "is_empty" | "is_not_empty";
@@ -355,6 +355,7 @@ export interface RelationType {
   color: string;
   icon: string;
   position: number;
+  is_system: number; // 1 = system type (cannot be deleted)
 }
 
 export interface Relation {

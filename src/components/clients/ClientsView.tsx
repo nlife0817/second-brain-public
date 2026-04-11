@@ -127,7 +127,8 @@ interface ClientGroup {
 
 function groupClients(
   clients: ClientFull[],
-  field: ClientGroupByField
+  field: ClientGroupByField,
+  clientStatuses?: { id: string; name: string; color: string; position: number }[]
 ): ClientGroup[] {
   if (field === "none") return [];
 
@@ -145,7 +146,24 @@ function groupClients(
     groups.push({ key, label: key, items });
   }
 
-  groups.sort((a, b) => a.label.localeCompare(b.label, "ru"));
+  if (field === "status" && clientStatuses) {
+    const posMap = new Map<string, number>();
+    for (const s of clientStatuses) {
+      posMap.set(s.name, s.position);
+    }
+    groups.sort((a, b) => {
+      const noStatus = "Без статуса";
+      if (a.label === noStatus && b.label !== noStatus) return 1;
+      if (b.label === noStatus && a.label !== noStatus) return -1;
+      const aPos = posMap.get(a.label) ?? 9999;
+      const bPos = posMap.get(b.label) ?? 9999;
+      if (aPos !== bPos) return aPos - bPos;
+      return a.label.localeCompare(b.label, "ru");
+    });
+  } else {
+    groups.sort((a, b) => a.label.localeCompare(b.label, "ru"));
+  }
+
   return groups;
 }
 
@@ -756,8 +774,8 @@ export function ClientsView() {
   const dragDisabled = isGrouped;
 
   const groups = useMemo(
-    () => groupClients(clients, clientGroupBy[0]),
-    [clients, clientGroupBy]
+    () => groupClients(clients, clientGroupBy[0], clientStatuses),
+    [clients, clientGroupBy, clientStatuses]
   );
 
   const clientIds = useMemo(() => clients.map((c) => c.id), [clients]);
@@ -843,7 +861,7 @@ export function ClientsView() {
         {/* ---------------------------------------------------------------- */}
         {/*  Header bar                                                      */}
         {/* ---------------------------------------------------------------- */}
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-4">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-4 sticky top-0 z-10">
           <h2 className="text-sm font-semibold text-slate-900 whitespace-nowrap mr-1">
             Клиенты
           </h2>
@@ -1134,7 +1152,7 @@ export function ClientsView() {
                     strategy={verticalListSortingStrategy}
                   >
                     <table className="w-full border-collapse bg-white">
-                      <thead>
+                      <thead className="sticky top-0 z-[5]">
                         <tr className="bg-slate-50 border-b border-slate-200">
                           <th className="w-8 px-1 py-2" />
                           <th className="px-4 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500">
@@ -1183,7 +1201,8 @@ export function ClientsView() {
                               const level2Groups = hasLevel2
                                 ? groupClients(
                                     group.items,
-                                    clientGroupBy[1]
+                                    clientGroupBy[1],
+                                    clientStatuses
                                   )
                                 : null;
 
