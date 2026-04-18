@@ -5,16 +5,20 @@
  *
  * Requires DATABASE_URL in .env.local (Direct connection string, not pooler).
  */
-import "dotenv/config";
+import dotenv from "dotenv";
 import Database from "better-sqlite3";
 import postgres from "postgres";
 import path from "path";
 
+dotenv.config({ path: path.join(process.cwd(), ".env.local") });
+dotenv.config();
+
 const SQLITE_PATH = path.join(process.cwd(), "data", "brain.db");
-const DATABASE_URL = process.env.DATABASE_URL;
+// Prefer Transaction pooler (IPv4) over Direct (often IPv6-only from Windows).
+const DATABASE_URL = process.env.DATABASE_POOL_URL || process.env.DATABASE_URL;
 
 if (!DATABASE_URL) {
-  console.error("DATABASE_URL is not set in .env.local");
+  console.error("DATABASE_POOL_URL (or DATABASE_URL) is not set in .env.local");
   process.exit(1);
 }
 
@@ -58,7 +62,12 @@ async function main() {
   sqlite.pragma("foreign_keys = OFF");
 
   console.log("Connecting to Postgres…");
-  const sql = postgres(DATABASE_URL!, { prepare: false, max: 1 });
+  const sql = postgres(DATABASE_URL!, {
+    prepare: false,
+    max: 1,
+    ssl: "require",
+    connect_timeout: 15,
+  });
 
   try {
     for (const table of TABLES_ORDER) {
