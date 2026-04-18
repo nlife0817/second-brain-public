@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, memo } from "react";
 import { useBrainStore, useSelectedItem, useCategoryConfig } from "@/lib/store";
 import {
   ItemWithSubtasks,
@@ -67,7 +67,7 @@ import { TagSelector } from "./TagSelector";
 /*  RichEditor                                                         */
 /* ------------------------------------------------------------------ */
 
-function RichEditor({
+const RichEditor = memo(function RichEditor({
   content,
   onSave,
 }: {
@@ -204,7 +204,7 @@ function RichEditor({
       <EditorContent editor={editor} />
     </div>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /*  Field selectors (shared)                                           */
@@ -687,7 +687,9 @@ function DeleteSection({
 /* ------------------------------------------------------------------ */
 
 function useTaskDetailLogic(item: ItemWithSubtasks | null) {
-  const { updateItem, deleteItem, closeDetail } = useBrainStore();
+  const updateItem = useBrainStore((s) => s.updateItem);
+  const deleteItem = useBrainStore((s) => s.deleteItem);
+  const closeDetail = useBrainStore((s) => s.closeDetail);
 
   const [title, setTitle] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -865,10 +867,11 @@ function TaskDetailContent({
 
   /* ---- Parent link (for subtasks) ---- */
   const isSubtask = !!item.parent_id;
-  const allItems = useBrainStore((s) => s.items);
+  const parentItem = useBrainStore((s) =>
+    isSubtask ? s.items.find((i) => i.id === item.parent_id) ?? null : null
+  );
   const openDetail = useBrainStore((s) => s.openDetail);
   const updateItem = useBrainStore((s) => s.updateItem);
-  const parentItem = isSubtask ? allItems.find((i) => i.id === item.parent_id) : null;
 
   /* ---- Title block ---- */
   const titleSizeCls = layout === "panel" ? "text-base" : "text-lg";
@@ -926,10 +929,14 @@ function TaskDetailContent({
   );
 
   /* ---- Tags block ---- */
+  const handleTagsChange = useCallback(
+    (tagIds: string[]) => updateItem(item.id, { tags: tagIds }),
+    [item.id, updateItem]
+  );
   const tagsBlock = (
     <TagSelector
       selectedTags={item.tags ?? []}
-      onTagsChange={(tagIds) => updateItem(item.id, { tags: tagIds })}
+      onTagsChange={handleTagsChange}
     />
   );
 

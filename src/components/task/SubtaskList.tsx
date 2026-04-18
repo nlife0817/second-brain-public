@@ -81,7 +81,9 @@ interface SubtaskListProps {
 /* ------------------------------------------------------------------ */
 
 export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
-  const { createItem, updateItem, deleteItem } = useBrainStore();
+  const createItem = useBrainStore((s) => s.createItem);
+  const updateItem = useBrainStore((s) => s.updateItem);
+  const deleteItem = useBrainStore((s) => s.deleteItem);
   const detachSubtask = useBrainStore((s) => s.detachSubtask);
   const openDetail = useBrainStore((s) => s.openDetail);
 
@@ -337,6 +339,16 @@ function SubtaskRow({
   const isDone = subtask.status === "done";
   const parsedDate = subtask.due_date ? new Date(subtask.due_date) : undefined;
 
+  const handleDateSelect = useCallback((date: Date | undefined) => {
+    onDateChange(subtask.id, date);
+    setDateOpen(false);
+  }, [onDateChange, subtask.id]);
+
+  const handleClearDate = useCallback(() => {
+    onDateChange(subtask.id, undefined);
+    setDateOpen(false);
+  }, [onDateChange, subtask.id]);
+
   return (
     <tr className="group/row border-b border-slate-50 last:border-b-0 hover:bg-slate-50/60">
       {/* Checkbox */}
@@ -487,10 +499,7 @@ function SubtaskRow({
             <Calendar
               mode="single"
               selected={parsedDate}
-              onSelect={(date) => {
-                onDateChange(subtask.id, date);
-                setDateOpen(false);
-              }}
+              onSelect={handleDateSelect}
               locale={ru}
             />
             {parsedDate && (
@@ -499,10 +508,7 @@ function SubtaskRow({
                   variant="ghost"
                   size="sm"
                   className="w-full text-xs text-slate-500 hover:text-slate-900"
-                  onClick={() => {
-                    onDateChange(subtask.id, undefined);
-                    setDateOpen(false);
-                  }}
+                  onClick={handleClearDate}
                 >
                   Убрать срок
                 </Button>

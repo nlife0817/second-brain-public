@@ -48,8 +48,10 @@ import {
 } from "@/components/kaiten/KaitenValueControls";
 
 export function CreateTaskDialog() {
-  const { isCreateOpen, closeCreate, createDefaults, createItem } =
-    useBrainStore();
+  const isCreateOpen = useBrainStore((s) => s.isCreateOpen);
+  const closeCreate = useBrainStore((s) => s.closeCreate);
+  const createDefaults = useBrainStore((s) => s.createDefaults);
+  const createItem = useBrainStore((s) => s.createItem);
   const { catalog, loading: kaitenCatalogLoading } = useKaitenCatalog();
 
   const [title, setTitle] = useState("");
@@ -125,6 +127,16 @@ export function CreateTaskDialog() {
     createItem,
     closeCreate,
   ]);
+
+  const handleDateSelect = useCallback((date: Date | undefined) => {
+    setDueDate(date);
+    setDatePickerOpen(false);
+  }, []);
+
+  const handleClearDate = useCallback(() => {
+    setDueDate(undefined);
+    setDatePickerOpen(false);
+  }, []);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -351,10 +363,7 @@ export function CreateTaskDialog() {
               <Calendar
                 mode="single"
                 selected={dueDate}
-                onSelect={(date) => {
-                  setDueDate(date);
-                  setDatePickerOpen(false);
-                }}
+                onSelect={handleDateSelect}
                 locale={ru}
               />
               {dueDate && (
@@ -363,10 +372,7 @@ export function CreateTaskDialog() {
                     variant="ghost"
                     size="sm"
                     className="w-full text-slate-500 hover:text-slate-900"
-                    onClick={() => {
-                      setDueDate(undefined);
-                      setDatePickerOpen(false);
-                    }}
+                    onClick={handleClearDate}
                   >
                     Убрать срок
                   </Button>

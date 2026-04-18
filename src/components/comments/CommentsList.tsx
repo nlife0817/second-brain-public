@@ -144,9 +144,14 @@ export function CommentsList({ entityType, entityId }: CommentsListProps) {
 
   const loadComments = useCallback(async () => {
     setLoading(true);
-    const data = await fetchComments(entityType, entityId);
-    setComments(data);
-    setLoading(false);
+    try {
+      const data = await fetchComments(entityType, entityId);
+      setComments(data);
+    } catch {
+      // network error — ignore silently
+    } finally {
+      setLoading(false);
+    }
   }, [fetchComments, entityType, entityId]);
 
   useEffect(() => {

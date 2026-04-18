@@ -1068,9 +1068,13 @@ export const useBrainStore = create<BrainStore>()(
   // --- Comments ---
 
   fetchComments: async (entityType, entityId) => {
-    const res = await fetch(`/api/comments?entity_type=${entityType}&entity_id=${entityId}`);
-    if (!res.ok) return [];
-    return await res.json();
+    try {
+      const res = await fetch(`/api/comments?entity_type=${entityType}&entity_id=${entityId}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
   },
 
   createComment: async (entityType, entityId, text) => {
