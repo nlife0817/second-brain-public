@@ -4,12 +4,12 @@ import { getAuthUser } from "@/lib/auth";
 import { v4 as uuid } from "uuid";
 
 export async function GET() {
-  const plans = getAllWeeklyPlans();
+  const plans = await getAllWeeklyPlans();
   return NextResponse.json(plans);
 }
 
 export async function POST(req: NextRequest) {
-  const user = getAuthUser(req.headers);
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "week_start and week_end are required" }, { status: 400 });
     }
 
-    const plan = createWeeklyPlan({
+    const plan = await createWeeklyPlan({
       id: uuid(),
       week_start: body.week_start,
       week_end: body.week_end,
@@ -29,11 +29,11 @@ export async function POST(req: NextRequest) {
 
     // Transfer entries from previous plan if requested
     if (body.transferFromPlanId && body.transferEntryIds?.length) {
-      const transferable = getTransferableEntries(body.transferFromPlanId);
+      const transferable = await getTransferableEntries(body.transferFromPlanId);
       const validIds = transferable.map((e) => e.item_id);
       const toTransfer = (body.transferEntryIds as string[]).filter((id: string) => validIds.includes(id));
       if (toTransfer.length) {
-        bulkAddItemsToPlan(plan.id, toTransfer);
+        await bulkAddItemsToPlan(plan.id, toTransfer);
       }
     }
 

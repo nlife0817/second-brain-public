@@ -3,7 +3,7 @@ import { getWeeklyPlanReport } from "@/lib/db";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const report = getWeeklyPlanReport(id);
+  const report = await getWeeklyPlanReport(id);
   if (!report) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json(report);
 }

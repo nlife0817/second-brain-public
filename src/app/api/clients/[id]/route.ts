@@ -5,13 +5,13 @@ import { getAuthUser } from "@/lib/auth";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const client = getClientFull(id);
+  const client = await getClientFull(id);
   if (!client) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json(client);
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const user = getAuthUser(req.headers);
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -21,17 +21,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const { companies, contacts, notes, links, crm_system_ids, ...clientUpdates } = body;
     if (Object.keys(clientUpdates).length > 0) {
-      const updated = updateClient(id, clientUpdates);
+      const updated = await updateClient(id, clientUpdates);
       if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
     if (crm_system_ids) {
-      setClientCrmSystems(id, crm_system_ids);
+      await setClientCrmSystems(id, crm_system_ids);
     }
 
-    syncClientNested(id, { companies, contacts, notes, links });
+    await syncClientNested(id, { companies, contacts, notes, links });
 
-    const full = getClientFull(id);
+    const full = await getClientFull(id);
     return NextResponse.json(full);
   } catch {
     return NextResponse.json({ error: "Failed to update" }, { status: 500 });
@@ -39,12 +39,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const user = getAuthUser(req.headers);
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const { id } = await params;
-  const ok = deleteClient(id);
+  const ok = await deleteClient(id);
   if (!ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

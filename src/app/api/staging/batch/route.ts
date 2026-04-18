@@ -4,13 +4,13 @@ import { deleteStagingBatch, getAllStagingItems } from "@/lib/db";
 export async function DELETE(req: NextRequest) {
   const batchId = req.nextUrl.searchParams.get("batchId");
   if (!batchId) return NextResponse.json({ error: "batchId required" }, { status: 400 });
-  deleteStagingBatch(batchId);
+  await deleteStagingBatch(batchId);
   return NextResponse.json({ ok: true });
 }
 
 export async function GET(req: NextRequest) {
   const status = req.nextUrl.searchParams.get("status") as "pending" | "approved" | "rejected" | null;
-  const items = getAllStagingItems(status ?? undefined);
+  const items = await getAllStagingItems(status ?? undefined);
 
   const batches: Record<string, typeof items> = {};
   for (const item of items) {

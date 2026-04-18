@@ -3,11 +3,11 @@ import { getAllCrmSystems, createCrmSystem } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth";
 
 export async function GET() {
-  return NextResponse.json(getAllCrmSystems());
+  return NextResponse.json(await getAllCrmSystems());
 }
 
 export async function POST(req: NextRequest) {
-  const user = getAuthUser(req.headers);
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     const { name } = body;
     if (!name) return NextResponse.json({ error: "Name required" }, { status: 400 });
 
-    const crm = createCrmSystem({
+    const crm = await createCrmSystem({
       id: crypto.randomUUID(),
       name,
     });

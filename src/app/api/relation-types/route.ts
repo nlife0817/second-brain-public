@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAllRelationTypes, createRelationType } from "@/lib/db";
 
 export async function GET() {
-  return NextResponse.json(getAllRelationTypes());
+  return NextResponse.json(await getAllRelationTypes());
 }
 
 export async function POST(req: Request) {
@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   const { name, color, icon, is_system } = body;
   if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
 
-  const rt = createRelationType({
+  const rt = await createRelationType({
     id: crypto.randomUUID(),
     name,
     color: color ?? "#6b7280",

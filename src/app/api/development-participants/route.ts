@@ -3,11 +3,11 @@ import { getAllDevelopmentParticipants, createDevelopmentParticipant } from "@/l
 import { getAuthUser } from "@/lib/auth";
 
 export async function GET() {
-  return NextResponse.json(getAllDevelopmentParticipants());
+  return NextResponse.json(await getAllDevelopmentParticipants());
 }
 
 export async function POST(req: NextRequest) {
-  const user = getAuthUser(req.headers);
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { name } = body;
     if (!name) return NextResponse.json({ error: "Name required" }, { status: 400 });
-    const participant = createDevelopmentParticipant(name);
+    const participant = await createDevelopmentParticipant(name);
     return NextResponse.json(participant, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Failed to create" }, { status: 500 });

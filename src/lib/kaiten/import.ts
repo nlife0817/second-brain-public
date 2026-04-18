@@ -132,9 +132,9 @@ function applyMapping(card: Record<string, unknown>, mappings: SyncFieldMapping[
 }
 
 export async function importKaitenProfile(profileId: string): Promise<KaitenImportResult> {
-  const settings = getIntegrationSettings("kaiten");
-  const token = getIntegrationToken("kaiten");
-  const profile = getSyncProfileById(profileId);
+  const settings = await getIntegrationSettings("kaiten");
+  const token = await getIntegrationToken("kaiten");
+  const profile = await getSyncProfileById(profileId);
 
   if (!settings.enabled) {
     throw new KaitenApiError("Kaiten integration is disabled", 400);
@@ -146,7 +146,7 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
     throw new KaitenApiError("Board is not configured for the sync profile", 400);
   }
 
-  const mappings = getSyncFieldMappings(profileId);
+  const mappings = await getSyncFieldMappings(profileId);
   const client = createKaitenClient({ baseUrl: settings.api_base_url, token });
   await refreshKaitenCatalogForProfile(profileId).catch(() => null);
   const batchId = crypto.randomUUID();
@@ -203,16 +203,16 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
         importedParticipants.set(key, participant);
       }
 
-      const link = getExternalEntityLinkByRemote("kaiten", "card", remoteId);
+      const link = await getExternalEntityLinkByRemote("kaiten", "card", remoteId);
       const parsed = applyMapping(enrichedCard, mappings);
       parsed.participants = participants;
       const title = extractCardTitle(enrichedCard) || `Kaiten #${remoteId}`;
       const description = extractCardDescription(enrichedCard);
 
       if (link) {
-        const staging = getStagingItemById(link.local_entity_id);
+        const staging = await getStagingItemById(link.local_entity_id);
         if (staging) {
-          updateStagingItem(staging.id, {
+          await updateStagingItem(staging.id, {
             title,
             description,
             parsed_data: JSON.stringify(parsed),
@@ -222,7 +222,7 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
           });
           result.updated += 1;
           result.imported_ids.push(staging.id);
-          upsertExternalEntityLink({
+          await upsertExternalEntityLink({
             provider: "kaiten",
             profile_id: profile.id,
             local_entity_type: "item",
@@ -240,9 +240,9 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
           continue;
         }
 
-        const item = getItemById(link.local_entity_id);
+        const item = await getItemById(link.local_entity_id);
         if (item) {
-          updateItem(item.id, {
+          await updateItem(item.id, {
             title,
             description,
             type: "task",
@@ -252,10 +252,10 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
             priority: parsed.priority ?? item.priority,
             due_date: parsed.due_date ?? null,
           });
-          setItemParticipants(item.id, participants);
+          await setItemParticipants(item.id, participants);
           result.updated += 1;
           result.imported_ids.push(item.id);
-          upsertExternalEntityLink({
+          await upsertExternalEntityLink({
             provider: "kaiten",
             profile_id: profile.id,
             local_entity_type: "item",
@@ -274,7 +274,7 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
         }
       }
 
-      const staging = createStagingItem({
+      const staging = await createStagingItem({
         id: crypto.randomUUID(),
         entity_type: "item",
         title,
@@ -282,7 +282,7 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
         parsed_data: JSON.stringify(parsed),
         batch_id: batchId,
       });
-      upsertExternalEntityLink({
+      await upsertExternalEntityLink({
         provider: "kaiten",
         profile_id: profile.id,
         local_entity_type: "item",
@@ -306,7 +306,7 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
   }
 
   if (importedParticipants.size > 0) {
-    upsertSyncProfile("kaiten", {
+    await upsertSyncProfile("kaiten", {
       ...profile,
       available_participants: Array.from(
         new Map(
@@ -321,10 +321,10 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
     });
   }
 
-  saveSyncImportRun("kaiten", profileId, result);
+  await saveSyncImportRun("kaiten", profileId, result);
   return result;
 }
 
-export function getLatestKaitenImport(profileId: string) {
-  return getLatestSyncImportRun(profileId);
+export async function getLatestKaitenImport(profileId: string) {
+  return await getLatestSyncImportRun(profileId);
 }

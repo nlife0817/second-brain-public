@@ -6,7 +6,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const { entryId } = await params;
     const body = await req.json();
 
-    const updated = updatePlanEntry(entryId, {
+    const updated = await updatePlanEntry(entryId, {
       result_status: body.result_status,
       result_comment: body.result_comment,
       position: body.position,

@@ -2,31 +2,29 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAllItemsFull, createItem, getItemFull, reorderItems, setItemParticipants, setItemTags } from "@/lib/db";
 import { v4 as uuid } from "uuid";
 import { CreateItemPayload } from "@/types";
-import { ensureKaitenSyncScheduler, queueKaitenItemSync } from "@/lib/kaiten/sync";
+import { queueKaitenItemSync } from "@/lib/kaiten/sync";
 import { getAuthUser } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
-  ensureKaitenSyncScheduler();
   const showArchived = req.nextUrl.searchParams.get("archived") === "true";
   const includeChildren = req.nextUrl.searchParams.get("children") === "true";
 
-  return NextResponse.json(getAllItemsFull(showArchived, includeChildren));
+  return NextResponse.json(await getAllItemsFull(showArchived, includeChildren));
 }
 
 export async function POST(req: NextRequest) {
-  const user = getAuthUser(req.headers);
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   try {
-    ensureKaitenSyncScheduler();
     const body: CreateItemPayload = await req.json();
 
     if (!body.title?.trim()) {
       return NextResponse.json({ error: "Title is required" }, { status: 400 });
     }
 
-    const item = createItem({
+    const item = await createItem({
       id: uuid(),
       title: body.title.trim(),
       description: body.description ?? "",
@@ -42,32 +40,31 @@ export async function POST(req: NextRequest) {
     });
 
     if (body.tags?.length) {
-      setItemTags(item.id, body.tags);
+      await setItemTags(item.id, body.tags);
     }
     if (body.participants?.length) {
-      setItemParticipants(item.id, body.participants);
+      await setItemParticipants(item.id, body.participants);
     }
-    queueKaitenItemSync(item.id);
-    return NextResponse.json(getItemFull(item.id), { status: 201 });
+    await queueKaitenItemSync(item.id);
+    return NextResponse.json(await getItemFull(item.id), { status: 201 });
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 }
 
 export async function PUT(req: NextRequest) {
-  const user = getAuthUser(req.headers);
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   try {
-    ensureKaitenSyncScheduler();
     const body: { items: { id: string; position: number; status?: string }[] } = await req.json();
 
     if (!body.items?.length) {
       return NextResponse.json({ error: "Items array required" }, { status: 400 });
     }
 
-    reorderItems(body.items);
+    await reorderItems(body.items);
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });

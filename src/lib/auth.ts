@@ -1,44 +1,38 @@
 import { getUserByEmail, upsertUser, getUserCount } from "./db";
+import { createSupabaseServerClient } from "./supabase/server";
 import type { UserRole } from "@/types";
-
-const CF_EMAIL_HEADER = "cf-access-authenticated-user-email";
 
 export interface AuthUser {
   email: string;
   role: UserRole;
 }
 
-export function getAuthUser(headers: Headers): AuthUser | null {
-  let email = headers.get(CF_EMAIL_HEADER);
+/**
+ * Resolve the current user from the Supabase session cookie.
+ * - Reads JWT from cookies via @supabase/ssr.
+ * - If JWT email matches a row in `users`, returns it.
+ * - First login with no users yet: bootstraps the account as admin
+ *   (gated by ADMIN_BOOTSTRAP_EMAIL if set, otherwise any email).
+ * - Known email in users → return role.
+ * - Unknown email and not first user → null (access denied).
+ */
+export async function getAuthUser(): Promise<AuthUser | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user?.email) return null;
 
-  if (!email) {
-    email = process.env.DEV_AUTH_EMAIL || null;
-  }
-
-  if (!email) return null;
-
-  email = email.toLowerCase().trim();
-
-  const existing = getUserByEmail(email);
+  const email = user.email.toLowerCase().trim();
+  const existing = await getUserByEmail(email);
   if (existing) {
     return { email: existing.email, role: existing.role };
   }
 
-  // First user ever → auto-create as admin
-  const count = getUserCount();
-  if (count === 0) {
-    const user = upsertUser(email, "admin");
-    return { email: user.email, role: user.role };
+  const bootstrap = (process.env.ADMIN_BOOTSTRAP_EMAIL ?? "").toLowerCase().trim();
+  const count = await getUserCount();
+  if (count === 0 && (!bootstrap || bootstrap === email)) {
+    const created = await upsertUser(email, "admin", user.user_metadata?.full_name ?? "");
+    return { email: created.email, role: created.role };
   }
 
-  // Unknown email, not first user → no access
   return null;
-}
-
-export function getDevAuthUser(): AuthUser | null {
-  if (process.env.NODE_ENV !== "development") return null;
-  const email = process.env.DEV_AUTH_EMAIL;
-  if (!email) return null;
-  const role = (process.env.DEV_AUTH_ROLE as UserRole) || "admin";
-  return { email, role };
 }

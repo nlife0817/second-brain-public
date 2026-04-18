@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { uploadAttachment } from "@/lib/storage";
 import {
   KaitenDevelopmentStageSelect,
   KaitenParticipantsSelect,
@@ -59,6 +60,7 @@ import {
   Strikethrough as StrikethroughIcon,
   List,
   ListOrdered,
+  Paperclip,
   X,
 } from "lucide-react";
 import { TagSelector } from "./TagSelector";
@@ -96,12 +98,9 @@ const RichEditor = memo(function RichEditor({
             event.preventDefault();
             const file = item.getAsFile();
             if (!file) return false;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-              const src = e.target?.result as string;
-              editor?.chain().focus().setImage({ src }).run();
-            };
-            reader.readAsDataURL(file);
+            uploadAttachment(file)
+              .then((res) => editor?.chain().focus().setImage({ src: res.url, alt: res.name }).run())
+              .catch((err) => console.error("Image upload failed", err));
             return true;
           }
         }
@@ -113,14 +112,22 @@ const RichEditor = memo(function RichEditor({
         for (const file of Array.from(files)) {
           if (file.type.startsWith("image/")) {
             event.preventDefault();
-            const reader = new FileReader();
-            reader.onload = (e) => {
-              const src = e.target?.result as string;
-              editor?.chain().focus().setImage({ src }).run();
-            };
-            reader.readAsDataURL(file);
+            uploadAttachment(file)
+              .then((res) => editor?.chain().focus().setImage({ src: res.url, alt: res.name }).run())
+              .catch((err) => console.error("Image upload failed", err));
             return true;
           }
+          // Non-image files → inline download link
+          event.preventDefault();
+          uploadAttachment(file)
+            .then((res) => {
+              const safeName = res.name.replace(/[<>&"']/g, "");
+              editor?.chain().focus().insertContent(
+                `<p><a href="${res.url}" target="_blank" rel="noopener">📎 ${safeName}</a></p>`
+              ).run();
+            })
+            .catch((err) => console.error("File upload failed", err));
+          return true;
         }
         return false;
       },
@@ -198,6 +205,40 @@ const RichEditor = memo(function RichEditor({
           title="Нумерованный список"
         >
           <ListOrdered className="size-4" />
+        </button>
+
+        <div className="mx-1 h-4 w-px bg-slate-200" />
+
+        <button
+          type="button"
+          onClick={() => {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.multiple = true;
+            input.onchange = async () => {
+              const files = Array.from(input.files ?? []);
+              for (const file of files) {
+                try {
+                  const res = await uploadAttachment(file);
+                  if (file.type.startsWith("image/")) {
+                    editor.chain().focus().setImage({ src: res.url, alt: res.name }).run();
+                  } else {
+                    const safeName = res.name.replace(/[<>&"']/g, "");
+                    editor.chain().focus().insertContent(
+                      `<p><a href="${res.url}" target="_blank" rel="noopener">📎 ${safeName}</a></p>`
+                    ).run();
+                  }
+                } catch (err) {
+                  console.error("Upload failed", err);
+                }
+              }
+            };
+            input.click();
+          }}
+          className={btnCls(false)}
+          title="Прикрепить файл"
+        >
+          <Paperclip className="size-4" />
         </button>
       </div>
 

@@ -3,8 +3,8 @@ import { getIntegrationSettings, getIntegrationToken } from "@/lib/db";
 import { createKaitenClient, KaitenApiError } from "@/lib/kaiten/client";
 
 export async function GET(req: NextRequest) {
-  const settings = getIntegrationSettings("kaiten");
-  const token = getIntegrationToken("kaiten");
+  const settings = await getIntegrationSettings("kaiten");
+  const token = await getIntegrationToken("kaiten");
   const spaceIdParam = req.nextUrl.searchParams.get("space_id");
 
   if (!settings.company_domain || !token) {

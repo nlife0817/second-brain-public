@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     defaults: KAITEN_DEFAULT_FIELD_MAPPINGS,
-    mappings: getSyncFieldMappings(profileId),
+    mappings: await getSyncFieldMappings(profileId),
   });
 }
 
@@ -23,7 +23,7 @@ export async function PUT(req: NextRequest) {
     if (!body.profile_id) {
       return NextResponse.json({ error: "profile_id is required" }, { status: 400 });
     }
-    const mappings = replaceSyncFieldMappings(
+    const mappings = await replaceSyncFieldMappings(
       body.profile_id,
       Array.isArray(body.mappings) ? body.mappings : []
     );

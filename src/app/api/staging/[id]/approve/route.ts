@@ -23,7 +23,7 @@ interface StagingRelation {
   relation_type_id?: string | null;
 }
 
-function resolveAndCreateRelations(
+async function resolveAndCreateRelations(
   sourceType: "item" | "client",
   sourceId: string,
   relations: StagingRelation[]
@@ -34,13 +34,13 @@ function resolveAndCreateRelations(
     // If no target_id, try to resolve by title
     if (!targetId && rel.target_title) {
       if (rel.target_type === "item") {
-        const items = getAllItems(false, false);
+        const items = await getAllItems(false, false);
         const match = items.find(
           (i) => i.title.toLowerCase() === rel.target_title!.toLowerCase()
         );
         if (match) targetId = match.id;
       } else {
-        const clients = getAllClients();
+        const clients = await getAllClients();
         const match = clients.find(
           (c) => c.name.toLowerCase() === rel.target_title!.toLowerCase()
         );
@@ -50,7 +50,7 @@ function resolveAndCreateRelations(
 
     if (!targetId) continue;
 
-    createRelation({
+    await createRelation({
       id: uuid(),
       source_type: sourceType,
       source_id: sourceId,
@@ -67,11 +67,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const body = await req.json();
     const action = body.action as "approve" | "reject";
 
-    const staging = getStagingItemById(id);
+    const staging = await getStagingItemById(id);
     if (!staging) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     if (action === "reject") {
-      const rejected = rejectStagingItem(id);
+      const rejected = await rejectStagingItem(id);
       return NextResponse.json(rejected);
     }
 
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (staging.entity_type === "item") {
       const itemId = uuid();
       const source = parsed.external_source === "kaiten" ? "kaiten" : "system";
-      const item = createItem({
+      const item = await createItem({
         id: itemId,
         title: staging.title,
         description: staging.description,
@@ -97,19 +97,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
 
       if (parsed.participants?.length) {
-        setItemParticipants(itemId, parsed.participants);
+        await setItemParticipants(itemId, parsed.participants);
       }
 
       // Set tags if any
       if (parsed.tags?.length) {
-        setItemTags(itemId, parsed.tags);
+        await setItemTags(itemId, parsed.tags);
       }
 
       // Create subtasks if any
       if (parsed.subtasks?.length) {
         for (let i = 0; i < parsed.subtasks.length; i++) {
           const sub = parsed.subtasks[i];
-          createItem({
+          await createItem({
             id: uuid(),
             title: sub.title,
             description: sub.description ?? "",
@@ -128,24 +128,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       // Create relations if any
       if (parsed.relations?.length) {
-        resolveAndCreateRelations("item", itemId, parsed.relations);
+        await resolveAndCreateRelations("item", itemId, parsed.relations);
       }
 
-      approveStagingItem(id);
-      rebindExternalEntityLinks("item", id, itemId);
+      await approveStagingItem(id);
+      await rebindExternalEntityLinks("item", id, itemId);
 
       const full = {
         ...item,
-        subtasks: getSubtasks(itemId),
-        tags: getItemTags(itemId),
-        participants: getItemParticipants(itemId),
+        subtasks: await getSubtasks(itemId),
+        tags: await getItemTags(itemId),
+        participants: await getItemParticipants(itemId),
       };
       return NextResponse.json(full, { status: 201 });
     }
 
     if (staging.entity_type === "client") {
       const clientId = uuid();
-      const client = dbCreateClient({
+      const client = await dbCreateClient({
         id: clientId,
         name: staging.title,
         status_id: parsed.status_id ?? null,
@@ -168,21 +168,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (allNotes.length > 0) nestedData.notes = allNotes;
       if (parsed.links?.length) nestedData.links = parsed.links;
       if (Object.keys(nestedData).length > 0) {
-        syncClientNested(clientId, nestedData);
+        await syncClientNested(clientId, nestedData);
       }
 
       // Set CRM systems if any
       if (parsed.crm_system_ids?.length) {
-        setClientCrmSystems(clientId, parsed.crm_system_ids);
+        await setClientCrmSystems(clientId, parsed.crm_system_ids);
       }
 
       // Create relations if any
       if (parsed.relations?.length) {
-        resolveAndCreateRelations("client", clientId, parsed.relations);
+        await resolveAndCreateRelations("client", clientId, parsed.relations);
       }
 
-      approveStagingItem(id);
-      rebindExternalEntityLinks("client", id, clientId);
+      await approveStagingItem(id);
+      await rebindExternalEntityLinks("client", id, clientId);
       return NextResponse.json(client, { status: 201 });
     }
 

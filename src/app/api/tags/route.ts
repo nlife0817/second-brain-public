@@ -4,11 +4,11 @@ import { v4 as uuid } from "uuid";
 import { getAuthUser } from "@/lib/auth";
 
 export async function GET() {
-  return NextResponse.json(getAllTags());
+  return NextResponse.json(await getAllTags());
 }
 
 export async function POST(req: NextRequest) {
-  const user = getAuthUser(req.headers);
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
   }
 
-  const tag = createTag({
+  const tag = await createTag({
     id: uuid(),
     name: body.name.trim(),
     color: body.color ?? "#6b7280",

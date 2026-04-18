@@ -1,24 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllSyncProfiles, getIntegrationSettings, getIntegrationToken, upsertSyncProfile } from "@/lib/db";
 import { getLatestKaitenImport } from "@/lib/kaiten/import";
-import { ensureKaitenSyncScheduler, refreshKaitenCatalogForProfile } from "@/lib/kaiten/sync";
+import { refreshKaitenCatalogForProfile } from "@/lib/kaiten/sync";
 
 export async function GET() {
-  ensureKaitenSyncScheduler();
-  const profiles = getAllSyncProfiles("kaiten");
-  return NextResponse.json(
-    profiles.map((profile) => ({
+  const profiles = await getAllSyncProfiles("kaiten");
+  const withImports = await Promise.all(
+    profiles.map(async (profile) => ({
       ...profile,
-      last_import: getLatestKaitenImport(profile.id),
+      last_import: await getLatestKaitenImport(profile.id),
     }))
   );
+  return NextResponse.json(withImports);
 }
 
 export async function POST(req: NextRequest) {
   try {
-    ensureKaitenSyncScheduler();
     const body = await req.json();
-    const savedProfile = upsertSyncProfile("kaiten", {
+    const savedProfile = await upsertSyncProfile("kaiten", {
       id: body.id,
       name: body.name ?? "Kaiten import",
       entity_type: "item",
@@ -32,15 +31,15 @@ export async function POST(req: NextRequest) {
       source_columns: Array.isArray(body.source_columns) ? body.source_columns.map(String) : [],
       source_lanes: Array.isArray(body.source_lanes) ? body.source_lanes.map(String) : [],
     });
-    const settings = getIntegrationSettings("kaiten");
-    const token = getIntegrationToken("kaiten");
+    const settings = await getIntegrationSettings("kaiten");
+    const token = await getIntegrationToken("kaiten");
     const profile =
       settings.company_domain && token && savedProfile.source_space_id
         ? await refreshKaitenCatalogForProfile(savedProfile.id).catch(() => savedProfile)
         : savedProfile;
     return NextResponse.json({
       ...profile,
-      last_import: getLatestKaitenImport(profile.id),
+      last_import: await getLatestKaitenImport(profile.id),
     });
   } catch (error) {
     return NextResponse.json(

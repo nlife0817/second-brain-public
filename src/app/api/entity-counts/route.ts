@@ -7,14 +7,14 @@ export async function GET(req: NextRequest) {
   if (!entityType) return NextResponse.json({ error: "entity_type required" }, { status: 400 });
 
   const response: Record<string, unknown> = {
-    relations: getRelationCountsBatch(entityType),
-    comments: getCommentCountsBatch(entityType),
-    relationTitles: getRelationTitlesBatch(entityType),
+    relations: await getRelationCountsBatch(entityType),
+    comments: await getCommentCountsBatch(entityType),
+    relationTitles: await getRelationTitlesBatch(entityType),
   };
 
   // Only include linked clients for items
   if (entityType === "item") {
-    response.linkedClients = getItemLinkedClientsBatch();
+    response.linkedClients = await getItemLinkedClientsBatch();
   }
 
   return NextResponse.json(response);

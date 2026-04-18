@@ -169,14 +169,14 @@ function mapPriority(value: string): ItemPriority | null {
   return null;
 }
 
-function getEligibleExportProfiles(preferredProfileId?: string | null) {
+async function getEligibleExportProfiles(preferredProfileId?: string | null) {
   const preferredProfile = preferredProfileId
-    ? getSyncProfileById(preferredProfileId)
+    ? await getSyncProfileById(preferredProfileId)
     : undefined;
 
   const profiles = preferredProfile
     ? [preferredProfile]
-    : getAllSyncProfiles("kaiten");
+    : await getAllSyncProfiles("kaiten");
 
   return profiles.filter(
     (profile): profile is SyncProfile =>
@@ -198,11 +198,11 @@ function findProfileStageMatch(profile: SyncProfile, value?: string | null) {
   );
 }
 
-function pickKaitenExportProfile(
+async function pickKaitenExportProfile(
   item: Item,
   preferredProfileId?: string | null
 ) {
-  const profiles = getEligibleExportProfiles(preferredProfileId);
+  const profiles = await getEligibleExportProfiles(preferredProfileId);
   if (profiles.length === 0) return undefined;
 
   const directMatch = profiles.find((profile) =>
@@ -271,9 +271,9 @@ async function createRemoteCardForItem(
 }
 
 export async function refreshKaitenCatalogForProfile(profileId: string): Promise<SyncProfile> {
-  const settings = getIntegrationSettings("kaiten");
-  const token = getIntegrationToken("kaiten");
-  const profile = getSyncProfileById(profileId);
+  const settings = await getIntegrationSettings("kaiten");
+  const token = await getIntegrationToken("kaiten");
+  const profile = await getSyncProfileById(profileId);
 
   if (!profile) {
     throw new Error("Sync profile not found");
@@ -289,7 +289,7 @@ export async function refreshKaitenCatalogForProfile(profileId: string): Promise
   const stageOptions = board ? buildBoardStageOptions(board) : [];
   const participants = await client.getSpaceUsers(profile.source_space_id).catch(() => []);
 
-  return upsertSyncProfile("kaiten", {
+  return await upsertSyncProfile("kaiten", {
     ...profile,
     available_development_stages: stageOptions,
     available_participants: participants,
@@ -297,18 +297,18 @@ export async function refreshKaitenCatalogForProfile(profileId: string): Promise
   });
 }
 
-export function queueKaitenItemSync(itemId: string) {
-  const item = getItemById(itemId);
+export async function queueKaitenItemSync(itemId: string) {
+  const item = await getItemById(itemId);
   if (!item) return false;
 
-  const link = getExternalEntityLinkByLocal("kaiten", "item", itemId);
+  const link = await getExternalEntityLinkByLocal("kaiten", "item", itemId);
   if (!link || link.remote_entity_type !== "card") {
     if (item.category !== "development") return false;
 
-    const profile = pickKaitenExportProfile(item);
+    const profile = await pickKaitenExportProfile(item);
     if (!profile) return false;
 
-    upsertSyncOutboxJob({
+    await upsertSyncOutboxJob({
       provider: "kaiten",
       profile_id: profile.id,
       local_entity_type: "item",
@@ -325,12 +325,12 @@ export function queueKaitenItemSync(itemId: string) {
   }
 
   const profile =
-    (link.profile_id ? getSyncProfileById(link.profile_id) : undefined)
-    ?? (link.remote_board_id ? getSyncProfileByBoard("kaiten", link.remote_board_id) : undefined);
+    (link.profile_id ? await getSyncProfileById(link.profile_id) : undefined)
+    ?? (link.remote_board_id ? await getSyncProfileByBoard("kaiten", link.remote_board_id) : undefined);
 
   if (!profile || !profile.export_enabled) return false;
 
-  upsertSyncOutboxJob({
+  await upsertSyncOutboxJob({
     provider: "kaiten",
     profile_id: profile.id,
     local_entity_type: "item",
@@ -344,8 +344,8 @@ export function queueKaitenItemSync(itemId: string) {
 }
 
 async function applyRemoteCardToItem(cardId: number, profile: SyncProfile, localItemId: string) {
-  const settings = getIntegrationSettings("kaiten");
-  const token = getIntegrationToken("kaiten");
+  const settings = await getIntegrationSettings("kaiten");
+  const token = await getIntegrationToken("kaiten");
   const client = createKaitenClient({ baseUrl: settings.api_base_url, token });
   const card = await client.getCard(cardId);
   const participants = await client.getCardMembers(cardId).catch(() => []);
@@ -354,7 +354,7 @@ async function applyRemoteCardToItem(cardId: number, profile: SyncProfile, local
     ? "archived" as ItemStatus
     : mapStatus(extractCardStatus(card)) ?? "inbox";
 
-  updateItem(localItemId, {
+  await updateItem(localItemId, {
     title: extractCardTitle(card) || `Kaiten #${cardId}`,
     description: extractCardDescription(card),
     type: "task",
@@ -364,9 +364,9 @@ async function applyRemoteCardToItem(cardId: number, profile: SyncProfile, local
     priority: mapPriority(extractCardPriority(card)) ?? "none",
     due_date: extractCardDueDate(card) ?? null,
   });
-  setItemParticipants(localItemId, participants);
+  await setItemParticipants(localItemId, participants);
 
-  upsertExternalEntityLink({
+  await upsertExternalEntityLink({
     provider: "kaiten",
     profile_id: profile.id,
     local_entity_type: "item",
@@ -390,13 +390,13 @@ async function applyRemoteCardToItem(cardId: number, profile: SyncProfile, local
 }
 
 export async function runDueKaitenSync(options?: { force?: boolean }) {
-  const settings = getIntegrationSettings("kaiten");
-  const token = getIntegrationToken("kaiten");
+  const settings = await getIntegrationSettings("kaiten");
+  const token = await getIntegrationToken("kaiten");
   if (!settings.enabled || !token) {
     return { processed: 0, exported: 0, remote_overrides: 0, errors: 0 };
   }
 
-  const jobs = getDueSyncOutboxJobs("kaiten", 50, options?.force === true);
+  const jobs = await getDueSyncOutboxJobs("kaiten", 50, options?.force === true);
   if (jobs.length === 0) {
     return { processed: 0, exported: 0, remote_overrides: 0, errors: 0 };
   }
@@ -406,29 +406,29 @@ export async function runDueKaitenSync(options?: { force?: boolean }) {
 
   for (const job of jobs) {
     result.processed += 1;
-    markSyncOutboxProcessing(job.id);
+    await markSyncOutboxProcessing(job.id);
 
     try {
-      const link = getExternalEntityLinkByLocal(
+      const link = await getExternalEntityLinkByLocal(
         "kaiten",
         job.local_entity_type,
         job.local_entity_id
       );
-      const item = getItemById(job.local_entity_id);
+      const item = await getItemById(job.local_entity_id);
 
       if (!item || job.local_entity_type !== "item") {
-        deleteSyncOutboxJob(job.id);
+        await deleteSyncOutboxJob(job.id);
         continue;
       }
 
       const profile =
-        (job.profile_id ? getSyncProfileById(job.profile_id) : undefined)
-        ?? (link?.profile_id ? getSyncProfileById(link.profile_id) : undefined)
-        ?? (link?.remote_board_id ? getSyncProfileByBoard("kaiten", link.remote_board_id) : undefined)
-        ?? pickKaitenExportProfile(item, job.profile_id);
+        (job.profile_id ? await getSyncProfileById(job.profile_id) : undefined)
+        ?? (link?.profile_id ? await getSyncProfileById(link.profile_id) : undefined)
+        ?? (link?.remote_board_id ? await getSyncProfileByBoard("kaiten", link.remote_board_id) : undefined)
+        ?? await pickKaitenExportProfile(item, job.profile_id);
 
       if (!profile || !profile.export_enabled) {
-        deleteSyncOutboxJob(job.id);
+        await deleteSyncOutboxJob(job.id);
         continue;
       }
 
@@ -460,12 +460,12 @@ export async function runDueKaitenSync(options?: { force?: boolean }) {
           });
         }
         if (createdDescription !== item.description) {
-          updateItem(item.id, { description: createdDescription });
+          await updateItem(item.id, { description: createdDescription });
         }
 
-        await client.syncCardMembers(createdCardId, getItemParticipants(item.id));
+        await client.syncCardMembers(createdCardId, await getItemParticipants(item.id));
 
-        upsertExternalEntityLink({
+        await upsertExternalEntityLink({
           provider: "kaiten",
           profile_id: syncedProfile.id,
           local_entity_type: "item",
@@ -487,14 +487,14 @@ export async function runDueKaitenSync(options?: { force?: boolean }) {
           last_error: null,
         });
 
-        deleteSyncOutboxJob(job.id);
+        await deleteSyncOutboxJob(job.id);
         result.exported += 1;
         continue;
       }
 
       const remoteCardId = Number(link.remote_entity_id);
       if (!Number.isFinite(remoteCardId)) {
-        deleteSyncOutboxJob(job.id);
+        await deleteSyncOutboxJob(job.id);
         continue;
       }
 
@@ -512,7 +512,7 @@ export async function runDueKaitenSync(options?: { force?: boolean }) {
 
       if (remoteChanged && syncedProfile.remote_wins_on_conflict) {
         await applyRemoteCardToItem(remoteCardId, syncedProfile, item.id);
-        deleteSyncOutboxJob(job.id);
+        await deleteSyncOutboxJob(job.id);
         result.remote_overrides += 1;
         continue;
       }
@@ -540,9 +540,9 @@ export async function runDueKaitenSync(options?: { force?: boolean }) {
       }
 
       await client.updateCard(remoteCardId, updatePayload);
-      await client.syncCardMembers(remoteCardId, getItemParticipants(item.id));
+      await client.syncCardMembers(remoteCardId, await getItemParticipants(item.id));
       if (syncedDescription !== item.description) {
-        updateItem(item.id, { description: syncedDescription });
+        await updateItem(item.id, { description: syncedDescription });
       }
 
       // Sync archive state: local archived → archive in Kaiten, local active → unarchive in Kaiten
@@ -561,7 +561,7 @@ export async function runDueKaitenSync(options?: { force?: boolean }) {
             ? syncedCard.updated_at
             : nowIso();
 
-      upsertExternalEntityLink({
+      await upsertExternalEntityLink({
         provider: "kaiten",
         profile_id: syncedProfile.id,
         local_entity_type: "item",
@@ -578,11 +578,11 @@ export async function runDueKaitenSync(options?: { force?: boolean }) {
         last_error: null,
       });
 
-      deleteSyncOutboxJob(job.id);
+      await deleteSyncOutboxJob(job.id);
       result.exported += 1;
     } catch (error) {
       result.errors += 1;
-      markSyncOutboxError(
+      await markSyncOutboxError(
         job.id,
         addMinutes(new Date(), 10),
         error instanceof Error ? error.message : String(error)
@@ -593,14 +593,6 @@ export async function runDueKaitenSync(options?: { force?: boolean }) {
   return result;
 }
 
-export function ensureKaitenSyncScheduler() {
-  const globalState = globalThis as typeof globalThis & {
-    __secondBrainKaitenSyncInterval?: ReturnType<typeof setInterval>;
-  };
-
-  if (globalState.__secondBrainKaitenSyncInterval) return;
-
-  globalState.__secondBrainKaitenSyncInterval = setInterval(() => {
-    void runDueKaitenSync();
-  }, 5 * 60 * 1000);
-}
+// Scheduler moved to Vercel Cron. Kept as a no-op stub for backward compatibility
+// with any route handler still invoking it.
+export function ensureKaitenSyncScheduler() {}

@@ -7,7 +7,7 @@ type AuthenticatedHandler = (request: NextRequest, context: { params: Promise<Re
 
 export function withAuth(handler: AuthenticatedHandler, requiredRole?: UserRole): RouteHandler {
   return async (request, context) => {
-    const user = getAuthUser(request.headers);
+    const user = await getAuthUser();
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

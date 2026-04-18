@@ -15,31 +15,28 @@ import {
   getRelationTitlesBatch,
   getItemLinkedClientsBatch,
 } from "@/lib/db";
-import { ensureKaitenSyncScheduler } from "@/lib/kaiten/sync";
 
 export async function GET(req: NextRequest) {
-  ensureKaitenSyncScheduler();
-
   const showArchived = req.nextUrl.searchParams.get("archived") === "true";
   const includeChildren = req.nextUrl.searchParams.get("children") === "true";
 
-  const items = getAllItemsFull(showArchived, includeChildren);
-  const tags = getAllTags();
-  const categories = getAllCategories();
-  const clients = getAllClientsFull();
-  const clientStatuses = getAllClientStatuses();
-  const crmSystems = getAllCrmSystems();
-  const developmentStages = getAllDevelopmentStages();
-  const allParticipants = getAllDevelopmentParticipants();
-  const relationTypes = getAllRelationTypes();
-  const stagingItems = getAllStagingItems("pending");
+  const items = await getAllItemsFull(showArchived, includeChildren);
+  const tags = await getAllTags();
+  const categories = await getAllCategories();
+  const clients = await getAllClientsFull();
+  const clientStatuses = await getAllClientStatuses();
+  const crmSystems = await getAllCrmSystems();
+  const developmentStages = await getAllDevelopmentStages();
+  const allParticipants = await getAllDevelopmentParticipants();
+  const relationTypes = await getAllRelationTypes();
+  const stagingItems = await getAllStagingItems("pending");
 
-  const itemRelationCounts = getRelationCountsBatch("item");
-  const itemCommentCounts = getCommentCountsBatch("item");
-  const clientRelationCounts = getRelationCountsBatch("client");
-  const clientCommentCounts = getCommentCountsBatch("client");
-  const itemRelationTitles = getRelationTitlesBatch("item");
-  const itemLinkedClients = getItemLinkedClientsBatch();
+  const itemRelationCounts = await getRelationCountsBatch("item");
+  const itemCommentCounts = await getCommentCountsBatch("item");
+  const clientRelationCounts = await getRelationCountsBatch("client");
+  const clientCommentCounts = await getCommentCountsBatch("client");
+  const itemRelationTitles = await getRelationTitlesBatch("item");
+  const itemLinkedClients = await getItemLinkedClientsBatch();
 
   return NextResponse.json({
     items,

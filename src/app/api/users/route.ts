@@ -3,18 +3,18 @@ import { getAllUsers, upsertUser } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth";
 import type { UserRole } from "@/types";
 
-export async function GET(request: NextRequest) {
-  const user = getAuthUser(request.headers);
+export async function GET(_request: NextRequest) {
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const users = getAllUsers();
+  const users = await getAllUsers();
   return NextResponse.json(users);
 }
 
 export async function POST(request: NextRequest) {
-  const user = getAuthUser(request.headers);
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -30,6 +30,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Role must be 'admin' or 'manager'" }, { status: 400 });
   }
 
-  const created = upsertUser(email.toLowerCase().trim(), role || "manager", name);
+  const created = await upsertUser(email.toLowerCase().trim(), role || "manager", name);
   return NextResponse.json(created, { status: 201 });
 }

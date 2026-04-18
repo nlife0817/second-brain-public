@@ -1,57 +1,54 @@
 import { NextRequest, NextResponse } from "next/server";
 import { updateItem, deleteItem, getItemFull, setItemParticipants, setItemTags } from "@/lib/db";
 import { UpdateItemPayload } from "@/types";
-import { ensureKaitenSyncScheduler, queueKaitenItemSync } from "@/lib/kaiten/sync";
+import { queueKaitenItemSync } from "@/lib/kaiten/sync";
 import { getAuthUser } from "@/lib/auth";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  ensureKaitenSyncScheduler();
   const { id } = await params;
-  const item = getItemFull(id);
+  const item = await getItemFull(id);
   if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json(item);
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const user = getAuthUser(req.headers);
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   try {
-    ensureKaitenSyncScheduler();
     const { id } = await params;
     const body: UpdateItemPayload = await req.json();
     const hadParticipants = Array.isArray(body.participants);
 
     if (body.tags) {
-      setItemTags(id, body.tags);
+      await setItemTags(id, body.tags);
       delete body.tags;
     }
     if (body.participants) {
-      setItemParticipants(id, body.participants);
+      await setItemParticipants(id, body.participants);
       delete body.participants;
     }
 
-    const updated = updateItem(id, body);
+    const updated = await updateItem(id, body);
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
     if (hadParticipants || Object.keys(body).length > 0) {
-      queueKaitenItemSync(id);
+      await queueKaitenItemSync(id);
     }
 
-    return NextResponse.json(getItemFull(id));
+    return NextResponse.json(await getItemFull(id));
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const user = getAuthUser(req.headers);
+  const user = await getAuthUser();
   if (!user || user.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  ensureKaitenSyncScheduler();
   const { id } = await params;
-  const deleted = deleteItem(id);
+  const deleted = await deleteItem(id);
   if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

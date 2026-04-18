@@ -1,29 +1,54 @@
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
-
-const CF_EMAIL_HEADER = "cf-access-authenticated-user-email";
+import { NextResponse, type NextRequest } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 
 function isMobileUserAgent(ua: string): boolean {
   return /Mobile|Android|iPhone|iPad|iPod/i.test(ua);
 }
 
-export function middleware(request: NextRequest) {
+const PUBLIC_PATHS = ["/login", "/auth/callback"];
+
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  const cfEmail = request.headers.get(CF_EMAIL_HEADER);
-  const devEmail = process.env.DEV_AUTH_EMAIL;
+  let response = NextResponse.next({ request });
 
-  // Block access only when: no CF header AND no DEV_AUTH_EMAIL fallback
-  if (!cfEmail && !devEmail) {
-    return new NextResponse("Access denied — Cloudflare Access required", {
-      status: 401,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-    });
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+    ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+  const supabase = createServerClient(url, key, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        for (const { name, value } of cookiesToSet) {
+          request.cookies.set(name, value);
+        }
+        response = NextResponse.next({ request });
+        for (const { name, value, options } of cookiesToSet) {
+          response.cookies.set(name, value, options);
+        }
+      },
+    },
+  });
+
+  // Refresh session cookies.
+  const { data: { user } } = await supabase.auth.getUser();
+
+  const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+
+  if (!user && !isPublic) {
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = "/login";
+    loginUrl.searchParams.set("next", pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
-  // Mobile redirect for root path
+  // Mobile redirect for root path (only for authenticated users).
   const ua = request.headers.get("user-agent") ?? "";
   if (
+    user &&
     pathname === "/" &&
     isMobileUserAgent(ua) &&
     !request.nextUrl.searchParams.has("desktop")
@@ -31,12 +56,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/m/tasks", request.url));
   }
 
-  return NextResponse.next();
+  return response;
 }
 
 export const config = {
   matcher: [
-    // Match all routes except Next.js internals, static files, and API init
-    "/((?!_next|api/init|icons|favicon|manifest|sw\\.js).*)",
+    "/((?!_next|api/init|api/cron|icons|favicon|manifest|sw\\.js).*)",
   ],
 };
