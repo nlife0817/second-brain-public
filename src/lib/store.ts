@@ -60,6 +60,7 @@ interface BrainStore {
   editingField: string | null;
   cardVisibleFields: string[];
   listColumnOrder: string[];
+  listColumnWidths: Record<string, number>;
   savedFilters: SavedFilter[];
   activeFilterId: string | null;
   detailMode: "modal" | "panel";
@@ -97,6 +98,8 @@ interface BrainStore {
   setEditingItem: (id: string | null, field?: string | null) => void;
   setCardVisibleFields: (fields: string[]) => void;
   setListColumnOrder: (order: string[]) => void;
+  setListColumnWidths: (widths: Record<string, number>) => void;
+  setListColumnWidth: (colId: string, width: number) => void;
   saveFilter: (name: string) => void;
   loadFilter: (id: string) => void;
   updateFilter: (id: string) => void;
@@ -259,6 +262,7 @@ export const useBrainStore = create<BrainStore>()(
   editingField: null,
   cardVisibleFields: ["priority", "category", "due_date", "subtasks", "type"],
   listColumnOrder: ["title", "status", "category", "clients", "type", "due_date", "subtasks"],
+  listColumnWidths: {},
   savedFilters: [],
   activeFilterId: null,
   detailMode: "modal" as "modal" | "panel",
@@ -618,6 +622,9 @@ export const useBrainStore = create<BrainStore>()(
   setEditingItem: (editingItemId, field = null) => set({ editingItemId, editingField: field }),
   setCardVisibleFields: (cardVisibleFields) => set({ cardVisibleFields }),
   setListColumnOrder: (listColumnOrder) => set({ listColumnOrder }),
+  setListColumnWidths: (listColumnWidths) => set({ listColumnWidths }),
+  setListColumnWidth: (colId, width) =>
+    set((s) => ({ listColumnWidths: { ...s.listColumnWidths, [colId]: width } })),
   saveFilter: (name) => {
     const { filters, savedFilters } = get();
     const id = crypto.randomUUID();
@@ -1255,6 +1262,7 @@ export const useBrainStore = create<BrainStore>()(
       subtaskDisplayMode: state.subtaskDisplayMode,
       cardVisibleFields: state.cardVisibleFields,
       listColumnOrder: state.listColumnOrder,
+      listColumnWidths: state.listColumnWidths,
       savedFilters: state.savedFilters,
       activeFilterId: state.activeFilterId,
       detailMode: state.detailMode,

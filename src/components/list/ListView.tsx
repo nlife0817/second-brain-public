@@ -169,6 +169,24 @@ const DEFAULT_COLUMN_ORDER = [
 // Colored left border on the drag-handle cell serves as the priority indicator
 // since the dedicated column was removed. Rendering via the leftmost <td>
 // works reliably across browsers (unlike pseudo-elements on <tr>).
+// Default widths in px used when a column has no persisted user-resized width.
+// Title is flexible (auto) — the resize handle turns it into a fixed value.
+const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
+  title: 320,
+  status: 112,
+  category: 112,
+  clients: 144,
+  development_stage: 176,
+  participants: 176,
+  tags: 144,
+  type: 96,
+  due_date: 112,
+  subtasks: 88,
+};
+
+const COLUMN_MIN_WIDTH = 60;
+const COLUMN_MAX_WIDTH = 600;
+
 const PRIORITY_ACCENT_BORDER: Record<ItemPriority, string> = {
   urgent: "border-l-2 border-red-500",
   high: "border-l-2 border-orange-500",
@@ -624,7 +642,15 @@ function ColumnConfigPopoverContent({ onClose }: { onClose: () => void }) {
         className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-700 mt-2 px-1.5 py-0.5 rounded hover:bg-slate-50 w-full"
       >
         <RotateCcw className="size-2.5" />
-        Сбросить
+        Сбросить порядок
+      </button>
+      <button
+        type="button"
+        onClick={() => useBrainStore.getState().setListColumnWidths({})}
+        className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-700 px-1.5 py-0.5 rounded hover:bg-slate-50 w-full"
+      >
+        <RotateCcw className="size-2.5" />
+        Сбросить ширины колонок
       </button>
     </div>
   );
@@ -1320,6 +1346,8 @@ export function ListView() {
   const reorderItems = useBrainStore((s) => s.reorderItems);
   const listColumnOrder = useBrainStore((s) => s.listColumnOrder);
   const setListColumnOrder = useBrainStore((s) => s.setListColumnOrder);
+  const listColumnWidths = useBrainStore((s) => s.listColumnWidths);
+  const setListColumnWidth = useBrainStore((s) => s.setListColumnWidth);
   const listGroupBy = useBrainStore((s) => s.listGroupBy);
   const setListGroupBy = useBrainStore((s) => s.setListGroupBy);
   const listCollapsedGroupsArr = useBrainStore((s) => s.listCollapsedGroups);
@@ -1354,6 +1382,38 @@ export function ListView() {
     items: ItemWithSubtasks[];
   } | null>(null);
   const collapsedGroups = useMemo(() => new Set(listCollapsedGroupsArr), [listCollapsedGroupsArr]);
+
+  /* ----- Column width helpers / resize ------------------------------------ */
+  const colWidthFor = useCallback(
+    (id: string) => listColumnWidths[id] ?? DEFAULT_COLUMN_WIDTHS[id] ?? 120,
+    [listColumnWidths]
+  );
+
+  const startColumnResize = useCallback(
+    (colId: string, e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = colWidthFor(colId);
+      const onMove = (ev: PointerEvent) => {
+        const delta = ev.clientX - startX;
+        const next = Math.max(
+          COLUMN_MIN_WIDTH,
+          Math.min(COLUMN_MAX_WIDTH, Math.round(startWidth + delta))
+        );
+        setListColumnWidth(colId, next);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        document.body.style.cursor = "";
+      };
+      document.body.style.cursor = "col-resize";
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [colWidthFor, setListColumnWidth]
+  );
 
   /* ----- Quick search (title + description + tags + clients) -------------- */
   const [searchInput, setSearchInput] = useState("");
@@ -2376,7 +2436,18 @@ export function ListView() {
             items={allRowIds}
             strategy={verticalListSortingStrategy}
           >
-            <table className="w-full border-collapse bg-white border border-t-0 border-slate-200 rounded-b-lg">
+            <table
+              className="w-full border-collapse bg-white border border-t-0 border-slate-200 rounded-b-lg"
+              style={{ tableLayout: "fixed" }}
+            >
+              <colgroup>
+                <col style={{ width: 28 }} />
+                <col style={{ width: 32 }} />
+                <col style={{ width: 32 }} />
+                {visibleColumns.map((col) => (
+                  <col key={col.id} style={{ width: colWidthFor(col.id) }} />
+                ))}
+              </colgroup>
               {/* ---- Header ------------------------------------------- */}
               <thead className="sticky top-0 z-10">
                 <tr className="bg-slate-50 border-b border-slate-200">
@@ -2397,29 +2468,30 @@ export function ListView() {
                   </th>
 
                   {/* Dynamic columns */}
-                  {visibleColumns.map((col) =>
-                    col.sortable ? (
+                  {visibleColumns.map((col) => {
+                    const w = colWidthFor(col.id);
+                    return col.sortable ? (
                       <SortableHeader
                         key={col.id}
                         label={col.label}
                         column={col.id as SortColumn}
                         current={sort}
                         onToggle={toggleSort}
-                        className={col.width}
+                        width={w}
                         isManualOrder={manualOrder}
+                        onResizeStart={(e) => startColumnResize(col.id, e)}
                       />
                     ) : (
                       <th
                         key={col.id}
-                        className={cn(
-                          col.width,
-                          "px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500"
-                        )}
+                        style={{ width: w, minWidth: w, maxWidth: w }}
+                        className="relative px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500"
                       >
                         {col.label}
+                        <ColumnResizeHandle onPointerDown={(e) => startColumnResize(col.id, e)} />
                       </th>
-                    )
-                  )}
+                    );
+                  })}
 
                 </tr>
               </thead>
@@ -2641,20 +2713,25 @@ function SortableHeader({
   column,
   current,
   onToggle,
-  className,
+  width,
   isManualOrder,
+  onResizeStart,
 }: {
   label: string;
   column: SortColumn;
   current: SortState;
   onToggle: (col: SortColumn) => void;
-  className?: string;
+  width: number;
   isManualOrder: boolean;
+  onResizeStart: (e: React.PointerEvent) => void;
 }) {
   const isActive = !isManualOrder && current.column === column;
 
   return (
-    <th className={cn("px-3 py-2 text-left", className)}>
+    <th
+      style={{ width, minWidth: width, maxWidth: width }}
+      className="relative px-3 py-2 text-left"
+    >
       <button
         type="button"
         onClick={() => onToggle(column)}
@@ -2676,7 +2753,25 @@ function SortableHeader({
           <ArrowUpDown className="size-3 opacity-40" />
         )}
       </button>
+      <ColumnResizeHandle onPointerDown={onResizeStart} />
     </th>
+  );
+}
+
+function ColumnResizeHandle({
+  onPointerDown,
+}: {
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      onClick={(e) => e.stopPropagation()}
+      className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize select-none group/resize"
+      title="Тянуть для изменения ширины"
+    >
+      <div className="absolute right-0 top-0 bottom-0 w-px bg-transparent group-hover/resize:bg-blue-400 transition-colors" />
+    </div>
   );
 }
 
