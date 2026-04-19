@@ -63,6 +63,7 @@ import {
   Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
 
 function SourceIcon({ source }: { source: string }) {
   if (source === "kaiten") return <span title="Кайтен" className="mr-1 inline-flex size-4 items-center justify-center rounded bg-red-50 text-[10px] font-semibold text-red-600">К</span>;
@@ -753,6 +754,12 @@ function InlineTagsCell({
   const allTags = useBrainStore((s) => s.tags);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set(selectedTagIds));
+  const [query, setQuery] = useState("");
+  const filteredTags = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allTags;
+    return allTags.filter((t) => t.name.toLowerCase().includes(q));
+  }, [allTags, query]);
 
   useLayoutEffect(() => {
     const anchor = anchorRef?.current;
@@ -786,7 +793,7 @@ function InlineTagsCell({
     return () => document.removeEventListener("keydown", handler);
   }, [onCancel]);
 
-  if (!pos || allTags.length === 0) return null;
+  if (!pos) return null;
 
   const openUp = pos.top > window.innerHeight / 2;
 
@@ -809,219 +816,51 @@ function InlineTagsCell({
         left: pos.left,
         zIndex: 9999,
       }}
-      className="min-w-[160px] max-h-[220px] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
+      className="min-w-[200px] max-h-[260px] rounded-lg border border-slate-200 bg-white py-1 shadow-xl flex flex-col"
       onClick={(e) => e.stopPropagation()}
     >
-      {allTags.map((tag) => (
-        <button
-          key={tag.id}
-          onClick={(e) => {
-            e.stopPropagation();
-            toggle(tag.id);
-          }}
-          className={cn(
-            "flex w-full items-center gap-2 px-3 py-1 text-[11px] hover:bg-slate-50 text-left",
-            selected.has(tag.id) && "bg-violet-50"
-          )}
-        >
-          <span
-            className="size-2.5 rounded-full shrink-0"
-            style={{ backgroundColor: tag.color }}
+      <div className="px-2 pt-1 pb-1 border-b border-slate-100">
+        <div className="relative">
+          <Search className="absolute left-1.5 top-1/2 -translate-y-1/2 size-3 text-slate-400 pointer-events-none" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
+            placeholder="Поиск тегов…"
+            className="w-full h-6 pl-6 pr-1.5 text-[11px] rounded border border-slate-200 bg-white placeholder:text-slate-400 outline-none focus:border-blue-400"
           />
-          <span className="flex-1 truncate">{tag.name}</span>
-          {selected.has(tag.id) && (
-            <Check className="size-3 text-violet-600 shrink-0" />
-          )}
-        </button>
-      ))}
-    </div>,
-    document.body
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Inline edit cell for date field (portal-based)                            */
-/* -------------------------------------------------------------------------- */
-
-function InlineDateCell({
-  dateValue,
-  timeValue,
-  onCommit,
-  onCancel,
-  anchorRef,
-}: {
-  dateValue: string;
-  timeValue: string;
-  onCommit: (val: { date: string | null; time: string | null }) => void;
-  onCancel: () => void;
-  anchorRef?: React.RefObject<HTMLElement | null>;
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const [localDate, setLocalDate] = useState(dateValue);
-  const [localTime, setLocalTime] = useState(timeValue);
-  const localDateRef = useRef(dateValue);
-  const localTimeRef = useRef(timeValue);
-  const committedRef = useRef(false);
-  const initialDateRef = useRef(dateValue);
-  const initialTimeRef = useRef(timeValue);
-
-  useLayoutEffect(() => {
-    const anchor = anchorRef?.current;
-    if (anchor) {
-      const rect = anchor.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setPos({ top, left: rect.left });
-    }
-  }, [anchorRef]);
-
-  useEffect(() => {
-    if (!pos) return;
-    const el = inputRef.current;
-    if (el) {
-      el.focus();
-      try {
-        el.showPicker();
-      } catch {
-        // showPicker may fail in some browsers
-      }
-    }
-  }, [pos]);
-
-  const finish = useCallback(
-    (cleared?: boolean) => {
-      if (committedRef.current) return;
-      committedRef.current = true;
-      if (cleared) {
-        onCommit({ date: null, time: null });
-        return;
-      }
-      const curDate = localDateRef.current || null;
-      const curTime = /^\d{2}:\d{2}$/.test(localTimeRef.current) ? localTimeRef.current : null;
-      const origDate = initialDateRef.current || null;
-      const origTime = initialTimeRef.current || null;
-      if (curDate !== origDate || curTime !== origTime) {
-        onCommit({ date: curDate, time: curDate ? curTime : null });
-      } else {
-        onCancel();
-      }
-    },
-    [onCommit, onCancel]
-  );
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
-      )
-        finish();
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [finish]);
-
-  useEffect(() => {
-    function handler(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCancel();
-      }
-    }
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onCancel]);
-
-  if (!pos) return null;
-
-  const openUp = pos.top > window.innerHeight / 2;
-
-  return createPortal(
-    <div
-      ref={containerRef}
-      style={{
-        position: "fixed",
-        top: openUp ? undefined : pos.top,
-        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
-        left: pos.left,
-        zIndex: 9999,
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-white p-1 shadow-md">
-        <input
-          ref={inputRef}
-          type="date"
-          value={localDate}
-          onChange={(e) => {
-            const v = e.target.value;
-            localDateRef.current = v;
-            setLocalDate(v);
-            // If user cleared the date entirely — also clear time.
-            if (!v) {
-              localTimeRef.current = "";
-              setLocalTime("");
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              onCancel();
-            } else if (e.key === "Enter") {
-              e.preventDefault();
-              finish();
-            }
-          }}
-          className="h-6 rounded border border-slate-200 bg-white px-1.5 text-[10px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
-          onClick={(e) => e.stopPropagation()}
-        />
-        <input
-          type="time"
-          value={localTime}
-          disabled={!localDate}
-          onChange={(e) => {
-            const v = e.target.value;
-            localTimeRef.current = v;
-            setLocalTime(v);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              onCancel();
-            } else if (e.key === "Enter") {
-              e.preventDefault();
-              finish();
-            }
-          }}
-          className="h-6 rounded border border-slate-200 bg-white px-1.5 text-[10px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300 disabled:cursor-not-allowed disabled:bg-slate-50"
-          onClick={(e) => e.stopPropagation()}
-          placeholder="—:—"
-        />
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            finish(true);
-          }}
-          className="h-6 rounded px-1 text-[10px] text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-          title="Убрать срок"
-        >
-          ✕
-        </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            finish();
-          }}
-          className="h-6 rounded px-1.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50"
-          title="Применить"
-        >
-          OK
-        </button>
+        </div>
+      </div>
+      <div className="overflow-y-auto flex-1">
+        {filteredTags.length === 0 ? (
+          <div className="px-3 py-2 text-[11px] text-slate-400 text-center">
+            Ничего не найдено
+          </div>
+        ) : (
+          filteredTags.map((tag) => (
+            <button
+              key={tag.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggle(tag.id);
+              }}
+              className={cn(
+                "flex w-full items-center gap-2 px-3 py-1 text-[11px] hover:bg-slate-50 text-left",
+                selected.has(tag.id) && "bg-violet-50"
+              )}
+            >
+              <span
+                className="size-2.5 rounded-full shrink-0"
+                style={{ backgroundColor: tag.color }}
+              />
+              <span className="flex-1 truncate">{tag.name}</span>
+              {selected.has(tag.id) && (
+                <Check className="size-3 text-violet-600 shrink-0" />
+              )}
+            </button>
+          ))
+        )}
       </div>
     </div>,
     document.body
@@ -2307,17 +2146,15 @@ export function ListView() {
 
       case "due_date": {
         return (
-          <td key={colId} className="px-3 py-1.5">
-            <input
-              type="date"
-              value={newItem.due_date}
-              onChange={(e) =>
-                setNewItem((prev) => ({
-                  ...prev,
-                  due_date: e.target.value,
-                }))
+          <td key={colId} className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
+            <DateTimePicker
+              value={{ date: newItem.due_date || null, time: null }}
+              onChange={({ date }) =>
+                setNewItem((prev) => ({ ...prev, due_date: date ?? "" }))
               }
-              className="h-5 rounded border border-slate-200 bg-white px-1 text-[10px] text-slate-600 outline-none focus:border-blue-400"
+              size="xs"
+              compact
+              placeholder="—"
             />
           </td>
         );
@@ -3174,17 +3011,19 @@ const ItemRowGroup = memo(function ItemRowGroup({
 
                   case "due_date":
                     return (
-                      <td key={col.id} className="px-3 py-1">
-                        <input
-                          type="date"
-                          value={newSubtask.due_date}
-                          onChange={(e) =>
-                            setNewSubtask((prev) => ({
-                              ...prev,
-                              due_date: e.target.value,
-                            }))
+                      <td
+                        key={col.id}
+                        className="px-3 py-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <DateTimePicker
+                          value={{ date: newSubtask.due_date || null, time: null }}
+                          onChange={({ date }) =>
+                            setNewSubtask((prev) => ({ ...prev, due_date: date ?? "" }))
                           }
-                          className="h-5 rounded border border-slate-200 bg-white px-1 text-[10px] text-slate-600 outline-none focus:border-blue-400"
+                          size="xs"
+                          compact
+                          placeholder="—"
                         />
                       </td>
                     );
@@ -3658,45 +3497,18 @@ const ItemRow = memo(function ItemRow({
         return (
           <td
             key={colId}
-            ref={(el) => {
-              cellRefs.current["due_date"] = el;
-            }}
-            className={EDITABLE_CELL_CLS}
-            onClick={(e) => handleCellClick("due_date", e)}
+            className="relative px-3 py-1.5"
+            onClick={(e) => e.stopPropagation()}
           >
-            {dueDate ? (
-              <div
-                className={cn(
-                  "flex items-center gap-1 text-xs",
-                  isOverdue ? "text-red-500 font-medium" : "text-slate-600"
-                )}
-              >
-                {isOverdue && (
-                  <AlertCircle className="size-3 shrink-0" />
-                )}
-                {!isOverdue && (
-                  <Calendar className="size-3 shrink-0 text-slate-400" />
-                )}
-                <span>
-                  {format(dueDate, "d MMM", { locale: ru })}
-                  {item.due_time && <span className="ml-0.5">· {item.due_time}</span>}
-                </span>
-              </div>
-            ) : (
-              <span className="text-xs text-slate-300">--</span>
-            )}
-            {editingField === "due_date" && (
-              <InlineDateCell
-                dateValue={item.due_date ?? ""}
-                timeValue={item.due_time ?? ""}
-                onCommit={async ({ date, time }) => {
-                  await updateItem(item.id, { due_date: date, due_time: time });
-                  setEditingItem(null);
-                }}
-                onCancel={cancelEdit}
-                anchorRef={{ current: cellRefs.current["due_date"] }}
-              />
-            )}
+            <DateTimePicker
+              value={{ date: item.due_date, time: item.due_time ?? null }}
+              onChange={({ date, time }) => {
+                void updateItem(item.id, { due_date: date, due_time: time });
+              }}
+              size="xs"
+              compact
+              placeholder="—"
+            />
           </td>
         );
       }
