@@ -6,7 +6,10 @@ import { sendPushToEmail } from "@/lib/notifications/push";
 
 function isAuthorized(req: NextRequest): boolean {
   const expected = process.env.CRON_SECRET;
-  if (!expected) return true;
+  if (!expected) {
+    console.error("[notifications/dispatch] CRON_SECRET is not configured — denying request");
+    return false;
+  }
   return req.headers.get("authorization") === `Bearer ${expected}`;
 }
 
@@ -82,7 +85,9 @@ async function dispatchOverdueHour() {
       const deadline = parseDue(item.due_date, item.due_time, user.timezone);
       if (!deadline) continue;
       const diffMin = (deadline.getTime() - now.getTime()) / 60000;
-      if (diffMin < 55 || diffMin > 65) continue;
+      // Окно расширено до 50–70 мин, чтобы пережить jitter pg_net + cold start Vercel.
+      // Дубли исключены через notifications_log (UNIQUE на type, target_id, user_email).
+      if (diffMin < 50 || diffMin > 70) continue;
 
       if (!(await logSent("overdue_hour", item.id, user.email))) {
         skipped.push(item.id);
@@ -99,6 +104,7 @@ async function dispatchOverdueHour() {
       sent += result.sent;
     }
   }
+  console.log("[dispatch] type=overdue_hour users=%d sent=%d skipped=%d", users.length, sent, skipped.length);
   return { type: "overdue_hour", sent, skipped };
 }
 
@@ -136,6 +142,7 @@ async function dispatchDateOnlyMorning() {
       sent += result.sent;
     }
   }
+  console.log("[dispatch] type=date_only_morning users=%d sent=%d skipped=%d", users.length, sent, skipped.length);
   return { type: "date_only_morning", sent, skipped };
 }
 
@@ -220,6 +227,7 @@ async function dispatchDailySummary() {
     summaries.push({ email: user.email, text: body });
   }
 
+  console.log("[dispatch] type=daily_summary users=%d sent=%d", users.length, sent);
   return { type: "daily_summary", sent, summaries };
 }
 

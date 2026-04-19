@@ -14,6 +14,16 @@ export async function POST() {
       url: "/",
       tag: "test",
     });
+    if (result.sent === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "У тебя нет активных push-подписок. Включи уведомления заново через переключатель — старая подписка могла стать невалидной.",
+          ...result,
+        },
+        { status: 400 }
+      );
+    }
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     console.error("[push/test] error:", e);
