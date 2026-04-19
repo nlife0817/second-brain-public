@@ -92,6 +92,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         source,
         development_stage: parsed.development_stage ?? null,
         due_date: parsed.due_date ?? null,
+        due_time: null,
         position: 0,
         parent_id: parsed.parent_id ?? null,
       });
@@ -120,6 +121,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             source,
             development_stage: parsed.development_stage ?? null,
             due_date: null,
+            due_time: null,
             position: i,
             parent_id: itemId,
           });

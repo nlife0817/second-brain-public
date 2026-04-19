@@ -75,6 +75,7 @@ export interface Item {
   source: ItemSource;
   development_stage: string | null;
   due_date: string | null;
+  due_time: string | null;
   position: number;
   parent_id: string | null;
   created_at: string;
@@ -109,6 +110,7 @@ export interface CreateItemPayload {
   source?: ItemSource;
   development_stage?: string | null;
   due_date?: string | null;
+  due_time?: string | null;
   parent_id?: string | null;
   tags?: string[];
   participants?: DevelopmentParticipantInput[];
@@ -124,6 +126,7 @@ export interface UpdateItemPayload {
   source?: ItemSource;
   development_stage?: string | null;
   due_date?: string | null;
+  due_time?: string | null;
   position?: number;
   parent_id?: string | null;
   tags?: string[];

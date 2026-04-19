@@ -65,6 +65,7 @@ export function CreateTaskDialog() {
     []
   );
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
+  const [dueTime, setDueTime] = useState<string>("");
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const categoryConfig = useCategoryConfig();
   const storeCategories = useBrainStore((s) => s.categories);
@@ -88,6 +89,7 @@ export function CreateTaskDialog() {
       setDueDate(
         createDefaults.due_date ? new Date(createDefaults.due_date) : undefined
       );
+      setDueTime(createDefaults.due_time ?? "");
     }
   }, [isCreateOpen, createDefaults]);
 
@@ -106,7 +108,8 @@ export function CreateTaskDialog() {
         category,
         development_stage:
           category === "development" ? developmentStage ?? null : null,
-        due_date: dueDate ? dueDate.toISOString() : null,
+        due_date: dueDate ? dueDate.toISOString().slice(0, 10) : null,
+        due_time: dueDate && /^\d{2}:\d{2}$/.test(dueTime) ? dueTime : null,
         participants: category === "development" ? participants : [],
       });
       closeCreate();
@@ -122,6 +125,7 @@ export function CreateTaskDialog() {
     category,
     developmentStage,
     dueDate,
+    dueTime,
     isSubmitting,
     participants,
     createItem,
@@ -135,6 +139,7 @@ export function CreateTaskDialog() {
 
   const handleClearDate = useCallback(() => {
     setDueDate(undefined);
+    setDueTime("");
     setDatePickerOpen(false);
   }, []);
 
@@ -341,45 +346,57 @@ export function CreateTaskDialog() {
             </div>
           )}
 
-          {/* Due date */}
-          <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
-            <PopoverTrigger
-              render={
-                <button
-                  className={cn(
-                    "inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900 transition-colors hover:bg-slate-50",
-                    !dueDate && "text-slate-500"
-                  )}
-                  type="button"
+          {/* Due date + time */}
+          <div className="flex items-center gap-2">
+            <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+              <PopoverTrigger
+                render={
+                  <button
+                    className={cn(
+                      "inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900 transition-colors hover:bg-slate-50",
+                      !dueDate && "text-slate-500"
+                    )}
+                    type="button"
+                  />
+                }
+              >
+                <CalendarIcon className="size-3.5" />
+                {dueDate
+                  ? format(dueDate, "d MMM yyyy", { locale: ru })
+                  : "Добавить срок"}
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-auto border-slate-200 bg-white p-0">
+                <Calendar
+                  mode="single"
+                  selected={dueDate}
+                  onSelect={handleDateSelect}
+                  locale={ru}
                 />
-              }
-            >
-              <CalendarIcon className="size-3.5" />
-              {dueDate
-                ? format(dueDate, "d MMM yyyy", { locale: ru })
-                : "Добавить срок"}
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-auto border-slate-200 bg-white p-0">
-              <Calendar
-                mode="single"
-                selected={dueDate}
-                onSelect={handleDateSelect}
-                locale={ru}
+                {dueDate && (
+                  <div className="border-t border-slate-200 px-3 py-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-slate-500 hover:text-slate-900"
+                      onClick={handleClearDate}
+                    >
+                      Убрать срок
+                    </Button>
+                  </div>
+                )}
+              </PopoverContent>
+            </Popover>
+
+            {dueDate && (
+              <input
+                type="time"
+                value={dueTime}
+                onChange={(e) => setDueTime(e.target.value)}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 hover:bg-slate-50 focus:outline-none focus:border-slate-300"
+                title="Время дедлайна (опционально)"
               />
-              {dueDate && (
-                <div className="border-t border-slate-200 px-3 py-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full text-slate-500 hover:text-slate-900"
-                    onClick={handleClearDate}
-                  >
-                    Убрать срок
-                  </Button>
-                </div>
-              )}
-            </PopoverContent>
-          </Popover>
+            )}
+          </div>
 
           {/* Description */}
           <Textarea
