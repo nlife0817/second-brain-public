@@ -256,7 +256,7 @@ export const useBrainStore = create<BrainStore>()(
   editingItemId: null,
   editingField: null,
   cardVisibleFields: ["priority", "category", "due_date", "subtasks", "type"],
-  listColumnOrder: ["priority", "title", "status", "category", "clients", "type", "due_date", "subtasks"],
+  listColumnOrder: ["title", "status", "category", "clients", "type", "due_date", "subtasks"],
   savedFilters: [],
   activeFilterId: null,
   detailMode: "modal" as "modal" | "panel",
@@ -1200,7 +1200,7 @@ export const useBrainStore = create<BrainStore>()(
 }),
   {
     name: "second-brain-settings",
-    version: 3,
+    version: 4,
     storage: createJSONStorage(() => localStorage),
     migrate: (persisted: unknown, version: number) => {
       const state = persisted as Record<string, unknown> | null;
@@ -1213,6 +1213,15 @@ export const useBrainStore = create<BrainStore>()(
             filtered.splice(catIdx >= 0 ? catIdx + 1 : 2, 0, "clients");
           }
           state.listColumnOrder = filtered;
+        }
+      }
+      if (state && version < 4) {
+        // Priority is now rendered as a colored left accent border on the row
+        // instead of a dedicated column. Drop the stored column so nobody sees
+        // a duplicate indicator.
+        const cols = state.listColumnOrder as string[] | undefined;
+        if (cols) {
+          state.listColumnOrder = cols.filter((c) => c !== "priority");
         }
       }
       return state;

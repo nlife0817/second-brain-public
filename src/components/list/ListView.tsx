@@ -121,8 +121,10 @@ interface ColumnDef {
   sortable: boolean;
 }
 
+// Priority is rendered as a colored left accent border on the row (see
+// PRIORITY_ACCENT below) instead of a dedicated column. Sorting by priority
+// is still available via header click / sort popover.
 const ALL_COLUMNS: ColumnDef[] = [
-  { id: "priority", label: "Приоритет", width: "w-20", sortable: true },
   { id: "title", label: "Название", width: "min-w-[250px] flex-1", sortable: true },
   { id: "status", label: "Статус", width: "w-28", sortable: true },
   { id: "category", label: "Категория", width: "w-28", sortable: true },
@@ -136,7 +138,6 @@ const ALL_COLUMNS: ColumnDef[] = [
 ];
 
 const DEFAULT_COLUMN_ORDER = [
-  "priority",
   "title",
   "status",
   "category",
@@ -145,6 +146,17 @@ const DEFAULT_COLUMN_ORDER = [
   "due_date",
   "subtasks",
 ];
+
+// Colored left border on the drag-handle cell serves as the priority indicator
+// since the dedicated column was removed. Rendering via the leftmost <td>
+// works reliably across browsers (unlike pseudo-elements on <tr>).
+const PRIORITY_ACCENT_BORDER: Record<ItemPriority, string> = {
+  urgent: "border-l-2 border-red-500",
+  high: "border-l-2 border-orange-500",
+  medium: "border-l-2 border-yellow-500",
+  low: "border-l-2 border-blue-300",
+  none: "border-l-2 border-transparent",
+};
 
 /* -------------------------------------------------------------------------- */
 /*  Priority / status sort weight (lower = more urgent)                       */
@@ -2083,40 +2095,6 @@ export function ListView() {
 
   const renderCreateCell = (colId: string) => {
     switch (colId) {
-      case "priority": {
-        const cfg = PRIORITY_CONFIG[newItem.priority];
-        return (
-          <td
-            key={colId}
-            ref={(el) => {
-              createCellRefs.current["priority"] = el;
-            }}
-            className="relative px-3 py-1.5 cursor-pointer"
-            onClick={(e) => {
-              e.stopPropagation();
-              setCreateDropdown(
-                createDropdown === "priority" ? null : "priority"
-              );
-            }}
-          >
-            <span className="text-xs leading-none">{cfg.icon}</span>
-            {createDropdown === "priority" && (
-              <CreationSelectDropdown
-                value={newItem.priority}
-                options={priorityOptions}
-                onSelect={(val) =>
-                  setNewItem((prev) => ({ ...prev, priority: val }))
-                }
-                anchorRef={{
-                  current: createCellRefs.current["priority"],
-                }}
-                onClose={() => setCreateDropdown(null)}
-              />
-            )}
-          </td>
-        );
-      }
-
       case "title":
         return (
           <td key={colId} className="px-3 py-1.5">
@@ -3410,34 +3388,6 @@ const ItemRow = memo(function ItemRow({
 
   const renderCell = (colId: string) => {
     switch (colId) {
-      case "priority": {
-        return (
-          <td
-            key={colId}
-            ref={(el) => {
-              cellRefs.current["priority"] = el;
-            }}
-            className={EDITABLE_CELL_CLS}
-            onClick={(e) => handleCellClick("priority", e)}
-          >
-            {!isSubtask && (
-              <div className="flex items-center gap-1">
-                <span className="text-xs leading-none">{priorityCfg.icon}</span>
-              </div>
-            )}
-            {editingField === "priority" && (
-              <InlineSelectCell
-                value={item.priority as ItemPriority}
-                options={priorityOptions}
-                onCommit={(val) => commitFieldEdit("priority", val)}
-                onCancel={cancelEdit}
-                anchorRef={{ current: cellRefs.current["priority"] }}
-              />
-            )}
-          </td>
-        );
-      }
-
       case "title": {
         return (
           <td
@@ -3784,17 +3734,33 @@ const ItemRow = memo(function ItemRow({
 
   /* ----- Render ----------------------------------------------------------- */
 
+  const priorityBorderCls = !isSubtask
+    ? PRIORITY_ACCENT_BORDER[item.priority as ItemPriority] ?? "border-l-2 border-transparent"
+    : "border-l-2 border-transparent";
+
   return (
     <tr ref={setNodeRef} style={sortableStyle} className={rowCls}>
-      {/* Drag handle */}
+      {/* Drag handle + priority accent border */}
       <td
-        className="px-1 py-1.5 text-center"
-        onClick={(e) => e.stopPropagation()}
+        className={cn("px-1 py-1.5 text-center cursor-pointer", priorityBorderCls)}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!isSubtask) setEditingItem(item.id, "priority");
+        }}
+        title={
+          isSubtask
+            ? undefined
+            : `Приоритет: ${PRIORITY_CONFIG[item.priority as ItemPriority]?.label ?? item.priority}`
+        }
+        ref={(el) => {
+          cellRefs.current["priority"] = el;
+        }}
       >
         <button
           type="button"
+          onClick={(e) => e.stopPropagation()}
           className={cn(
-            "inline-flex items-center justify-center size-5 rounded hover:bg-slate-200/70 transition-colors text-slate-400 cursor-grab opacity-0 group-hover:opacity-100",
+            "inline-flex items-center justify-center size-5 rounded hover:bg-slate-200/70 transition-colors text-slate-400 cursor-grab opacity-0 group-hover:opacity-100 relative z-[1]",
             isSubtask && "ml-3"
           )}
           {...attributes}
@@ -3802,6 +3768,15 @@ const ItemRow = memo(function ItemRow({
         >
           <GripVertical className="size-3.5" />
         </button>
+        {editingField === "priority" && !isSubtask && (
+          <InlineSelectCell
+            value={item.priority as ItemPriority}
+            options={priorityOptions}
+            onCommit={(val) => commitFieldEdit("priority", val)}
+            onCancel={cancelEdit}
+            anchorRef={{ current: cellRefs.current["priority"] }}
+          />
+        )}
       </td>
 
       {/* Expand / collapse chevron */}
