@@ -33,7 +33,11 @@ export async function enablePushNotifications(): Promise<void> {
     throw new Error("Push API не поддерживается браузером");
   }
   const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-  if (!publicKey) throw new Error("VAPID public key не настроен");
+  if (!publicKey) {
+    throw new Error(
+      "NEXT_PUBLIC_VAPID_PUBLIC_KEY не определён в build. Добавь переменную в Vercel → Settings → Environment Variables и сделай redeploy."
+    );
+  }
 
   const permission = await Notification.requestPermission();
   if (permission !== "granted") {

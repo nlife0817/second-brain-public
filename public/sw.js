@@ -1,5 +1,5 @@
-const CACHE_NAME = "second-brain-v1";
-const STATIC_ASSETS = ["/", "/icons/icon-192.png", "/icons/icon-512.png"];
+const CACHE_NAME = "second-brain-v2";
+const STATIC_ASSETS = ["/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -28,10 +28,17 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.startsWith("/api/")) return;
   if (url.pathname.startsWith("/_next/")) return;
 
+  // Navigation requests (HTML documents) — always network-first.
+  // Cached HTML после деплоя приводит к рассинхрону bundle и UI; в кеш кладём
+  // только статические ассеты. При offline отдаём fallback из кеша если есть.
+  if (request.mode === "navigate") {
+    event.respondWith(fetch(request).catch(() => caches.match(request)));
+    return;
+  }
+
   event.respondWith(
     fetch(request)
       .then((response) => {
-        // Cache successful responses for static assets
         if (response.ok && url.pathname.match(/\.(js|css|png|svg|woff2?)$/)) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));

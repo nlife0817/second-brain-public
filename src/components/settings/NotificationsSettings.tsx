@@ -119,11 +119,29 @@ export function NotificationsSettings() {
             )}
           </div>
 
+          {state.permission === "denied" && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+              Браузер заблокировал уведомления для этого сайта. Открой настройки сайта в браузере,
+              разреши уведомления вручную и перезагрузи страницу.
+            </p>
+          )}
+
           <ul className="text-xs text-slate-500 space-y-1 pt-1">
             <li>• За 1 час до дедлайна (если у задачи указано время).</li>
-            <li>• В 09:00 НСК в день дедлайна (для задач без времени).</li>
+            <li>• В 10:00 НСК в день дедлайна (для задач без времени).</li>
             <li>• В 21:00 НСК — сводка на завтра + просрочки.</li>
           </ul>
+
+          <div className="pt-1">
+            <a
+              href="/api/notifications/debug"
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-slate-500 underline hover:text-slate-700"
+            >
+              Диагностика подписки →
+            </a>
+          </div>
         </>
       )}
 
