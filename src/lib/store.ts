@@ -60,6 +60,7 @@ interface BrainStore {
   editingField: string | null;
   cardVisibleFields: string[];
   listColumnOrder: string[];
+  listColumnWidths: Record<string, number>;
   savedFilters: SavedFilter[];
   activeFilterId: string | null;
   detailMode: "modal" | "panel";
@@ -75,6 +76,8 @@ interface BrainStore {
   createItem: (payload: CreateItemPayload) => Promise<ItemWithSubtasks>;
   updateItem: (id: string, payload: UpdateItemPayload) => Promise<void>;
   deleteItem: (id: string) => Promise<void>;
+  removeItemsLocal: (ids: string[]) => void;
+  restoreItemsLocal: (items: ItemWithSubtasks[]) => void;
   reorderItems: (items: { id: string; position: number; status?: string }[]) => Promise<void>;
   createTag: (name: string, color?: string) => Promise<Tag>;
   updateTag: (id: string, updates: Partial<Tag>) => Promise<void>;
@@ -95,6 +98,8 @@ interface BrainStore {
   setEditingItem: (id: string | null, field?: string | null) => void;
   setCardVisibleFields: (fields: string[]) => void;
   setListColumnOrder: (order: string[]) => void;
+  setListColumnWidths: (widths: Record<string, number>) => void;
+  setListColumnWidth: (colId: string, width: number) => void;
   saveFilter: (name: string) => void;
   loadFilter: (id: string) => void;
   updateFilter: (id: string) => void;
@@ -256,7 +261,8 @@ export const useBrainStore = create<BrainStore>()(
   editingItemId: null,
   editingField: null,
   cardVisibleFields: ["priority", "category", "due_date", "subtasks", "type"],
-  listColumnOrder: ["priority", "title", "status", "category", "clients", "type", "due_date", "subtasks"],
+  listColumnOrder: ["title", "status", "category", "clients", "type", "due_date", "subtasks"],
+  listColumnWidths: {},
   savedFilters: [],
   activeFilterId: null,
   detailMode: "modal" as "modal" | "panel",
@@ -501,6 +507,24 @@ export const useBrainStore = create<BrainStore>()(
     }));
   },
 
+  removeItemsLocal: (ids) => {
+    const set_ = new Set(ids);
+    set((s) => ({
+      items: s.items.filter((i) => !set_.has(i.id)),
+      isDetailOpen: s.selectedItemId && set_.has(s.selectedItemId) ? false : s.isDetailOpen,
+      selectedItemId: s.selectedItemId && set_.has(s.selectedItemId) ? null : s.selectedItemId,
+    }));
+  },
+
+  restoreItemsLocal: (items) => {
+    set((s) => {
+      const existing = new Set(s.items.map((i) => i.id));
+      const toAdd = items.filter((i) => !existing.has(i.id));
+      if (toAdd.length === 0) return s;
+      return { items: [...s.items, ...toAdd] };
+    });
+  },
+
   reorderItems: async (updates) => {
     // Optimistic update: apply new positions/statuses immediately
     const posMap = new Map(updates.map((u: { id: string; position: number; status?: string }) => [u.id, u]));
@@ -598,6 +622,9 @@ export const useBrainStore = create<BrainStore>()(
   setEditingItem: (editingItemId, field = null) => set({ editingItemId, editingField: field }),
   setCardVisibleFields: (cardVisibleFields) => set({ cardVisibleFields }),
   setListColumnOrder: (listColumnOrder) => set({ listColumnOrder }),
+  setListColumnWidths: (listColumnWidths) => set({ listColumnWidths }),
+  setListColumnWidth: (colId, width) =>
+    set((s) => ({ listColumnWidths: { ...s.listColumnWidths, [colId]: width } })),
   saveFilter: (name) => {
     const { filters, savedFilters } = get();
     const id = crypto.randomUUID();
@@ -1200,7 +1227,7 @@ export const useBrainStore = create<BrainStore>()(
 }),
   {
     name: "second-brain-settings",
-    version: 3,
+    version: 4,
     storage: createJSONStorage(() => localStorage),
     migrate: (persisted: unknown, version: number) => {
       const state = persisted as Record<string, unknown> | null;
@@ -1215,6 +1242,15 @@ export const useBrainStore = create<BrainStore>()(
           state.listColumnOrder = filtered;
         }
       }
+      if (state && version < 4) {
+        // Priority is now rendered as a colored left accent border on the row
+        // instead of a dedicated column. Drop the stored column so nobody sees
+        // a duplicate indicator.
+        const cols = state.listColumnOrder as string[] | undefined;
+        if (cols) {
+          state.listColumnOrder = cols.filter((c) => c !== "priority");
+        }
+      }
       return state;
     },
     partialize: (state) => ({
@@ -1226,6 +1262,7 @@ export const useBrainStore = create<BrainStore>()(
       subtaskDisplayMode: state.subtaskDisplayMode,
       cardVisibleFields: state.cardVisibleFields,
       listColumnOrder: state.listColumnOrder,
+      listColumnWidths: state.listColumnWidths,
       savedFilters: state.savedFilters,
       activeFilterId: state.activeFilterId,
       detailMode: state.detailMode,

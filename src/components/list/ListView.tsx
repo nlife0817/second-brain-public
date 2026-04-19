@@ -7,6 +7,7 @@ import {
   useRef,
   useEffect,
   useLayoutEffect,
+  memo,
 } from "react";
 import { createPortal } from "react-dom";
 import { useFilteredItems, useBrainStore, useCategoryConfig } from "@/lib/store";
@@ -62,11 +63,31 @@ import {
   Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
+import { AdvancedFilterBuilder } from "@/components/filters/AdvancedFilterBuilder";
 
 function SourceIcon({ source }: { source: string }) {
   if (source === "kaiten") return <span title="Кайтен" className="mr-1 inline-flex size-4 items-center justify-center rounded bg-red-50 text-[10px] font-semibold text-red-600">К</span>;
   if (source === "claude") return <span title="Клод" className="mr-1 inline-flex size-4 items-center justify-center rounded bg-orange-50 text-[10px] font-semibold text-orange-600">С</span>;
   return null;
+}
+
+function highlightMatch(text: string, query: string): React.ReactNode {
+  const q = query.trim();
+  if (!q) return text;
+  const lower = text.toLowerCase();
+  const needle = q.toLowerCase();
+  const idx = lower.indexOf(needle);
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-yellow-200 text-slate-900 rounded px-0.5">
+        {text.slice(idx, idx + q.length)}
+      </mark>
+      {text.slice(idx + q.length)}
+    </>
+  );
 }
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
@@ -120,8 +141,10 @@ interface ColumnDef {
   sortable: boolean;
 }
 
+// Priority is rendered as a colored left accent border on the row (see
+// PRIORITY_ACCENT below) instead of a dedicated column. Sorting by priority
+// is still available via header click / sort popover.
 const ALL_COLUMNS: ColumnDef[] = [
-  { id: "priority", label: "Приоритет", width: "w-20", sortable: true },
   { id: "title", label: "Название", width: "min-w-[250px] flex-1", sortable: true },
   { id: "status", label: "Статус", width: "w-28", sortable: true },
   { id: "category", label: "Категория", width: "w-28", sortable: true },
@@ -135,7 +158,6 @@ const ALL_COLUMNS: ColumnDef[] = [
 ];
 
 const DEFAULT_COLUMN_ORDER = [
-  "priority",
   "title",
   "status",
   "category",
@@ -144,6 +166,35 @@ const DEFAULT_COLUMN_ORDER = [
   "due_date",
   "subtasks",
 ];
+
+// Colored left border on the drag-handle cell serves as the priority indicator
+// since the dedicated column was removed. Rendering via the leftmost <td>
+// works reliably across browsers (unlike pseudo-elements on <tr>).
+// Default widths in px used when a column has no persisted user-resized width.
+// Title is flexible (auto) — the resize handle turns it into a fixed value.
+const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
+  title: 320,
+  status: 112,
+  category: 112,
+  clients: 144,
+  development_stage: 176,
+  participants: 176,
+  tags: 144,
+  type: 96,
+  due_date: 112,
+  subtasks: 88,
+};
+
+const COLUMN_MIN_WIDTH = 60;
+const COLUMN_MAX_WIDTH = 600;
+
+const PRIORITY_ACCENT_BORDER: Record<ItemPriority, string> = {
+  urgent: "border-l-2 border-red-500",
+  high: "border-l-2 border-orange-500",
+  medium: "border-l-2 border-yellow-500",
+  low: "border-l-2 border-blue-300",
+  none: "border-l-2 border-transparent",
+};
 
 /* -------------------------------------------------------------------------- */
 /*  Priority / status sort weight (lower = more urgent)                       */
@@ -592,7 +643,15 @@ function ColumnConfigPopoverContent({ onClose }: { onClose: () => void }) {
         className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-700 mt-2 px-1.5 py-0.5 rounded hover:bg-slate-50 w-full"
       >
         <RotateCcw className="size-2.5" />
-        Сбросить
+        Сбросить порядок
+      </button>
+      <button
+        type="button"
+        onClick={() => useBrainStore.getState().setListColumnWidths({})}
+        className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-700 px-1.5 py-0.5 rounded hover:bg-slate-50 w-full"
+      >
+        <RotateCcw className="size-2.5" />
+        Сбросить ширины колонок
       </button>
     </div>
   );
@@ -722,6 +781,12 @@ function InlineTagsCell({
   const allTags = useBrainStore((s) => s.tags);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set(selectedTagIds));
+  const [query, setQuery] = useState("");
+  const filteredTags = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allTags;
+    return allTags.filter((t) => t.name.toLowerCase().includes(q));
+  }, [allTags, query]);
 
   useLayoutEffect(() => {
     const anchor = anchorRef?.current;
@@ -755,7 +820,7 @@ function InlineTagsCell({
     return () => document.removeEventListener("keydown", handler);
   }, [onCancel]);
 
-  if (!pos || allTags.length === 0) return null;
+  if (!pos) return null;
 
   const openUp = pos.top > window.innerHeight / 2;
 
@@ -778,219 +843,51 @@ function InlineTagsCell({
         left: pos.left,
         zIndex: 9999,
       }}
-      className="min-w-[160px] max-h-[220px] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
+      className="min-w-[200px] max-h-[260px] rounded-lg border border-slate-200 bg-white py-1 shadow-xl flex flex-col"
       onClick={(e) => e.stopPropagation()}
     >
-      {allTags.map((tag) => (
-        <button
-          key={tag.id}
-          onClick={(e) => {
-            e.stopPropagation();
-            toggle(tag.id);
-          }}
-          className={cn(
-            "flex w-full items-center gap-2 px-3 py-1 text-[11px] hover:bg-slate-50 text-left",
-            selected.has(tag.id) && "bg-violet-50"
-          )}
-        >
-          <span
-            className="size-2.5 rounded-full shrink-0"
-            style={{ backgroundColor: tag.color }}
+      <div className="px-2 pt-1 pb-1 border-b border-slate-100">
+        <div className="relative">
+          <Search className="absolute left-1.5 top-1/2 -translate-y-1/2 size-3 text-slate-400 pointer-events-none" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
+            placeholder="Поиск тегов…"
+            className="w-full h-6 pl-6 pr-1.5 text-[11px] rounded border border-slate-200 bg-white placeholder:text-slate-400 outline-none focus:border-blue-400"
           />
-          <span className="flex-1 truncate">{tag.name}</span>
-          {selected.has(tag.id) && (
-            <Check className="size-3 text-violet-600 shrink-0" />
-          )}
-        </button>
-      ))}
-    </div>,
-    document.body
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Inline edit cell for date field (portal-based)                            */
-/* -------------------------------------------------------------------------- */
-
-function InlineDateCell({
-  dateValue,
-  timeValue,
-  onCommit,
-  onCancel,
-  anchorRef,
-}: {
-  dateValue: string;
-  timeValue: string;
-  onCommit: (val: { date: string | null; time: string | null }) => void;
-  onCancel: () => void;
-  anchorRef?: React.RefObject<HTMLElement | null>;
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const [localDate, setLocalDate] = useState(dateValue);
-  const [localTime, setLocalTime] = useState(timeValue);
-  const localDateRef = useRef(dateValue);
-  const localTimeRef = useRef(timeValue);
-  const committedRef = useRef(false);
-  const initialDateRef = useRef(dateValue);
-  const initialTimeRef = useRef(timeValue);
-
-  useLayoutEffect(() => {
-    const anchor = anchorRef?.current;
-    if (anchor) {
-      const rect = anchor.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const top = spaceBelow < 200 ? rect.top - 8 : rect.bottom + 4;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setPos({ top, left: rect.left });
-    }
-  }, [anchorRef]);
-
-  useEffect(() => {
-    if (!pos) return;
-    const el = inputRef.current;
-    if (el) {
-      el.focus();
-      try {
-        el.showPicker();
-      } catch {
-        // showPicker may fail in some browsers
-      }
-    }
-  }, [pos]);
-
-  const finish = useCallback(
-    (cleared?: boolean) => {
-      if (committedRef.current) return;
-      committedRef.current = true;
-      if (cleared) {
-        onCommit({ date: null, time: null });
-        return;
-      }
-      const curDate = localDateRef.current || null;
-      const curTime = /^\d{2}:\d{2}$/.test(localTimeRef.current) ? localTimeRef.current : null;
-      const origDate = initialDateRef.current || null;
-      const origTime = initialTimeRef.current || null;
-      if (curDate !== origDate || curTime !== origTime) {
-        onCommit({ date: curDate, time: curDate ? curTime : null });
-      } else {
-        onCancel();
-      }
-    },
-    [onCommit, onCancel]
-  );
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
-      )
-        finish();
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [finish]);
-
-  useEffect(() => {
-    function handler(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCancel();
-      }
-    }
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onCancel]);
-
-  if (!pos) return null;
-
-  const openUp = pos.top > window.innerHeight / 2;
-
-  return createPortal(
-    <div
-      ref={containerRef}
-      style={{
-        position: "fixed",
-        top: openUp ? undefined : pos.top,
-        bottom: openUp ? window.innerHeight - pos.top + 4 : undefined,
-        left: pos.left,
-        zIndex: 9999,
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-white p-1 shadow-md">
-        <input
-          ref={inputRef}
-          type="date"
-          value={localDate}
-          onChange={(e) => {
-            const v = e.target.value;
-            localDateRef.current = v;
-            setLocalDate(v);
-            // If user cleared the date entirely — also clear time.
-            if (!v) {
-              localTimeRef.current = "";
-              setLocalTime("");
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              onCancel();
-            } else if (e.key === "Enter") {
-              e.preventDefault();
-              finish();
-            }
-          }}
-          className="h-6 rounded border border-slate-200 bg-white px-1.5 text-[10px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
-          onClick={(e) => e.stopPropagation()}
-        />
-        <input
-          type="time"
-          value={localTime}
-          disabled={!localDate}
-          onChange={(e) => {
-            const v = e.target.value;
-            localTimeRef.current = v;
-            setLocalTime(v);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              onCancel();
-            } else if (e.key === "Enter") {
-              e.preventDefault();
-              finish();
-            }
-          }}
-          className="h-6 rounded border border-slate-200 bg-white px-1.5 text-[10px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300 disabled:cursor-not-allowed disabled:bg-slate-50"
-          onClick={(e) => e.stopPropagation()}
-          placeholder="—:—"
-        />
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            finish(true);
-          }}
-          className="h-6 rounded px-1 text-[10px] text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-          title="Убрать срок"
-        >
-          ✕
-        </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            finish();
-          }}
-          className="h-6 rounded px-1.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50"
-          title="Применить"
-        >
-          OK
-        </button>
+        </div>
+      </div>
+      <div className="overflow-y-auto flex-1">
+        {filteredTags.length === 0 ? (
+          <div className="px-3 py-2 text-[11px] text-slate-400 text-center">
+            Ничего не найдено
+          </div>
+        ) : (
+          filteredTags.map((tag) => (
+            <button
+              key={tag.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggle(tag.id);
+              }}
+              className={cn(
+                "flex w-full items-center gap-2 px-3 py-1 text-[11px] hover:bg-slate-50 text-left",
+                selected.has(tag.id) && "bg-violet-50"
+              )}
+            >
+              <span
+                className="size-2.5 rounded-full shrink-0"
+                style={{ backgroundColor: tag.color }}
+              />
+              <span className="flex-1 truncate">{tag.name}</span>
+              {selected.has(tag.id) && (
+                <Check className="size-3 text-violet-600 shrink-0" />
+              )}
+            </button>
+          ))
+        )}
       </div>
     </div>,
     document.body
@@ -1439,7 +1336,7 @@ const NEW_ITEM_DEFAULTS = {
 };
 
 export function ListView() {
-  const items = useFilteredItems();
+  const rawItems = useFilteredItems();
   const { catalog } = useKaitenCatalog();
   const createItem = useBrainStore((s) => s.createItem);
   const openDetail = useBrainStore((s) => s.openDetail);
@@ -1450,6 +1347,8 @@ export function ListView() {
   const reorderItems = useBrainStore((s) => s.reorderItems);
   const listColumnOrder = useBrainStore((s) => s.listColumnOrder);
   const setListColumnOrder = useBrainStore((s) => s.setListColumnOrder);
+  const listColumnWidths = useBrainStore((s) => s.listColumnWidths);
+  const setListColumnWidth = useBrainStore((s) => s.setListColumnWidth);
   const listGroupBy = useBrainStore((s) => s.listGroupBy);
   const setListGroupBy = useBrainStore((s) => s.setListGroupBy);
   const listCollapsedGroupsArr = useBrainStore((s) => s.listCollapsedGroups);
@@ -1459,6 +1358,8 @@ export function ListView() {
   const developmentStages = useBrainStore((s) => s.developmentStages);
   const categoryConfig = useCategoryConfig();
   const itemLinkedClients = useBrainStore((s) => s.itemLinkedClients);
+  const removeItemsLocal = useBrainStore((s) => s.removeItemsLocal);
+  const restoreItemsLocal = useBrainStore((s) => s.restoreItemsLocal);
 
   // Build position maps for group ordering
   const groupPositionMaps = useMemo(() => {
@@ -1477,7 +1378,72 @@ export function ListView() {
   const [manualOrder, setManualOrder] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const [pendingDelete, setPendingDelete] = useState<{
+    ids: string[];
+    items: ItemWithSubtasks[];
+  } | null>(null);
   const collapsedGroups = useMemo(() => new Set(listCollapsedGroupsArr), [listCollapsedGroupsArr]);
+
+  /* ----- Column width helpers / resize ------------------------------------ */
+  const colWidthFor = useCallback(
+    (id: string) => listColumnWidths[id] ?? DEFAULT_COLUMN_WIDTHS[id] ?? 120,
+    [listColumnWidths]
+  );
+
+  const startColumnResize = useCallback(
+    (colId: string, e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = colWidthFor(colId);
+      const onMove = (ev: PointerEvent) => {
+        const delta = ev.clientX - startX;
+        const next = Math.max(
+          COLUMN_MIN_WIDTH,
+          Math.min(COLUMN_MAX_WIDTH, Math.round(startWidth + delta))
+        );
+        setListColumnWidth(colId, next);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        document.body.style.cursor = "";
+      };
+      document.body.style.cursor = "col-resize";
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [colWidthFor, setListColumnWidth]
+  );
+
+  /* ----- Quick search (title + description + tags + clients) -------------- */
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQuery(searchInput), 150);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const { items, searchMatchInfo } = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return { items: rawItems, searchMatchInfo: null };
+    const matches = new Map<string, { tag: boolean; client: boolean }>();
+    const filtered = rawItems.filter((item) => {
+      const titleHit = item.title.toLowerCase().includes(q);
+      const descHit = (item.description ?? "").toLowerCase().includes(q);
+      const tags = "tags" in item ? item.tags : undefined;
+      const tagHit = tags?.some((t) => t.name.toLowerCase().includes(q)) ?? false;
+      const clientNames = itemLinkedClients[item.id] ?? [];
+      const clientHit = clientNames.some((c) => c.toLowerCase().includes(q));
+      if (!(titleHit || descHit || tagHit || clientHit)) return false;
+      matches.set(item.id, {
+        tag: tagHit && !titleHit && !descHit,
+        client: clientHit && !titleHit && !descHit && !tagHit,
+      });
+      return true;
+    });
+    return { items: filtered, searchMatchInfo: { query: q, matches } };
+  }, [rawItems, searchQuery, itemLinkedClients]);
 
   /* ----- Inline task creation state -------------------------------------- */
   const [isCreating, setIsCreating] = useState(false);
@@ -1487,6 +1453,7 @@ export function ListView() {
     {}
   );
   const [createDropdown, setCreateDropdown] = useState<string | null>(null);
+  const isCommittingCreateRef = useRef(false);
 
   /* ----- Inline subtask creation state ----------------------------------- */
   const [creatingSubtaskFor, setCreatingSubtaskFor] = useState<string | null>(
@@ -1507,6 +1474,7 @@ export function ListView() {
     {}
   );
   const [subtaskDropdown, setSubtaskDropdown] = useState<string | null>(null);
+  const isCommittingSubtaskRef = useRef(false);
 
   /* ----- Column definitions for current order ----------------------------- */
 
@@ -1755,15 +1723,30 @@ export function ListView() {
     await fetchItems();
   }, [selectedIds, fetchItems]);
 
-  const handleBulkDelete = useCallback(async () => {
-    if (!confirm(`Удалить выбранные элементы (${selectedIds.size})?`)) return;
+  const handleBulkDelete = useCallback(() => {
     const ids = Array.from(selectedIds);
-    await Promise.all(ids.map(id =>
-      fetch(`/api/items/${id}`, { method: "DELETE" })
-    ));
+    if (ids.length === 0) return;
+    const snapshot = rawItems.filter((i) => selectedIds.has(i.id));
+    removeItemsLocal(ids);
     setSelectedIds(new Set());
-    await fetchItems();
-  }, [selectedIds, fetchItems]);
+    setPendingDelete({ ids, items: snapshot });
+  }, [selectedIds, rawItems, removeItemsLocal]);
+
+  const cancelPendingDelete = useCallback(() => {
+    setPendingDelete((prev) => {
+      if (!prev) return null;
+      restoreItemsLocal(prev.items);
+      return null;
+    });
+  }, [restoreItemsLocal]);
+
+  const confirmPendingDelete = useCallback(async (ids: string[]) => {
+    await Promise.all(
+      ids.map((id) => fetch(`/api/items/${id}`, { method: "DELETE" }))
+    );
+    // store already removed items locally — just clean up the pending state
+    setPendingDelete(null);
+  }, []);
 
   /* ----- DnD drag end handler -------------------------------------------- */
 
@@ -1872,8 +1855,7 @@ export function ListView() {
     setIsCreating(true);
     setNewItem({ ...NEW_ITEM_DEFAULTS });
     setCreateDropdown(null);
-    // Auto-focus title after render
-    setTimeout(() => createTitleRef.current?.focus(), 0);
+    // Focus handled via autoFocus on the title input — avoids setTimeout delay
   }, []);
 
   const handleCancelCreate = useCallback(() => {
@@ -1888,40 +1870,47 @@ export function ListView() {
   const fetchEntityCounts = useBrainStore((s) => s.fetchEntityCounts);
 
   const handleCommitCreate = useCallback(async () => {
+    if (isCommittingCreateRef.current) return;
     if (!newItem.title.trim()) {
       handleCancelCreate();
       return;
     }
+    isCommittingCreateRef.current = true;
+    // Close the inline row immediately — optimistic temp item already renders
+    // from the store. Keeping the form open waiting for the API round-trip is
+    // what made creation feel laggy.
+    const snapshot = newItem;
+    setIsCreating(false);
+    setNewItem({ ...NEW_ITEM_DEFAULTS });
+    setCreateDropdown(null);
     try {
       const created = await createItem({
-        title: newItem.title.trim(),
-        status: newItem.status,
-        priority: newItem.priority,
-        category: newItem.category,
-        type: newItem.type,
+        title: snapshot.title.trim(),
+        status: snapshot.status,
+        priority: snapshot.priority,
+        category: snapshot.category,
+        type: snapshot.type,
         development_stage:
-          newItem.category === "development"
-            ? newItem.development_stage
+          snapshot.category === "development"
+            ? snapshot.development_stage
             : null,
         participants:
-          newItem.category === "development" ? newItem.participants : [],
-        due_date: newItem.due_date || null,
+          snapshot.category === "development" ? snapshot.participants : [],
+        due_date: snapshot.due_date || null,
       });
-      // Link to client if selected
-      if (newItem.clientId && created) {
+      if (snapshot.clientId && created) {
         let clientType = relationTypes.find((rt) => rt.name === "Клиент");
         if (!clientType) {
           clientType = await createRelationType("Клиент", "#22c55e", "User", 1);
         }
-        await createRelation("item", created.id, "client", newItem.clientId, clientType.id);
+        await createRelation("item", created.id, "client", snapshot.clientId, clientType.id);
         await fetchEntityCounts("item");
       }
     } catch {
-      // silently fail
+      // silently fail — store rollback handles temp item removal
+    } finally {
+      isCommittingCreateRef.current = false;
     }
-    setIsCreating(false);
-    setNewItem({ ...NEW_ITEM_DEFAULTS });
-    setCreateDropdown(null);
   }, [newItem, createItem, createRelation, createRelationType, relationTypes, fetchEntityCounts, handleCancelCreate]);
 
   /* ----- Inline subtask creation handlers -------------------------------- */
@@ -1957,7 +1946,7 @@ export function ListView() {
         next.add(parentId);
         return next;
       });
-      setTimeout(() => subtaskInputRef.current?.focus(), 0);
+      // Focus handled via autoFocus on the subtask title input
     },
     [sortedItems]
   );
@@ -1978,31 +1967,15 @@ export function ListView() {
   }, []);
 
   const handleCommitSubtaskCreate = useCallback(async () => {
+    if (isCommittingSubtaskRef.current) return;
     if (!newSubtask.title.trim() || !creatingSubtaskFor) {
       handleCancelSubtaskCreate();
       return;
     }
-    try {
-      await createItem({
-        title: newSubtask.title.trim(),
-        parent_id: creatingSubtaskFor,
-        status: newSubtask.status,
-        priority: newSubtask.priority,
-        category: newSubtask.category,
-        type: newSubtask.type,
-        development_stage:
-          newSubtask.category === "development"
-            ? newSubtask.development_stage
-            : null,
-        participants:
-          newSubtask.category === "development"
-            ? newSubtask.participants
-            : [],
-        due_date: newSubtask.due_date || null,
-      });
-    } catch {
-      // silently fail
-    }
+    isCommittingSubtaskRef.current = true;
+    // Close the subtask form right away — optimistic temp row renders from store
+    const snapshot = newSubtask;
+    const parentId = creatingSubtaskFor;
     setCreatingSubtaskFor(null);
     setNewSubtask({
       title: "",
@@ -2015,6 +1988,29 @@ export function ListView() {
       due_date: "",
     });
     setSubtaskDropdown(null);
+    try {
+      await createItem({
+        title: snapshot.title.trim(),
+        parent_id: parentId,
+        status: snapshot.status,
+        priority: snapshot.priority,
+        category: snapshot.category,
+        type: snapshot.type,
+        development_stage:
+          snapshot.category === "development"
+            ? snapshot.development_stage
+            : null,
+        participants:
+          snapshot.category === "development"
+            ? snapshot.participants
+            : [],
+        due_date: snapshot.due_date || null,
+      });
+    } catch {
+      // silently fail — store rollback handles temp item removal
+    } finally {
+      isCommittingSubtaskRef.current = false;
+    }
   }, [
     newSubtask,
     creatingSubtaskFor,
@@ -2067,40 +2063,6 @@ export function ListView() {
 
   const renderCreateCell = (colId: string) => {
     switch (colId) {
-      case "priority": {
-        const cfg = PRIORITY_CONFIG[newItem.priority];
-        return (
-          <td
-            key={colId}
-            ref={(el) => {
-              createCellRefs.current["priority"] = el;
-            }}
-            className="relative px-3 py-1.5 cursor-pointer"
-            onClick={(e) => {
-              e.stopPropagation();
-              setCreateDropdown(
-                createDropdown === "priority" ? null : "priority"
-              );
-            }}
-          >
-            <span className="text-xs leading-none">{cfg.icon}</span>
-            {createDropdown === "priority" && (
-              <CreationSelectDropdown
-                value={newItem.priority}
-                options={priorityOptions}
-                onSelect={(val) =>
-                  setNewItem((prev) => ({ ...prev, priority: val }))
-                }
-                anchorRef={{
-                  current: createCellRefs.current["priority"],
-                }}
-                onClose={() => setCreateDropdown(null)}
-              />
-            )}
-          </td>
-        );
-      }
-
       case "title":
         return (
           <td key={colId} className="px-3 py-1.5">
@@ -2109,6 +2071,7 @@ export function ListView() {
               type="text"
               placeholder="Название задачи..."
               value={newItem.title}
+              autoFocus
               onChange={(e) =>
                 setNewItem((prev) => ({ ...prev, title: e.target.value }))
               }
@@ -2244,17 +2207,15 @@ export function ListView() {
 
       case "due_date": {
         return (
-          <td key={colId} className="px-3 py-1.5">
-            <input
-              type="date"
-              value={newItem.due_date}
-              onChange={(e) =>
-                setNewItem((prev) => ({
-                  ...prev,
-                  due_date: e.target.value,
-                }))
+          <td key={colId} className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
+            <DateTimePicker
+              value={{ date: newItem.due_date || null, time: null }}
+              onChange={({ date }) =>
+                setNewItem((prev) => ({ ...prev, due_date: date ?? "" }))
               }
-              className="h-5 rounded border border-slate-200 bg-white px-1 text-[10px] text-slate-600 outline-none focus:border-blue-400"
+              size="xs"
+              compact
+              placeholder="—"
             />
           </td>
         );
@@ -2428,33 +2389,45 @@ export function ListView() {
           typeOptions={typeOptions}
           stageOptions={catalog.development_stages}
           participantOptions={catalog.participants}
+          searchQuery={searchQuery}
+          searchRowMatch={searchMatchInfo?.matches.get(row.item.id) ?? null}
         />
       );
     });
 
   /* ----- render ----------------------------------------------------------- */
 
+  const toolbar = (
+    <ListViewToolbar
+      search={searchInput}
+      onSearchChange={setSearchInput}
+      totalCount={rawItems.length}
+      filteredCount={items.length}
+      onNewTask={handleStartCreate}
+      listGroupBy={listGroupBy}
+      setListGroupBy={setListGroupBy}
+      isGrouped={isGrouped}
+      allGroupsCollapsed={allGroupsCollapsed}
+      toggleAllGroups={toggleAllGroups}
+    />
+  );
+
   if (items.length === 0 && !isCreating) {
     return (
-      <div>
-        <div className="p-2">
-          <button
-            type="button"
-            onClick={handleStartCreate}
-            className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 transition-colors px-2 py-1 rounded hover:bg-slate-100"
-          >
-            <Plus className="size-3.5" />
-            Добавить задачу
-          </button>
+      <div className="flex flex-col h-full">
+        {toolbar}
+        <div className="flex-1 min-h-0 overflow-auto">
+          <EmptyState search={searchQuery || undefined} />
         </div>
-        {isCreating ? null : <EmptyState />}
       </div>
     );
   }
 
   return (
-    <ScrollArea className="h-full w-full">
-      <div className="min-w-[900px]">
+    <div className="flex flex-col h-full">
+      {toolbar}
+      <ScrollArea className="flex-1 w-full">
+        <div className="min-w-[900px]">
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
@@ -2464,7 +2437,18 @@ export function ListView() {
             items={allRowIds}
             strategy={verticalListSortingStrategy}
           >
-            <table className="w-full border-collapse bg-white border border-t-0 border-slate-200 rounded-b-lg">
+            <table
+              className="w-full border-collapse bg-white border border-t-0 border-slate-200 rounded-b-lg"
+              style={{ tableLayout: "fixed" }}
+            >
+              <colgroup>
+                <col style={{ width: 28 }} />
+                <col style={{ width: 32 }} />
+                <col style={{ width: 32 }} />
+                {visibleColumns.map((col) => (
+                  <col key={col.id} style={{ width: colWidthFor(col.id) }} />
+                ))}
+              </colgroup>
               {/* ---- Header ------------------------------------------- */}
               <thead className="sticky top-0 z-10">
                 <tr className="bg-slate-50 border-b border-slate-200">
@@ -2485,112 +2469,32 @@ export function ListView() {
                   </th>
 
                   {/* Dynamic columns */}
-                  {visibleColumns.map((col) =>
-                    col.sortable ? (
+                  {visibleColumns.map((col) => {
+                    const w = colWidthFor(col.id);
+                    return col.sortable ? (
                       <SortableHeader
                         key={col.id}
                         label={col.label}
                         column={col.id as SortColumn}
                         current={sort}
                         onToggle={toggleSort}
-                        className={col.width}
+                        width={w}
                         isManualOrder={manualOrder}
+                        onResizeStart={(e) => startColumnResize(col.id, e)}
                       />
                     ) : (
                       <th
                         key={col.id}
-                        className={cn(
-                          col.width,
-                          "px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500"
-                        )}
+                        style={{ width: w, minWidth: w, maxWidth: w }}
+                        className="relative px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500"
                       >
                         {col.label}
+                        <ColumnResizeHandle onPointerDown={(e) => startColumnResize(col.id, e)} />
                       </th>
-                    )
-                  )}
+                    );
+                  })}
 
-                  {/* Column config & grouping buttons */}
-                  <th className="w-16 px-1 py-2">
-                    <div className="flex items-center gap-0.5 justify-end">
-                      {isGrouped && (
-                        <button
-                          type="button"
-                          onClick={toggleAllGroups}
-                          className="inline-flex items-center justify-center size-6 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-                          title={allGroupsCollapsed ? "Раскрыть всё" : "Свернуть всё"}
-                        >
-                          <ChevronsUpDown className="size-3.5" />
-                        </button>
-                      )}
-                      <GroupByPopover
-                        value={listGroupBy}
-                        onChange={setListGroupBy}
-                      />
-                      <ColumnConfigPopover />
-                    </div>
-                  </th>
                 </tr>
-
-                {/* ---- Bulk actions bar -------------------------------- */}
-                {selectedIds.size > 0 && (
-                  <tr className="bg-blue-50 border-b border-blue-200">
-                    <td colSpan={visibleColumns.length + 4} className="px-3 py-1.5">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs font-medium text-blue-700">
-                          Выбрано: {selectedIds.size}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedIds(new Set())}
-                          className="inline-flex items-center justify-center size-5 rounded hover:bg-blue-200/70 text-blue-500 transition-colors"
-                          title="Снять выделение"
-                        >
-                          <X className="size-3" />
-                        </button>
-                        <div className="h-4 w-px bg-blue-200 mx-0.5" />
-                        <BulkActionDropdown
-                          label="Статус"
-                          options={statusOptions}
-                          onSelect={(val) => handleBulkUpdate("status", val)}
-                        />
-                        <BulkActionDropdown
-                          label="Приоритет"
-                          options={priorityOptions}
-                          onSelect={(val) => handleBulkUpdate("priority", val)}
-                        />
-                        <BulkActionDropdown
-                          label="Категория"
-                          options={categoryOptions}
-                          onSelect={(val) => handleBulkUpdate("category", val)}
-                        />
-                        <BulkActionDropdown
-                          label="Тип"
-                          options={typeOptions}
-                          onSelect={(val) => handleBulkUpdate("type", val)}
-                        />
-                        <div className="h-4 w-px bg-blue-200 mx-0.5" />
-                        <button
-                          type="button"
-                          onClick={() => handleBulkUpdate("status", "archived")}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-amber-100 text-amber-700 transition-colors"
-                          title="В архив"
-                        >
-                          <Archive className="size-3" />
-                          В архив
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleBulkDelete}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-red-100 text-red-600 transition-colors"
-                          title="Удалить"
-                        >
-                          <Trash2 className="size-3" />
-                          Удалить
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )}
               </thead>
 
               {/* ---- Body --------------------------------------------- */}
@@ -2614,7 +2518,6 @@ export function ListView() {
                         Добавить задачу
                       </span>
                     </td>
-                    <td className="w-16" />
                   </tr>
                 ) : (
                   <tr className="bg-blue-50/40 ring-1 ring-inset ring-blue-200">
@@ -2652,8 +2555,6 @@ export function ListView() {
                     {/* Dynamic creation cells */}
                     {/* eslint-disable-next-line react-hooks/refs */}
                     {visibleColumns.map((col) => renderCreateCell(col.id))}
-                    {/* Settings spacer */}
-                    <td className="w-16" />
                   </tr>
                 )}
 
@@ -2662,7 +2563,7 @@ export function ListView() {
                   ? groups.map((group) => {
                       const l1Key = group.key;
                       const groupCollapsed = collapsedGroups.has(l1Key);
-                      const colCount = visibleColumns.length + 4;
+                      const colCount = visibleColumns.length + 3;
 
                       // Level 2 sub-groups
                       const level2Groups = hasLevel2
@@ -2710,6 +2611,30 @@ export function ListView() {
         </DndContext>
       </div>
     </ScrollArea>
+    {selectedIds.size > 0 && (
+      <FloatingBulkBar
+        count={selectedIds.size}
+        onClearSelection={() => setSelectedIds(new Set())}
+        onStatus={(val) => handleBulkUpdate("status", val)}
+        onPriority={(val) => handleBulkUpdate("priority", val)}
+        onCategory={(val) => handleBulkUpdate("category", val)}
+        onType={(val) => handleBulkUpdate("type", val)}
+        onArchive={() => handleBulkUpdate("status", "archived")}
+        onDelete={handleBulkDelete}
+        statusOptions={statusOptions}
+        priorityOptions={priorityOptions}
+        categoryOptions={categoryOptions}
+        typeOptions={typeOptions}
+      />
+    )}
+    {pendingDelete && (
+      <UndoToast
+        count={pendingDelete.ids.length}
+        onUndo={cancelPendingDelete}
+        onConfirm={() => confirmPendingDelete(pendingDelete.ids)}
+      />
+    )}
+    </div>
   );
 }
 
@@ -2717,7 +2642,7 @@ export function ListView() {
 /*  Group section header row                                                  */
 /* -------------------------------------------------------------------------- */
 
-function GroupSection({
+const GroupSection = memo(function GroupSection({
   group,
   collapsed,
   onToggle,
@@ -2778,7 +2703,7 @@ function GroupSection({
       {children}
     </>
   );
-}
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Sortable column header                                                    */
@@ -2789,20 +2714,25 @@ function SortableHeader({
   column,
   current,
   onToggle,
-  className,
+  width,
   isManualOrder,
+  onResizeStart,
 }: {
   label: string;
   column: SortColumn;
   current: SortState;
   onToggle: (col: SortColumn) => void;
-  className?: string;
+  width: number;
   isManualOrder: boolean;
+  onResizeStart: (e: React.PointerEvent) => void;
 }) {
   const isActive = !isManualOrder && current.column === column;
 
   return (
-    <th className={cn("px-3 py-2 text-left", className)}>
+    <th
+      style={{ width, minWidth: width, maxWidth: width }}
+      className="relative px-3 py-2 text-left"
+    >
       <button
         type="button"
         onClick={() => onToggle(column)}
@@ -2824,7 +2754,25 @@ function SortableHeader({
           <ArrowUpDown className="size-3 opacity-40" />
         )}
       </button>
+      <ColumnResizeHandle onPointerDown={onResizeStart} />
     </th>
+  );
+}
+
+function ColumnResizeHandle({
+  onPointerDown,
+}: {
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      onClick={(e) => e.stopPropagation()}
+      className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize select-none group/resize"
+      title="Тянуть для изменения ширины"
+    >
+      <div className="absolute right-0 top-0 bottom-0 w-px bg-transparent group-hover/resize:bg-blue-400 transition-colors" />
+    </div>
   );
 }
 
@@ -2832,7 +2780,7 @@ function SortableHeader({
 /*  ItemRowGroup: renders the main row + optional "add subtask" row           */
 /* -------------------------------------------------------------------------- */
 
-function ItemRowGroup({
+const ItemRowGroup = memo(function ItemRowGroup({
   row,
   selected,
   onSelect,
@@ -2861,6 +2809,8 @@ function ItemRowGroup({
   typeOptions,
   stageOptions,
   participantOptions,
+  searchQuery,
+  searchRowMatch,
 }: {
   row: FlatRow;
   selected: boolean;
@@ -2908,9 +2858,11 @@ function ItemRowGroup({
   typeOptions: { key: ItemType; label: string }[];
   stageOptions: KaitenStageOption[];
   participantOptions: DevelopmentParticipantInput[];
+  searchQuery: string;
+  searchRowMatch: { tag: boolean; client: boolean } | null;
 }) {
   const catConfig = useCategoryConfig();
-  const colCount = visibleColumns.length + 4; // drag + expand + checkbox + settings
+  const colCount = visibleColumns.length + 3; // drag + expand + checkbox
 
   return (
     <>
@@ -2925,6 +2877,8 @@ function ItemRowGroup({
         isExpanded={isExpanded}
         onToggleExpand={onToggleExpand}
         visibleColumns={visibleColumns}
+        searchQuery={searchQuery}
+        searchRowMatch={searchRowMatch}
         statusOptions={statusOptions}
         priorityOptions={priorityOptions}
         categoryOptions={categoryOptions}
@@ -3016,6 +2970,7 @@ function ItemRowGroup({
                             type="text"
                             placeholder="Название подзадачи..."
                             value={newSubtask.title}
+                            autoFocus
                             onChange={(e) =>
                               setNewSubtask((prev) => ({ ...prev, title: e.target.value }))
                             }
@@ -3152,17 +3107,19 @@ function ItemRowGroup({
 
                   case "due_date":
                     return (
-                      <td key={col.id} className="px-3 py-1">
-                        <input
-                          type="date"
-                          value={newSubtask.due_date}
-                          onChange={(e) =>
-                            setNewSubtask((prev) => ({
-                              ...prev,
-                              due_date: e.target.value,
-                            }))
+                      <td
+                        key={col.id}
+                        className="px-3 py-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <DateTimePicker
+                          value={{ date: newSubtask.due_date || null, time: null }}
+                          onChange={({ date }) =>
+                            setNewSubtask((prev) => ({ ...prev, due_date: date ?? "" }))
                           }
-                          className="h-5 rounded border border-slate-200 bg-white px-1 text-[10px] text-slate-600 outline-none focus:border-blue-400"
+                          size="xs"
+                          compact
+                          placeholder="—"
                         />
                       </td>
                     );
@@ -3224,8 +3181,6 @@ function ItemRowGroup({
                     return <td key={col.id} />;
                 }
               })}
-              {/* Settings spacer */}
-              <td className="w-8" />
             </tr>
           ) : (
             <tr
@@ -3248,7 +3203,7 @@ function ItemRowGroup({
       )}
     </>
   );
-}
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Table row                                                                 */
@@ -3256,7 +3211,13 @@ function ItemRowGroup({
 
 const EMPTY_REL_TITLES: string[] = [];
 
-function ItemRow({
+// Applied to cells that open an inline editor on click. The transparent dashed
+// border keeps the layout steady and only becomes visible on hover to hint the
+// cell is editable without extra icons or affordances.
+const EDITABLE_CELL_CLS =
+  "relative px-3 py-1.5 cursor-pointer border border-dashed border-transparent hover:border-slate-300 rounded-sm transition-colors";
+
+const ItemRow = memo(function ItemRow({
   row,
   selected,
   onSelect,
@@ -3273,6 +3234,8 @@ function ItemRow({
   typeOptions,
   stageOptions,
   participantOptions,
+  searchQuery,
+  searchRowMatch,
 }: {
   row: FlatRow;
   selected: boolean;
@@ -3290,6 +3253,8 @@ function ItemRow({
   typeOptions: { key: ItemType; label: string }[];
   stageOptions: KaitenStageOption[];
   participantOptions: DevelopmentParticipantInput[];
+  searchQuery: string;
+  searchRowMatch: { tag: boolean; client: boolean } | null;
 }) {
   const { item, isSubtask, totalSubtasks, doneSubtasks } = row;
   const allItems = useBrainStore((s) => s.items);
@@ -3320,6 +3285,12 @@ function ItemRow({
   const sortableStyle: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition: isDragging ? undefined : transition,
+    // Browser-level virtualization: skip painting rows that are off-screen.
+    // We leave it on "visible" while dragging so the moving row keeps its
+    // layout. containIntrinsicSize reserves height so scrollbar math stays
+    // stable when rows flip between rendered / skipped.
+    contentVisibility: isDragging ? "visible" : "auto",
+    containIntrinsicSize: "0 32px",
   };
 
   const itemCategoryConfig = useCategoryConfig();
@@ -3386,34 +3357,6 @@ function ItemRow({
 
   const renderCell = (colId: string) => {
     switch (colId) {
-      case "priority": {
-        return (
-          <td
-            key={colId}
-            ref={(el) => {
-              cellRefs.current["priority"] = el;
-            }}
-            className="relative px-3 py-1.5 cursor-pointer"
-            onClick={(e) => handleCellClick("priority", e)}
-          >
-            {!isSubtask && (
-              <div className="flex items-center gap-1">
-                <span className="text-xs leading-none">{priorityCfg.icon}</span>
-              </div>
-            )}
-            {editingField === "priority" && (
-              <InlineSelectCell
-                value={item.priority as ItemPriority}
-                options={priorityOptions}
-                onCommit={(val) => commitFieldEdit("priority", val)}
-                onCancel={cancelEdit}
-                anchorRef={{ current: cellRefs.current["priority"] }}
-              />
-            )}
-          </td>
-        );
-      }
-
       case "title": {
         return (
           <td
@@ -3428,7 +3371,7 @@ function ItemRow({
             )}
             <span
               className={cn(
-                "text-xs font-medium leading-snug line-clamp-1 transition-colors",
+                "text-xs font-medium leading-snug line-clamp-1 transition-colors group-hover:underline underline-offset-2 decoration-slate-300",
                 isSubtask
                   ? "text-slate-600 pl-4"
                   : isDetachedSubtask
@@ -3444,7 +3387,23 @@ function ItemRow({
               {item.source && item.source !== "system" && (
                 <SourceIcon source={item.source} />
               )}
-              {item.title}
+              {highlightMatch(item.title, searchQuery)}
+              {searchRowMatch?.tag && (
+                <span
+                  className="ml-1 inline-flex items-center text-[9px] text-emerald-600"
+                  title="Совпадение по тегу"
+                >
+                  <Search className="size-2.5" />
+                </span>
+              )}
+              {searchRowMatch?.client && (
+                <span
+                  className="ml-1 inline-flex items-center text-[9px] text-violet-600"
+                  title="Совпадение по клиенту"
+                >
+                  <Building2 className="size-2.5" />
+                </span>
+              )}
               {(relTitles.length > 0 || commentCount > 0) && (
                 <span className="inline-flex items-center gap-1.5 ml-2">
                   {relTitles.length > 0 && (
@@ -3476,7 +3435,7 @@ function ItemRow({
             ref={(el) => {
               cellRefs.current["status"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("status", e)}
           >
             <Badge
@@ -3508,7 +3467,7 @@ function ItemRow({
             ref={(el) => {
               cellRefs.current["category"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("category", e)}
           >
             <Badge
@@ -3579,7 +3538,7 @@ function ItemRow({
             ref={(el) => {
               cellRefs.current["tags"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("tags", e)}
           >
             {itemTags.length > 0 ? (
@@ -3619,7 +3578,7 @@ function ItemRow({
             ref={(el) => {
               cellRefs.current["type"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("type", e)}
           >
             <span className="text-xs text-slate-600">{typeCfg.label}</span>
@@ -3640,45 +3599,18 @@ function ItemRow({
         return (
           <td
             key={colId}
-            ref={(el) => {
-              cellRefs.current["due_date"] = el;
-            }}
-            className="relative px-3 py-1.5 cursor-pointer"
-            onClick={(e) => handleCellClick("due_date", e)}
+            className="relative px-3 py-1.5"
+            onClick={(e) => e.stopPropagation()}
           >
-            {dueDate ? (
-              <div
-                className={cn(
-                  "flex items-center gap-1 text-xs",
-                  isOverdue ? "text-red-500 font-medium" : "text-slate-600"
-                )}
-              >
-                {isOverdue && (
-                  <AlertCircle className="size-3 shrink-0" />
-                )}
-                {!isOverdue && (
-                  <Calendar className="size-3 shrink-0 text-slate-400" />
-                )}
-                <span>
-                  {format(dueDate, "d MMM", { locale: ru })}
-                  {item.due_time && <span className="ml-0.5">· {item.due_time}</span>}
-                </span>
-              </div>
-            ) : (
-              <span className="text-xs text-slate-300">--</span>
-            )}
-            {editingField === "due_date" && (
-              <InlineDateCell
-                dateValue={item.due_date ?? ""}
-                timeValue={item.due_time ?? ""}
-                onCommit={async ({ date, time }) => {
-                  await updateItem(item.id, { due_date: date, due_time: time });
-                  setEditingItem(null);
-                }}
-                onCancel={cancelEdit}
-                anchorRef={{ current: cellRefs.current["due_date"] }}
-              />
-            )}
+            <DateTimePicker
+              value={{ date: item.due_date, time: item.due_time ?? null }}
+              onChange={({ date, time }) => {
+                void updateItem(item.id, { due_date: date, due_time: time });
+              }}
+              size="xs"
+              compact
+              placeholder="—"
+            />
           </td>
         );
       }
@@ -3723,7 +3655,7 @@ function ItemRow({
             ref={(el) => {
               cellRefs.current["clients"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("clients", e)}
           >
             {linkedClientNames.length > 0 ? (
@@ -3760,17 +3692,33 @@ function ItemRow({
 
   /* ----- Render ----------------------------------------------------------- */
 
+  const priorityBorderCls = !isSubtask
+    ? PRIORITY_ACCENT_BORDER[item.priority as ItemPriority] ?? "border-l-2 border-transparent"
+    : "border-l-2 border-transparent";
+
   return (
     <tr ref={setNodeRef} style={sortableStyle} className={rowCls}>
-      {/* Drag handle */}
+      {/* Drag handle + priority accent border */}
       <td
-        className="px-1 py-1.5 text-center"
-        onClick={(e) => e.stopPropagation()}
+        className={cn("px-1 py-1.5 text-center cursor-pointer", priorityBorderCls)}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!isSubtask) setEditingItem(item.id, "priority");
+        }}
+        title={
+          isSubtask
+            ? undefined
+            : `Приоритет: ${PRIORITY_CONFIG[item.priority as ItemPriority]?.label ?? item.priority}`
+        }
+        ref={(el) => {
+          cellRefs.current["priority"] = el;
+        }}
       >
         <button
           type="button"
+          onClick={(e) => e.stopPropagation()}
           className={cn(
-            "inline-flex items-center justify-center size-5 rounded hover:bg-slate-200/70 transition-colors text-slate-400 cursor-grab opacity-0 group-hover:opacity-100",
+            "inline-flex items-center justify-center size-5 rounded hover:bg-slate-200/70 transition-colors text-slate-400 cursor-grab opacity-0 group-hover:opacity-100 relative z-[1]",
             isSubtask && "ml-3"
           )}
           {...attributes}
@@ -3778,6 +3726,15 @@ function ItemRow({
         >
           <GripVertical className="size-3.5" />
         </button>
+        {editingField === "priority" && !isSubtask && (
+          <InlineSelectCell
+            value={item.priority as ItemPriority}
+            options={priorityOptions}
+            onCommit={(val) => commitFieldEdit("priority", val)}
+            onCancel={cancelEdit}
+            anchorRef={{ current: cellRefs.current["priority"] }}
+          />
+        )}
       </td>
 
       {/* Expand / collapse chevron */}
@@ -3817,30 +3774,291 @@ function ItemRow({
       {/* Dynamic columns */}
       {/* eslint-disable-next-line react-hooks/refs */}
       {visibleColumns.map((col) => renderCell(col.id))}
-
-      {/* Empty cell for the settings column */}
-      <td className="w-8" />
     </tr>
   );
-}
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Empty state                                                               */
 /* -------------------------------------------------------------------------- */
 
-function EmptyState() {
+function EmptyState({ search }: { search?: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 px-6">
       <div className="flex items-center justify-center size-16 rounded-2xl bg-slate-100 mb-5">
         <Inbox className="size-7 text-slate-400" />
       </div>
       <h3 className="text-base font-semibold text-slate-900 mb-1.5">
-        Ничего не найдено
+        {search ? "По запросу ничего не найдено" : "Ничего не найдено"}
       </h3>
       <p className="text-sm text-slate-500 text-center max-w-[320px]">
-        Нет элементов, соответствующих текущим фильтрам. Попробуйте изменить
-        параметры поиска или создайте новый элемент.
+        {search
+          ? `Нет задач, соответствующих запросу «${search}». Попробуйте другой запрос или сбросьте фильтры.`
+          : "Нет элементов, соответствующих текущим фильтрам. Попробуйте изменить параметры поиска или создайте новый элемент."}
       </p>
     </div>
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  ListView toolbar                                                          */
+/* -------------------------------------------------------------------------- */
+
+function FilterButton() {
+  const [open, setOpen] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const groups = useBrainStore((s) => s.filters.advancedGroups);
+  const useAdvanced = useBrainStore((s) => s.filters.useAdvanced);
+
+  const activeCount = useMemo(() => {
+    if (!useAdvanced) return 0;
+    return groups.reduce((acc, g) => acc + g.conditions.length, 0);
+  }, [groups, useAdvanced]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={popoverRef}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={cn(
+          "inline-flex items-center gap-1 px-2 h-7 text-xs rounded border transition-colors",
+          activeCount > 0
+            ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+        )}
+        title="Фильтры"
+      >
+        <Layers className="size-3.5" />
+        Фильтр
+        {activeCount > 0 && (
+          <span className="inline-flex items-center justify-center min-w-4 h-4 px-1 text-[10px] font-semibold rounded-full bg-blue-500 text-white tabular-nums">
+            {activeCount}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 w-[560px] max-w-[90vw] max-h-[70vh] overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl">
+          <AdvancedFilterBuilder />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ListViewToolbar({
+  search,
+  onSearchChange,
+  totalCount,
+  filteredCount,
+  onNewTask,
+  listGroupBy,
+  setListGroupBy,
+  isGrouped,
+  allGroupsCollapsed,
+  toggleAllGroups,
+}: {
+  search: string;
+  onSearchChange: (value: string) => void;
+  totalCount: number;
+  filteredCount: number;
+  onNewTask: () => void;
+  listGroupBy: ListGroupByConfig;
+  setListGroupBy: (config: ListGroupByConfig) => void;
+  isGrouped: boolean;
+  allGroupsCollapsed: boolean;
+  toggleAllGroups: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 px-2 py-1.5 border-b border-slate-200 bg-white">
+      {/* Search */}
+      <div className="relative flex-1 max-w-xs">
+        <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-slate-400 pointer-events-none" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="Поиск по названию, описанию, тегам, клиентам…"
+          className="w-full h-7 pl-7 pr-7 text-xs rounded border border-slate-200 bg-white placeholder:text-slate-400 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => onSearchChange("")}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center size-4 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+            title="Очистить поиск"
+          >
+            <X className="size-3" />
+          </button>
+        )}
+      </div>
+
+      {/* Counter */}
+      <span className="text-[11px] text-slate-500 tabular-nums whitespace-nowrap">
+        {filteredCount === totalCount
+          ? `${totalCount} задач${pluralRu(totalCount, "а", "и", "")}`
+          : `${filteredCount} из ${totalCount}`}
+      </span>
+
+      <div className="flex-1" />
+
+      {/* Filter */}
+      <FilterButton />
+
+      {/* New task */}
+      <button
+        type="button"
+        onClick={onNewTask}
+        className="inline-flex items-center gap-1 px-2 h-7 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white transition-colors"
+        title="Новая задача"
+      >
+        <Plus className="size-3.5" />
+        Новая
+      </button>
+
+      {/* Collapse all groups (only when grouping is on) */}
+      {isGrouped && (
+        <button
+          type="button"
+          onClick={toggleAllGroups}
+          className="inline-flex items-center justify-center size-7 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+          title={allGroupsCollapsed ? "Раскрыть всё" : "Свернуть всё"}
+        >
+          <ChevronsUpDown className="size-3.5" />
+        </button>
+      )}
+
+      {/* Group-by config */}
+      <GroupByPopover value={listGroupBy} onChange={setListGroupBy} />
+
+      {/* Column config */}
+      <ColumnConfigPopover />
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Floating bulk-actions bar                                                 */
+/* -------------------------------------------------------------------------- */
+
+function FloatingBulkBar({
+  count,
+  onClearSelection,
+  onStatus,
+  onPriority,
+  onCategory,
+  onType,
+  onArchive,
+  onDelete,
+  statusOptions,
+  priorityOptions,
+  categoryOptions,
+  typeOptions,
+}: {
+  count: number;
+  onClearSelection: () => void;
+  onStatus: (v: string) => void;
+  onPriority: (v: string) => void;
+  onCategory: (v: string) => void;
+  onType: (v: string) => void;
+  onArchive: () => void;
+  onDelete: () => void;
+  statusOptions: { key: ItemStatus; label: string }[];
+  priorityOptions: { key: ItemPriority; label: string }[];
+  categoryOptions: { key: ItemCategory; label: string }[];
+  typeOptions: { key: ItemType; label: string }[];
+}) {
+  return (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40">
+      <div className="flex items-center gap-1.5 flex-wrap px-3 py-2 bg-white border border-slate-200 rounded-lg shadow-lg">
+        <span className="text-xs font-medium text-blue-700">Выбрано: {count}</span>
+        <button
+          type="button"
+          onClick={onClearSelection}
+          className="inline-flex items-center justify-center size-5 rounded hover:bg-slate-100 text-slate-500 transition-colors"
+          title="Снять выделение"
+        >
+          <X className="size-3" />
+        </button>
+        <div className="h-4 w-px bg-slate-200 mx-0.5" />
+        <BulkActionDropdown label="Статус" options={statusOptions} onSelect={onStatus} />
+        <BulkActionDropdown label="Приоритет" options={priorityOptions} onSelect={onPriority} />
+        <BulkActionDropdown label="Категория" options={categoryOptions} onSelect={onCategory} />
+        <BulkActionDropdown label="Тип" options={typeOptions} onSelect={onType} />
+        <div className="h-4 w-px bg-slate-200 mx-0.5" />
+        <button
+          type="button"
+          onClick={onArchive}
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-amber-100 text-amber-700 transition-colors"
+          title="В архив"
+        >
+          <Archive className="size-3" />
+          В архив
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-red-100 text-red-600 transition-colors"
+          title="Удалить"
+        >
+          <Trash2 className="size-3" />
+          Удалить
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Undo toast for bulk delete                                                */
+/* -------------------------------------------------------------------------- */
+
+function UndoToast({
+  count,
+  onUndo,
+  onConfirm,
+}: {
+  count: number;
+  onUndo: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    const t = setTimeout(() => onConfirm(), 5000);
+    return () => clearTimeout(t);
+  }, [onConfirm]);
+
+  return (
+    <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50">
+      <div className="flex items-center gap-3 px-4 py-2.5 bg-slate-900 text-white rounded-lg shadow-lg">
+        <span className="text-xs">
+          Удалено {count} задач{pluralRu(count, "а", "и", "")}
+        </span>
+        <button
+          type="button"
+          onClick={onUndo}
+          className="text-xs font-semibold text-blue-300 hover:text-blue-200 transition-colors"
+        >
+          Отменить
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function pluralRu(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
 }
