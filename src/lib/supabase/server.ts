@@ -17,7 +17,7 @@ export async function createSupabaseServerClient() {
             cookieStore.set(name, value, options);
           }
         } catch {
-          // `setAll` called from a Server Component — ignore (middleware refreshes sessions).
+          // `setAll` called from a Server Component — ignore (proxy refreshes sessions).
         }
       },
     },
