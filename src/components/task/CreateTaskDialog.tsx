@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useBrainStore, useCategoryConfig } from "@/lib/store";
 import {
   DevelopmentParticipantInput,
@@ -12,8 +12,6 @@ import {
   TYPE_CONFIG,
 } from "@/types";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
-import { ru } from "date-fns/locale";
 
 import {
   Dialog,
@@ -33,14 +31,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
 
-import { CalendarIcon, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import {
   KaitenDevelopmentStageSelect,
   KaitenParticipantsSelect,
@@ -69,7 +62,7 @@ export function CreateTaskDialog() {
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const categoryConfig = useCategoryConfig();
   const storeCategories = useBrainStore((s) => s.categories);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   // Reset form when dialog opens with defaults
   useEffect(() => {
@@ -93,29 +86,34 @@ export function CreateTaskDialog() {
     }
   }, [isCreateOpen, createDefaults]);
 
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = useCallback(() => {
     const trimmedTitle = title.trim();
-    if (!trimmedTitle || isSubmitting) return;
+    if (!trimmedTitle || submittingRef.current) return;
+    submittingRef.current = true;
 
-    setIsSubmitting(true);
-    try {
-      await createItem({
-        title: trimmedTitle,
-        description: description.trim() || undefined,
-        type,
-        status,
-        priority,
-        category,
-        development_stage:
-          category === "development" ? developmentStage ?? null : null,
-        due_date: dueDate ? dueDate.toISOString().slice(0, 10) : null,
-        due_time: dueDate && /^\d{2}:\d{2}$/.test(dueTime) ? dueTime : null,
-        participants: category === "development" ? participants : [],
+    const payload = {
+      title: trimmedTitle,
+      description: description.trim() || undefined,
+      type,
+      status,
+      priority,
+      category,
+      development_stage:
+        category === "development" ? developmentStage ?? null : null,
+      due_date: dueDate ? dueDate.toISOString().slice(0, 10) : null,
+      due_time: dueDate && /^\d{2}:\d{2}$/.test(dueTime) ? dueTime : null,
+      participants: category === "development" ? participants : [],
+    };
+
+    // Close immediately for instant UX; store does optimistic add + rollback on error.
+    closeCreate();
+    createItem(payload)
+      .catch((err) => {
+        console.error("createItem failed", err);
+      })
+      .finally(() => {
+        submittingRef.current = false;
       });
-      closeCreate();
-    } finally {
-      setIsSubmitting(false);
-    }
   }, [
     title,
     description,
@@ -126,7 +124,6 @@ export function CreateTaskDialog() {
     developmentStage,
     dueDate,
     dueTime,
-    isSubmitting,
     participants,
     createItem,
     closeCreate,
@@ -347,56 +344,18 @@ export function CreateTaskDialog() {
           )}
 
           {/* Due date + time */}
-          <div className="flex items-center gap-2">
-            <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
-              <PopoverTrigger
-                render={
-                  <button
-                    className={cn(
-                      "inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900 transition-colors hover:bg-slate-50",
-                      !dueDate && "text-slate-500"
-                    )}
-                    type="button"
-                  />
-                }
-              >
-                <CalendarIcon className="size-3.5" />
-                {dueDate
-                  ? format(dueDate, "d MMM yyyy", { locale: ru })
-                  : "Добавить срок"}
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-auto border-slate-200 bg-white p-0">
-                <Calendar
-                  mode="single"
-                  selected={dueDate}
-                  onSelect={handleDateSelect}
-                  locale={ru}
-                />
-                {dueDate && (
-                  <div className="border-t border-slate-200 px-3 py-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="w-full text-slate-500 hover:text-slate-900"
-                      onClick={handleClearDate}
-                    >
-                      Убрать срок
-                    </Button>
-                  </div>
-                )}
-              </PopoverContent>
-            </Popover>
-
-            {dueDate && (
-              <input
-                type="time"
-                value={dueTime}
-                onChange={(e) => setDueTime(e.target.value)}
-                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 hover:bg-slate-50 focus:outline-none focus:border-slate-300"
-                title="Время дедлайна (опционально)"
-              />
-            )}
-          </div>
+          <DateTimePicker
+            size="md"
+            placeholder="Добавить срок"
+            value={{
+              date: dueDate ? dueDate.toISOString().slice(0, 10) : null,
+              time: dueTime || null,
+            }}
+            onChange={({ date, time }) => {
+              setDueDate(date ? new Date(`${date}T00:00:00`) : undefined);
+              setDueTime(time ?? "");
+            }}
+          />
 
           {/* Description */}
           <Textarea
@@ -417,7 +376,7 @@ export function CreateTaskDialog() {
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={!title.trim() || isSubmitting}
+            disabled={!title.trim()}
           >
             <Plus className="size-4" />
             Создать

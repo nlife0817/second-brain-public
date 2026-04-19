@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllItemsFull, createItem, getItemFull, reorderItems, setItemParticipants, setItemTags } from "@/lib/db";
+import { getAllItemsFull, createItem, getItemTags, reorderItems, setItemParticipants, setItemTags } from "@/lib/db";
 import { v4 as uuid } from "uuid";
-import { CreateItemPayload } from "@/types";
+import { CreateItemPayload, ItemWithSubtasks } from "@/types";
 import { queueKaitenItemSync } from "@/lib/kaiten/sync";
 import { getAuthUser } from "@/lib/auth";
 
@@ -40,14 +40,25 @@ export async function POST(req: NextRequest) {
       parent_id: body.parent_id ?? null,
     });
 
-    if (body.tags?.length) {
-      await setItemTags(item.id, body.tags);
+    // Run tags + participants in parallel; new items have no subtasks.
+    const [tags, participants] = await Promise.all([
+      body.tags?.length
+        ? setItemTags(item.id, body.tags).then(() => getItemTags(item.id))
+        : Promise.resolve([]),
+      body.participants?.length
+        ? setItemParticipants(item.id, body.participants)
+        : Promise.resolve([]),
+    ]);
+
+    // Kaiten sync is a background queue op — don't block the response.
+    if (item.category === "development" || body.parent_id) {
+      void queueKaitenItemSync(item.id).catch((err) => {
+        console.error("queueKaitenItemSync failed", err);
+      });
     }
-    if (body.participants?.length) {
-      await setItemParticipants(item.id, body.participants);
-    }
-    await queueKaitenItemSync(item.id);
-    return NextResponse.json(await getItemFull(item.id), { status: 201 });
+
+    const full: ItemWithSubtasks = { ...item, subtasks: [], tags, participants };
+    return NextResponse.json(full, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }

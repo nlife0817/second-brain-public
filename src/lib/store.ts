@@ -384,31 +384,90 @@ export const useBrainStore = create<BrainStore>()(
   },
 
   createItem: async (payload) => {
-    const res = await fetch("/api/items", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      let msg = `Ошибка ${res.status}`;
-      try { const body = await res.json(); msg = body.error ?? msg; } catch { /* ignore */ }
-      throw new Error(msg);
-    }
-    const item: ItemWithSubtasks = await res.json();
-    // Optimistic: add to store without refetch
-    if (!item.parent_id) {
-      set((s) => ({ items: [item, ...s.items] }));
+    const tempId = `tmp_${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    const tempItem: ItemWithSubtasks = {
+      id: tempId,
+      title: payload.title,
+      description: payload.description ?? "",
+      type: payload.type ?? "task",
+      status: payload.status ?? "inbox",
+      priority: payload.priority ?? "none",
+      category: payload.category ?? "other",
+      source: payload.source ?? "system",
+      development_stage: payload.development_stage ?? null,
+      due_date: payload.due_date ?? null,
+      due_time: payload.due_time ?? null,
+      position: 0,
+      parent_id: payload.parent_id ?? null,
+      created_at: now,
+      updated_at: now,
+      subtasks: [],
+      tags: [],
+      participants: (payload.participants ?? []).map((p) => ({
+        id: `tmp_${crypto.randomUUID()}`,
+        provider: p.provider ?? null,
+        remote_id: p.remote_id ?? null,
+        name: p.name,
+        position: 0,
+        created_at: now,
+        updated_at: now,
+      })),
+    };
+
+    // Optimistic insert — instant UI update.
+    if (!tempItem.parent_id) {
+      set((s) => ({ items: [tempItem, ...s.items] }));
     } else {
-      // Subtask: update parent's subtask list
       set((s) => ({
         items: s.items.map((i) =>
-          i.id === item.parent_id
-            ? { ...i, subtasks: [...(i.subtasks ?? []), item] }
+          i.id === tempItem.parent_id
+            ? { ...i, subtasks: [...(i.subtasks ?? []), tempItem] }
             : i
         ),
       }));
     }
-    return item;
+
+    try {
+      const res = await fetch("/api/items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        let msg = `Ошибка ${res.status}`;
+        try { const body = await res.json(); msg = body.error ?? msg; } catch { /* ignore */ }
+        throw new Error(msg);
+      }
+      const item: ItemWithSubtasks = await res.json();
+      // Replace temp with server item.
+      if (!item.parent_id) {
+        set((s) => ({ items: s.items.map((i) => i.id === tempId ? item : i) }));
+      } else {
+        set((s) => ({
+          items: s.items.map((i) =>
+            i.id === item.parent_id
+              ? { ...i, subtasks: (i.subtasks ?? []).map((sub) => sub.id === tempId ? item : sub) }
+              : i
+          ),
+        }));
+      }
+      return item;
+    } catch (err) {
+      // Rollback optimistic insert.
+      if (!tempItem.parent_id) {
+        set((s) => ({ items: s.items.filter((i) => i.id !== tempId) }));
+      } else {
+        set((s) => ({
+          items: s.items.map((i) =>
+            i.id === tempItem.parent_id
+              ? { ...i, subtasks: (i.subtasks ?? []).filter((sub) => sub.id !== tempId) }
+              : i
+          ),
+        }));
+      }
+      throw err;
+    }
   },
 
   updateItem: async (id, payload) => {
