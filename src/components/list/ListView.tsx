@@ -3285,6 +3285,12 @@ const ItemRow = memo(function ItemRow({
   const sortableStyle: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition: isDragging ? undefined : transition,
+    // Browser-level virtualization: skip painting rows that are off-screen.
+    // We leave it on "visible" while dragging so the moving row keeps its
+    // layout. containIntrinsicSize reserves height so scrollbar math stays
+    // stable when rows flip between rendered / skipped.
+    contentVisibility: isDragging ? "visible" : "auto",
+    containIntrinsicSize: "0 32px",
   };
 
   const itemCategoryConfig = useCategoryConfig();
