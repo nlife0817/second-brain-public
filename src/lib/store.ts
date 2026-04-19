@@ -75,6 +75,8 @@ interface BrainStore {
   createItem: (payload: CreateItemPayload) => Promise<ItemWithSubtasks>;
   updateItem: (id: string, payload: UpdateItemPayload) => Promise<void>;
   deleteItem: (id: string) => Promise<void>;
+  removeItemsLocal: (ids: string[]) => void;
+  restoreItemsLocal: (items: ItemWithSubtasks[]) => void;
   reorderItems: (items: { id: string; position: number; status?: string }[]) => Promise<void>;
   createTag: (name: string, color?: string) => Promise<Tag>;
   updateTag: (id: string, updates: Partial<Tag>) => Promise<void>;
@@ -499,6 +501,24 @@ export const useBrainStore = create<BrainStore>()(
       isDetailOpen: s.selectedItemId === id ? false : s.isDetailOpen,
       selectedItemId: s.selectedItemId === id ? null : s.selectedItemId,
     }));
+  },
+
+  removeItemsLocal: (ids) => {
+    const set_ = new Set(ids);
+    set((s) => ({
+      items: s.items.filter((i) => !set_.has(i.id)),
+      isDetailOpen: s.selectedItemId && set_.has(s.selectedItemId) ? false : s.isDetailOpen,
+      selectedItemId: s.selectedItemId && set_.has(s.selectedItemId) ? null : s.selectedItemId,
+    }));
+  },
+
+  restoreItemsLocal: (items) => {
+    set((s) => {
+      const existing = new Set(s.items.map((i) => i.id));
+      const toAdd = items.filter((i) => !existing.has(i.id));
+      if (toAdd.length === 0) return s;
+      return { items: [...s.items, ...toAdd] };
+    });
   },
 
   reorderItems: async (updates) => {

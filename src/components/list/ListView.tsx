@@ -1490,6 +1490,8 @@ export function ListView() {
   const developmentStages = useBrainStore((s) => s.developmentStages);
   const categoryConfig = useCategoryConfig();
   const itemLinkedClients = useBrainStore((s) => s.itemLinkedClients);
+  const removeItemsLocal = useBrainStore((s) => s.removeItemsLocal);
+  const restoreItemsLocal = useBrainStore((s) => s.restoreItemsLocal);
 
   // Build position maps for group ordering
   const groupPositionMaps = useMemo(() => {
@@ -1508,6 +1510,10 @@ export function ListView() {
   const [manualOrder, setManualOrder] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const [pendingDelete, setPendingDelete] = useState<{
+    ids: string[];
+    items: ItemWithSubtasks[];
+  } | null>(null);
   const collapsedGroups = useMemo(() => new Set(listCollapsedGroupsArr), [listCollapsedGroupsArr]);
 
   /* ----- Quick search (title + description + tags + clients) -------------- */
@@ -1817,15 +1823,30 @@ export function ListView() {
     await fetchItems();
   }, [selectedIds, fetchItems]);
 
-  const handleBulkDelete = useCallback(async () => {
-    if (!confirm(`Удалить выбранные элементы (${selectedIds.size})?`)) return;
+  const handleBulkDelete = useCallback(() => {
     const ids = Array.from(selectedIds);
-    await Promise.all(ids.map(id =>
-      fetch(`/api/items/${id}`, { method: "DELETE" })
-    ));
+    if (ids.length === 0) return;
+    const snapshot = rawItems.filter((i) => selectedIds.has(i.id));
+    removeItemsLocal(ids);
     setSelectedIds(new Set());
-    await fetchItems();
-  }, [selectedIds, fetchItems]);
+    setPendingDelete({ ids, items: snapshot });
+  }, [selectedIds, rawItems, removeItemsLocal]);
+
+  const cancelPendingDelete = useCallback(() => {
+    setPendingDelete((prev) => {
+      if (!prev) return null;
+      restoreItemsLocal(prev.items);
+      return null;
+    });
+  }, [restoreItemsLocal]);
+
+  const confirmPendingDelete = useCallback(async (ids: string[]) => {
+    await Promise.all(
+      ids.map((id) => fetch(`/api/items/${id}`, { method: "DELETE" }))
+    );
+    // store already removed items locally — just clean up the pending state
+    setPendingDelete(null);
+  }, []);
 
   /* ----- DnD drag end handler -------------------------------------------- */
 
@@ -2564,67 +2585,6 @@ export function ListView() {
                   )}
 
                 </tr>
-
-                {/* ---- Bulk actions bar -------------------------------- */}
-                {selectedIds.size > 0 && (
-                  <tr className="bg-blue-50 border-b border-blue-200">
-                    <td colSpan={visibleColumns.length + 3} className="px-3 py-1.5">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs font-medium text-blue-700">
-                          Выбрано: {selectedIds.size}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedIds(new Set())}
-                          className="inline-flex items-center justify-center size-5 rounded hover:bg-blue-200/70 text-blue-500 transition-colors"
-                          title="Снять выделение"
-                        >
-                          <X className="size-3" />
-                        </button>
-                        <div className="h-4 w-px bg-blue-200 mx-0.5" />
-                        <BulkActionDropdown
-                          label="Статус"
-                          options={statusOptions}
-                          onSelect={(val) => handleBulkUpdate("status", val)}
-                        />
-                        <BulkActionDropdown
-                          label="Приоритет"
-                          options={priorityOptions}
-                          onSelect={(val) => handleBulkUpdate("priority", val)}
-                        />
-                        <BulkActionDropdown
-                          label="Категория"
-                          options={categoryOptions}
-                          onSelect={(val) => handleBulkUpdate("category", val)}
-                        />
-                        <BulkActionDropdown
-                          label="Тип"
-                          options={typeOptions}
-                          onSelect={(val) => handleBulkUpdate("type", val)}
-                        />
-                        <div className="h-4 w-px bg-blue-200 mx-0.5" />
-                        <button
-                          type="button"
-                          onClick={() => handleBulkUpdate("status", "archived")}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-amber-100 text-amber-700 transition-colors"
-                          title="В архив"
-                        >
-                          <Archive className="size-3" />
-                          В архив
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleBulkDelete}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-red-100 text-red-600 transition-colors"
-                          title="Удалить"
-                        >
-                          <Trash2 className="size-3" />
-                          Удалить
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )}
               </thead>
 
               {/* ---- Body --------------------------------------------- */}
@@ -2741,6 +2701,29 @@ export function ListView() {
         </DndContext>
       </div>
     </ScrollArea>
+    {selectedIds.size > 0 && (
+      <FloatingBulkBar
+        count={selectedIds.size}
+        onClearSelection={() => setSelectedIds(new Set())}
+        onStatus={(val) => handleBulkUpdate("status", val)}
+        onPriority={(val) => handleBulkUpdate("priority", val)}
+        onCategory={(val) => handleBulkUpdate("category", val)}
+        onType={(val) => handleBulkUpdate("type", val)}
+        onArchive={() => handleBulkUpdate("status", "archived")}
+        onDelete={handleBulkDelete}
+        statusOptions={statusOptions}
+        priorityOptions={priorityOptions}
+        categoryOptions={categoryOptions}
+        typeOptions={typeOptions}
+      />
+    )}
+    {pendingDelete && (
+      <UndoToast
+        count={pendingDelete.ids.length}
+        onUndo={cancelPendingDelete}
+        onConfirm={() => confirmPendingDelete(pendingDelete.ids)}
+      />
+    )}
     </div>
   );
 }
@@ -3991,6 +3974,114 @@ function ListViewToolbar({
 
       {/* Column config */}
       <ColumnConfigPopover />
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Floating bulk-actions bar                                                 */
+/* -------------------------------------------------------------------------- */
+
+function FloatingBulkBar({
+  count,
+  onClearSelection,
+  onStatus,
+  onPriority,
+  onCategory,
+  onType,
+  onArchive,
+  onDelete,
+  statusOptions,
+  priorityOptions,
+  categoryOptions,
+  typeOptions,
+}: {
+  count: number;
+  onClearSelection: () => void;
+  onStatus: (v: string) => void;
+  onPriority: (v: string) => void;
+  onCategory: (v: string) => void;
+  onType: (v: string) => void;
+  onArchive: () => void;
+  onDelete: () => void;
+  statusOptions: { key: ItemStatus; label: string }[];
+  priorityOptions: { key: ItemPriority; label: string }[];
+  categoryOptions: { key: ItemCategory; label: string }[];
+  typeOptions: { key: ItemType; label: string }[];
+}) {
+  return (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40">
+      <div className="flex items-center gap-1.5 flex-wrap px-3 py-2 bg-white border border-slate-200 rounded-lg shadow-lg">
+        <span className="text-xs font-medium text-blue-700">Выбрано: {count}</span>
+        <button
+          type="button"
+          onClick={onClearSelection}
+          className="inline-flex items-center justify-center size-5 rounded hover:bg-slate-100 text-slate-500 transition-colors"
+          title="Снять выделение"
+        >
+          <X className="size-3" />
+        </button>
+        <div className="h-4 w-px bg-slate-200 mx-0.5" />
+        <BulkActionDropdown label="Статус" options={statusOptions} onSelect={onStatus} />
+        <BulkActionDropdown label="Приоритет" options={priorityOptions} onSelect={onPriority} />
+        <BulkActionDropdown label="Категория" options={categoryOptions} onSelect={onCategory} />
+        <BulkActionDropdown label="Тип" options={typeOptions} onSelect={onType} />
+        <div className="h-4 w-px bg-slate-200 mx-0.5" />
+        <button
+          type="button"
+          onClick={onArchive}
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-amber-100 text-amber-700 transition-colors"
+          title="В архив"
+        >
+          <Archive className="size-3" />
+          В архив
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-red-100 text-red-600 transition-colors"
+          title="Удалить"
+        >
+          <Trash2 className="size-3" />
+          Удалить
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Undo toast for bulk delete                                                */
+/* -------------------------------------------------------------------------- */
+
+function UndoToast({
+  count,
+  onUndo,
+  onConfirm,
+}: {
+  count: number;
+  onUndo: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    const t = setTimeout(() => onConfirm(), 5000);
+    return () => clearTimeout(t);
+  }, [onConfirm]);
+
+  return (
+    <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50">
+      <div className="flex items-center gap-3 px-4 py-2.5 bg-slate-900 text-white rounded-lg shadow-lg">
+        <span className="text-xs">
+          Удалено {count} задач{pluralRu(count, "а", "и", "")}
+        </span>
+        <button
+          type="button"
+          onClick={onUndo}
+          className="text-xs font-semibold text-blue-300 hover:text-blue-200 transition-colors"
+        >
+          Отменить
+        </button>
+      </div>
     </div>
   );
 }
