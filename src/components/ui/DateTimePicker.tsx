@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { CalendarIcon, Clock, X } from "lucide-react";
+import { CalendarIcon, Clock, X, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -54,16 +54,31 @@ export function DateTimePicker({
   align = "start",
 }: Props) {
   const [open, setOpen] = useState(false);
-  const date = parseDate(value.date);
-  const isOverdue = date && (() => {
+
+  // Buffered editing: changes made inside the popover are local until the user
+  // hits "Применить" (or "Убрать срок"). Outside-click / Escape discards the
+  // buffer. This avoids per-keystroke store updates and the row-jumping that
+  // comes with them when the list is sorted by due_date.
+  const [buffer, setBuffer] = useState<DateTimeValue>(value);
+
+  // Re-sync the buffer whenever the popover opens (or props change while open
+  // due to an external update).
+  useEffect(() => {
+    if (open) setBuffer(value);
+  }, [open, value]);
+
+  const committedDate = parseDate(value.date);
+  const bufferedDate = parseDate(buffer.date);
+
+  const isOverdue = committedDate && (() => {
     const now = new Date();
     if (value.time && /^\d{2}:\d{2}$/.test(value.time)) {
       const [h, m] = value.time.split(":").map((p) => parseInt(p, 10));
-      const deadline = new Date(date);
+      const deadline = new Date(committedDate);
       deadline.setHours(h, m, 0, 0);
       return deadline < now;
     }
-    const endOfDay = new Date(date);
+    const endOfDay = new Date(committedDate);
     endOfDay.setHours(23, 59, 59, 999);
     return endOfDay < now;
   })();
@@ -71,26 +86,30 @@ export function DateTimePicker({
   const heightCls = size === "xs" ? "h-6 text-xs" : size === "sm" ? "h-7 text-xs" : "h-8 text-sm";
   const iconSize = size === "xs" ? "size-3" : "size-3.5";
 
-  const label = date
+  const label = committedDate
     ? value.time && /^\d{2}:\d{2}$/.test(value.time)
-      ? `${format(date, "d MMM", { locale: ru })} · ${value.time}`
-      : format(date, "d MMM yyyy", { locale: ru })
+      ? `${format(committedDate, "d MMM", { locale: ru })} · ${value.time}`
+      : format(committedDate, "d MMM yyyy", { locale: ru })
     : placeholder;
 
-  const handleDate = useCallback(
-    (d: Date | undefined) => {
-      onChange({ date: d ? toIsoDate(d) : null, time: d ? value.time : null });
-    },
-    [onChange, value.time]
-  );
+  const handleDate = useCallback((d: Date | undefined) => {
+    setBuffer((prev) => ({
+      date: d ? toIsoDate(d) : null,
+      time: d ? prev.time : null,
+    }));
+  }, []);
 
-  const handleTime = useCallback(
-    (t: string) => {
-      const normalized = /^\d{2}:\d{2}$/.test(t) ? t : null;
-      onChange({ date: value.date, time: normalized });
-    },
-    [onChange, value.date]
-  );
+  const handleTime = useCallback((t: string) => {
+    const normalized = /^\d{2}:\d{2}$/.test(t) ? t : null;
+    setBuffer((prev) => ({ date: prev.date, time: normalized }));
+  }, []);
+
+  const handleApply = useCallback(() => {
+    const sameDate = buffer.date === value.date;
+    const sameTime = (buffer.time ?? null) === (value.time ?? null);
+    if (!sameDate || !sameTime) onChange(buffer);
+    setOpen(false);
+  }, [buffer, onChange, value.date, value.time]);
 
   const handleClear = useCallback(
     (e?: React.MouseEvent) => {
@@ -111,7 +130,7 @@ export function DateTimePicker({
             className={cn(
               "inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 text-slate-900 transition-colors hover:bg-slate-50 focus:outline-none focus:border-slate-300",
               heightCls,
-              !date && "text-slate-400",
+              !committedDate && "text-slate-400",
               isOverdue && "border-red-300 text-red-600",
               disabled && "cursor-not-allowed opacity-60",
               className
@@ -121,21 +140,21 @@ export function DateTimePicker({
       >
         <CalendarIcon className={cn(iconSize, "shrink-0")} />
         {!compact && <span className="truncate">{label}</span>}
-        {compact && date && <span className="truncate">{label}</span>}
+        {compact && committedDate && <span className="truncate">{label}</span>}
       </PopoverTrigger>
       <PopoverContent align={align} className="w-auto border-slate-200 bg-white p-0">
-        <Calendar mode="single" selected={date} onSelect={handleDate} locale={ru} />
+        <Calendar mode="single" selected={bufferedDate} onSelect={handleDate} locale={ru} />
         <div className="flex items-center gap-2 border-t border-slate-200 px-3 py-2">
           <Clock className="size-3.5 text-slate-400" />
           <input
             type="time"
-            value={value.time ?? ""}
+            value={buffer.time ?? ""}
             onChange={(e) => handleTime(e.target.value)}
-            disabled={!date}
+            disabled={!buffer.date}
             className="h-7 flex-1 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-900 hover:bg-slate-50 focus:outline-none focus:border-slate-300 disabled:cursor-not-allowed disabled:bg-slate-50"
             placeholder="—:—"
           />
-          {value.time && (
+          {buffer.time && (
             <button
               type="button"
               onClick={() => handleTime("")}
@@ -146,18 +165,26 @@ export function DateTimePicker({
             </button>
           )}
         </div>
-        {date && (
-          <div className="border-t border-slate-200 px-3 py-2">
+        <div className="flex items-center gap-2 border-t border-slate-200 px-3 py-2">
+          {value.date && (
             <Button
               variant="ghost"
               size="sm"
-              className="w-full text-slate-500 hover:text-slate-900"
+              className="flex-1 text-slate-500 hover:text-slate-900"
               onClick={handleClear}
             >
               Убрать срок
             </Button>
-          </div>
-        )}
+          )}
+          <Button
+            size="sm"
+            className="flex-1 gap-1 bg-blue-500 text-white hover:bg-blue-600"
+            onClick={handleApply}
+          >
+            <Check className="size-3.5" />
+            Применить
+          </Button>
+        </div>
       </PopoverContent>
     </Popover>
   );
