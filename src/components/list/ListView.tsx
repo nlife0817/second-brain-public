@@ -813,23 +813,28 @@ function InlineTagsCell({
 /* -------------------------------------------------------------------------- */
 
 function InlineDateCell({
-  value,
+  dateValue,
+  timeValue,
   onCommit,
   onCancel,
   anchorRef,
 }: {
-  value: string;
-  onCommit: (val: string | null) => void;
+  dateValue: string;
+  timeValue: string;
+  onCommit: (val: { date: string | null; time: string | null }) => void;
   onCancel: () => void;
   anchorRef?: React.RefObject<HTMLElement | null>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const [localValue, setLocalValue] = useState(value);
-  const localRef = useRef(value);
+  const [localDate, setLocalDate] = useState(dateValue);
+  const [localTime, setLocalTime] = useState(timeValue);
+  const localDateRef = useRef(dateValue);
+  const localTimeRef = useRef(timeValue);
   const committedRef = useRef(false);
-  const initialValueRef = useRef(value);
+  const initialDateRef = useRef(dateValue);
+  const initialTimeRef = useRef(timeValue);
 
   useLayoutEffect(() => {
     const anchor = anchorRef?.current;
@@ -860,13 +865,15 @@ function InlineDateCell({
       if (committedRef.current) return;
       committedRef.current = true;
       if (cleared) {
-        onCommit(null);
+        onCommit({ date: null, time: null });
         return;
       }
-      const cur = localRef.current || null;
-      const orig = initialValueRef.current || null;
-      if (cur !== orig) {
-        onCommit(cur);
+      const curDate = localDateRef.current || null;
+      const curTime = /^\d{2}:\d{2}$/.test(localTimeRef.current) ? localTimeRef.current : null;
+      const origDate = initialDateRef.current || null;
+      const origTime = initialTimeRef.current || null;
+      if (curDate !== origDate || curTime !== origTime) {
+        onCommit({ date: curDate, time: curDate ? curTime : null });
       } else {
         onCancel();
       }
@@ -913,38 +920,78 @@ function InlineDateCell({
       }}
       onClick={(e) => e.stopPropagation()}
     >
-      <input
-        ref={inputRef}
-        type="date"
-        value={localValue}
-        onChange={(e) => {
-          const v = e.target.value;
-          localRef.current = v;
-          setLocalValue(v);
-          // Apply and close immediately when a date is picked
-          if (v) {
-            if (committedRef.current) return;
-            committedRef.current = true;
-            inputRef.current?.blur();
-            onCommit(v);
-            return;
-          }
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault();
-            onCancel();
-          } else if (e.key === "Delete" || e.key === "Backspace") {
-            e.preventDefault();
+      <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-white p-1 shadow-md">
+        <input
+          ref={inputRef}
+          type="date"
+          value={localDate}
+          onChange={(e) => {
+            const v = e.target.value;
+            localDateRef.current = v;
+            setLocalDate(v);
+            // If user cleared the date entirely — also clear time.
+            if (!v) {
+              localTimeRef.current = "";
+              setLocalTime("");
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              onCancel();
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              finish();
+            }
+          }}
+          className="h-6 rounded border border-slate-200 bg-white px-1.5 text-[10px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
+          onClick={(e) => e.stopPropagation()}
+        />
+        <input
+          type="time"
+          value={localTime}
+          disabled={!localDate}
+          onChange={(e) => {
+            const v = e.target.value;
+            localTimeRef.current = v;
+            setLocalTime(v);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              onCancel();
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              finish();
+            }
+          }}
+          className="h-6 rounded border border-slate-200 bg-white px-1.5 text-[10px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300 disabled:cursor-not-allowed disabled:bg-slate-50"
+          onClick={(e) => e.stopPropagation()}
+          placeholder="—:—"
+        />
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
             finish(true);
-          } else if (e.key === "Enter") {
-            e.preventDefault();
+          }}
+          className="h-6 rounded px-1 text-[10px] text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          title="Убрать срок"
+        >
+          ✕
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
             finish();
-          }
-        }}
-        className="h-6 rounded-md border border-slate-200 bg-white px-1.5 text-[10px] text-slate-700 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300"
-        onClick={(e) => e.stopPropagation()}
-      />
+          }}
+          className="h-6 rounded px-1.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50"
+          title="Применить"
+        >
+          OK
+        </button>
+      </div>
     </div>,
     document.body
   );
@@ -3622,8 +3669,12 @@ function ItemRow({
             )}
             {editingField === "due_date" && (
               <InlineDateCell
-                value={item.due_date ?? ""}
-                onCommit={(val) => commitFieldEdit("due_date", val)}
+                dateValue={item.due_date ?? ""}
+                timeValue={item.due_time ?? ""}
+                onCommit={async ({ date, time }) => {
+                  await updateItem(item.id, { due_date: date, due_time: time });
+                  setEditingItem(null);
+                }}
                 onCancel={cancelEdit}
                 anchorRef={{ current: cellRefs.current["due_date"] }}
               />
