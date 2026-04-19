@@ -66,8 +66,12 @@ function ItemBrief({ item }: { item: Item }) {
         <span className="text-[10px] leading-none">{priorityCfg.icon}</span>
       )}
       {dueDate && (
-        <span className="text-[9px] text-slate-400 tabular-nums" title={`Дедлайн: ${format(dueDate, "d MMM yyyy", { locale: ru })}`}>
+        <span
+          className="text-[9px] text-slate-400 tabular-nums"
+          title={`Дедлайн: ${format(dueDate, "d MMM yyyy", { locale: ru })}${item.due_time ? ` ${item.due_time}` : ""}`}
+        >
           {format(dueDate, "d.MM", { locale: ru })}
+          {item.due_time && ` ${item.due_time}`}
         </span>
       )}
     </div>

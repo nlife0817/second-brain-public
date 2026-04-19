@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Inbox, CheckSquare, StickyNote } from "lucide-react";
+import { Inbox, CheckSquare, StickyNote, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const tabs = [
   { href: "/m/inbox", icon: Inbox, label: "Inbox" },
   { href: "/m/tasks", icon: CheckSquare, label: "Задачи" },
   { href: "/m/notes", icon: StickyNote, label: "Заметки" },
+  { href: "/m/settings", icon: Settings, label: "Настройки" },
 ];
 
 export function MobileBottomNav() {

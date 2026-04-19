@@ -1,6 +1,6 @@
 -- Notifications schema: timezone per user, time part on items, push subscriptions, notifications log.
 
-ALTER TABLE public.users ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'Europe/Moscow';
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'Asia/Novosibirsk';
 
 ALTER TABLE public.items ADD COLUMN IF NOT EXISTS due_time TEXT;
 

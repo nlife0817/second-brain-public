@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Separator } from "@/components/ui/separator";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import { SubtaskList } from "./SubtaskList";
 import { RelationsList } from "@/components/relations/RelationsList";
 import { CommentsList } from "@/components/comments/CommentsList";
@@ -254,33 +255,22 @@ const RichEditor = memo(function RichEditor({
 function FieldSelectors({
   item,
   layout,
-  datePickerOpen,
-  setDatePickerOpen,
   onStatusChange,
   onPriorityChange,
   onCategoryChange,
   onTypeChange,
-  onDateChange,
-  onTimeChange,
-  onClearDate,
+  onDueChange,
 }: {
   item: ItemWithSubtasks;
   layout: "modal" | "panel";
-  datePickerOpen: boolean;
-  setDatePickerOpen: (v: boolean) => void;
   onStatusChange: (v: ItemStatus | null) => void;
   onPriorityChange: (v: ItemPriority | null) => void;
   onCategoryChange: (v: ItemCategory | null) => void;
   onTypeChange: (v: ItemType | null) => void;
-  onDateChange: (d: Date | undefined) => void;
-  onTimeChange: (v: string) => void;
-  onClearDate: () => void;
+  onDueChange: (next: { date: string | null; time: string | null }) => void;
 }) {
   const categoryConfig = useCategoryConfig();
   const categories = useBrainStore((s) => s.categories);
-  const dueDate = item.due_date ? new Date(item.due_date) : undefined;
-  const isOverdue =
-    dueDate && dueDate < new Date() && item.status !== "done";
 
   const isPanel = layout === "panel";
   const labelCls = isPanel ? "text-xs text-slate-500" : "text-sm text-slate-500";
@@ -418,67 +408,13 @@ function FieldSelectors({
         {/* Row 3: Due date + time (full width) */}
         <div className="flex flex-col gap-1">
           <span className={labelCls}>Срок</span>
-          <div className="flex items-center gap-2">
-            <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
-              <PopoverTrigger
-                render={
-                  <button
-                    className={cn(
-                      "inline-flex h-7 flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-900 transition-colors hover:bg-slate-50",
-                      !dueDate && "text-slate-500",
-                      isOverdue && "border-red-300 text-red-600"
-                    )}
-                    type="button"
-                  />
-                }
-              >
-                <CalendarIcon className="size-3.5 shrink-0" />
-                {dueDate ? (
-                  <span className="flex items-center gap-1.5">
-                    {format(dueDate, "d MMM yyyy", { locale: ru })}
-                    {isOverdue && (
-                      <AlertTriangle className="size-3 text-red-500" />
-                    )}
-                  </span>
-                ) : (
-                  <span>Без срока</span>
-                )}
-              </PopoverTrigger>
-              <PopoverContent
-                align="start"
-                className="w-auto border-slate-200 bg-white p-0"
-              >
-                <Calendar
-                  mode="single"
-                  selected={dueDate}
-                  onSelect={onDateChange}
-                  locale={ru}
-                />
-                {dueDate && (
-                  <div className="border-t border-slate-200 px-3 py-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="w-full text-slate-500 hover:text-slate-900"
-                      onClick={onClearDate}
-                    >
-                      Убрать срок
-                    </Button>
-                  </div>
-                )}
-              </PopoverContent>
-            </Popover>
-
-            {dueDate && (
-              <input
-                type="time"
-                value={item.due_time ?? ""}
-                onChange={(e) => onTimeChange(e.target.value)}
-                className="h-7 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-900 hover:bg-slate-50 focus:outline-none focus:border-slate-300"
-                title="Время дедлайна (опционально)"
-              />
-            )}
-          </div>
+          <DateTimePicker
+            size="sm"
+            placeholder="Без срока"
+            className="w-full"
+            value={{ date: item.due_date ?? null, time: item.due_time ?? null }}
+            onChange={onDueChange}
+          />
         </div>
       </div>
     );
@@ -606,67 +542,13 @@ function FieldSelectors({
 
       {/* Due date + time */}
       <span className={labelCls}>Срок</span>
-      <div className="flex items-center gap-2">
-        <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
-          <PopoverTrigger
-            render={
-              <button
-                className={cn(
-                  "inline-flex h-8 flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900 transition-colors hover:bg-slate-50",
-                  !dueDate && "text-slate-500",
-                  isOverdue && "border-red-300 text-red-600"
-                )}
-                type="button"
-              />
-            }
-          >
-            <CalendarIcon className="size-3.5 shrink-0" />
-            {dueDate ? (
-              <span className="flex items-center gap-1.5">
-                {format(dueDate, "d MMM yyyy", { locale: ru })}
-                {isOverdue && (
-                  <AlertTriangle className="size-3 text-red-500" />
-                )}
-              </span>
-            ) : (
-              <span>Без срока</span>
-            )}
-          </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            className="w-auto border-slate-200 bg-white p-0"
-          >
-            <Calendar
-              mode="single"
-              selected={dueDate}
-              onSelect={onDateChange}
-              locale={ru}
-            />
-            {dueDate && (
-              <div className="border-t border-slate-200 px-3 py-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full text-slate-500 hover:text-slate-900"
-                  onClick={onClearDate}
-                >
-                  Убрать срок
-                </Button>
-              </div>
-            )}
-          </PopoverContent>
-        </Popover>
-
-        {dueDate && (
-          <input
-            type="time"
-            value={item.due_time ?? ""}
-            onChange={(e) => onTimeChange(e.target.value)}
-            className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 hover:bg-slate-50 focus:outline-none focus:border-slate-300"
-            title="Время дедлайна (опционально)"
-          />
-        )}
-      </div>
+      <DateTimePicker
+        size="md"
+        placeholder="Без срока"
+        className="w-full"
+        value={{ date: item.due_date ?? null, time: item.due_time ?? null }}
+        onChange={onDueChange}
+      />
     </div>
   );
 }
@@ -761,7 +643,6 @@ function useTaskDetailLogic(item: ItemWithSubtasks | null) {
   const [title, setTitle] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [datePickerOpen, setDatePickerOpen] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -847,33 +728,13 @@ function useTaskDetailLogic(item: ItemWithSubtasks | null) {
     [item, updateItem]
   );
 
-  const handleDateChange = useCallback(
-    (date: Date | undefined) => {
-      if (item) {
-        updateItem(item.id, {
-          due_date: date ? date.toISOString().slice(0, 10) : null,
-        });
-        setDatePickerOpen(false);
-      }
-    },
-    [item, updateItem]
-  );
-
-  const handleTimeChange = useCallback(
-    (value: string) => {
+  const handleDueChange = useCallback(
+    ({ date, time }: { date: string | null; time: string | null }) => {
       if (!item) return;
-      const normalized = /^\d{2}:\d{2}$/.test(value) ? value : null;
-      updateItem(item.id, { due_time: normalized });
+      updateItem(item.id, { due_date: date, due_time: time });
     },
     [item, updateItem]
   );
-
-  const handleClearDate = useCallback(() => {
-    if (item) {
-      updateItem(item.id, { due_date: null, due_time: null });
-      setDatePickerOpen(false);
-    }
-  }, [item, updateItem]);
 
   const handleDelete = useCallback(async () => {
     if (item) {
@@ -889,8 +750,6 @@ function useTaskDetailLogic(item: ItemWithSubtasks | null) {
     setIsEditingTitle,
     showDeleteConfirm,
     setShowDeleteConfirm,
-    datePickerOpen,
-    setDatePickerOpen,
     titleInputRef,
     handleTitleSave,
     handleDescriptionSave,
@@ -900,9 +759,7 @@ function useTaskDetailLogic(item: ItemWithSubtasks | null) {
     handleTypeChange,
     handleDevelopmentStageChange,
     handleParticipantsChange,
-    handleDateChange,
-    handleTimeChange,
-    handleClearDate,
+    handleDueChange,
     handleDelete,
   };
 }
@@ -926,8 +783,6 @@ function TaskDetailContent({
     setIsEditingTitle,
     showDeleteConfirm,
     setShowDeleteConfirm,
-    datePickerOpen,
-    setDatePickerOpen,
     titleInputRef,
     handleTitleSave,
     handleDescriptionSave,
@@ -937,9 +792,7 @@ function TaskDetailContent({
     handleTypeChange,
     handleDevelopmentStageChange,
     handleParticipantsChange,
-    handleDateChange,
-    handleTimeChange,
-    handleClearDate,
+    handleDueChange,
     handleDelete,
   } = useTaskDetailLogic(item);
 
@@ -995,15 +848,11 @@ function TaskDetailContent({
     <FieldSelectors
       item={item}
       layout={layout}
-      datePickerOpen={datePickerOpen}
-      setDatePickerOpen={setDatePickerOpen}
       onStatusChange={handleStatusChange}
       onPriorityChange={handlePriorityChange}
       onCategoryChange={handleCategoryChange}
       onTypeChange={handleTypeChange}
-      onDateChange={handleDateChange}
-      onTimeChange={handleTimeChange}
-      onClearDate={handleClearDate}
+      onDueChange={handleDueChange}
     />
   );
 

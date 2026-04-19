@@ -22,6 +22,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import {
   Popover,
   PopoverTrigger,
@@ -168,11 +169,9 @@ export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
     [updateItem]
   );
 
-  const handleDateChange = useCallback(
-    async (id: string, date: Date | undefined) => {
-      await updateItem(id, {
-        due_date: date ? format(date, "yyyy-MM-dd") : null,
-      });
+  const handleDueChange = useCallback(
+    async (id: string, next: { date: string | null; time: string | null }) => {
+      await updateItem(id, { due_date: next.date, due_time: next.time });
     },
     [updateItem]
   );
@@ -249,7 +248,7 @@ export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
                   onToggle={handleToggle}
                   onStatusChange={handleStatusChange}
                   onPriorityChange={handlePriorityChange}
-                  onDateChange={handleDateChange}
+                  onDueChange={handleDueChange}
                   onDetach={handleDetach}
                   onDelete={handleDelete}
                   onOpen={openDetail}
@@ -313,7 +312,7 @@ interface SubtaskRowProps {
   onToggle: (s: Item) => void;
   onStatusChange: (id: string, status: ItemStatus) => void;
   onPriorityChange: (id: string, priority: ItemPriority) => void;
-  onDateChange: (id: string, date: Date | undefined) => void;
+  onDueChange: (id: string, next: { date: string | null; time: string | null }) => void;
   onDetach: (id: string) => void;
   onDelete: (id: string) => void;
   onOpen: (id: string) => void;
@@ -330,24 +329,12 @@ function SubtaskRow({
   onToggle,
   onStatusChange,
   onPriorityChange,
-  onDateChange,
+  onDueChange,
   onDetach,
   onDelete,
   onOpen,
 }: SubtaskRowProps) {
-  const [dateOpen, setDateOpen] = useState(false);
   const isDone = subtask.status === "done";
-  const parsedDate = subtask.due_date ? new Date(subtask.due_date) : undefined;
-
-  const handleDateSelect = useCallback((date: Date | undefined) => {
-    onDateChange(subtask.id, date);
-    setDateOpen(false);
-  }, [onDateChange, subtask.id]);
-
-  const handleClearDate = useCallback(() => {
-    onDateChange(subtask.id, undefined);
-    setDateOpen(false);
-  }, [onDateChange, subtask.id]);
 
   return (
     <tr className="group/row border-b border-slate-50 last:border-b-0 hover:bg-slate-50/60">
@@ -471,51 +458,15 @@ function SubtaskRow({
         </Select>
       </td>
 
-      {/* Due date */}
+      {/* Due date + time */}
       <td className="hidden py-0.5 pr-1 align-middle md:table-cell">
-        <Popover open={dateOpen} onOpenChange={setDateOpen}>
-          <PopoverTrigger
-            render={
-              <button
-                className={cn(
-                  "inline-flex h-6 w-full items-center gap-1 rounded px-1.5 text-[11px] text-slate-600 transition-colors hover:bg-slate-100",
-                  !parsedDate && "text-slate-400"
-                )}
-                type="button"
-              />
-            }
-          >
-            <CalendarIcon className="size-3 shrink-0 text-slate-400" />
-            <span className="truncate">
-              {parsedDate
-                ? format(parsedDate, "d MMM", { locale: ru })
-                : "\u2014"}
-            </span>
-          </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            className="w-auto border-slate-200 bg-white p-0"
-          >
-            <Calendar
-              mode="single"
-              selected={parsedDate}
-              onSelect={handleDateSelect}
-              locale={ru}
-            />
-            {parsedDate && (
-              <div className="border-t border-slate-200 px-3 py-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full text-xs text-slate-500 hover:text-slate-900"
-                  onClick={handleClearDate}
-                >
-                  Убрать срок
-                </Button>
-              </div>
-            )}
-          </PopoverContent>
-        </Popover>
+        <DateTimePicker
+          size="xs"
+          placeholder="—"
+          className="w-full border-0 bg-transparent hover:bg-slate-100"
+          value={{ date: subtask.due_date ?? null, time: subtask.due_time ?? null }}
+          onChange={(next) => onDueChange(subtask.id, next)}
+        />
       </td>
 
       {/* Actions */}

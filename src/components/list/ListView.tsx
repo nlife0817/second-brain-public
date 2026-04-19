@@ -3612,7 +3612,10 @@ function ItemRow({
                 {!isOverdue && (
                   <Calendar className="size-3 shrink-0 text-slate-400" />
                 )}
-                <span>{format(dueDate, "d MMM", { locale: ru })}</span>
+                <span>
+                  {format(dueDate, "d MMM", { locale: ru })}
+                  {item.due_time && <span className="ml-0.5">· {item.due_time}</span>}
+                </span>
               </div>
             ) : (
               <span className="text-xs text-slate-300">--</span>

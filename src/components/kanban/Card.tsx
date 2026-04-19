@@ -610,6 +610,7 @@ export const KanbanCard = React.memo(function KanbanCard({ item, isDragOverlay =
                 >
                   <Calendar className="size-2.5" />
                   {format(dueDate, "d MMM", { locale: ru })}
+                  {item.due_time && <span className="ml-0.5">· {item.due_time}</span>}
                 </span>
               ) : (
                 <span

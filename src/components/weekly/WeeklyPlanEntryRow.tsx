@@ -245,6 +245,7 @@ function TriageRow({ item, onRemove }: { entry?: WeeklyPlanEntryWithItem; item: 
           <span className="text-[10px] text-slate-400 shrink-0 flex items-center gap-0.5">
             <Calendar className="size-2.5" />
             {formatDueDate(item.due_date)}
+            {item.due_time && ` · ${item.due_time}`}
           </span>
         )}
         <span className="text-[10px] text-slate-400 shrink-0">{catCfg[item.category]?.label ?? item.category}</span>
