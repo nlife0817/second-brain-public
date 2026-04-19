@@ -7,6 +7,7 @@ import {
   useRef,
   useEffect,
   useLayoutEffect,
+  memo,
 } from "react";
 import { createPortal } from "react-dom";
 import { useFilteredItems, useBrainStore, useCategoryConfig } from "@/lib/store";
@@ -1487,6 +1488,7 @@ export function ListView() {
     {}
   );
   const [createDropdown, setCreateDropdown] = useState<string | null>(null);
+  const isCommittingCreateRef = useRef(false);
 
   /* ----- Inline subtask creation state ----------------------------------- */
   const [creatingSubtaskFor, setCreatingSubtaskFor] = useState<string | null>(
@@ -1507,6 +1509,7 @@ export function ListView() {
     {}
   );
   const [subtaskDropdown, setSubtaskDropdown] = useState<string | null>(null);
+  const isCommittingSubtaskRef = useRef(false);
 
   /* ----- Column definitions for current order ----------------------------- */
 
@@ -1872,8 +1875,7 @@ export function ListView() {
     setIsCreating(true);
     setNewItem({ ...NEW_ITEM_DEFAULTS });
     setCreateDropdown(null);
-    // Auto-focus title after render
-    setTimeout(() => createTitleRef.current?.focus(), 0);
+    // Focus handled via autoFocus on the title input — avoids setTimeout delay
   }, []);
 
   const handleCancelCreate = useCallback(() => {
@@ -1888,40 +1890,47 @@ export function ListView() {
   const fetchEntityCounts = useBrainStore((s) => s.fetchEntityCounts);
 
   const handleCommitCreate = useCallback(async () => {
+    if (isCommittingCreateRef.current) return;
     if (!newItem.title.trim()) {
       handleCancelCreate();
       return;
     }
+    isCommittingCreateRef.current = true;
+    // Close the inline row immediately — optimistic temp item already renders
+    // from the store. Keeping the form open waiting for the API round-trip is
+    // what made creation feel laggy.
+    const snapshot = newItem;
+    setIsCreating(false);
+    setNewItem({ ...NEW_ITEM_DEFAULTS });
+    setCreateDropdown(null);
     try {
       const created = await createItem({
-        title: newItem.title.trim(),
-        status: newItem.status,
-        priority: newItem.priority,
-        category: newItem.category,
-        type: newItem.type,
+        title: snapshot.title.trim(),
+        status: snapshot.status,
+        priority: snapshot.priority,
+        category: snapshot.category,
+        type: snapshot.type,
         development_stage:
-          newItem.category === "development"
-            ? newItem.development_stage
+          snapshot.category === "development"
+            ? snapshot.development_stage
             : null,
         participants:
-          newItem.category === "development" ? newItem.participants : [],
-        due_date: newItem.due_date || null,
+          snapshot.category === "development" ? snapshot.participants : [],
+        due_date: snapshot.due_date || null,
       });
-      // Link to client if selected
-      if (newItem.clientId && created) {
+      if (snapshot.clientId && created) {
         let clientType = relationTypes.find((rt) => rt.name === "Клиент");
         if (!clientType) {
           clientType = await createRelationType("Клиент", "#22c55e", "User", 1);
         }
-        await createRelation("item", created.id, "client", newItem.clientId, clientType.id);
+        await createRelation("item", created.id, "client", snapshot.clientId, clientType.id);
         await fetchEntityCounts("item");
       }
     } catch {
-      // silently fail
+      // silently fail — store rollback handles temp item removal
+    } finally {
+      isCommittingCreateRef.current = false;
     }
-    setIsCreating(false);
-    setNewItem({ ...NEW_ITEM_DEFAULTS });
-    setCreateDropdown(null);
   }, [newItem, createItem, createRelation, createRelationType, relationTypes, fetchEntityCounts, handleCancelCreate]);
 
   /* ----- Inline subtask creation handlers -------------------------------- */
@@ -1957,7 +1966,7 @@ export function ListView() {
         next.add(parentId);
         return next;
       });
-      setTimeout(() => subtaskInputRef.current?.focus(), 0);
+      // Focus handled via autoFocus on the subtask title input
     },
     [sortedItems]
   );
@@ -1978,31 +1987,15 @@ export function ListView() {
   }, []);
 
   const handleCommitSubtaskCreate = useCallback(async () => {
+    if (isCommittingSubtaskRef.current) return;
     if (!newSubtask.title.trim() || !creatingSubtaskFor) {
       handleCancelSubtaskCreate();
       return;
     }
-    try {
-      await createItem({
-        title: newSubtask.title.trim(),
-        parent_id: creatingSubtaskFor,
-        status: newSubtask.status,
-        priority: newSubtask.priority,
-        category: newSubtask.category,
-        type: newSubtask.type,
-        development_stage:
-          newSubtask.category === "development"
-            ? newSubtask.development_stage
-            : null,
-        participants:
-          newSubtask.category === "development"
-            ? newSubtask.participants
-            : [],
-        due_date: newSubtask.due_date || null,
-      });
-    } catch {
-      // silently fail
-    }
+    isCommittingSubtaskRef.current = true;
+    // Close the subtask form right away — optimistic temp row renders from store
+    const snapshot = newSubtask;
+    const parentId = creatingSubtaskFor;
     setCreatingSubtaskFor(null);
     setNewSubtask({
       title: "",
@@ -2015,6 +2008,29 @@ export function ListView() {
       due_date: "",
     });
     setSubtaskDropdown(null);
+    try {
+      await createItem({
+        title: snapshot.title.trim(),
+        parent_id: parentId,
+        status: snapshot.status,
+        priority: snapshot.priority,
+        category: snapshot.category,
+        type: snapshot.type,
+        development_stage:
+          snapshot.category === "development"
+            ? snapshot.development_stage
+            : null,
+        participants:
+          snapshot.category === "development"
+            ? snapshot.participants
+            : [],
+        due_date: snapshot.due_date || null,
+      });
+    } catch {
+      // silently fail — store rollback handles temp item removal
+    } finally {
+      isCommittingSubtaskRef.current = false;
+    }
   }, [
     newSubtask,
     creatingSubtaskFor,
@@ -2109,6 +2125,7 @@ export function ListView() {
               type="text"
               placeholder="Название задачи..."
               value={newItem.title}
+              autoFocus
               onChange={(e) =>
                 setNewItem((prev) => ({ ...prev, title: e.target.value }))
               }
@@ -2717,7 +2734,7 @@ export function ListView() {
 /*  Group section header row                                                  */
 /* -------------------------------------------------------------------------- */
 
-function GroupSection({
+const GroupSection = memo(function GroupSection({
   group,
   collapsed,
   onToggle,
@@ -2778,7 +2795,7 @@ function GroupSection({
       {children}
     </>
   );
-}
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Sortable column header                                                    */
@@ -2832,7 +2849,7 @@ function SortableHeader({
 /*  ItemRowGroup: renders the main row + optional "add subtask" row           */
 /* -------------------------------------------------------------------------- */
 
-function ItemRowGroup({
+const ItemRowGroup = memo(function ItemRowGroup({
   row,
   selected,
   onSelect,
@@ -3016,6 +3033,7 @@ function ItemRowGroup({
                             type="text"
                             placeholder="Название подзадачи..."
                             value={newSubtask.title}
+                            autoFocus
                             onChange={(e) =>
                               setNewSubtask((prev) => ({ ...prev, title: e.target.value }))
                             }
@@ -3248,7 +3266,7 @@ function ItemRowGroup({
       )}
     </>
   );
-}
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Table row                                                                 */
@@ -3256,7 +3274,7 @@ function ItemRowGroup({
 
 const EMPTY_REL_TITLES: string[] = [];
 
-function ItemRow({
+const ItemRow = memo(function ItemRow({
   row,
   selected,
   onSelect,
@@ -3822,7 +3840,7 @@ function ItemRow({
       <td className="w-8" />
     </tr>
   );
-}
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Empty state                                                               */
