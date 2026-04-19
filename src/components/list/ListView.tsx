@@ -64,6 +64,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
+import { AdvancedFilterBuilder } from "@/components/filters/AdvancedFilterBuilder";
 
 function SourceIcon({ source }: { source: string }) {
   if (source === "kaiten") return <span title="Кайтен" className="mr-1 inline-flex size-4 items-center justify-center rounded bg-red-50 text-[10px] font-semibold text-red-600">К</span>;
@@ -3797,6 +3798,58 @@ function EmptyState({ search }: { search?: string }) {
 /*  ListView toolbar                                                          */
 /* -------------------------------------------------------------------------- */
 
+function FilterButton() {
+  const [open, setOpen] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const groups = useBrainStore((s) => s.filters.advancedGroups);
+  const useAdvanced = useBrainStore((s) => s.filters.useAdvanced);
+
+  const activeCount = useMemo(() => {
+    if (!useAdvanced) return 0;
+    return groups.reduce((acc, g) => acc + g.conditions.length, 0);
+  }, [groups, useAdvanced]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={popoverRef}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={cn(
+          "inline-flex items-center gap-1 px-2 h-7 text-xs rounded border transition-colors",
+          activeCount > 0
+            ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+        )}
+        title="Фильтры"
+      >
+        <Layers className="size-3.5" />
+        Фильтр
+        {activeCount > 0 && (
+          <span className="inline-flex items-center justify-center min-w-4 h-4 px-1 text-[10px] font-semibold rounded-full bg-blue-500 text-white tabular-nums">
+            {activeCount}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 w-[560px] max-w-[90vw] max-h-[70vh] overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl">
+          <AdvancedFilterBuilder />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ListViewToolbar({
   search,
   onSearchChange,
@@ -3852,6 +3905,9 @@ function ListViewToolbar({
       </span>
 
       <div className="flex-1" />
+
+      {/* Filter */}
+      <FilterButton />
 
       {/* New task */}
       <button
