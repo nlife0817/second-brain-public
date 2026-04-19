@@ -69,6 +69,24 @@ function SourceIcon({ source }: { source: string }) {
   if (source === "claude") return <span title="Клод" className="mr-1 inline-flex size-4 items-center justify-center rounded bg-orange-50 text-[10px] font-semibold text-orange-600">С</span>;
   return null;
 }
+
+function highlightMatch(text: string, query: string): React.ReactNode {
+  const q = query.trim();
+  if (!q) return text;
+  const lower = text.toLowerCase();
+  const needle = q.toLowerCase();
+  const idx = lower.indexOf(needle);
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-yellow-200 text-slate-900 rounded px-0.5">
+        {text.slice(idx, idx + q.length)}
+      </mark>
+      {text.slice(idx + q.length)}
+    </>
+  );
+}
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -1452,7 +1470,7 @@ const NEW_ITEM_DEFAULTS = {
 };
 
 export function ListView() {
-  const items = useFilteredItems();
+  const rawItems = useFilteredItems();
   const { catalog } = useKaitenCatalog();
   const createItem = useBrainStore((s) => s.createItem);
   const openDetail = useBrainStore((s) => s.openDetail);
@@ -1491,6 +1509,35 @@ export function ListView() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const collapsedGroups = useMemo(() => new Set(listCollapsedGroupsArr), [listCollapsedGroupsArr]);
+
+  /* ----- Quick search (title + description + tags + clients) -------------- */
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQuery(searchInput), 150);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const { items, searchMatchInfo } = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return { items: rawItems, searchMatchInfo: null };
+    const matches = new Map<string, { tag: boolean; client: boolean }>();
+    const filtered = rawItems.filter((item) => {
+      const titleHit = item.title.toLowerCase().includes(q);
+      const descHit = (item.description ?? "").toLowerCase().includes(q);
+      const tags = "tags" in item ? item.tags : undefined;
+      const tagHit = tags?.some((t) => t.name.toLowerCase().includes(q)) ?? false;
+      const clientNames = itemLinkedClients[item.id] ?? [];
+      const clientHit = clientNames.some((c) => c.toLowerCase().includes(q));
+      if (!(titleHit || descHit || tagHit || clientHit)) return false;
+      matches.set(item.id, {
+        tag: tagHit && !titleHit && !descHit,
+        client: clientHit && !titleHit && !descHit && !tagHit,
+      });
+      return true;
+    });
+    return { items: filtered, searchMatchInfo: { query: q, matches } };
+  }, [rawItems, searchQuery, itemLinkedClients]);
 
   /* ----- Inline task creation state -------------------------------------- */
   const [isCreating, setIsCreating] = useState(false);
@@ -2423,33 +2470,45 @@ export function ListView() {
           typeOptions={typeOptions}
           stageOptions={catalog.development_stages}
           participantOptions={catalog.participants}
+          searchQuery={searchQuery}
+          searchRowMatch={searchMatchInfo?.matches.get(row.item.id) ?? null}
         />
       );
     });
 
   /* ----- render ----------------------------------------------------------- */
 
+  const toolbar = (
+    <ListViewToolbar
+      search={searchInput}
+      onSearchChange={setSearchInput}
+      totalCount={rawItems.length}
+      filteredCount={items.length}
+      onNewTask={handleStartCreate}
+      listGroupBy={listGroupBy}
+      setListGroupBy={setListGroupBy}
+      isGrouped={isGrouped}
+      allGroupsCollapsed={allGroupsCollapsed}
+      toggleAllGroups={toggleAllGroups}
+    />
+  );
+
   if (items.length === 0 && !isCreating) {
     return (
-      <div>
-        <div className="p-2">
-          <button
-            type="button"
-            onClick={handleStartCreate}
-            className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 transition-colors px-2 py-1 rounded hover:bg-slate-100"
-          >
-            <Plus className="size-3.5" />
-            Добавить задачу
-          </button>
+      <div className="flex flex-col h-full">
+        {toolbar}
+        <div className="flex-1 min-h-0 overflow-auto">
+          <EmptyState search={searchQuery || undefined} />
         </div>
-        {isCreating ? null : <EmptyState />}
       </div>
     );
   }
 
   return (
-    <ScrollArea className="h-full w-full">
-      <div className="min-w-[900px]">
+    <div className="flex flex-col h-full">
+      {toolbar}
+      <ScrollArea className="flex-1 w-full">
+        <div className="min-w-[900px]">
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
@@ -2504,32 +2563,12 @@ export function ListView() {
                     )
                   )}
 
-                  {/* Column config & grouping buttons */}
-                  <th className="w-16 px-1 py-2">
-                    <div className="flex items-center gap-0.5 justify-end">
-                      {isGrouped && (
-                        <button
-                          type="button"
-                          onClick={toggleAllGroups}
-                          className="inline-flex items-center justify-center size-6 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-                          title={allGroupsCollapsed ? "Раскрыть всё" : "Свернуть всё"}
-                        >
-                          <ChevronsUpDown className="size-3.5" />
-                        </button>
-                      )}
-                      <GroupByPopover
-                        value={listGroupBy}
-                        onChange={setListGroupBy}
-                      />
-                      <ColumnConfigPopover />
-                    </div>
-                  </th>
                 </tr>
 
                 {/* ---- Bulk actions bar -------------------------------- */}
                 {selectedIds.size > 0 && (
                   <tr className="bg-blue-50 border-b border-blue-200">
-                    <td colSpan={visibleColumns.length + 4} className="px-3 py-1.5">
+                    <td colSpan={visibleColumns.length + 3} className="px-3 py-1.5">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-xs font-medium text-blue-700">
                           Выбрано: {selectedIds.size}
@@ -2609,7 +2648,6 @@ export function ListView() {
                         Добавить задачу
                       </span>
                     </td>
-                    <td className="w-16" />
                   </tr>
                 ) : (
                   <tr className="bg-blue-50/40 ring-1 ring-inset ring-blue-200">
@@ -2647,8 +2685,6 @@ export function ListView() {
                     {/* Dynamic creation cells */}
                     {/* eslint-disable-next-line react-hooks/refs */}
                     {visibleColumns.map((col) => renderCreateCell(col.id))}
-                    {/* Settings spacer */}
-                    <td className="w-16" />
                   </tr>
                 )}
 
@@ -2657,7 +2693,7 @@ export function ListView() {
                   ? groups.map((group) => {
                       const l1Key = group.key;
                       const groupCollapsed = collapsedGroups.has(l1Key);
-                      const colCount = visibleColumns.length + 4;
+                      const colCount = visibleColumns.length + 3;
 
                       // Level 2 sub-groups
                       const level2Groups = hasLevel2
@@ -2705,6 +2741,7 @@ export function ListView() {
         </DndContext>
       </div>
     </ScrollArea>
+    </div>
   );
 }
 
@@ -2856,6 +2893,8 @@ const ItemRowGroup = memo(function ItemRowGroup({
   typeOptions,
   stageOptions,
   participantOptions,
+  searchQuery,
+  searchRowMatch,
 }: {
   row: FlatRow;
   selected: boolean;
@@ -2903,9 +2942,11 @@ const ItemRowGroup = memo(function ItemRowGroup({
   typeOptions: { key: ItemType; label: string }[];
   stageOptions: KaitenStageOption[];
   participantOptions: DevelopmentParticipantInput[];
+  searchQuery: string;
+  searchRowMatch: { tag: boolean; client: boolean } | null;
 }) {
   const catConfig = useCategoryConfig();
-  const colCount = visibleColumns.length + 4; // drag + expand + checkbox + settings
+  const colCount = visibleColumns.length + 3; // drag + expand + checkbox
 
   return (
     <>
@@ -2920,6 +2961,8 @@ const ItemRowGroup = memo(function ItemRowGroup({
         isExpanded={isExpanded}
         onToggleExpand={onToggleExpand}
         visibleColumns={visibleColumns}
+        searchQuery={searchQuery}
+        searchRowMatch={searchRowMatch}
         statusOptions={statusOptions}
         priorityOptions={priorityOptions}
         categoryOptions={categoryOptions}
@@ -3220,8 +3263,6 @@ const ItemRowGroup = memo(function ItemRowGroup({
                     return <td key={col.id} />;
                 }
               })}
-              {/* Settings spacer */}
-              <td className="w-8" />
             </tr>
           ) : (
             <tr
@@ -3275,6 +3316,8 @@ const ItemRow = memo(function ItemRow({
   typeOptions,
   stageOptions,
   participantOptions,
+  searchQuery,
+  searchRowMatch,
 }: {
   row: FlatRow;
   selected: boolean;
@@ -3292,6 +3335,8 @@ const ItemRow = memo(function ItemRow({
   typeOptions: { key: ItemType; label: string }[];
   stageOptions: KaitenStageOption[];
   participantOptions: DevelopmentParticipantInput[];
+  searchQuery: string;
+  searchRowMatch: { tag: boolean; client: boolean } | null;
 }) {
   const { item, isSubtask, totalSubtasks, doneSubtasks } = row;
   const allItems = useBrainStore((s) => s.items);
@@ -3418,7 +3463,23 @@ const ItemRow = memo(function ItemRow({
               {item.source && item.source !== "system" && (
                 <SourceIcon source={item.source} />
               )}
-              {item.title}
+              {highlightMatch(item.title, searchQuery)}
+              {searchRowMatch?.tag && (
+                <span
+                  className="ml-1 inline-flex items-center text-[9px] text-emerald-600"
+                  title="Совпадение по тегу"
+                >
+                  <Search className="size-2.5" />
+                </span>
+              )}
+              {searchRowMatch?.client && (
+                <span
+                  className="ml-1 inline-flex items-center text-[9px] text-violet-600"
+                  title="Совпадение по клиенту"
+                >
+                  <Building2 className="size-2.5" />
+                </span>
+              )}
               {(relTitles.length > 0 || commentCount > 0) && (
                 <span className="inline-flex items-center gap-1.5 ml-2">
                   {relTitles.length > 0 && (
@@ -3816,9 +3877,6 @@ const ItemRow = memo(function ItemRow({
       {/* Dynamic columns */}
       {/* eslint-disable-next-line react-hooks/refs */}
       {visibleColumns.map((col) => renderCell(col.id))}
-
-      {/* Empty cell for the settings column */}
-      <td className="w-8" />
     </tr>
   );
 });
@@ -3827,19 +3885,120 @@ const ItemRow = memo(function ItemRow({
 /*  Empty state                                                               */
 /* -------------------------------------------------------------------------- */
 
-function EmptyState() {
+function EmptyState({ search }: { search?: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 px-6">
       <div className="flex items-center justify-center size-16 rounded-2xl bg-slate-100 mb-5">
         <Inbox className="size-7 text-slate-400" />
       </div>
       <h3 className="text-base font-semibold text-slate-900 mb-1.5">
-        Ничего не найдено
+        {search ? "По запросу ничего не найдено" : "Ничего не найдено"}
       </h3>
       <p className="text-sm text-slate-500 text-center max-w-[320px]">
-        Нет элементов, соответствующих текущим фильтрам. Попробуйте изменить
-        параметры поиска или создайте новый элемент.
+        {search
+          ? `Нет задач, соответствующих запросу «${search}». Попробуйте другой запрос или сбросьте фильтры.`
+          : "Нет элементов, соответствующих текущим фильтрам. Попробуйте изменить параметры поиска или создайте новый элемент."}
       </p>
     </div>
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  ListView toolbar                                                          */
+/* -------------------------------------------------------------------------- */
+
+function ListViewToolbar({
+  search,
+  onSearchChange,
+  totalCount,
+  filteredCount,
+  onNewTask,
+  listGroupBy,
+  setListGroupBy,
+  isGrouped,
+  allGroupsCollapsed,
+  toggleAllGroups,
+}: {
+  search: string;
+  onSearchChange: (value: string) => void;
+  totalCount: number;
+  filteredCount: number;
+  onNewTask: () => void;
+  listGroupBy: ListGroupByConfig;
+  setListGroupBy: (config: ListGroupByConfig) => void;
+  isGrouped: boolean;
+  allGroupsCollapsed: boolean;
+  toggleAllGroups: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 px-2 py-1.5 border-b border-slate-200 bg-white">
+      {/* Search */}
+      <div className="relative flex-1 max-w-xs">
+        <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-slate-400 pointer-events-none" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="Поиск по названию, описанию, тегам, клиентам…"
+          className="w-full h-7 pl-7 pr-7 text-xs rounded border border-slate-200 bg-white placeholder:text-slate-400 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => onSearchChange("")}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center size-4 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+            title="Очистить поиск"
+          >
+            <X className="size-3" />
+          </button>
+        )}
+      </div>
+
+      {/* Counter */}
+      <span className="text-[11px] text-slate-500 tabular-nums whitespace-nowrap">
+        {filteredCount === totalCount
+          ? `${totalCount} задач${pluralRu(totalCount, "а", "и", "")}`
+          : `${filteredCount} из ${totalCount}`}
+      </span>
+
+      <div className="flex-1" />
+
+      {/* New task */}
+      <button
+        type="button"
+        onClick={onNewTask}
+        className="inline-flex items-center gap-1 px-2 h-7 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white transition-colors"
+        title="Новая задача"
+      >
+        <Plus className="size-3.5" />
+        Новая
+      </button>
+
+      {/* Collapse all groups (only when grouping is on) */}
+      {isGrouped && (
+        <button
+          type="button"
+          onClick={toggleAllGroups}
+          className="inline-flex items-center justify-center size-7 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+          title={allGroupsCollapsed ? "Раскрыть всё" : "Свернуть всё"}
+        >
+          <ChevronsUpDown className="size-3.5" />
+        </button>
+      )}
+
+      {/* Group-by config */}
+      <GroupByPopover value={listGroupBy} onChange={setListGroupBy} />
+
+      {/* Column config */}
+      <ColumnConfigPopover />
+    </div>
+  );
+}
+
+function pluralRu(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
 }
