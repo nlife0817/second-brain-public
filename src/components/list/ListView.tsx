@@ -3274,6 +3274,12 @@ const ItemRowGroup = memo(function ItemRowGroup({
 
 const EMPTY_REL_TITLES: string[] = [];
 
+// Applied to cells that open an inline editor on click. The transparent dashed
+// border keeps the layout steady and only becomes visible on hover to hint the
+// cell is editable without extra icons or affordances.
+const EDITABLE_CELL_CLS =
+  "relative px-3 py-1.5 cursor-pointer border border-dashed border-transparent hover:border-slate-300 rounded-sm transition-colors";
+
 const ItemRow = memo(function ItemRow({
   row,
   selected,
@@ -3411,7 +3417,7 @@ const ItemRow = memo(function ItemRow({
             ref={(el) => {
               cellRefs.current["priority"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("priority", e)}
           >
             {!isSubtask && (
@@ -3446,7 +3452,7 @@ const ItemRow = memo(function ItemRow({
             )}
             <span
               className={cn(
-                "text-xs font-medium leading-snug line-clamp-1 transition-colors",
+                "text-xs font-medium leading-snug line-clamp-1 transition-colors group-hover:underline underline-offset-2 decoration-slate-300",
                 isSubtask
                   ? "text-slate-600 pl-4"
                   : isDetachedSubtask
@@ -3494,7 +3500,7 @@ const ItemRow = memo(function ItemRow({
             ref={(el) => {
               cellRefs.current["status"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("status", e)}
           >
             <Badge
@@ -3526,7 +3532,7 @@ const ItemRow = memo(function ItemRow({
             ref={(el) => {
               cellRefs.current["category"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("category", e)}
           >
             <Badge
@@ -3597,7 +3603,7 @@ const ItemRow = memo(function ItemRow({
             ref={(el) => {
               cellRefs.current["tags"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("tags", e)}
           >
             {itemTags.length > 0 ? (
@@ -3637,7 +3643,7 @@ const ItemRow = memo(function ItemRow({
             ref={(el) => {
               cellRefs.current["type"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("type", e)}
           >
             <span className="text-xs text-slate-600">{typeCfg.label}</span>
@@ -3661,7 +3667,7 @@ const ItemRow = memo(function ItemRow({
             ref={(el) => {
               cellRefs.current["due_date"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("due_date", e)}
           >
             {dueDate ? (
@@ -3741,7 +3747,7 @@ const ItemRow = memo(function ItemRow({
             ref={(el) => {
               cellRefs.current["clients"] = el;
             }}
-            className="relative px-3 py-1.5 cursor-pointer"
+            className={EDITABLE_CELL_CLS}
             onClick={(e) => handleCellClick("clients", e)}
           >
             {linkedClientNames.length > 0 ? (
