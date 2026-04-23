@@ -261,7 +261,7 @@ export const useBrainStore = create<BrainStore>()(
   editingItemId: null,
   editingField: null,
   cardVisibleFields: ["priority", "category", "due_date", "subtasks", "type"],
-  listColumnOrder: ["title", "status", "category", "clients", "type", "due_date", "subtasks"],
+  listColumnOrder: ["priority", "title", "status", "category", "clients", "type", "due_date", "subtasks"],
   listColumnWidths: {},
   savedFilters: [],
   activeFilterId: null,
@@ -1243,12 +1243,9 @@ export const useBrainStore = create<BrainStore>()(
         }
       }
       if (state && version < 4) {
-        // Priority is now rendered as a colored left accent border on the row
-        // instead of a dedicated column. Drop the stored column so nobody sees
-        // a duplicate indicator.
         const cols = state.listColumnOrder as string[] | undefined;
-        if (cols) {
-          state.listColumnOrder = cols.filter((c) => c !== "priority");
+        if (cols && !cols.includes("priority")) {
+          state.listColumnOrder = ["priority", ...cols];
         }
       }
       return state;

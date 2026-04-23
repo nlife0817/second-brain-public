@@ -137,14 +137,15 @@ interface SortState {
 interface ColumnDef {
   id: string;
   label: string;
+  headerLabel?: string;
   width: string;
   sortable: boolean;
 }
 
-// Priority is rendered as a colored left accent border on the row (see
-// PRIORITY_ACCENT below) instead of a dedicated column. Sorting by priority
-// is still available via header click / sort popover.
+// Priority is rendered both as a dedicated "P" column (colored dot) and as a
+// colored left accent border on the row (see PRIORITY_ACCENT_BORDER below).
 const ALL_COLUMNS: ColumnDef[] = [
+  { id: "priority", label: "Приоритет", headerLabel: "P", width: "w-[60px]", sortable: true },
   { id: "title", label: "Название", width: "min-w-[250px] flex-1", sortable: true },
   { id: "status", label: "Статус", width: "w-28", sortable: true },
   { id: "category", label: "Категория", width: "w-28", sortable: true },
@@ -158,6 +159,7 @@ const ALL_COLUMNS: ColumnDef[] = [
 ];
 
 const DEFAULT_COLUMN_ORDER = [
+  "priority",
   "title",
   "status",
   "category",
@@ -167,12 +169,10 @@ const DEFAULT_COLUMN_ORDER = [
   "subtasks",
 ];
 
-// Colored left border on the drag-handle cell serves as the priority indicator
-// since the dedicated column was removed. Rendering via the leftmost <td>
-// works reliably across browsers (unlike pseudo-elements on <tr>).
 // Default widths in px used when a column has no persisted user-resized width.
 // Title is flexible (auto) — the resize handle turns it into a fixed value.
 const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
+  priority: 60,
   title: 320,
   status: 112,
   category: 112,
@@ -207,6 +207,26 @@ const PRIORITY_WEIGHT: Record<string, number> = {
   low: 3,
   none: 4,
 };
+
+const PRIORITY_DOT_COLOR: Record<ItemPriority, string> = {
+  urgent: "bg-red-500",
+  high: "bg-orange-500",
+  medium: "bg-yellow-400",
+  low: "bg-blue-500",
+  none: "bg-slate-300",
+};
+
+function PriorityDot({ priority, className }: { priority: ItemPriority; className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-block size-2.5 rounded-full",
+        priority === "none" ? "border border-slate-300 bg-transparent" : PRIORITY_DOT_COLOR[priority],
+        className
+      )}
+    />
+  );
+}
 
 const STATUS_WEIGHT: Record<string, number> = {
   in_progress: 0,
@@ -1853,7 +1873,10 @@ export function ListView() {
 
   const handleStartCreate = useCallback(() => {
     setIsCreating(true);
-    setNewItem({ ...NEW_ITEM_DEFAULTS });
+    setNewItem({
+      ...NEW_ITEM_DEFAULTS,
+      due_date: format(new Date(), "yyyy-MM-dd"),
+    });
     setCreateDropdown(null);
     // Focus handled via autoFocus on the title input — avoids setTimeout delay
   }, []);
@@ -2063,6 +2086,42 @@ export function ListView() {
 
   const renderCreateCell = (colId: string) => {
     switch (colId) {
+      case "priority": {
+        return (
+          <td
+            key={colId}
+            ref={(el) => {
+              createCellRefs.current["priority"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              setCreateDropdown(
+                createDropdown === "priority" ? null : "priority"
+              );
+            }}
+          >
+            <div className="flex items-center justify-center">
+              <PriorityDot priority={newItem.priority} />
+            </div>
+            {createDropdown === "priority" && (
+              <CreationSelectDropdown
+                value={newItem.priority}
+                options={priorityOptions}
+                onSelect={(val) =>
+                  setNewItem((prev) => ({ ...prev, priority: val }))
+                }
+                anchorRef={{
+                  current: createCellRefs.current["priority"],
+                }}
+                onClose={() => setCreateDropdown(null)}
+              />
+            )}
+          </td>
+        );
+      }
+
+
       case "title":
         return (
           <td key={colId} className="px-3 py-1.5">
@@ -2474,7 +2533,7 @@ export function ListView() {
                     return col.sortable ? (
                       <SortableHeader
                         key={col.id}
-                        label={col.label}
+                        label={col.headerLabel ?? col.label}
                         column={col.id as SortColumn}
                         current={sort}
                         onToggle={toggleSort}
@@ -2488,7 +2547,7 @@ export function ListView() {
                         style={{ width: w, minWidth: w, maxWidth: w }}
                         className="relative px-3 py-2 text-left text-[10px] font-medium uppercase tracking-wider text-slate-500"
                       >
-                        {col.label}
+                        {col.headerLabel ?? col.label}
                         <ColumnResizeHandle onPointerDown={(e) => startColumnResize(col.id, e)} />
                       </th>
                     );
@@ -2925,7 +2984,6 @@ const ItemRowGroup = memo(function ItemRowGroup({
               {visibleColumns.map((col) => {
                 switch (col.id) {
                   case "priority": {
-                    const cfg = PRIORITY_CONFIG[newSubtask.priority];
                     return (
                       <td
                         key={col.id}
@@ -2940,7 +2998,9 @@ const ItemRowGroup = memo(function ItemRowGroup({
                           );
                         }}
                       >
-                        <span className="text-xs leading-none">{cfg.icon}</span>
+                        <div className="flex items-center justify-center">
+                          <PriorityDot priority={newSubtask.priority} />
+                        </div>
                         {subtaskDropdown === "priority" && (
                           <CreationSelectDropdown
                             value={newSubtask.priority}
@@ -3295,7 +3355,6 @@ const ItemRow = memo(function ItemRow({
 
   const itemCategoryConfig = useCategoryConfig();
   const statusCfg = STATUS_CONFIG[item.status as ItemStatus];
-  const priorityCfg = PRIORITY_CONFIG[item.priority as ItemPriority];
   const categoryCfg = itemCategoryConfig[item.category];
   const typeCfg = TYPE_CONFIG[item.type as ItemType];
 
@@ -3357,6 +3416,35 @@ const ItemRow = memo(function ItemRow({
 
   const renderCell = (colId: string) => {
     switch (colId) {
+      case "priority": {
+        return (
+          <td
+            key={colId}
+            ref={(el) => {
+              cellRefs.current["priority"] = el;
+            }}
+            className="relative px-3 py-1.5 cursor-pointer"
+            onClick={(e) => handleCellClick("priority", e)}
+          >
+            {!isSubtask && (
+              <div className="flex items-center justify-center">
+                <PriorityDot priority={item.priority as ItemPriority} />
+              </div>
+            )}
+            {editingField === "priority" && (
+              <InlineSelectCell
+                value={item.priority as ItemPriority}
+                options={priorityOptions}
+                onCommit={(val) => commitFieldEdit("priority", val)}
+                onCancel={cancelEdit}
+                anchorRef={{ current: cellRefs.current["priority"] }}
+              />
+            )}
+          </td>
+        );
+      }
+
+
       case "title": {
         return (
           <td
