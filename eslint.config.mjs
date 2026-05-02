@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local-only directories that shouldn't pollute lint output:
+    ".claude/**",
   ]),
 ]);
 
