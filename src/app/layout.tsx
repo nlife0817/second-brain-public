@@ -4,6 +4,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { RealtimeProvider } from "@/components/RealtimeProvider";
+import { TimingProvider } from "@/components/timing/TimingProvider";
+import { GlobalTimerWidget } from "@/components/timing/GlobalTimerWidget";
 import "./globals.css";
 
 const inter = Inter({
@@ -54,6 +56,8 @@ export default function RootLayout({
           </TooltipProvider>
           <ServiceWorkerRegister />
           <RealtimeProvider />
+          <TimingProvider />
+          <GlobalTimerWidget />
         </ErrorBoundary>
       </body>
     </html>
