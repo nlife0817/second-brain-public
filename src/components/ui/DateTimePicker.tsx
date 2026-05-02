@@ -120,6 +120,18 @@ export function DateTimePicker({
     [onChange]
   );
 
+  const handleToday = useCallback(
+    (e?: React.MouseEvent) => {
+      e?.stopPropagation();
+      const today = toIsoDate(new Date());
+      // Apply immediately — "Today" is a one-click quick action, no need to
+      // route through the buffered Apply step.
+      onChange({ date: today, time: buffer.time ?? null });
+      setOpen(false);
+    },
+    [buffer.time, onChange]
+  );
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -143,6 +155,17 @@ export function DateTimePicker({
         {compact && committedDate && <span className="truncate">{label}</span>}
       </PopoverTrigger>
       <PopoverContent align={align} className="w-auto border-slate-200 bg-white p-0">
+        <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1 gap-1 border-slate-200 text-slate-700 hover:bg-slate-50"
+            onClick={handleToday}
+          >
+            <CalendarIcon className="size-3.5" />
+            Сегодня
+          </Button>
+        </div>
         <Calendar mode="single" selected={bufferedDate} onSelect={handleDate} locale={ru} />
         <div className="flex items-center gap-2 border-t border-slate-200 px-3 py-2">
           <Clock className="size-3.5 text-slate-400" />
