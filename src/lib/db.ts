@@ -10,6 +10,7 @@ import {
   SyncProfile, SyncProfileInput, SyncFieldMapping, SyncFieldMappingInput,
   ExternalEntityLink, ExternalSyncState, SyncEntityType, SyncDirection, KaitenImportResult,
   DevelopmentParticipant, DevelopmentParticipantInput, KaitenStageOption, SyncOutboxJob, SyncOutboxStatus,
+  ItemStatusRow, ItemStatusKind,
 } from "@/types";
 
 // Schema and migrations now live in Supabase (supabase/migrations/*.sql).
@@ -66,6 +67,7 @@ const ITEM_UPDATE_FIELDS = [
 
 const TAG_UPDATE_FIELDS = ["name", "color", "position"] as const;
 const DEV_STAGE_UPDATE_FIELDS = ["name", "position"] as const;
+const ITEM_STATUS_UPDATE_FIELDS = ["name", "color", "position", "kind"] as const;
 const DEV_PARTICIPANT_UPDATE_FIELDS = ["name", "position"] as const;
 const CATEGORY_UPDATE_FIELDS = ["name", "color", "icon", "position"] as const;
 const WEEKLY_PLAN_UPDATE_FIELDS = ["week_start", "week_end", "title", "status"] as const;
@@ -360,6 +362,82 @@ export async function updateDevelopmentStage(id: string, updates: Partial<Pick<D
 export async function deleteDevelopmentStage(id: string): Promise<boolean> {
   const result = await prepare("DELETE FROM development_stages WHERE id = ?").run(id);
   return result.changes > 0;
+}
+
+// ---------------- Item statuses (user-editable) ----------------
+
+export async function getAllItemStatuses(): Promise<ItemStatusRow[]> {
+  return await prepare<ItemStatusRow>(
+    "SELECT * FROM item_statuses ORDER BY position ASC, LOWER(name) ASC"
+  ).all();
+}
+
+export async function createItemStatus(data: {
+  id: string;
+  name: string;
+  color?: string;
+  kind?: ItemStatusKind;
+}): Promise<ItemStatusRow> {
+  const maxPos = await prepare<{ p: number }>(
+    "SELECT COALESCE(MAX(position), -1) + 1 as p FROM item_statuses"
+  ).get();
+  const now = new Date().toISOString();
+  await prepare(
+    "INSERT INTO item_statuses (id, name, color, position, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).run(
+    data.id,
+    data.name,
+    data.color ?? "#94a3b8",
+    maxPos?.p ?? 0,
+    data.kind ?? "open",
+    now,
+    now
+  );
+  return (await prepare<ItemStatusRow>(
+    "SELECT * FROM item_statuses WHERE id = ?"
+  ).get(data.id))!;
+}
+
+export async function updateItemStatus(
+  id: string,
+  updates: Partial<Pick<ItemStatusRow, "name" | "color" | "position" | "kind">>
+): Promise<ItemStatusRow | undefined> {
+  const built = buildUpdateClause(
+    updates as Record<string, unknown>,
+    ITEM_STATUS_UPDATE_FIELDS
+  );
+  if (!built)
+    return await prepare<ItemStatusRow>(
+      "SELECT * FROM item_statuses WHERE id = ?"
+    ).get(id);
+  const now = new Date().toISOString();
+  await prepare(
+    `UPDATE item_statuses SET ${built.sql}, updated_at = ? WHERE id = ?`
+  ).run(...built.values, now, id);
+  return await prepare<ItemStatusRow>(
+    "SELECT * FROM item_statuses WHERE id = ?"
+  ).get(id);
+}
+
+// Returns false if the status doesn't exist or is referenced by any item.
+// Reassigning items to another status is the caller's responsibility.
+export async function deleteItemStatus(id: string): Promise<{
+  ok: boolean;
+  reason?: "in_use" | "not_found";
+  inUseCount?: number;
+}> {
+  const existing = await prepare<{ id: string }>(
+    "SELECT id FROM item_statuses WHERE id = ?"
+  ).get(id);
+  if (!existing) return { ok: false, reason: "not_found" };
+  const count = await prepare<{ c: number }>(
+    "SELECT COUNT(*) as c FROM items WHERE status = ?"
+  ).get(id);
+  if ((count?.c ?? 0) > 0) {
+    return { ok: false, reason: "in_use", inUseCount: count!.c };
+  }
+  await prepare("DELETE FROM item_statuses WHERE id = ?").run(id);
+  return { ok: true };
 }
 
 // ---------------- Development Participants ----------------

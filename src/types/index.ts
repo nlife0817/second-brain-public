@@ -147,6 +147,22 @@ export interface Filters {
   useAdvanced: boolean;
 }
 
+// User-editable task statuses (DB-backed). The 6 legacy ItemStatus keys are
+// seeded as the initial rows; users can rename, reorder, recolor and add
+// custom statuses. `kind` carries the well-known semantics that the app
+// branches on regardless of the row's user-visible name.
+export type ItemStatusKind = "open" | "done" | "archived";
+
+export interface ItemStatusRow {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  kind: ItemStatusKind;
+  created_at: string;
+  updated_at: string;
+}
+
 export const STATUS_CONFIG: Record<ItemStatus, { label: string; color: string }> = {
   inbox: { label: "Входящие", color: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300" },
   todo: { label: "К выполнению", color: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" },
