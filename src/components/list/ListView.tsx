@@ -1364,6 +1364,7 @@ export function ListView() {
   const editingField = useBrainStore((s) => s.editingField);
   const setEditingItem = useBrainStore((s) => s.setEditingItem);
   const updateItem = useBrainStore((s) => s.updateItem);
+  const updateItemsLocal = useBrainStore((s) => s.updateItemsLocal);
   const reorderItems = useBrainStore((s) => s.reorderItems);
   const listColumnOrder = useBrainStore((s) => s.listColumnOrder);
   const setListColumnOrder = useBrainStore((s) => s.setListColumnOrder);
@@ -1373,7 +1374,6 @@ export function ListView() {
   const setListGroupBy = useBrainStore((s) => s.setListGroupBy);
   const listCollapsedGroupsArr = useBrainStore((s) => s.listCollapsedGroups);
   const setListCollapsedGroups = useBrainStore((s) => s.setListCollapsedGroups);
-  const fetchItems = useBrainStore((s) => s.fetchItems);
   const categories = useBrainStore((s) => s.categories);
   const developmentStages = useBrainStore((s) => s.developmentStages);
   const categoryConfig = useCategoryConfig();
@@ -1732,16 +1732,36 @@ export function ListView() {
 
   const handleBulkUpdate = useCallback(async (field: string, value: string) => {
     const ids = Array.from(selectedIds);
-    await Promise.all(ids.map(id =>
-      fetch(`/api/items/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [field]: value }),
-      })
-    ));
+    if (ids.length === 0) return;
+    // Snapshot per-id values so we can roll back only the failed rows.
+    const snapshots = new Map<string, unknown>();
+    const currentItems = useBrainStore.getState().items;
+    for (const id of ids) {
+      const it = currentItems.find((i) => i.id === id);
+      if (it) snapshots.set(id, (it as unknown as Record<string, unknown>)[field]);
+    }
+    // Optimistic — patch all selected items in a single React commit.
+    const payload = { [field]: value } as unknown as Parameters<typeof updateItemsLocal>[1];
+    updateItemsLocal(ids, payload);
     setSelectedIds(new Set());
-    await fetchItems();
-  }, [selectedIds, fetchItems]);
+    // Fire individual PUTs in parallel; updateItem will use abort-per-field
+    // and merge server responses. skipOptimistic avoids re-applying the patch.
+    const results = await Promise.allSettled(
+      ids.map((id) => updateItem(id, payload, { skipOptimistic: true }))
+    );
+    // Roll back only rows whose server call failed (and only the field
+    // we just changed — other in-flight mutations on those rows stay).
+    const failed: string[] = [];
+    results.forEach((r, idx) => { if (r.status === "rejected") failed.push(ids[idx]); });
+    if (failed.length > 0) {
+      for (const id of failed) {
+        const prev = snapshots.get(id);
+        // Use updateItemsLocal to write the snapshot back without firing PUT.
+        updateItemsLocal([id], { [field]: prev } as unknown as Parameters<typeof updateItemsLocal>[1]);
+      }
+      console.warn(`[bulk] ${failed.length} of ${ids.length} updates failed`);
+    }
+  }, [selectedIds, updateItemsLocal, updateItem]);
 
   const handleBulkDelete = useCallback(() => {
     const ids = Array.from(selectedIds);
@@ -3370,9 +3390,12 @@ const ItemRow = memo(function ItemRow({
   /* ----- Inline edit commit helper --------------------------------------- */
 
   const commitFieldEdit = useCallback(
-    async (field: string, value: unknown) => {
-      await updateItem(item.id, { [field]: value });
+    (field: string, value: unknown) => {
+      // Close the editor in the same React commit as the optimistic patch.
+      // updateItem is fire-and-forget: store.ts applies the change locally
+      // before the network round-trip, so the UI doesn't wait for the PUT.
       setEditingItem(null);
+      void updateItem(item.id, { [field]: value });
     },
     [item.id, updateItem, setEditingItem]
   );
