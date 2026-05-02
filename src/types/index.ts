@@ -76,6 +76,7 @@ export interface Item {
   development_stage: string | null;
   due_date: string | null;
   due_time: string | null;
+  estimated_minutes: number | null;
   position: number;
   parent_id: string | null;
   created_at: string;
@@ -111,6 +112,7 @@ export interface CreateItemPayload {
   development_stage?: string | null;
   due_date?: string | null;
   due_time?: string | null;
+  estimated_minutes?: number | null;
   parent_id?: string | null;
   tags?: string[];
   participants?: DevelopmentParticipantInput[];
@@ -127,6 +129,7 @@ export interface UpdateItemPayload {
   development_stage?: string | null;
   due_date?: string | null;
   due_time?: string | null;
+  estimated_minutes?: number | null;
   position?: number;
   parent_id?: string | null;
   tags?: string[];
@@ -660,3 +663,80 @@ export const KAITEN_DEFAULT_FIELD_MAPPINGS: Array<{
   { local_field: "due_date", remote_field: "due_date" },
   { local_field: "tags", remote_field: "tags" },
 ];
+
+// --- Time tracking ---
+
+export type PomodoroMode = "25_5" | "50_10";
+export type PomodoroPhase = "focus" | "break";
+export type TimeEntrySource =
+  | "manual"
+  | "auto_stop"
+  | "idle_discard"
+  | "mutex_replace"
+  | "manual_edit"
+  | "pomodoro_complete";
+
+export interface TimeEntry {
+  id: string;
+  user_email: string;
+  item_id: string;
+  started_at: string;            // ISO 8601 (TIMESTAMPTZ from Postgres)
+  ended_at: string | null;
+  last_heartbeat_at: string | null;
+  last_active_at: string | null;
+  reminder_sent_at: string | null;
+  note: string;
+  source: TimeEntrySource;
+  pomodoro_mode: PomodoroMode | null;
+  pomodoro_phase: PomodoroPhase | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ActiveTimerSnapshot {
+  entry: TimeEntry | null;
+  item_title: string | null;
+  server_now: string;            // ISO timestamp from server, for clock-drift correction
+}
+
+export interface TimingSettings {
+  user_email: string;
+  idle_threshold_min: number;
+  reminder_interval_min: number;
+  hard_cap_hours: number;
+  default_pomodoro: PomodoroMode | null;
+  updated_at: string;
+}
+
+export interface TimingSettingsInput {
+  idle_threshold_min?: number;
+  reminder_interval_min?: number;
+  hard_cap_hours?: number;
+  default_pomodoro?: PomodoroMode | null;
+}
+
+export const TIMING_SETTINGS_DEFAULTS: Omit<TimingSettings, "user_email" | "updated_at"> = {
+  idle_threshold_min: 5,
+  reminder_interval_min: 60,
+  hard_cap_hours: 4,
+  default_pomodoro: null,
+};
+
+export interface ItemTimeTotals {
+  item_id: string;
+  self_seconds: number;          // own sessions
+  total_seconds: number;         // self + all descendants
+}
+
+export interface CreateTimeEntryPayload {
+  item_id: string;
+  started_at: string;
+  ended_at: string;
+  note?: string;
+}
+
+export interface UpdateTimeEntryPayload {
+  started_at?: string;
+  ended_at?: string;
+  note?: string;
+}

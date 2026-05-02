@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
       development_stage: body.development_stage ?? null,
       due_date: body.due_date ?? null,
       due_time: body.due_time ?? null,
+      estimated_minutes: body.estimated_minutes ?? null,
       position: 0,
       parent_id: body.parent_id ?? null,
     });

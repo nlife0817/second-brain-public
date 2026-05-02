@@ -61,7 +61,7 @@ function buildUpdateClause(
 
 const ITEM_UPDATE_FIELDS = [
   "title", "description", "type", "status", "priority", "category", "source",
-  "development_stage", "due_date", "due_time", "position", "parent_id",
+  "development_stage", "due_date", "due_time", "estimated_minutes", "position", "parent_id",
 ] as const;
 
 const TAG_UPDATE_FIELDS = ["name", "color", "position"] as const;
@@ -273,12 +273,12 @@ export async function createItem(item: Omit<Item, "created_at" | "updated_at">):
   ).get(item.status, item.parent_id ?? null);
 
   await prepare(`
-    INSERT INTO items (id, title, description, type, status, priority, category, source, development_stage, due_date, due_time, position, parent_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO items (id, title, description, type, status, priority, category, source, development_stage, due_date, due_time, estimated_minutes, position, parent_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     item.id, item.title, item.description, item.type, item.status,
     item.priority, item.category, item.source ?? "system", item.development_stage ?? null,
-    item.due_date ?? null, item.due_time ?? null,
+    item.due_date ?? null, item.due_time ?? null, item.estimated_minutes ?? null,
     item.position ?? maxPos?.next_pos ?? 0, item.parent_id ?? null, now, now
   );
   return (await getItemById(item.id))!;
@@ -458,6 +458,7 @@ export async function getWeeklyPlanFull(id: string): Promise<WeeklyPlanFull | un
            i.type as item_type, i.status as item_status, i.priority as item_priority,
            i.category as item_category, i.source as item_source, i.development_stage as item_development_stage,
            i.due_date as item_due_date, i.due_time as item_due_time,
+           i.estimated_minutes as item_estimated_minutes,
            i.position as item_position, i.parent_id as item_parent_id,
            i.created_at as item_created_at, i.updated_at as item_updated_at
     FROM weekly_plan_entries e
@@ -504,6 +505,7 @@ export async function getWeeklyPlanFull(id: string): Promise<WeeklyPlanFull | un
         development_stage: (row.item_development_stage as string) || null,
         due_date: (row.item_due_date as string) || null,
         due_time: (row.item_due_time as string) || null,
+        estimated_minutes: (row.item_estimated_minutes as number | null) ?? null,
         position: row.item_position as number,
         parent_id: (row.item_parent_id as string) || null,
         created_at: row.item_created_at as string,
@@ -597,6 +599,7 @@ export async function getTransferableEntries(planId: string): Promise<WeeklyPlan
            i.type as item_type, i.status as item_status, i.priority as item_priority,
            i.category as item_category, i.source as item_source, i.development_stage as item_development_stage,
            i.due_date as item_due_date, i.due_time as item_due_time,
+           i.estimated_minutes as item_estimated_minutes,
            i.position as item_position, i.parent_id as item_parent_id,
            i.created_at as item_created_at, i.updated_at as item_updated_at
     FROM weekly_plan_entries e
@@ -633,6 +636,7 @@ export async function getTransferableEntries(planId: string): Promise<WeeklyPlan
         development_stage: (row.item_development_stage as string) || null,
         due_date: (row.item_due_date as string) || null,
         due_time: (row.item_due_time as string) || null,
+        estimated_minutes: (row.item_estimated_minutes as number | null) ?? null,
         position: row.item_position as number,
         parent_id: (row.item_parent_id as string) || null,
         created_at: row.item_created_at as string,
