@@ -714,6 +714,11 @@ function InlineSelectCell<T extends string>({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  // Close-on-leave: only arm after the cursor has actually entered the
+  // dropdown at least once. The dropdown opens at a fixed position which may
+  // not be under the cursor — without this guard it would close instantly.
+  const hasEnteredRef = useRef(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useLayoutEffect(() => {
     const anchor = anchorRef?.current;
@@ -745,6 +750,32 @@ function InlineSelectCell<T extends string>({
     return () => document.removeEventListener("keydown", handler);
   }, [onCancel]);
 
+  // Cleanup pending close timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
+  const handleMouseEnter = useCallback(() => {
+    hasEnteredRef.current = true;
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    if (!hasEnteredRef.current) return;
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    // Brief grace period so a transient mouse exit (e.g. stuttering or
+    // crossing into the trigger cell) doesn't snap the dropdown shut.
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      onCancel();
+    }, 200);
+  }, [onCancel]);
+
   if (!pos) return null;
 
   const openUp = pos.top > window.innerHeight / 2;
@@ -761,6 +792,8 @@ function InlineSelectCell<T extends string>({
       }}
       className="min-w-[140px] max-h-[200px] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
       onClick={(e) => e.stopPropagation()}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       {options.map((opt) => (
         <button
@@ -934,6 +967,9 @@ function InlineCompanyCell({
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const [query, setQuery] = useState("");
   const [linking, setLinking] = useState(false);
+  // Close-on-leave: only after the cursor has actually entered the dropdown.
+  const hasEnteredRef = useRef(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clients = useBrainStore((s) => s.clients);
   const createRelation = useBrainStore((s) => s.createRelation);
@@ -970,6 +1006,29 @@ function InlineCompanyCell({
     }
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
+  }, [onCancel]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
+  const handleMouseEnter = useCallback(() => {
+    hasEnteredRef.current = true;
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    if (!hasEnteredRef.current) return;
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      onCancel();
+    }, 250);
   }, [onCancel]);
 
   const filteredClients = useMemo(() => {
@@ -1019,6 +1078,8 @@ function InlineCompanyCell({
       }}
       className="w-[280px] rounded-lg border border-slate-200 bg-white shadow-xl overflow-hidden"
       onClick={(e) => e.stopPropagation()}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       <div className="p-1.5">
         <div className="relative">
@@ -1762,6 +1823,39 @@ export function ListView() {
       console.warn(`[bulk] ${failed.length} of ${ids.length} updates failed`);
     }
   }, [selectedIds, updateItemsLocal, updateItem]);
+
+  // Bulk update for due_date+due_time. Same optimistic-first pattern as
+  // handleBulkUpdate but sends a 2-field payload so date and time stay in
+  // sync (clearing date also clears time on the server).
+  const handleBulkDueDate = useCallback(
+    async ({ date, time }: { date: string | null; time: string | null }) => {
+      const ids = Array.from(selectedIds);
+      if (ids.length === 0) return;
+      const snapshots = new Map<string, { date: string | null; time: string | null }>();
+      const currentItems = useBrainStore.getState().items;
+      for (const id of ids) {
+        const it = currentItems.find((i) => i.id === id);
+        if (it) snapshots.set(id, { date: it.due_date ?? null, time: it.due_time ?? null });
+      }
+      const payload = { due_date: date, due_time: time } as unknown as Parameters<typeof updateItemsLocal>[1];
+      updateItemsLocal(ids, payload);
+      setSelectedIds(new Set());
+      const results = await Promise.allSettled(
+        ids.map((id) => updateItem(id, payload, { skipOptimistic: true }))
+      );
+      const failed: string[] = [];
+      results.forEach((r, idx) => { if (r.status === "rejected") failed.push(ids[idx]); });
+      if (failed.length > 0) {
+        for (const id of failed) {
+          const prev = snapshots.get(id);
+          if (!prev) continue;
+          updateItemsLocal([id], { due_date: prev.date, due_time: prev.time } as unknown as Parameters<typeof updateItemsLocal>[1]);
+        }
+        console.warn(`[bulk-due] ${failed.length} of ${ids.length} updates failed`);
+      }
+    },
+    [selectedIds, updateItemsLocal, updateItem]
+  );
 
   const handleBulkDelete = useCallback(() => {
     const ids = Array.from(selectedIds);
@@ -2698,6 +2792,7 @@ export function ListView() {
         onPriority={(val) => handleBulkUpdate("priority", val)}
         onCategory={(val) => handleBulkUpdate("category", val)}
         onType={(val) => handleBulkUpdate("type", val)}
+        onDueDate={handleBulkDueDate}
         onArchive={() => handleBulkUpdate("status", "archived")}
         onDelete={handleBulkDelete}
         statusOptions={statusOptions}
@@ -4069,6 +4164,7 @@ function FloatingBulkBar({
   onPriority,
   onCategory,
   onType,
+  onDueDate,
   onArchive,
   onDelete,
   statusOptions,
@@ -4082,6 +4178,7 @@ function FloatingBulkBar({
   onPriority: (v: string) => void;
   onCategory: (v: string) => void;
   onType: (v: string) => void;
+  onDueDate: (v: { date: string | null; time: string | null }) => void;
   onArchive: () => void;
   onDelete: () => void;
   statusOptions: { key: ItemStatus; label: string }[];
@@ -4106,6 +4203,14 @@ function FloatingBulkBar({
         <BulkActionDropdown label="Приоритет" options={priorityOptions} onSelect={onPriority} />
         <BulkActionDropdown label="Категория" options={categoryOptions} onSelect={onCategory} />
         <BulkActionDropdown label="Тип" options={typeOptions} onSelect={onType} />
+        <DateTimePicker
+          value={{ date: null, time: null }}
+          onChange={onDueDate}
+          placeholder="Дедлайн"
+          size="xs"
+          align="end"
+          className="border-slate-200 hover:bg-slate-50"
+        />
         <div className="h-4 w-px bg-slate-200 mx-0.5" />
         <button
           type="button"
