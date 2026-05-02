@@ -40,6 +40,47 @@ export async function seedDefaultCategoriesIfMissing(): Promise<void> {
   });
 }
 
+// Whitelist-based UPDATE clause builder. Untrusted JSON keys never reach SQL —
+// only fields explicitly listed in `allowed` are rendered. Returns null when
+// the input contains no valid fields.
+function buildUpdateClause(
+  updates: Record<string, unknown>,
+  allowed: readonly string[],
+): { sql: string; values: unknown[] } | null {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(updates, key)) {
+      fields.push(`${key} = ?`);
+      values.push(updates[key]);
+    }
+  }
+  if (fields.length === 0) return null;
+  return { sql: fields.join(", "), values };
+}
+
+const ITEM_UPDATE_FIELDS = [
+  "title", "description", "type", "status", "priority", "category", "source",
+  "development_stage", "due_date", "due_time", "position", "parent_id",
+] as const;
+
+const TAG_UPDATE_FIELDS = ["name", "color", "position"] as const;
+const DEV_STAGE_UPDATE_FIELDS = ["name", "position"] as const;
+const DEV_PARTICIPANT_UPDATE_FIELDS = ["name", "position"] as const;
+const CATEGORY_UPDATE_FIELDS = ["name", "color", "icon", "position"] as const;
+const WEEKLY_PLAN_UPDATE_FIELDS = ["week_start", "week_end", "title", "status"] as const;
+const PLAN_ENTRY_UPDATE_FIELDS = ["result_status", "result_comment", "position"] as const;
+const CLIENT_STATUS_UPDATE_FIELDS = ["name", "color", "position"] as const;
+const CLIENT_UPDATE_FIELDS = [
+  "name", "status_id", "position",
+  "budget", "operators_per_shift", "operators_total", "calls_per_month", "crm_system",
+] as const;
+const CRM_SYSTEM_UPDATE_FIELDS = ["name", "position"] as const;
+const RELATION_TYPE_UPDATE_FIELDS = ["name", "color", "icon", "position"] as const;
+const STAGING_ITEM_UPDATE_FIELDS = [
+  "title", "description", "parsed_data", "staging_status", "entity_type", "batch_id",
+] as const;
+
 function parseJsonArray(value: string | null | undefined): string[] {
   if (!value) return [];
   try {
@@ -247,18 +288,12 @@ export async function updateItem(id: string, updates: Partial<Item>): Promise<It
   const existing = await getItemById(id);
   if (!existing) return undefined;
 
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    if (key === "id" || key === "created_at") continue;
-    fields.push(`${key} = ?`);
-    values.push(value);
-  }
-  if (fields.length === 0) return existing;
+  const built = buildUpdateClause(updates as Record<string, unknown>, ITEM_UPDATE_FIELDS);
+  if (!built) return existing;
 
-  fields.push("updated_at = ?");
-  values.push(new Date().toISOString(), id);
-  await prepare(`UPDATE items SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const now = new Date().toISOString();
+  await prepare(`UPDATE items SET ${built.sql}, updated_at = ? WHERE id = ?`)
+    .run(...built.values, now, id);
   return await getItemById(id);
 }
 
@@ -280,15 +315,9 @@ export async function createTag(tag: Pick<Tag, "id" | "name" | "color">): Promis
 }
 
 export async function updateTag(id: string, updates: Partial<Pick<Tag, "name" | "color" | "position">>): Promise<Tag | undefined> {
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    fields.push(`${key} = ?`);
-    values.push(value);
-  }
-  if (fields.length === 0) return await prepare<Tag>("SELECT * FROM tags WHERE id = ?").get(id);
-  values.push(id);
-  await prepare(`UPDATE tags SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const built = buildUpdateClause(updates as Record<string, unknown>, TAG_UPDATE_FIELDS);
+  if (!built) return await prepare<Tag>("SELECT * FROM tags WHERE id = ?").get(id);
+  await prepare(`UPDATE tags SET ${built.sql} WHERE id = ?`).run(...built.values, id);
   return await prepare<Tag>("SELECT * FROM tags WHERE id = ?").get(id);
 }
 
@@ -322,15 +351,9 @@ export async function createDevelopmentStage(data: { id: string; name: string })
 }
 
 export async function updateDevelopmentStage(id: string, updates: Partial<Pick<DevelopmentStage, "name" | "position">>): Promise<DevelopmentStage | undefined> {
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    fields.push(`${key} = ?`);
-    values.push(value);
-  }
-  if (fields.length === 0) return await prepare<DevelopmentStage>("SELECT * FROM development_stages WHERE id = ?").get(id);
-  values.push(id);
-  await prepare(`UPDATE development_stages SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const built = buildUpdateClause(updates as Record<string, unknown>, DEV_STAGE_UPDATE_FIELDS);
+  if (!built) return await prepare<DevelopmentStage>("SELECT * FROM development_stages WHERE id = ?").get(id);
+  await prepare(`UPDATE development_stages SET ${built.sql} WHERE id = ?`).run(...built.values, id);
   return await prepare<DevelopmentStage>("SELECT * FROM development_stages WHERE id = ?").get(id);
 }
 
@@ -346,16 +369,11 @@ export async function getAllDevelopmentParticipants(): Promise<DevelopmentPartic
 }
 
 export async function updateDevelopmentParticipant(id: string, updates: Partial<Pick<DevelopmentParticipant, "name" | "position">>): Promise<DevelopmentParticipant | undefined> {
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    fields.push(`${key} = ?`);
-    values.push(value);
-  }
-  if (fields.length === 0) return await prepare<DevelopmentParticipant>("SELECT * FROM development_participants WHERE id = ?").get(id);
-  fields.push("updated_at = ?");
-  values.push(new Date().toISOString(), id);
-  await prepare(`UPDATE development_participants SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const built = buildUpdateClause(updates as Record<string, unknown>, DEV_PARTICIPANT_UPDATE_FIELDS);
+  if (!built) return await prepare<DevelopmentParticipant>("SELECT * FROM development_participants WHERE id = ?").get(id);
+  const now = new Date().toISOString();
+  await prepare(`UPDATE development_participants SET ${built.sql}, updated_at = ? WHERE id = ?`)
+    .run(...built.values, now, id);
   return await prepare<DevelopmentParticipant>("SELECT * FROM development_participants WHERE id = ?").get(id);
 }
 
@@ -394,15 +412,9 @@ export async function createCategory(cat: Omit<Category, "position">): Promise<C
 export async function updateCategory(id: string, updates: Partial<Pick<Category, "name" | "color" | "icon" | "position">>): Promise<Category | undefined> {
   const existing = await getCategoryById(id);
   if (!existing) return undefined;
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    fields.push(`${key} = ?`);
-    values.push(value);
-  }
-  if (fields.length === 0) return existing;
-  values.push(id);
-  await prepare(`UPDATE categories SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const built = buildUpdateClause(updates as Record<string, unknown>, CATEGORY_UPDATE_FIELDS);
+  if (!built) return existing;
+  await prepare(`UPDATE categories SET ${built.sql} WHERE id = ?`).run(...built.values, id);
   return await getCategoryById(id);
 }
 
@@ -515,17 +527,11 @@ export async function createWeeklyPlan(plan: Pick<WeeklyPlan, "id" | "week_start
 export async function updateWeeklyPlan(id: string, updates: Partial<WeeklyPlan>): Promise<WeeklyPlan | undefined> {
   const existing = await getWeeklyPlanById(id);
   if (!existing) return undefined;
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    if (key === "id" || key === "created_at") continue;
-    fields.push(`${key} = ?`);
-    values.push(value);
-  }
-  if (fields.length === 0) return existing;
-  fields.push("updated_at = ?");
-  values.push(new Date().toISOString(), id);
-  await prepare(`UPDATE weekly_plans SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const built = buildUpdateClause(updates as Record<string, unknown>, WEEKLY_PLAN_UPDATE_FIELDS);
+  if (!built) return existing;
+  const now = new Date().toISOString();
+  await prepare(`UPDATE weekly_plans SET ${built.sql}, updated_at = ? WHERE id = ?`)
+    .run(...built.values, now, id);
   return await getWeeklyPlanById(id);
 }
 
@@ -577,16 +583,11 @@ export async function removeItemFromPlan(planId: string, itemId: string): Promis
 }
 
 export async function updatePlanEntry(entryId: string, updates: Partial<Pick<WeeklyPlanEntry, "result_status" | "result_comment" | "position">>): Promise<WeeklyPlanEntry | undefined> {
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    fields.push(`${key} = ?`);
-    values.push(value);
-  }
-  if (fields.length === 0) return undefined;
-  fields.push("updated_at = ?");
-  values.push(new Date().toISOString(), entryId);
-  await prepare(`UPDATE weekly_plan_entries SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const built = buildUpdateClause(updates as Record<string, unknown>, PLAN_ENTRY_UPDATE_FIELDS);
+  if (!built) return undefined;
+  const now = new Date().toISOString();
+  await prepare(`UPDATE weekly_plan_entries SET ${built.sql}, updated_at = ? WHERE id = ?`)
+    .run(...built.values, now, entryId);
   return await prepare<WeeklyPlanEntry>("SELECT * FROM weekly_plan_entries WHERE id = ?").get(entryId);
 }
 
@@ -717,15 +718,9 @@ export async function createClientStatus(status: Pick<ClientStatus, "id" | "name
 }
 
 export async function updateClientStatus(id: string, updates: Partial<Pick<ClientStatus, "name" | "color" | "position">>): Promise<ClientStatus | undefined> {
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    fields.push(`${key} = ?`);
-    values.push(value);
-  }
-  if (fields.length === 0) return await prepare<ClientStatus>("SELECT * FROM client_statuses WHERE id = ?").get(id);
-  values.push(id);
-  await prepare(`UPDATE client_statuses SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const built = buildUpdateClause(updates as Record<string, unknown>, CLIENT_STATUS_UPDATE_FIELDS);
+  if (!built) return await prepare<ClientStatus>("SELECT * FROM client_statuses WHERE id = ?").get(id);
+  await prepare(`UPDATE client_statuses SET ${built.sql} WHERE id = ?`).run(...built.values, id);
   return await prepare<ClientStatus>("SELECT * FROM client_statuses WHERE id = ?").get(id);
 }
 
@@ -850,17 +845,11 @@ export async function createClient(data: {
 export async function updateClient(id: string, updates: Partial<Omit<Client, "id" | "created_at">>): Promise<Client | undefined> {
   const existing = await getClientById(id);
   if (!existing) return undefined;
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    if (key === "id" || key === "created_at") continue;
-    fields.push(`${key} = ?`);
-    values.push(value);
-  }
-  if (fields.length === 0) return existing;
-  fields.push("updated_at = ?");
-  values.push(new Date().toISOString(), id);
-  await prepare(`UPDATE clients SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const built = buildUpdateClause(updates as Record<string, unknown>, CLIENT_UPDATE_FIELDS);
+  if (!built) return existing;
+  const now = new Date().toISOString();
+  await prepare(`UPDATE clients SET ${built.sql}, updated_at = ? WHERE id = ?`)
+    .run(...built.values, now, id);
   return await getClientById(id);
 }
 
@@ -897,15 +886,9 @@ export async function createCrmSystem(data: { id: string; name: string }): Promi
 }
 
 export async function updateCrmSystem(id: string, updates: Partial<Pick<CrmSystem, "name" | "position">>): Promise<CrmSystem | undefined> {
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    fields.push(`${key} = ?`);
-    values.push(value);
-  }
-  if (fields.length === 0) return await prepare<CrmSystem>("SELECT * FROM crm_systems WHERE id = ?").get(id);
-  values.push(id);
-  await prepare(`UPDATE crm_systems SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const built = buildUpdateClause(updates as Record<string, unknown>, CRM_SYSTEM_UPDATE_FIELDS);
+  if (!built) return await prepare<CrmSystem>("SELECT * FROM crm_systems WHERE id = ?").get(id);
+  await prepare(`UPDATE crm_systems SET ${built.sql} WHERE id = ?`).run(...built.values, id);
   return await prepare<CrmSystem>("SELECT * FROM crm_systems WHERE id = ?").get(id);
 }
 
@@ -993,15 +976,9 @@ export async function createRelationType(rt: Pick<RelationType, "id" | "name" | 
 }
 
 export async function updateRelationType(id: string, updates: Partial<Pick<RelationType, "name" | "color" | "icon" | "position">>): Promise<RelationType | undefined> {
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    fields.push(`${key} = ?`);
-    values.push(value);
-  }
-  if (fields.length === 0) return await prepare<RelationType>("SELECT * FROM relation_types WHERE id = ?").get(id);
-  values.push(id);
-  await prepare(`UPDATE relation_types SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  const built = buildUpdateClause(updates as Record<string, unknown>, RELATION_TYPE_UPDATE_FIELDS);
+  if (!built) return await prepare<RelationType>("SELECT * FROM relation_types WHERE id = ?").get(id);
+  await prepare(`UPDATE relation_types SET ${built.sql} WHERE id = ?`).run(...built.values, id);
   return await prepare<RelationType>("SELECT * FROM relation_types WHERE id = ?").get(id);
 }
 
@@ -1635,19 +1612,11 @@ export async function createStagingItem(item: {
 }
 
 export async function updateStagingItem(id: string, updates: Partial<Pick<StagingItem, "title" | "description" | "parsed_data" | "staging_status" | "entity_type" | "batch_id">>): Promise<StagingItem | undefined> {
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, value] of Object.entries(updates)) {
-    if (value !== undefined) {
-      fields.push(`${key} = ?`);
-      values.push(value);
-    }
-  }
-  if (fields.length === 0) return await getStagingItemById(id);
+  const built = buildUpdateClause(updates as Record<string, unknown>, STAGING_ITEM_UPDATE_FIELDS);
+  if (!built) return await getStagingItemById(id);
   const now = new Date().toISOString();
-  fields.push("updated_at = ?");
-  values.push(now, id);
-  await prepare(`UPDATE staging_items SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  await prepare(`UPDATE staging_items SET ${built.sql}, updated_at = ? WHERE id = ?`)
+    .run(...built.values, now, id);
   return await getStagingItemById(id);
 }
 
