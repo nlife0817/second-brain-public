@@ -1,61 +1,21 @@
 @AGENTS.md
 
-# Second Brain — контекст проекта
+# Стек и команды
 
-Локальный «второй мозг» для управления задачами, заметками, клиентами, недельным планированием. Только пользователь (см. `user_profile`) + опциональный мобильный доступ через Cloudflare Tunnel.
+- Next.js 16 (App Router, `proxy.ts` вместо `middleware.ts`), React 19, TypeScript
+- Supabase (Postgres + Auth + Storage + Realtime), `@supabase/ssr` для сессий
+- UI: Base UI (`@base-ui/react`), Tailwind v4, shadcn, Tiptap, dnd-kit, Zustand
+- Push: `web-push` + Service Worker (`/sw.js`)
+- Деплой: Vercel (auto-deploy с `master` → production)
 
-**Стек:** Next.js 16 (App Router) + React 19 + Supabase (Postgres + Auth + RLS + Storage) + shadcn/ui + Tailwind v4 + Zustand + dnd-kit + Tiptap v3 + web-push.
+Команды: `npm run dev` · `npm run build` · `npm run lint`
 
-## Команды
+# Структура и ключевые модули
 
-```bash
-npm run dev        # http://localhost:3000
-npm run build
-npm run lint       # flat config: eslint.config.mjs
-npx tsx scripts/seed.mjs                         # сидить дефолты (категории и т.п.)
-npx tsx scripts/migrate-sqlite-to-supabase.ts    # одноразовая миграция legacy SQLite → Supabase
-```
-
-Перед `npm run dev`/`build` — см. правило «безопасный билд» ниже.
-
-## Архитектура
-
-- `src/app/` — App Router. Маршруты:
-  - `/` — kanban (десктоп), `/list`, `/planning` — недельное планирование.
-  - `/m/*` — мобильный UI: `inbox`, `tasks`, `notes`, `settings`. UA-детект в `proxy.ts` редиректит мобилки сюда.
-  - `/login`, `/auth/callback` — Supabase Auth.
-  - `/api/*` — REST: `items`, `categories`, `tags`, `clients`, `client-statuses`, `crm-systems`, `relations`, `relation-types`, `comments`, `weekly-plans`, `staging`, `kaiten`, `notifications`, `push`, `cron`, `users`, `entity-counts`, `init`, `development-participants`, `development-stages`.
-- `src/proxy.ts` — **в Next.js 16 `middleware.ts` переименован в `proxy.ts`**, экспорт называется `proxy`, а не `middleware`. Содержит Supabase-сессию, защиту путей, мобильный UA-редирект.
-- `src/lib/db.ts` — единая точка доступа к данным. **База в Supabase (Postgres), не в SQLite.** `ensureDb()` оставлен как no-op для обратной совместимости; схема живёт в `supabase/migrations/`.
-- `src/lib/sql.ts` — клиент `postgres` для server-side запросов; `prepare`/`exec`/`transaction`.
-- `src/lib/supabase/` — server/client helpers через `@supabase/ssr` (cookie-based).
-- `src/lib/auth.ts`, `src/lib/api-auth.ts` — гард API-роутов.
-- `src/lib/kaiten/` — импорт из Kaiten через staging (import → staging → apply).
-- `src/lib/notifications/` — web-push (VAPID): дедлайны и daily summary; cron-хендлер в `/api/cron`.
-- `src/lib/store.ts` — Zustand-стор UI-состояния.
-- `src/lib/storage.ts` — Supabase Storage (картинки, аватары).
-- `src/components/` — `kanban/`, `list/`, `mobile/`, `kaiten/`, `clients/`, `weekly/`, `staging/`, `filters/`, `task/`, `comments/`, `relations/`, `settings/`, `ui/` (shadcn).
-- `supabase/migrations/*.sql` — схема БД, RLS-политики (`0002_rls.sql`), storage-конфиг, notifications.
-- `scripts/` — `seed.mjs`, одноразовый `migrate-sqlite-to-supabase.ts`.
-
-## Non-obvious gotchas
-
-- **Next.js 16 ≠ твои знания.** API, конвенции, файлы могут отличаться. Перед написанием роутов / server components / кешей `fetch` читай `node_modules/next/dist/docs/`. Чти deprecation-ноты.
-- **`middleware.ts` → `src/proxy.ts`** (Next.js 16). Экспорт `proxy`.
-- **Часовой пояс: Asia/Novosibirsk (UTC+7).** Дедлайны, отчёты, daily summary считаются в нём через `date-fns-tz`. Не используй `new Date().toLocaleString()` для пользовательских дат — только утилиты проекта.
-- **RLS включён** на всех пользовательских таблицах. Серверные запросы идут под сервис-ключом через `src/lib/sql.ts`; клиентские — под сессией пользователя через `@supabase/ssr`. Не смешивай.
-- **shadcn/ui + Tailwind v4**: токены и слои в `src/app/globals.css`; алиасы в `components.json`.
-- **dnd-kit Sortable** — drag-and-drop на kanban и list. Не путай `@dnd-kit/core` и `@dnd-kit/sortable`.
-- **Tiptap v3** — редактор заметок/комментариев (`starter-kit` + `image`, `underline`, `placeholder`).
-- **Никакого AI-чата в UI.** Всё взаимодействие через VS Code / Claude Code (см. память `feedback_no_chat_in_ui`).
-
-# Vercel — авто-деплой (настроено, не трогать)
-
-- Проект `second-brain` (team `nlife0817s-projects`, id `prj_swz4Z2mHuHbVirbisERz5ZPshFSj`) подключён к GitHub `nlife0817/second_brain` через Git integration.
-- **Push в `master` → production deploy** автоматически. Домен: `second-brain-nu-steel.vercel.app`.
-- Push в любую другую ветку → preview deploy с уникальным URL.
-- ENV (`NEXT_PUBLIC_SUPABASE_*`, VAPID, `CRON_SECRET` и т.д.) живут в Vercel Project Settings, не в репо. Локально — в `.env`, `.gitignore` держит.
-- Статус и логи через Vercel MCP: `mcp__vercel__list_deployments`, `mcp__vercel__get_deployment_build_logs`, `mcp__vercel__get_runtime_logs`.
+- [src/app/](src/app/) — App Router. Корень `/` — десктоп; `/m/*` (tasks/notes/inbox/settings) — мобильный UI; `/planning/` — недельное планирование; `/login/`, `/auth/callback/` — auth
+- [src/app/api/](src/app/api/) — REST endpoints. Крупные подсистемы: `kaiten/*` (двусторонняя синхронизация с Kaiten + cron), `weekly-plans/*` (план + entries + отчёты), `staging/*` (inbox), `push/*` + `notifications/dispatch` (web-push), `clients`, `items`, `relations`, `comments`
+- [src/lib/](src/lib/) — `sql.ts` (доступ к БД), `db.ts` (домен-запросы), `auth.ts`/`api-auth.ts` (`withAuth`/`withAdminOnly` обёртки), `store.ts` (Zustand), `realtime.ts` (Supabase Realtime), `storage.ts`
+- [supabase/migrations/](supabase/migrations/) — SQL миграции (см. правило ниже)
 
 # Правило: уточняющие вопросы перед кодом
 
@@ -63,74 +23,74 @@ npx tsx scripts/migrate-sqlite-to-supabase.ts    # одноразовая миг
 
 Для тривиальных задач (исправление опечаток, мелкий фикс, форматирование, простой рефакторинг) — уточнений не нужно, делай сразу.
 
-# Правило: коммит и пуш прямо в master после каждой логической части
+# Правило: безопасные авто-коммиты при параллельных сессиях
 
-Работаем напрямую в `master` — PR и ревью не нужны. Push → Vercel сам деплоит в production. Без локального билда: Vercel билдит в облаке, это быстрее и не занимает ресурсы машины.
+## Реестр файлов сессии
 
-## Что такое «логическая часть»
+Веди в памяти список всех файлов, которые ты создал или изменил в текущей сессии. Это твой **реестр**.
 
-Работоспособная, самодостаточная единица: роут, компонент, багфикс, миграция + зависящий код. **После коммита приложение должно билдиться и работать без остальных планируемых коммитов.** Не коммить незавершённое/некомпилируемое.
+## Когда коммитить
 
-Примеры правильного разбиения:
-- Добавлена миграция Supabase + обновлены типы + обновлён `db.ts` + API-роут → **один коммит** (атомарность схемы, см. ниже).
-- Добавлен компонент + использован в странице + стили → **один коммит**.
-- Фича из двух независимых частей, каждая работает отдельно → **два коммита**.
+После каждого завершённого логического шага: добавлен роут, компонент, исправлен баг, обновлены типы + связанный код. НЕ коммить незавершённые или некомпилируемые изменения.
 
-## Процедура
+## Процедура коммита
 
-1. Веди в памяти **реестр** файлов, изменённых в текущей сессии. `data/brain.db*` никогда не включай (legacy runtime-артефакты).
-2. На каждый логический шаг:
-   - `git status --short` — если видишь файлы НЕ из реестра, не трогай их (параллельная сессия).
-   - `git add <файлы из реестра>` — **ЗАПРЕЩЕНО:** `git add .`, `-A`, `-u`, `git commit -a`.
-   - `git diff --cached --name-only` — лишнее снимай через `git reset HEAD <файл>`.
-   - `git commit -m "<тип>(<область>): <описание>"`
-   - `git push`
-3. Vercel подхватит push автоматически. Проверять статус не обязательно; при падении — следующий коммит фикcит или откати через `git revert`.
+1. Убедись, что реестр не пуст
+2. `git status <файл>` для каждого файла из реестра — если файл не показывает изменений, сообщи: «Файл <путь> уже не содержит изменений — возможно, закоммичен другой сессией»
+3. `git status --short` — если есть файлы НЕ из реестра, не трогай их. Если файл из реестра содержит изменения, которые ты не вносил — сообщи пользователю, но продолжай работу с остальными файлами
+4. `git add <файл1> <файл2> ...` — только файлы из реестра. **ЗАПРЕЩЕНО:** `git add .`, `git add -A`, `git add -u`, `git commit -a`
+5. `git diff --cached --name-only` — если в стейдже лишний файл, выполни `git reset HEAD <файл>`
+6. `git commit -m "<тип>(<область>): <описание>"`
+
+## Ретраи при ошибках коммита
+
+При любой ошибке коммита (`index.lock`, конфликт, неожиданный diff) — сообщи пользователю о проблеме, но **не останавливай работу**. Продолжай разработку и повторяй попытку коммита с нарастающим интервалом: через 1 мин → 2 мин → 5 мин → 10 мин. После 4 неудачных попыток — сообщи итоговый статус и продолжай работу без коммитов до ручного вмешательства.
 
 ## Формат коммитов
 
-`<тип>(<область>): <описание>` — типы: feat, fix, refactor, style, types, api, docs, chore. Область — имя фичи/модуля (clients, kanban, sidebar, notifications, kaiten и т.д.).
+`<тип>(<область>): <описание>` — типы: feat, fix, refactor, style, types, api, docs. Область — имя фичи/модуля (clients, kanban, sidebar и т.д.).
 
-## Ретраи при ошибках
+# Правило: безопасный билд при параллельных сессиях
 
-При `index.lock` / конфликте / `non-fast-forward` — сообщи пользователю, продолжай работу, повтори через 1 → 2 → 5 → 10 мин. После 4 неудач — работай без коммитов до вмешательства.
+Перед запуском `npm run build`, `next build` или `npm run dev`:
 
-**Если push отклонён `non-fast-forward`**: `git pull --rebase origin master` (или `git fetch && git rebase origin/master`), затем `git push`. Не форсить (`--force`) без явного разрешения.
+1. Проверь, не запущен ли уже процесс: `ps aux | grep -E "next (build|dev)" | grep -v grep`
+2. Если процесс найден — **НЕ запускай повторно**. Сообщи: «Билд/dev-сервер уже запущен другой сессией, пропускаю»
+3. Если процесс не найден — запускай как обычно
 
-## Когда НЕ пушить в master напрямую
-
-Исключения — работай через feature-ветку + PR:
-- Миграция БД, которая может сломать прод (drop/rename колонки, тяжёлый бэкфил).
-- Крупный рефакторинг с риском регрессии.
-- Если пользователь явно сказал «через PR».
-
-В этих случаях создай ветку `claude/<описание>`, коммить туда, push → Vercel даст preview-URL, попроси пользователя проверить и замерджить.
-
-# Правило: dev-сервер при параллельных сессиях
-
-Локально билдить не нужно — Vercel билдит в облаке. `npm run dev` запускай только если нужно проверить вручную в браузере.
-
-1. Проверь, не запущен ли процесс: `ps aux | grep -E "next (dev|build)" | grep -v grep`
-2. Если запущен другой сессией — не дублируй.
+Если билд упал с ошибкой доступа к `.next/` (EBUSY, EPERM, ENOENT) — сообщи пользователю, но **не останавливайся**. Продолжай разработку и повторяй билд с нарастающим интервалом: через 1 мин → 2 мин → 5 мин → 10 мин. После 4 неудачных попыток — сообщи итоговый статус и продолжай без билда.
 
 # Правило: не удалять файлы без явного запроса
 
 **ЗАПРЕЩЕНО** удалять, переименовывать или перемещать существующие файлы компонентов, роутов, утилит — если пользователь явно не попросил. Если файл кажется ненужным — спроси пользователя, но не удаляй самостоятельно. Удаление файла, от которого зависят импорты, ломает билд и все API.
 
-# Правило: миграции БД при изменении схемы (Supabase)
+# Правило: миграции БД (Supabase Postgres)
 
-Схема живёт в `supabase/migrations/*.sql`. SQLite больше не используется — не трогай `initSchema`/`migrateSchema`/`better-sqlite3`.
+БД — Supabase Postgres (не SQLite). Доступ через `prepare()` из [src/lib/sql.ts](src/lib/sql.ts), который конвертит `?` → `$N` плейсхолдеры.
 
-## Когда добавляешь колонку или таблицу
-
-1. Создай новый файл `supabase/migrations/NNNN_<имя>.sql` (следующий номер; текущий максимум — смотри `ls supabase/migrations`). Используй `CREATE TABLE IF NOT EXISTS` и `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` для идемпотентности. Добавь RLS-политики (`ENABLE ROW LEVEL SECURITY` + `CREATE POLICY`), если таблица пользовательская.
-2. Применяй миграцию к удалённому Supabase через MCP: `mcp__supabase__apply_migration` (или `supabase db push`, если настроена локальная связка).
-3. **Перегенерируй типы**: `mcp__supabase__generate_typescript_types` → обнови `src/types/*` (или где хранятся сгенерированные).
-4. Обнови обращения в `src/lib/db.ts` и соответствующие API-роуты/компоненты.
-5. Проверь, что API отдаёт 200: `curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:3000/api/items`.
-
-**Почему:** Supabase — source of truth для схемы; код приложения и типы должны совпадать с актуальным состоянием Postgres, иначе API возвращает 500.
+Новая миграция:
+1. Создай `supabase/migrations/NNNN_<name>.sql` (порядковый номер)
+2. Применить на удалённый: `npx supabase db push` ИЛИ скопировать SQL в Dashboard → SQL Editor → Run
+3. Миграции **не катятся автоматически** при деплое Vercel — это отдельный шаг
 
 ## Атомарность изменений схемы
 
 Изменения схемы БД, типов, API-роутов и компонентов, зависящих от новых полей — коммить **одним коммитом**. Частичный коммит (например, код ожидает колонку, а миграция не применена) приводит к 500 на всех API.
+
+# Правило: публичные API endpoints в Next.js 16
+
+`src/proxy.ts` (бывший middleware.ts) перехватывает **все** роуты и редиректит неавторизованных на `/login`. Для endpoint'ов, которые дёргаются извне без сессии (cron от Supabase pg_net, webhooks, health-checks):
+
+1. Добавь свою auth (например, проверка `Bearer <SECRET>` из env)
+2. Добавь путь в `config.matcher` exclusion list в [src/proxy.ts](src/proxy.ts)
+3. Иначе запрос получит 307 на /login и до твоего кода не дойдёт
+
+Источник правды — `config.matcher` в [src/proxy.ts](src/proxy.ts). На текущий момент из middleware исключены `api/cron` и `api/notifications/dispatch` (плюс статика: `_next`, `icons`, `favicon`, `manifest`, `sw.js`). Все остальные `/api/*` проходят проверку сессии в proxy — отдельный `withAuth` в роуте не обязателен, но допустим (см. [src/lib/api-auth.ts](src/lib/api-auth.ts) для ролевых ограничений).
+
+Дополнительно proxy делает редирект `/` → `/m/tasks` для мобильных UA (можно обойти `?desktop`).
+
+# Хостинг
+
+- **Vercel Hobby plan** — cron максимум 1 раз/сутки, не подходит для частых задач
+- **Supabase Postgres + Vault** — для cron используем pg_cron + pg_net, секреты в Vault (`app_url`, `cron_secret`)
+- Пример расписаний: [supabase/migrations/0005_notifications_cron.sql](supabase/migrations/0005_notifications_cron.sql)
