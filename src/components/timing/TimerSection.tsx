@@ -152,22 +152,21 @@ export function TimerSection({ item, layout }: Props) {
       : null;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       <div className="flex items-center justify-between">
-        <span className={cn("font-medium text-slate-500", layout === "panel" ? "text-xs" : "text-sm")}>
+        <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
           Время работы
         </span>
       </div>
 
-      {/* ---- Big Start/Stop button ---- */}
-      <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+      {/* ---- Compact Start/Stop row ---- */}
+      <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 p-2">
         {isActiveOnThisItem ? (
           <Button
             variant="destructive"
             onClick={handleStop}
             disabled={busy}
-            size="lg"
-            className="min-w-[110px]"
+            size="sm"
           >
             {busy ? <Loader2 className="animate-spin" /> : <Square />}
             Стоп
@@ -177,32 +176,29 @@ export function TimerSection({ item, layout }: Props) {
             variant="default"
             onClick={handleStart}
             disabled={busy}
-            size="lg"
-            className="min-w-[110px]"
+            size="sm"
           >
             {busy ? <Loader2 className="animate-spin" /> : <Play />}
             {hasOtherActive ? "Переключить" : "Запустить"}
           </Button>
         )}
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 text-right">
           {isActiveOnThisItem ? (
-            <div className="font-mono tabular-nums text-2xl leading-none font-semibold text-emerald-600">
+            <div className="font-mono tabular-nums text-base leading-none font-semibold text-emerald-600">
               {formatHMS(elapsedFn())}
             </div>
           ) : (
-            <div className="text-xs text-slate-500">
-              {hasOtherActive
-                ? "Сейчас идёт другая задача — Запуск переключит таймер"
-                : "Нет активного таймера"}
+            <div className="text-[11px] leading-tight text-slate-500">
+              {hasOtherActive ? "Идёт другая задача" : "Не запущен"}
             </div>
           )}
         </div>
       </div>
 
       {/* ---- Totals + estimate ---- */}
-      <div className="grid grid-cols-3 gap-2 text-center text-xs">
-        <Stat label="Своих" value={selfSec} />
-        <Stat label="Подзадачи" value={subtasksSec} />
+      <div className="grid grid-cols-3 gap-1.5 text-center">
+        <Stat label="Свои" value={selfSec} />
+        <Stat label="Подзад." value={subtasksSec} />
         <Stat label="Итого" value={totalSec} highlight />
       </div>
 
@@ -297,12 +293,12 @@ function Stat({
   return (
     <div
       className={cn(
-        "rounded-md border bg-white px-2 py-1.5",
+        "rounded-md border bg-white px-1.5 py-1",
         highlight ? "border-emerald-200 bg-emerald-50/50" : "border-slate-200",
       )}
     >
-      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="font-mono tabular-nums text-sm font-medium">
+      <div className="text-[9px] uppercase tracking-wide text-slate-500 leading-tight">{label}</div>
+      <div className="font-mono tabular-nums text-[11px] font-medium leading-tight">
         {value > 0 ? formatHM(Math.round(value / 60)) : "—"}
       </div>
     </div>

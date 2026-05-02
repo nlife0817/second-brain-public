@@ -1050,8 +1050,6 @@ function TaskDetailContent({
         {/* LEFT column — main content */}
         <div className="flex-1 min-w-0 flex flex-col gap-5">
           {titleBlock}
-          {timerBlock && <Separator className="bg-slate-200" />}
-          {timerBlock}
           <Separator className="bg-slate-200" />
           {descriptionBlock}
           {subtasksBlock && <Separator className="bg-slate-200" />}
@@ -1067,6 +1065,8 @@ function TaskDetailContent({
           {fieldsBlock}
           {developmentFieldsBlock}
           {tagsBlock}
+          {timerBlock && <Separator className="bg-slate-200" />}
+          {timerBlock}
           <Separator className="bg-slate-200" />
           {timestampsBlock}
           <Separator className="bg-slate-200" />

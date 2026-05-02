@@ -84,7 +84,7 @@ export function usePipTimer(): PiPApi {
     }
     let pipWin: Window;
     try {
-      pipWin = await api.requestWindow({ width: 280, height: 140 });
+      pipWin = await api.requestWindow({ width: 240, height: 56 });
     } catch (e) {
       console.error("[timing pip] requestWindow failed", e);
       return;
@@ -95,7 +95,10 @@ export function usePipTimer(): PiPApi {
     (pipWin as unknown as { __sb_isPip?: boolean }).__sb_isPip = true;
 
     mirrorStyles(pipWin.document);
-    pipWin.document.title = "Таймер";
+    // Minimal title — Chrome shows it in the PiP system chrome strip.
+    // A single non-breaking space keeps the title bar at minimum height
+    // without showing "about:blank" or document URL.
+    pipWin.document.title = " ";
 
     // Create a stable container for the React portal.
     const container = pipWin.document.createElement("div");

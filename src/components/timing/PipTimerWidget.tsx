@@ -5,8 +5,10 @@ import { Square, Loader2 } from "lucide-react";
 import { useTimingStore, formatHMS } from "@/lib/timing-store";
 
 /**
- * Compact timer widget rendered inside the Document Picture-in-Picture window.
- * Reads the same useTimingStore as the main app — actions stay synchronised.
+ * Compact one-line timer rendered inside the Document Picture-in-Picture window.
+ * Layout: [● HH:MM:SS · task title] [⏹]
+ *
+ * Designed for a 220×56 PiP window — minimal vertical footprint.
  */
 export function PipTimerWidget() {
   const hasActive = useTimingStore((s) => s.activeEntry !== null);
@@ -44,12 +46,12 @@ export function PipTimerWidget() {
           justifyContent: "center",
           height: "100%",
           color: "rgb(120, 120, 130)",
-          fontSize: 13,
-          padding: 12,
+          fontSize: 11,
+          padding: 6,
           textAlign: "center",
         }}
       >
-        Активного таймера нет — закройте это окно
+        Таймер не запущен
       </div>
     );
   }
@@ -58,62 +60,81 @@ export function PipTimerWidget() {
     <div
       style={{
         display: "flex",
-        flexDirection: "column",
-        alignItems: "stretch",
+        alignItems: "center",
         height: "100%",
-        padding: 10,
-        gap: 8,
+        padding: "0 8px",
+        gap: 6,
         boxSizing: "border-box",
       }}
     >
-      <div
+      {/* Pulsing dot */}
+      <span
+        aria-hidden
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          background: "rgb(16, 185, 129)",
+          flexShrink: 0,
+          animation: "sb-pulse 1.6s ease-in-out infinite",
+        }}
+      />
+      {/* Time */}
+      <span
+        style={{
+          fontFamily:
+            'ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Mono", "Roboto Mono", monospace',
+          fontSize: 14,
+          fontVariantNumeric: "tabular-nums",
+          fontWeight: 600,
+          flexShrink: 0,
+        }}
+      >
+        {formatHMS(elapsed)}
+      </span>
+      {/* Title */}
+      <span
         title={itemTitle ?? undefined}
         style={{
+          flex: 1,
+          minWidth: 0,
           fontSize: 11,
-          opacity: 0.75,
+          opacity: 0.7,
           whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",
         }}
       >
-        {itemTitle ?? "Задача"}
-      </div>
-      <div
-        style={{
-          fontFamily:
-            'ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Mono", "Roboto Mono", monospace',
-          fontSize: 32,
-          fontVariantNumeric: "tabular-nums",
-          fontWeight: 600,
-          letterSpacing: "0.02em",
-        }}
-      >
-        {formatHMS(elapsed)}
-      </div>
+        {itemTitle ?? ""}
+      </span>
+      {/* Stop button (icon only) */}
       <button
         type="button"
         onClick={handleStop}
         disabled={stopping}
+        title="Остановить"
+        aria-label="Остановить"
         style={{
-          marginTop: "auto",
-          height: 32,
+          width: 24,
+          height: 24,
           border: "none",
-          borderRadius: 8,
+          borderRadius: 6,
           background: "rgba(220, 38, 38, 0.12)",
           color: "rgb(220, 38, 38)",
           cursor: stopping ? "wait" : "pointer",
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          gap: 6,
-          fontSize: 13,
-          fontWeight: 500,
+          flexShrink: 0,
           opacity: stopping ? 0.7 : 1,
         }}
       >
-        {stopping ? <Loader2 size={14} /> : <Square size={14} />}
-        Остановить
+        {stopping ? <Loader2 size={12} /> : <Square size={12} />}
       </button>
+      <style>{`@keyframes sb-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.35; }
+      }`}</style>
     </div>
   );
 }
