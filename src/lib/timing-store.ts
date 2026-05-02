@@ -5,7 +5,9 @@ import type {
   ActiveTimerSnapshot,
   PomodoroMode,
   TimeEntry,
+  TimingSettings,
 } from "@/types";
+import { TIMING_SETTINGS_DEFAULTS } from "@/types";
 
 const BROADCAST_CHANNEL = "second-brain-timing";
 
@@ -25,10 +27,13 @@ interface TimingStore {
   pipOpen: boolean;
   /** Self-time totals per item id (seconds). Refreshed on hydrate / stop. */
   totalsByItem: Record<string, number>;
+  /** User's per-account timer settings. Loaded once on hydrate. */
+  settings: Pick<TimingSettings, "idle_threshold_min" | "reminder_interval_min" | "hard_cap_hours" | "default_pomodoro">;
 
   // ----- actions -----
   hydrate: () => Promise<void>;
   refreshTotals: () => Promise<void>;
+  refreshSettings: () => Promise<void>;
   applySnapshot: (snap: ActiveTimerSnapshot, opts?: { broadcast?: boolean }) => void;
   start: (itemId: string, opts?: { pomodoroMode?: PomodoroMode | null; itemTitle?: string }) => Promise<void>;
   stop: (note?: string) => Promise<void>;
@@ -76,6 +81,7 @@ export const useTimingStore = create<TimingStore>()((set, get) => ({
   idlePromptOpen: false,
   pipOpen: false,
   totalsByItem: {},
+  settings: { ...TIMING_SETTINGS_DEFAULTS },
 
   hydrate: async () => {
     try {
@@ -88,10 +94,29 @@ export const useTimingStore = create<TimingStore>()((set, get) => ({
       const snap = (await res.json()) as ActiveTimerSnapshot;
       get().applySnapshot(snap, { broadcast: false });
       set({ hydrated: true });
-      // Fire-and-forget totals refresh.
+      // Fire-and-forget totals + settings refresh.
       void get().refreshTotals();
+      void get().refreshSettings();
     } catch {
       set({ hydrated: true });
+    }
+  },
+
+  refreshSettings: async () => {
+    try {
+      const res = await fetch("/api/timing/settings", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as TimingSettings;
+      set({
+        settings: {
+          idle_threshold_min: data.idle_threshold_min,
+          reminder_interval_min: data.reminder_interval_min,
+          hard_cap_hours: data.hard_cap_hours,
+          default_pomodoro: data.default_pomodoro,
+        },
+      });
+    } catch {
+      // Keep defaults on failure.
     }
   },
 

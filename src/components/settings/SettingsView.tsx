@@ -40,6 +40,7 @@ import { CategoryManager } from "./CategoryManager";
 import { OrderableListSection } from "./OrderableListSection";
 import { UserManager } from "./UserManager";
 import { NotificationsSettings } from "./NotificationsSettings";
+import { TimingSettingsCard } from "@/components/timing/TimingSettings";
 import { Tag, Layers, Users } from "lucide-react";
 
 const PRESET_COLORS = [
@@ -1219,6 +1220,9 @@ export function SettingsView() {
 
           {/* Notifications */}
           <NotificationsSettings />
+
+          {/* Time tracking */}
+          <TimingSettingsCard />
 
           {/* Relation Types */}
           <section className="rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-sm">

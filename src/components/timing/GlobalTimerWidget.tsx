@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
-import { Play, Square, Search, Loader2, PictureInPicture2, PictureInPicture } from "lucide-react";
+import Link from "next/link";
+import { Play, Square, Search, Loader2, PictureInPicture2, PictureInPicture, History } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -116,7 +117,17 @@ export function GlobalTimerWidget() {
             </Button>
           </>
         ) : (
-          <StartTimerButton />
+          <>
+            <StartTimerButton />
+            <Link
+              href="/timing"
+              className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Журнал учёта времени"
+              title="Журнал учёта времени"
+            >
+              <History className="size-4" />
+            </Link>
+          </>
         )}
       </div>
       {pip.containerNode && createPortal(<PipTimerWidget />, pip.containerNode)}

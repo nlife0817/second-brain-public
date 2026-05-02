@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { MobileBottomNav } from "@/components/mobile/MobileBottomNav";
+import { MobileTimerBar } from "@/components/timing/MobileTimerBar";
 
 export const metadata: Metadata = {
   title: "Second Brain — Mobile",
@@ -15,6 +16,7 @@ export const viewport: Viewport = {
 export default function MobileLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen flex-col bg-background">
+      <MobileTimerBar />
       <main className="flex-1 overflow-y-auto pb-16">{children}</main>
       <MobileBottomNav />
     </div>

@@ -1,4 +1,5 @@
 import { NotificationsSettings } from "@/components/settings/NotificationsSettings";
+import { TimingSettingsCard } from "@/components/timing/TimingSettings";
 
 export default function MobileSettingsPage() {
   return (
@@ -7,6 +8,7 @@ export default function MobileSettingsPage() {
         <h1 className="text-lg font-semibold">Настройки</h1>
       </header>
       <NotificationsSettings />
+      <TimingSettingsCard />
     </div>
   );
 }
