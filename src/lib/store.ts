@@ -41,6 +41,8 @@ import {
   StagingParsedData,
   User,
   UserRole,
+  ItemStatusRow,
+  ItemStatusKind,
 } from "@/types";
 
 interface BrainStore {
@@ -158,6 +160,14 @@ interface BrainStore {
   createDevelopmentStage: (name: string) => Promise<void>;
   updateDevelopmentStage: (id: string, updates: Record<string, unknown>) => Promise<void>;
   deleteDevelopmentStage: (id: string) => Promise<void>;
+
+  // Item statuses (user-editable)
+  itemStatuses: ItemStatusRow[];
+  fetchItemStatuses: () => Promise<void>;
+  createItemStatus: (name: string, color?: string, kind?: ItemStatusKind) => Promise<ItemStatusRow>;
+  updateItemStatus: (id: string, updates: Partial<Pick<ItemStatusRow, "name" | "color" | "position" | "kind">>) => Promise<void>;
+  deleteItemStatus: (id: string) => Promise<{ ok: boolean; inUseCount?: number; message?: string }>;
+  reorderItemStatuses: (orderedIds: string[]) => Promise<void>;
 
   // Development participants (all, not per-item)
   allParticipants: DevelopmentParticipant[];
@@ -380,6 +390,7 @@ export const useBrainStore = create<BrainStore>()(
   clientStatuses: [],
   crmSystems: [],
   developmentStages: [],
+  itemStatuses: [],
   allParticipants: [],
   selectedClientId: null,
   isClientDetailOpen: false,
@@ -419,6 +430,7 @@ export const useBrainStore = create<BrainStore>()(
       clientStatuses: data.clientStatuses,
       crmSystems: data.crmSystems,
       developmentStages: data.developmentStages,
+      itemStatuses: data.itemStatuses ?? [],
       allParticipants: data.allParticipants,
       relationTypes: data.relationTypes,
       stagingItems: parsed,
@@ -1167,6 +1179,78 @@ export const useBrainStore = create<BrainStore>()(
   deleteDevelopmentStage: async (id) => {
     await fetch(`/api/development-stages/${id}`, { method: "DELETE" });
     set((s) => ({ developmentStages: s.developmentStages.filter((d) => d.id !== id) }));
+  },
+
+  // Item statuses (user-editable)
+  fetchItemStatuses: async () => {
+    const res = await fetch("/api/item-statuses");
+    if (!res.ok) return;
+    set({ itemStatuses: await res.json() });
+  },
+  createItemStatus: async (name, color, kind) => {
+    const res = await fetch("/api/item-statuses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, color, kind }),
+    });
+    if (!res.ok) throw new Error("Failed to create status");
+    const created: ItemStatusRow = await res.json();
+    set((s) => ({ itemStatuses: [...s.itemStatuses, created] }));
+    return created;
+  },
+  updateItemStatus: async (id, updates) => {
+    // Optimistic patch — same pattern as updateItem so renames feel instant.
+    const prev = get().itemStatuses.find((s) => s.id === id);
+    set((s) => ({
+      itemStatuses: s.itemStatuses.map((st) => (st.id === id ? { ...st, ...updates } : st)),
+    }));
+    try {
+      const res = await fetch(`/api/item-statuses/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      if (!res.ok) throw new Error("Failed");
+      const updated: ItemStatusRow = await res.json();
+      set((s) => ({
+        itemStatuses: s.itemStatuses.map((st) => (st.id === id ? updated : st)),
+      }));
+    } catch (err) {
+      if (prev) {
+        set((s) => ({
+          itemStatuses: s.itemStatuses.map((st) => (st.id === id ? prev : st)),
+        }));
+      }
+      throw err;
+    }
+  },
+  deleteItemStatus: async (id) => {
+    const res = await fetch(`/api/item-statuses/${id}`, { method: "DELETE" });
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, inUseCount: body.inUseCount, message: body.message };
+    }
+    if (!res.ok) return { ok: false, message: "Не удалось удалить статус" };
+    set((s) => ({ itemStatuses: s.itemStatuses.filter((st) => st.id !== id) }));
+    return { ok: true };
+  },
+  reorderItemStatuses: async (orderedIds) => {
+    // Optimistic local reorder; server PUTs run in parallel.
+    const map = new Map(orderedIds.map((id, idx) => [id, idx]));
+    set((s) => ({
+      itemStatuses: [...s.itemStatuses]
+        .map((st) => (map.has(st.id) ? { ...st, position: map.get(st.id)! } : st))
+        .sort((a, b) => a.position - b.position),
+    }));
+    await Promise.allSettled(
+      orderedIds.map((id, idx) =>
+        fetch(`/api/item-statuses/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ position: idx }),
+        })
+      )
+    );
   },
 
   // Development participants (all)
