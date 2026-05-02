@@ -41,7 +41,7 @@ import { OrderableListSection } from "./OrderableListSection";
 import { UserManager } from "./UserManager";
 import { NotificationsSettings } from "./NotificationsSettings";
 import { TimingSettingsCard } from "@/components/timing/TimingSettings";
-import { Tag, Layers, Users } from "lucide-react";
+import { Tag, Layers, Users, ListChecks } from "lucide-react";
 
 const PRESET_COLORS = [
   "#6b7280", "#ef4444", "#f97316", "#eab308", "#22c55e",
@@ -97,6 +97,51 @@ function TagsSection() {
         hasColor
         emptyText="Нет тегов"
         addPlaceholder="Название тега..."
+      />
+    </section>
+  );
+}
+
+function TaskStatusesSection() {
+  const statuses = useBrainStore((s) => s.itemStatuses);
+  const create = useBrainStore((s) => s.createItemStatus);
+  const update = useBrainStore((s) => s.updateItemStatus);
+  const del = useBrainStore((s) => s.deleteItemStatus);
+
+  const handleCreate = useCallback(async (name: string, color?: string) => {
+    await create(name, color);
+  }, [create]);
+
+  const handleUpdate = useCallback(async (id: string, updates: Partial<{ name: string; color: string; position: number }>) => {
+    await update(id, updates);
+  }, [update]);
+
+  const handleDelete = useCallback(async (id: string) => {
+    const result = await del(id);
+    if (!result.ok && result.message) {
+      alert(result.message);
+    }
+  }, [del]);
+
+  return (
+    <section className="rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-sm">
+      <div className="mb-2 flex items-center gap-2">
+        <ListChecks className="size-4 text-emerald-500" />
+        <span className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Статусы задач</span>
+        {statuses.length > 0 && <span className="text-xs text-slate-400">({statuses.length})</span>}
+      </div>
+      <p className="mb-2 text-[11px] leading-snug text-slate-400">
+        Переименуйте, переставьте местами или добавьте свои статусы. Удалить можно только тот статус,
+        который не используется ни одной задачей.
+      </p>
+      <OrderableListSection
+        items={statuses}
+        onCreate={handleCreate}
+        onUpdate={handleUpdate}
+        onDelete={handleDelete}
+        hasColor
+        emptyText="Нет статусов"
+        addPlaceholder="Название статуса..."
       />
     </section>
   );
@@ -1206,6 +1251,9 @@ export function SettingsView() {
 
           {/* Tags */}
           <TagsSection />
+
+          {/* Task statuses */}
+          <TaskStatusesSection />
 
           {/* Development Stages */}
           <DevelopmentStagesSection />
