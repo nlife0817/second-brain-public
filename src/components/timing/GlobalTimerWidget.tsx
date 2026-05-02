@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
-import { Play, Square, Search, Loader2 } from "lucide-react";
+import { Play, Square, Search, Loader2, PictureInPicture2, PictureInPicture } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,6 +22,8 @@ import {
 import { useBrainStore } from "@/lib/store";
 import { useTimingStore, formatHMS } from "@/lib/timing-store";
 import type { ItemWithSubtasks } from "@/types";
+import { usePipTimer } from "./use-pip-timer";
+import { PipTimerWidget } from "./PipTimerWidget";
 
 function shouldHide(pathname: string | null): boolean {
   if (!pathname) return true;
@@ -50,6 +53,7 @@ export function GlobalTimerWidget() {
   const stop = useTimingStore((s) => s.stop);
 
   const [stopping, setStopping] = useState(false);
+  const pip = usePipTimer();
 
   const elapsed = useTickingElapsed();
 
@@ -68,41 +72,55 @@ export function GlobalTimerWidget() {
   };
 
   return (
-    <div
-      data-slot="global-timer-widget"
-      className={cn(
-        "fixed bottom-4 right-4 z-50",
-        "flex items-stretch gap-1 rounded-xl border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur",
-      )}
-    >
-      {activeEntry ? (
-        <>
-          <div className="flex flex-col justify-center px-2.5 py-1 min-w-0">
-            <span
-              className="text-[11px] leading-tight text-muted-foreground truncate max-w-[180px]"
-              title={itemTitle ?? undefined}
+    <>
+      <div
+        data-slot="global-timer-widget"
+        className={cn(
+          "fixed bottom-4 right-4 z-50",
+          "flex items-stretch gap-1 rounded-xl border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur",
+        )}
+      >
+        {activeEntry ? (
+          <>
+            <div className="flex flex-col justify-center px-2.5 py-1 min-w-0">
+              <span
+                className="text-[11px] leading-tight text-muted-foreground truncate max-w-[180px]"
+                title={itemTitle ?? undefined}
+              >
+                {itemTitle ?? "Задача"}
+              </span>
+              <span className="font-mono tabular-nums text-base leading-tight font-medium">
+                {formatHMS(elapsed)}
+              </span>
+            </div>
+            <SwitchTimerButton activeItemId={activeEntry.item_id} />
+            {pip.supported && (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={pip.open ? "Закрыть мини-окно" : "Открепить (мини-окно поверх всего)"}
+                title={pip.open ? "Закрыть мини-окно" : "Открепить поверх всех окон"}
+                onClick={() => (pip.open ? pip.close() : void pip.requestOpen())}
+              >
+                {pip.open ? <PictureInPicture /> : <PictureInPicture2 />}
+              </Button>
+            )}
+            <Button
+              variant="destructive"
+              size="icon"
+              aria-label="Остановить таймер"
+              onClick={handleStop}
+              disabled={stopping}
             >
-              {itemTitle ?? "Задача"}
-            </span>
-            <span className="font-mono tabular-nums text-base leading-tight font-medium">
-              {formatHMS(elapsed)}
-            </span>
-          </div>
-          <SwitchTimerButton activeItemId={activeEntry.item_id} />
-          <Button
-            variant="destructive"
-            size="icon"
-            aria-label="Остановить таймер"
-            onClick={handleStop}
-            disabled={stopping}
-          >
-            {stopping ? <Loader2 className="animate-spin" /> : <Square />}
-          </Button>
-        </>
-      ) : (
-        <StartTimerButton />
-      )}
-    </div>
+              {stopping ? <Loader2 className="animate-spin" /> : <Square />}
+            </Button>
+          </>
+        ) : (
+          <StartTimerButton />
+        )}
+      </div>
+      {pip.containerNode && createPortal(<PipTimerWidget />, pip.containerNode)}
+    </>
   );
 }
 
