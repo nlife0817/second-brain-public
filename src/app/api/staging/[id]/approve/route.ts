@@ -15,6 +15,7 @@ import {
 } from "@/lib/db";
 import { v4 as uuid } from "uuid";
 import type { StagingParsedData } from "@/types";
+import { sanitizeRichText } from "@/lib/sanitize";
 
 interface StagingRelation {
   target_type: "item" | "client";
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const item = await createItem({
         id: itemId,
         title: staging.title,
-        description: staging.description,
+        description: sanitizeRichText(staging.description),
         type: parsed.type ?? "task",
         status: parsed.status ?? "inbox",
         priority: parsed.priority ?? "none",
@@ -113,7 +114,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           await createItem({
             id: uuid(),
             title: sub.title,
-            description: sub.description ?? "",
+            description: sanitizeRichText(sub.description ?? ""),
             type: parsed.type ?? "task",
             status: "inbox",
             priority: "none",

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getComments, createComment, updateComment, deleteComment } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth";
+import { sanitizeRichText } from "@/lib/sanitize";
 import type { EntityType } from "@/types";
 
 export async function GET(req: NextRequest) {
@@ -12,6 +13,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const user = await getAuthUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json();
   const { entity_type, entity_id, text } = body;
   if (!entity_type || !entity_id || !text) {
@@ -21,8 +23,8 @@ export async function POST(req: NextRequest) {
     id: crypto.randomUUID(),
     entity_type,
     entity_id,
-    text,
-    author_email: user?.email || "",
+    text: sanitizeRichText(text),
+    author_email: user.email,
   });
   return NextResponse.json(comment, { status: 201 });
 }
@@ -35,7 +37,7 @@ export async function PUT(req: NextRequest) {
   const body = await req.json();
   const { id, text } = body;
   if (!id || text === undefined) return NextResponse.json({ error: "id and text required" }, { status: 400 });
-  const updated = await updateComment(id, text);
+  const updated = await updateComment(id, sanitizeRichText(text));
   if (!updated) return NextResponse.json({ error: "not found" }, { status: 404 });
   return NextResponse.json(updated);
 }

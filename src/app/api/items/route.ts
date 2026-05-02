@@ -4,6 +4,7 @@ import { v4 as uuid } from "uuid";
 import { CreateItemPayload, ItemWithSubtasks } from "@/types";
 import { queueKaitenItemSync } from "@/lib/kaiten/sync";
 import { getAuthUser } from "@/lib/auth";
+import { sanitizeRichText } from "@/lib/sanitize";
 
 export async function GET(req: NextRequest) {
   const showArchived = req.nextUrl.searchParams.get("archived") === "true";
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
     const item = await createItem({
       id: uuid(),
       title: body.title.trim(),
-      description: body.description ?? "",
+      description: sanitizeRichText(body.description ?? ""),
       type: body.type ?? "task",
       status: body.status ?? "inbox",
       priority: body.priority ?? "none",

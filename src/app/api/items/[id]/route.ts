@@ -3,6 +3,7 @@ import { updateItem, deleteItem, getItemFull, setItemParticipants, setItemTags }
 import { UpdateItemPayload } from "@/types";
 import { queueKaitenItemSync } from "@/lib/kaiten/sync";
 import { getAuthUser } from "@/lib/auth";
+import { sanitizeRichText } from "@/lib/sanitize";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -28,6 +29,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (body.participants) {
       await setItemParticipants(id, body.participants);
       delete body.participants;
+    }
+    if (typeof body.description === "string") {
+      body.description = sanitizeRichText(body.description);
     }
 
     const updated = await updateItem(id, body);
