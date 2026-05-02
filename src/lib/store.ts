@@ -369,7 +369,7 @@ export const useBrainStore = create<BrainStore>()(
   editingItemId: null,
   editingField: null,
   cardVisibleFields: ["priority", "category", "due_date", "subtasks", "type"],
-  listColumnOrder: ["priority", "title", "status", "category", "clients", "type", "due_date", "subtasks"],
+  listColumnOrder: ["priority", "title", "status", "category", "clients", "type", "due_date", "estimated_minutes", "subtasks"],
   listColumnWidths: {},
   savedFilters: [],
   activeFilterId: null,
@@ -1594,7 +1594,7 @@ export const useBrainStore = create<BrainStore>()(
 }),
   {
     name: "second-brain-settings",
-    version: 4,
+    version: 5,
     storage: createJSONStorage(() => localStorage),
     migrate: (persisted: unknown, version: number) => {
       const state = persisted as Record<string, unknown> | null;
@@ -1613,6 +1613,21 @@ export const useBrainStore = create<BrainStore>()(
         const cols = state.listColumnOrder as string[] | undefined;
         if (cols && !cols.includes("priority")) {
           state.listColumnOrder = ["priority", ...cols];
+        }
+      }
+      if (state && version < 5) {
+        const cols = state.listColumnOrder as string[] | undefined;
+        if (cols && !cols.includes("estimated_minutes")) {
+          // Insert right after due_date if present, otherwise before subtasks.
+          const next = [...cols];
+          const dueIdx = next.indexOf("due_date");
+          if (dueIdx >= 0) next.splice(dueIdx + 1, 0, "estimated_minutes");
+          else {
+            const subIdx = next.indexOf("subtasks");
+            if (subIdx >= 0) next.splice(subIdx, 0, "estimated_minutes");
+            else next.push("estimated_minutes");
+          }
+          state.listColumnOrder = next;
         }
       }
       return state;

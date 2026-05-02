@@ -28,7 +28,7 @@ export interface Category {
 }
 export type ViewMode = "kanban" | "list" | "weekly";
 export type SubtaskDisplayMode = "inline" | "accordion" | "detached";
-export type ListGroupByField = "none" | "status" | "priority" | "category" | "type" | "development_stage" | "participants" | "clients";
+export type ListGroupByField = "none" | "status" | "priority" | "category" | "type" | "development_stage" | "participants" | "clients" | "estimated_minutes";
 export type ListGroupByConfig = [ListGroupByField, ListGroupByField];
 
 export type FilterOperator = "is" | "is_not" | "contains" | "not_contains" | "before" | "after" | "is_empty" | "is_not_empty";

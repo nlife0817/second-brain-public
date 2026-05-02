@@ -24,6 +24,8 @@ type Props = {
   /** If true, trigger only shows an icon and selected value on the right (compact). */
   compact?: boolean;
   align?: "start" | "center" | "end";
+  /** If true, hides the year part when the selected date is in the current year. */
+  hideCurrentYear?: boolean;
 };
 
 function parseDate(s: string | null): Date | undefined {
@@ -52,6 +54,7 @@ export function DateTimePicker({
   disabled,
   compact = false,
   align = "start",
+  hideCurrentYear = false,
 }: Props) {
   const [open, setOpen] = useState(false);
 
@@ -86,10 +89,12 @@ export function DateTimePicker({
   const heightCls = size === "xs" ? "h-6 text-xs" : size === "sm" ? "h-7 text-xs" : "h-8 text-sm";
   const iconSize = size === "xs" ? "size-3" : "size-3.5";
 
+  const sameYear = committedDate && committedDate.getFullYear() === new Date().getFullYear();
+  const dateFormat = hideCurrentYear && sameYear ? "d MMM" : "d MMM yyyy";
   const label = committedDate
     ? value.time && /^\d{2}:\d{2}$/.test(value.time)
       ? `${format(committedDate, "d MMM", { locale: ru })} · ${value.time}`
-      : format(committedDate, "d MMM yyyy", { locale: ru })
+      : format(committedDate, dateFormat, { locale: ru })
     : placeholder;
 
   const handleDate = useCallback((d: Date | undefined) => {

@@ -64,6 +64,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
+import { EstimatePicker, formatEstimate } from "@/components/ui/EstimatePicker";
 import { AdvancedFilterBuilder } from "@/components/filters/AdvancedFilterBuilder";
 import { CardTimerControl } from "@/components/timing/CardTimerControl";
 
@@ -121,6 +122,7 @@ type SortColumn =
   | "category"
   | "type"
   | "due_date"
+  | "estimated_minutes"
   | "created_at"
   | "clients";
 
@@ -156,6 +158,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { id: "tags", label: "Теги", width: "w-36", sortable: false },
   { id: "type", label: "Тип", width: "w-24", sortable: true },
   { id: "due_date", label: "Дедлайн", width: "w-24", sortable: true },
+  { id: "estimated_minutes", label: "Оценка времени", headerLabel: "Оценка", width: "w-24", sortable: true },
   { id: "time", label: "Время", width: "w-24", sortable: false },
   { id: "subtasks", label: "Подзадачи", width: "w-20", sortable: false },
 ];
@@ -168,6 +171,7 @@ const DEFAULT_COLUMN_ORDER = [
   "clients",
   "type",
   "due_date",
+  "estimated_minutes",
   "time",
   "subtasks",
 ];
@@ -185,6 +189,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   tags: 144,
   type: 96,
   due_date: 112,
+  estimated_minutes: 110,
   time: 110,
   subtasks: 88,
 };
@@ -309,7 +314,31 @@ const GROUP_BY_OPTIONS: { key: ListGroupByField; label: string }[] = [
   { key: "clients", label: "Клиенты" },
   { key: "development_stage", label: "Этап разработки" },
   { key: "participants", label: "Участники" },
+  { key: "estimated_minutes", label: "Оценка времени" },
 ];
+
+// Buckets for grouping by estimate. Order is meaningful — used as static
+// group ordering below.
+const ESTIMATE_BUCKETS: { key: string; label: string; max: number }[] = [
+  { key: "<30", label: "< 30 минут", max: 30 },
+  { key: "30-60", label: "30 минут – 1 час", max: 60 },
+  { key: "1-2", label: "1 – 2 часа", max: 120 },
+  { key: "2-4", label: "2 – 4 часа", max: 240 },
+  { key: ">4", label: "Более 4 часов", max: Infinity },
+];
+
+function estimateBucketKey(minutes: number | null | undefined): string {
+  if (minutes == null || minutes <= 0) return "__none__";
+  for (const b of ESTIMATE_BUCKETS) if (minutes <= b.max) return b.key;
+  return ">4";
+}
+
+const ESTIMATE_BUCKET_ORDER: Record<string, number> = Object.fromEntries(
+  ESTIMATE_BUCKETS.map((b, i) => [b.key, i])
+);
+const ESTIMATE_BUCKET_LABELS: Record<string, string> = Object.fromEntries(
+  ESTIMATE_BUCKETS.map((b) => [b.key, b.label])
+);
 
 function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField, itemLinkedClients?: Record<string, string[]>): string {
   switch (field) {
@@ -326,6 +355,8 @@ function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField, itemLinked
       const linkedClients = itemLinkedClients?.[item.id];
       return linkedClients?.length ? linkedClients.sort((a, b) => a.localeCompare(b, "ru")).join(", ") : "__none__";
     }
+    case "estimated_minutes":
+      return estimateBucketKey(item.estimated_minutes);
     default: return "";
   }
 }
@@ -345,6 +376,7 @@ function getGroupLabel(
     case "development_stage": return key === "__none__" ? "Не указано" : key;
     case "participants": return key === "__none__" ? "Без участников" : key;
     case "clients": return key === "__none__" ? "Без клиента" : key;
+    case "estimated_minutes": return key === "__none__" ? "Без оценки" : (ESTIMATE_BUCKET_LABELS[key] ?? key);
     default: return key;
   }
 }
@@ -360,6 +392,7 @@ const GROUP_ORDER_STATIC: Record<string, Record<string, number>> = {
   status: STATUS_WEIGHT,
   priority: PRIORITY_WEIGHT,
   type: { task: 0, note: 1, meeting: 2, plan: 3, idea: 4 },
+  estimated_minutes: ESTIMATE_BUCKET_ORDER,
 };
 
 interface ItemGroup {
@@ -1423,6 +1456,7 @@ const NEW_ITEM_DEFAULTS = {
   development_stage: null as string | null,
   participants: [] as DevelopmentParticipantInput[],
   due_date: "",
+  estimated_minutes: null as number | null,
   clientId: null as string | null,
   clientName: "",
 };
@@ -1561,6 +1595,7 @@ export function ListView() {
     development_stage: null as string | null,
     participants: [] as DevelopmentParticipantInput[],
     due_date: "",
+    estimated_minutes: null as number | null,
   });
   const subtaskInputRef = useRef<HTMLInputElement>(null);
   const subtaskCellRefs = useRef<Record<string, HTMLTableCellElement | null>>(
@@ -1634,6 +1669,12 @@ export function ListView() {
           const da = a.due_date ? new Date(a.due_date).getTime() : Infinity;
           const db = b.due_date ? new Date(b.due_date).getTime() : Infinity;
           cmp = da - db;
+          break;
+        }
+        case "estimated_minutes": {
+          const ea = a.estimated_minutes ?? Infinity;
+          const eb = b.estimated_minutes ?? Infinity;
+          cmp = ea - eb;
           break;
         }
         case "created_at": {
@@ -2052,6 +2093,7 @@ export function ListView() {
         participants:
           snapshot.category === "development" ? snapshot.participants : [],
         due_date: snapshot.due_date || null,
+        estimated_minutes: snapshot.estimated_minutes,
       });
       if (snapshot.clientId && created) {
         let clientType = relationTypes.find((rt) => rt.name === "Клиент");
@@ -2093,6 +2135,7 @@ export function ListView() {
               }))
             : [],
         due_date: "",
+        estimated_minutes: null,
       });
       setSubtaskDropdown(null);
       // Expand parent if not expanded
@@ -2117,6 +2160,7 @@ export function ListView() {
       development_stage: null,
       participants: [],
       due_date: "",
+      estimated_minutes: null,
     });
     setSubtaskDropdown(null);
   }, []);
@@ -2141,6 +2185,7 @@ export function ListView() {
       development_stage: null,
       participants: [],
       due_date: "",
+      estimated_minutes: null,
     });
     setSubtaskDropdown(null);
     try {
@@ -2160,6 +2205,7 @@ export function ListView() {
             ? snapshot.participants
             : [],
         due_date: snapshot.due_date || null,
+        estimated_minutes: snapshot.estimated_minutes,
       });
     } catch {
       // silently fail — store rollback handles temp item removal
@@ -2407,6 +2453,23 @@ export function ListView() {
               value={{ date: newItem.due_date || null, time: null }}
               onChange={({ date }) =>
                 setNewItem((prev) => ({ ...prev, due_date: date ?? "" }))
+              }
+              size="xs"
+              compact
+              placeholder="—"
+              hideCurrentYear
+            />
+          </td>
+        );
+      }
+
+      case "estimated_minutes": {
+        return (
+          <td key={colId} className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
+            <EstimatePicker
+              value={newItem.estimated_minutes}
+              onChange={(minutes) =>
+                setNewItem((prev) => ({ ...prev, estimated_minutes: minutes }))
               }
               size="xs"
               compact
@@ -3031,6 +3094,7 @@ const ItemRowGroup = memo(function ItemRowGroup({
     development_stage: string | null;
     participants: DevelopmentParticipantInput[];
     due_date: string;
+    estimated_minutes: number | null;
   };
   setNewSubtask: React.Dispatch<React.SetStateAction<{
     title: string;
@@ -3041,6 +3105,7 @@ const ItemRowGroup = memo(function ItemRowGroup({
     development_stage: string | null;
     participants: DevelopmentParticipantInput[];
     due_date: string;
+    estimated_minutes: number | null;
   }>>;
   onCommitSubtaskCreate: () => void;
   onCancelSubtaskCreate: () => void;
@@ -3313,6 +3378,26 @@ const ItemRowGroup = memo(function ItemRowGroup({
                           value={{ date: newSubtask.due_date || null, time: null }}
                           onChange={({ date }) =>
                             setNewSubtask((prev) => ({ ...prev, due_date: date ?? "" }))
+                          }
+                          size="xs"
+                          compact
+                          placeholder="—"
+                          hideCurrentYear
+                        />
+                      </td>
+                    );
+
+                  case "estimated_minutes":
+                    return (
+                      <td
+                        key={col.id}
+                        className="px-3 py-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <EstimatePicker
+                          value={newSubtask.estimated_minutes}
+                          onChange={(minutes) =>
+                            setNewSubtask((prev) => ({ ...prev, estimated_minutes: minutes }))
                           }
                           size="xs"
                           compact
@@ -3854,6 +3939,27 @@ const ItemRow = memo(function ItemRow({
               value={{ date: item.due_date, time: item.due_time ?? null }}
               onChange={({ date, time }) => {
                 void updateItem(item.id, { due_date: date, due_time: time });
+              }}
+              size="xs"
+              compact
+              placeholder="—"
+              hideCurrentYear
+            />
+          </td>
+        );
+      }
+
+      case "estimated_minutes": {
+        return (
+          <td
+            key={colId}
+            className="relative px-3 py-1.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <EstimatePicker
+              value={item.estimated_minutes}
+              onChange={(minutes) => {
+                void updateItem(item.id, { estimated_minutes: minutes });
               }}
               size="xs"
               compact
