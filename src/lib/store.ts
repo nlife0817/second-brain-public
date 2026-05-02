@@ -502,6 +502,7 @@ export const useBrainStore = create<BrainStore>()(
       development_stage: payload.development_stage ?? null,
       due_date: payload.due_date ?? null,
       due_time: payload.due_time ?? null,
+      estimated_minutes: payload.estimated_minutes ?? null,
       position: 0,
       parent_id: payload.parent_id ?? null,
       created_at: now,
