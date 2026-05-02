@@ -3923,21 +3923,17 @@ const ItemRow = memo(function ItemRow({
 
   return (
     <tr ref={setNodeRef} style={sortableStyle} className={rowCls}>
-      {/* Drag handle + priority accent border */}
+      {/* Drag handle + priority accent border. Priority editing lives on the
+         dedicated priority column (case "priority" above) — opening it from
+         here would render a second InlineSelectCell at the same time and
+         the two portals' outside-click handlers would cancel each other. */}
       <td
-        className={cn("px-1 py-1.5 text-center cursor-pointer", priorityBorderCls)}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (!isSubtask) setEditingItem(item.id, "priority");
-        }}
+        className={cn("px-1 py-1.5 text-center", priorityBorderCls)}
         title={
           isSubtask
             ? undefined
             : `Приоритет: ${PRIORITY_CONFIG[item.priority as ItemPriority]?.label ?? item.priority}`
         }
-        ref={(el) => {
-          cellRefs.current["priority"] = el;
-        }}
       >
         <button
           type="button"
@@ -3951,15 +3947,6 @@ const ItemRow = memo(function ItemRow({
         >
           <GripVertical className="size-3.5" />
         </button>
-        {editingField === "priority" && !isSubtask && (
-          <InlineSelectCell
-            value={item.priority as ItemPriority}
-            options={priorityOptions}
-            onCommit={(val) => commitFieldEdit("priority", val)}
-            onCancel={cancelEdit}
-            anchorRef={{ current: cellRefs.current["priority"] }}
-          />
-        )}
       </td>
 
       {/* Expand / collapse chevron */}
