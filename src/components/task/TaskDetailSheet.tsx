@@ -49,6 +49,7 @@ import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import { SubtaskList } from "./SubtaskList";
 import { RelationsList } from "@/components/relations/RelationsList";
 import { CommentsList } from "@/components/comments/CommentsList";
+import { TimerSection } from "@/components/timing/TimerSection";
 
 import {
   CalendarIcon,
@@ -1015,6 +1016,11 @@ function TaskDetailContent({
     <SubtaskList parentId={item.id} subtasks={item.subtasks || []} />
   );
 
+  /* ---- Timer / time-tracking block ---- */
+  const timerBlock = (item.type === "task" || item.type === "meeting" || item.type === "plan")
+    ? <TimerSection item={item} layout={layout} />
+    : null;
+
   /* ---- Relations block ---- */
   const relationsBlock = (
     <RelationsList entityType="item" entityId={item.id} />
@@ -1044,6 +1050,8 @@ function TaskDetailContent({
         {/* LEFT column — main content */}
         <div className="flex-1 min-w-0 flex flex-col gap-5">
           {titleBlock}
+          {timerBlock && <Separator className="bg-slate-200" />}
+          {timerBlock}
           <Separator className="bg-slate-200" />
           {descriptionBlock}
           {subtasksBlock && <Separator className="bg-slate-200" />}
@@ -1076,6 +1084,8 @@ function TaskDetailContent({
       {fieldsBlock}
       {developmentFieldsBlock}
       {tagsBlock}
+      {timerBlock && <Separator className="bg-slate-200" />}
+      {timerBlock}
       {descriptionBlock}
       {subtasksBlock && <Separator className="bg-slate-200" />}
       {subtasksBlock}

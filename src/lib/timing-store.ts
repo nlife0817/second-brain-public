@@ -23,9 +23,12 @@ interface TimingStore {
   idlePromptOpen: boolean;
   /** Whether PiP window is currently open. */
   pipOpen: boolean;
+  /** Self-time totals per item id (seconds). Refreshed on hydrate / stop. */
+  totalsByItem: Record<string, number>;
 
   // ----- actions -----
   hydrate: () => Promise<void>;
+  refreshTotals: () => Promise<void>;
   applySnapshot: (snap: ActiveTimerSnapshot, opts?: { broadcast?: boolean }) => void;
   start: (itemId: string, opts?: { pomodoroMode?: PomodoroMode | null; itemTitle?: string }) => Promise<void>;
   stop: (note?: string) => Promise<void>;
@@ -72,6 +75,7 @@ export const useTimingStore = create<TimingStore>()((set, get) => ({
   hydrated: false,
   idlePromptOpen: false,
   pipOpen: false,
+  totalsByItem: {},
 
   hydrate: async () => {
     try {
@@ -84,8 +88,21 @@ export const useTimingStore = create<TimingStore>()((set, get) => ({
       const snap = (await res.json()) as ActiveTimerSnapshot;
       get().applySnapshot(snap, { broadcast: false });
       set({ hydrated: true });
+      // Fire-and-forget totals refresh.
+      void get().refreshTotals();
     } catch {
       set({ hydrated: true });
+    }
+  },
+
+  refreshTotals: async () => {
+    try {
+      const res = await fetch("/api/timing/totals", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { totals: Record<string, number> };
+      set({ totalsByItem: data.totals });
+    } catch {
+      // Network blip — keep previous totals.
     }
   },
 
@@ -118,6 +135,7 @@ export const useTimingStore = create<TimingStore>()((set, get) => ({
     }
     const snap = (await res.json()) as ActiveTimerSnapshot;
     get().applySnapshot(snap);
+    void get().refreshTotals();
   },
 
   stop: async (note) => {
@@ -134,6 +152,7 @@ export const useTimingStore = create<TimingStore>()((set, get) => ({
     if (!res.ok) throw new Error(`stop failed: ${res.status}`);
     set({ activeEntry: null, itemTitle: null, idlePromptOpen: false });
     broadcast({ type: "stopped" });
+    void get().refreshTotals();
   },
 
   heartbeat: async () => {
