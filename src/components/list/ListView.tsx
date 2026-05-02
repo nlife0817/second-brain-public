@@ -65,6 +65,7 @@ import {
 import { cn } from "@/lib/utils";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import { AdvancedFilterBuilder } from "@/components/filters/AdvancedFilterBuilder";
+import { CardTimerControl } from "@/components/timing/CardTimerControl";
 
 function SourceIcon({ source }: { source: string }) {
   if (source === "kaiten") return <span title="Кайтен" className="mr-1 inline-flex size-4 items-center justify-center rounded bg-red-50 text-[10px] font-semibold text-red-600">К</span>;
@@ -155,6 +156,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { id: "tags", label: "Теги", width: "w-36", sortable: false },
   { id: "type", label: "Тип", width: "w-24", sortable: true },
   { id: "due_date", label: "Дедлайн", width: "w-24", sortable: true },
+  { id: "time", label: "Время", width: "w-24", sortable: false },
   { id: "subtasks", label: "Подзадачи", width: "w-20", sortable: false },
 ];
 
@@ -166,6 +168,7 @@ const DEFAULT_COLUMN_ORDER = [
   "clients",
   "type",
   "due_date",
+  "time",
   "subtasks",
 ];
 
@@ -182,6 +185,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   tags: 144,
   type: 96,
   due_date: 112,
+  time: 110,
   subtasks: 88,
 };
 
@@ -3817,6 +3821,21 @@ const ItemRow = memo(function ItemRow({
               compact
               placeholder="—"
             />
+          </td>
+        );
+      }
+
+      case "time": {
+        if (item.type !== "task" && item.type !== "meeting" && item.type !== "plan") {
+          return <td key={colId} className="px-3 py-1.5" />;
+        }
+        return (
+          <td
+            key={colId}
+            className="px-3 py-1.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CardTimerControl itemId={item.id} itemTitle={item.title} />
           </td>
         );
       }

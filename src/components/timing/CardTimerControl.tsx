@@ -16,11 +16,14 @@ export function CardTimerControl({
   itemTitle,
   /** Container will toggle .group, so child uses group-hover. */
   alwaysShowStartButton = false,
+  /** Tailwind group variant suffix, e.g. "card" → group-hover/card. Empty = anonymous group. */
+  hoverGroup,
   className,
 }: {
   itemId: string;
   itemTitle?: string;
   alwaysShowStartButton?: boolean;
+  hoverGroup?: string;
   className?: string;
 }) {
   const activeEntry = useTimingStore((s) => s.activeEntry);
@@ -111,11 +114,21 @@ export function CardTimerControl({
 
   const hasTotal = totalSec > 0;
 
+  // Tailwind v4 needs static class strings — enumerate the supported variants.
+  // (Adding a new value? Append a literal here and use that name from callers.)
+  const hoverVariantClass =
+    hoverGroup === "card"
+      ? "opacity-0 group-hover/card:opacity-100 transition-opacity"
+      : hoverGroup === "row"
+        ? "opacity-0 group-hover/row:opacity-100 transition-opacity"
+        : "opacity-0 group-hover:opacity-100 transition-opacity";
+  const hideUnlessHover = !hasTotal && !alwaysShowStartButton ? hoverVariantClass : "";
+
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1 text-[11px] text-slate-500",
-        !hasTotal && !alwaysShowStartButton && "opacity-0 group-hover:opacity-100 transition-opacity",
+        hideUnlessHover,
         className,
       )}
       onClick={(e) => e.stopPropagation()}
@@ -136,7 +149,7 @@ export function CardTimerControl({
         title={activeEntry ? "Переключить таймер на эту задачу" : "Запустить таймер"}
         className={cn(
           "inline-flex size-5 items-center justify-center rounded text-slate-500 hover:bg-slate-200 hover:text-slate-900",
-          !hasTotal && !alwaysShowStartButton && "opacity-0 group-hover:opacity-100",
+          hideUnlessHover,
         )}
       >
         {busy ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}

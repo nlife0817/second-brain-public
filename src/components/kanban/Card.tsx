@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CardTimerControl } from "@/components/timing/CardTimerControl";
 
 const sourceIcons: Record<string, LucideIcon> = {
   kaiten: ExternalLink,
@@ -657,6 +658,17 @@ export const KanbanCard = React.memo(function KanbanCard({ item, isDragOverlay =
             <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400" title={`Комментарии: ${commentCount}`}>
               <MessageSquare className="size-2.5" />
               <span>{commentCount}</span>
+            </span>
+          )}
+
+          {/* Timer indicator (active session) / total tracked time + start button */}
+          {(item.type === "task" || item.type === "meeting" || item.type === "plan") && (
+            <span className="ml-auto inline-flex items-center">
+              <CardTimerControl
+                itemId={item.id}
+                itemTitle={item.title}
+                hoverGroup="card"
+              />
             </span>
           )}
         </div>
