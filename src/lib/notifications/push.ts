@@ -31,6 +31,11 @@ function configure() {
   configured = true;
 }
 
+export type PushAction = {
+  action: string;       // identifier matched by service worker on click
+  title: string;
+};
+
 export type PushPayload = {
   title: string;
   body: string;
@@ -38,6 +43,7 @@ export type PushPayload = {
   tag?: string;
   itemId?: string;
   requireInteraction?: boolean;
+  actions?: PushAction[];
 };
 
 type SubscriptionRow = {

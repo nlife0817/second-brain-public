@@ -64,14 +64,28 @@ self.addEventListener("push", (event) => {
     icon: "/icons/icon-192.png",
     badge: "/icons/icon-192.png",
     tag: data.tag,
-    data: { url: data.url || "/", itemId: data.itemId },
+    data: { url: data.url || "/", itemId: data.itemId, action: data.action },
     requireInteraction: !!data.requireInteraction,
+    actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : undefined,
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  // Action "stop" → POST to /api/timing/stop using session cookies.
+  if (event.action === "stop") {
+    event.waitUntil(
+      fetch("/api/timing/stop", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }).catch(() => {})
+    );
+    return;
+  }
+
   const targetUrl = event.notification.data?.url || "/";
   event.waitUntil(
     self.clients

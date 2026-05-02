@@ -3,11 +3,16 @@
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { useTimingStore, formatHMS } from "@/lib/timing-store";
+import { TIMING_SETTINGS_DEFAULTS } from "@/types";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const TICK_INTERVAL_MS = 1_000;
 const ACTIVITY_THROTTLE_MS = 5_000;
+const IDLE_CHECK_INTERVAL_MS = 30_000;
 const BASE_TITLE = "Second Brain";
+
+// Until per-user settings are wired in (Phase 5), use the default threshold.
+const IDLE_THRESHOLD_MS = TIMING_SETTINGS_DEFAULTS.idle_threshold_min * 60_000;
 
 function isAppRoute(pathname: string): boolean {
   if (!pathname) return false;
@@ -94,7 +99,21 @@ export function TimingProvider() {
     };
   }, [enabled]);
 
-  // ----- 5. App badge (taskbar approximation #2) -----
+  // ----- 5. Idle watcher: when no activity for IDLE_THRESHOLD, prompt user -----
+  useEffect(() => {
+    if (!enabled) return;
+    const id = window.setInterval(() => {
+      const { activeEntry, lastActiveAt, idlePromptOpen, setIdlePromptOpen } =
+        useTimingStore.getState();
+      if (!activeEntry) return;
+      if (idlePromptOpen) return;
+      const idleMs = Date.now() - new Date(lastActiveAt).getTime();
+      if (idleMs >= IDLE_THRESHOLD_MS) setIdlePromptOpen(true);
+    }, IDLE_CHECK_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [enabled]);
+
+  // ----- 6. App badge (taskbar approximation #2) -----
   useEffect(() => {
     if (!enabled) return;
     type BadgeNav = Navigator & {
