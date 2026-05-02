@@ -7,6 +7,7 @@ import {
   getAllClientStatuses,
   getAllCrmSystems,
   getAllDevelopmentStages,
+  getAllItemStatuses,
   getAllDevelopmentParticipants,
   getAllRelationTypes,
   getAllStagingItems,
@@ -27,6 +28,7 @@ export async function GET(req: NextRequest) {
   const clientStatuses = await getAllClientStatuses();
   const crmSystems = await getAllCrmSystems();
   const developmentStages = await getAllDevelopmentStages();
+  const itemStatuses = await getAllItemStatuses();
   const allParticipants = await getAllDevelopmentParticipants();
   const relationTypes = await getAllRelationTypes();
   const stagingItems = await getAllStagingItems("pending");
@@ -46,6 +48,7 @@ export async function GET(req: NextRequest) {
     clientStatuses,
     crmSystems,
     developmentStages,
+    itemStatuses,
     allParticipants,
     relationTypes,
     stagingItems,
