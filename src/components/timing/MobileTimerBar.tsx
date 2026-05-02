@@ -11,7 +11,8 @@ import { useTimingStore, formatHMS } from "@/lib/timing-store";
  * desktop UI; this bar is purely a visibility/anti-forgetting indicator).
  */
 export function MobileTimerBar() {
-  const activeEntry = useTimingStore((s) => s.activeEntry);
+  const hasActive = useTimingStore((s) => s.activeEntry !== null);
+  const activeItemId = useTimingStore((s) => s.activeEntry?.item_id ?? null);
   const itemTitle = useTimingStore((s) => s.itemTitle);
   const stop = useTimingStore((s) => s.stop);
   const elapsedFn = useTimingStore((s) => s.elapsedSeconds);
@@ -19,12 +20,12 @@ export function MobileTimerBar() {
   const [, setTick] = useState(0);
 
   useEffect(() => {
-    if (!activeEntry) return;
+    if (!hasActive) return;
     const id = window.setInterval(() => setTick((t) => t + 1), 1000);
     return () => window.clearInterval(id);
-  }, [activeEntry]);
+  }, [hasActive]);
 
-  if (!activeEntry) return null;
+  if (!hasActive || !activeItemId) return null;
 
   const handleStop = async () => {
     if (busy) return;
@@ -42,7 +43,7 @@ export function MobileTimerBar() {
     <div className="sticky top-0 z-40 flex items-center gap-2 border-b border-emerald-200 bg-emerald-50/95 backdrop-blur px-3 py-1.5 text-emerald-900">
       <span aria-hidden className="size-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
       <Link
-        href={`/m/tasks?item=${activeEntry.item_id}`}
+        href={`/m/tasks?item=${activeItemId}`}
         className="flex-1 min-w-0 text-xs truncate"
         title={itemTitle ?? undefined}
       >

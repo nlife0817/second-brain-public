@@ -9,16 +9,17 @@ import { useTimingStore, formatHMS } from "@/lib/timing-store";
  * Reads the same useTimingStore as the main app — actions stay synchronised.
  */
 export function PipTimerWidget() {
-  const activeEntry = useTimingStore((s) => s.activeEntry);
+  const hasActive = useTimingStore((s) => s.activeEntry !== null);
   const itemTitle = useTimingStore((s) => s.itemTitle);
   const stop = useTimingStore((s) => s.stop);
   const [stopping, setStopping] = useState(false);
   const [, setTick] = useState(0);
 
   useEffect(() => {
+    if (!hasActive) return;
     const id = window.setInterval(() => setTick((t) => t + 1), 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [hasActive]);
 
   const elapsed = useTimingStore.getState().elapsedSeconds();
 
@@ -34,7 +35,7 @@ export function PipTimerWidget() {
     }
   };
 
-  if (!activeEntry) {
+  if (!hasActive) {
     return (
       <div
         style={{

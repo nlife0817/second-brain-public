@@ -1,12 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Play, Square, Loader2, Plus, Pencil, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Square, Loader2, Plus, Play, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useBrainStore } from "@/lib/store";
-import { useTimingStore, formatHMS, formatHM } from "@/lib/timing-store";
+import {
+  useTimingStore,
+  formatHMS,
+  formatHM,
+  selectIsItemActive,
+  selectItemTotalSeconds,
+} from "@/lib/timing-store";
 import type { ItemWithSubtasks, ItemTimeTotals, TimeEntry } from "@/types";
 import { ManualEntryDialog } from "./ManualEntryDialog";
 import { EditEntryDialog } from "./EditEntryDialog";
@@ -22,7 +28,15 @@ interface EntriesResponse {
 }
 
 export function TimerSection({ item, layout }: Props) {
-  const activeEntry = useTimingStore((s) => s.activeEntry);
+  // Atomic selectors — only re-render this section when its slice changes.
+  const isActiveOnThisItem = useTimingStore(selectIsItemActive(item.id));
+  const hasOtherActive = useTimingStore(
+    (s) => s.activeEntry !== null && s.activeEntry.item_id !== item.id,
+  );
+  const activeEntryId = useTimingStore((s) => s.activeEntry?.id ?? null);
+  // Self total from the persisted store — shows instantly without a fetch.
+  const selfFromStore = useTimingStore(selectItemTotalSeconds(item.id));
+
   const start = useTimingStore((s) => s.start);
   const stop = useTimingStore((s) => s.stop);
   const elapsedFn = useTimingStore((s) => s.elapsedSeconds);
@@ -30,13 +44,11 @@ export function TimerSection({ item, layout }: Props) {
 
   const [busy, setBusy] = useState(false);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
-  const [totals, setTotals] = useState<ItemTimeTotals | null>(null);
+  const [serverTotals, setServerTotals] = useState<ItemTimeTotals | null>(null);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-
-  const isActiveOnThisItem = activeEntry?.item_id === item.id;
 
   // ---- Live tick for the elapsed display when this item is active ----
   const [, setTick] = useState(0);
@@ -46,7 +58,7 @@ export function TimerSection({ item, layout }: Props) {
     return () => window.clearInterval(id);
   }, [isActiveOnThisItem]);
 
-  // ---- Load entries + totals for this item ----
+  // ---- Load entries + server totals (self + recursive subtree) ----
   useEffect(() => {
     let cancelled = false;
     setLoadingEntries(true);
@@ -55,7 +67,7 @@ export function TimerSection({ item, layout }: Props) {
       .then((data) => {
         if (cancelled || !data) return;
         setEntries(data.entries);
-        setTotals(data.totals);
+        setServerTotals(data.totals);
       })
       .catch(() => {})
       .finally(() => {
@@ -64,7 +76,7 @@ export function TimerSection({ item, layout }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [item.id, refreshKey, activeEntry?.id, activeEntry?.ended_at]);
+  }, [item.id, refreshKey, activeEntryId]);
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
@@ -115,15 +127,17 @@ export function TimerSection({ item, layout }: Props) {
         ),
       );
     }
-    if (isActiveOnThisItem && activeEntry?.id === entry.id) return elapsedFn();
+    if (isActiveOnThisItem && activeEntryId === entry.id) return elapsedFn();
     return Math.max(
       0,
       Math.floor((Date.now() - new Date(entry.started_at).getTime()) / 1000),
     );
   };
 
-  const selfSec = totals?.self_seconds ?? 0;
-  const totalSec = totals?.total_seconds ?? 0;
+  // Stats: prefer server totals (correct for subtree) when available, fall back
+  // to instant self-only number from the persisted store.
+  const selfSec = serverTotals?.self_seconds ?? selfFromStore;
+  const totalSec = serverTotals?.total_seconds ?? selfFromStore;
   const subtasksSec = Math.max(0, totalSec - selfSec);
 
   const estimateMin = item.estimated_minutes ?? null;
@@ -167,7 +181,7 @@ export function TimerSection({ item, layout }: Props) {
             className="min-w-[110px]"
           >
             {busy ? <Loader2 className="animate-spin" /> : <Play />}
-            {activeEntry ? "Переключить" : "Запустить"}
+            {hasOtherActive ? "Переключить" : "Запустить"}
           </Button>
         )}
         <div className="flex-1 min-w-0">
@@ -177,7 +191,7 @@ export function TimerSection({ item, layout }: Props) {
             </div>
           ) : (
             <div className="text-xs text-slate-500">
-              {activeEntry
+              {hasOtherActive
                 ? "Сейчас идёт другая задача — Запуск переключит таймер"
                 : "Нет активного таймера"}
             </div>
@@ -246,7 +260,7 @@ export function TimerSection({ item, layout }: Props) {
                 key={entry.id}
                 entry={entry}
                 durationSec={elapsedForRow(entry)}
-                isActive={activeEntry?.id === entry.id}
+                isActive={activeEntryId === entry.id}
                 onEdit={() => setEditingEntry(entry)}
                 onDelete={() => handleDelete(entry.id)}
               />

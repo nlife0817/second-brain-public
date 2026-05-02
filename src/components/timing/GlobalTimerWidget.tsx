@@ -35,12 +35,14 @@ function shouldHide(pathname: string | null): boolean {
   return false;
 }
 
-function useTickingElapsed(): number {
+/** Tick once per second only while there IS an active entry. */
+function useTickingElapsed(active: boolean): number {
   const [, setTick] = useState(0);
   useEffect(() => {
+    if (!active) return;
     const id = window.setInterval(() => setTick((t) => t + 1), 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [active]);
   return useTimingStore.getState().elapsedSeconds();
 }
 
@@ -48,17 +50,20 @@ export function GlobalTimerWidget() {
   const pathname = usePathname();
   const hidden = shouldHide(pathname);
 
-  const activeEntry = useTimingStore((s) => s.activeEntry);
+  // Atomic selectors — only re-render on the specific slice that changed.
+  const hasActive = useTimingStore((s) => s.activeEntry !== null);
+  const activeItemId = useTimingStore((s) => s.activeEntry?.item_id ?? null);
   const itemTitle = useTimingStore((s) => s.itemTitle);
-  const hydrated = useTimingStore((s) => s.hydrated);
   const stop = useTimingStore((s) => s.stop);
 
   const [stopping, setStopping] = useState(false);
   const pip = usePipTimer();
 
-  const elapsed = useTickingElapsed();
+  const elapsed = useTickingElapsed(hasActive);
 
-  if (hidden || !hydrated) return null;
+  // We render immediately from persisted state; no need to wait for hydrate().
+  // Hidden routes (/login, /m/*) still skip render entirely.
+  if (hidden) return null;
 
   const handleStop = async () => {
     if (stopping) return;
@@ -81,7 +86,7 @@ export function GlobalTimerWidget() {
           "flex items-stretch gap-1 rounded-xl border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur",
         )}
       >
-        {activeEntry ? (
+        {hasActive && activeItemId ? (
           <>
             <div className="flex flex-col justify-center px-2.5 py-1 min-w-0">
               <span
@@ -94,7 +99,7 @@ export function GlobalTimerWidget() {
                 {formatHMS(elapsed)}
               </span>
             </div>
-            <SwitchTimerButton activeItemId={activeEntry.item_id} />
+            <SwitchTimerButton activeItemId={activeItemId} />
             {pip.supported && (
               <Button
                 variant="ghost"
