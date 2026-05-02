@@ -77,6 +77,24 @@ const RichEditor = memo(function RichEditor({
   content: string;
   onSave: (html: string) => void;
 }) {
+  // Refs let us call the latest onSave without re-creating the editor and
+  // remember the last HTML we already sent up so we can ignore re-entrant
+  // store echoes when our own optimistic update lands back as a `content` prop.
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastEmittedRef = useRef<string | null>(null);
+
+  const flushNow = useCallback((html: string) => {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    if (lastEmittedRef.current === html) return;
+    lastEmittedRef.current = html;
+    onSaveRef.current(html);
+  }, []);
+
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -133,15 +151,50 @@ const RichEditor = memo(function RichEditor({
         return false;
       },
     },
+    onUpdate: ({ editor: ed }) => {
+      // Debounced fire so each keystroke doesn't fire a PUT.
+      // Selects/dates/status flush instantly via their own handlers — only
+      // long-form text needs this throttle.
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = setTimeout(() => {
+        flushTimerRef.current = null;
+        const html = ed.getHTML();
+        if (lastEmittedRef.current === html) return;
+        lastEmittedRef.current = html;
+        onSaveRef.current(html);
+      }, 400);
+    },
     onBlur: ({ editor: ed }) => {
-      onSave(ed.getHTML());
+      // Force-flush any pending debounced edit so we never lose input on
+      // tab-switch, sheet-close, etc.
+      flushNow(ed.getHTML());
     },
   });
 
+  // Force-flush on unmount (sheet close, route change).
   useEffect(() => {
-    if (editor && content !== editor.getHTML()) {
-      editor.commands.setContent(content || "");
-    }
+    return () => {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+        if (editor) {
+          const html = editor.getHTML();
+          if (lastEmittedRef.current !== html) {
+            lastEmittedRef.current = html;
+            onSaveRef.current(html);
+          }
+        }
+      }
+    };
+  }, [editor]);
+
+  useEffect(() => {
+    if (!editor) return;
+    if (content === editor.getHTML()) return;
+    // Echo of our own optimistic save coming back through the store —
+    // don't reset content (would clobber the cursor and any newer typing).
+    if (lastEmittedRef.current === content) return;
+    editor.commands.setContent(content || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content]);
 
