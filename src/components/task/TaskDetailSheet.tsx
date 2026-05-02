@@ -62,6 +62,7 @@ import {
   List,
   ListOrdered,
   Paperclip,
+  Pencil,
   X,
 } from "lucide-react";
 import { TagSelector } from "./TagSelector";
@@ -857,7 +858,11 @@ function TaskDetailContent({
   const openDetail = useBrainStore((s) => s.openDetail);
   const updateItem = useBrainStore((s) => s.updateItem);
 
-  /* ---- Title block ---- */
+  /* ---- Title block ----
+     Goal: make it obvious the title is editable. Display mode shows a
+     subtle hover state with a pencil affordance; edit mode has a clear
+     bordered input with a focus ring and a hint about Enter/Esc keys.
+     Both modes share the same vertical footprint to avoid layout shift. */
   const titleSizeCls = layout === "panel" ? "text-base" : "text-lg";
   const titleBlock = (
     <div className="space-y-2">
@@ -871,27 +876,53 @@ function TaskDetailContent({
         </button>
       )}
       {isEditingTitle ? (
-        <input
-          ref={titleInputRef}
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onBlur={handleTitleSave}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleTitleSave();
-            if (e.key === "Escape") {
-              setTitle(item.title);
-              setIsEditingTitle(false);
-            }
-          }}
-          className={cn("w-full bg-transparent font-semibold leading-snug text-slate-900 outline-none", titleSizeCls)}
-        />
+        <div className="space-y-1">
+          <input
+            ref={titleInputRef}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={handleTitleSave}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleTitleSave();
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setTitle(item.title);
+                setIsEditingTitle(false);
+              }
+            }}
+            className={cn(
+              "w-full rounded-md border border-blue-400 bg-white px-2.5 py-1.5 font-semibold leading-snug text-slate-900 shadow-sm ring-2 ring-blue-100 outline-none transition-colors",
+              titleSizeCls
+            )}
+            placeholder="Название задачи"
+          />
+          <div className="flex items-center gap-3 px-1 text-[10px] text-slate-400">
+            <span>
+              <kbd className="rounded border border-slate-200 bg-slate-50 px-1 py-0.5 font-mono text-[9px] text-slate-600">Enter</kbd>
+              {" "}— сохранить
+            </span>
+            <span>
+              <kbd className="rounded border border-slate-200 bg-slate-50 px-1 py-0.5 font-mono text-[9px] text-slate-600">Esc</kbd>
+              {" "}— отменить
+            </span>
+          </div>
+        </div>
       ) : (
-        <h2
+        <button
+          type="button"
           onClick={() => setIsEditingTitle(true)}
-          className={cn("cursor-text font-semibold leading-snug text-slate-900 transition-colors hover:text-slate-700", titleSizeCls)}
+          title="Редактировать заголовок"
+          className={cn(
+            "group flex w-full items-start gap-2 rounded-md border border-transparent px-2.5 py-1.5 text-left font-semibold leading-snug text-slate-900 transition-colors hover:border-slate-200 hover:bg-slate-50",
+            titleSizeCls
+          )}
         >
-          {item.title}
-        </h2>
+          <span className="min-w-0 flex-1 break-words">{item.title}</span>
+          <Pencil className="mt-0.5 size-3.5 shrink-0 text-slate-300 opacity-0 transition-opacity group-hover:opacity-100" />
+        </button>
       )}
     </div>
   );
