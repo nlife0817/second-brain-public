@@ -330,9 +330,15 @@ function getGroupKey(item: ItemWithSubtasks, field: ListGroupByField, itemLinked
   }
 }
 
-function getGroupLabel(field: ListGroupByField, key: string, categoryConfig: Record<string, { label: string; icon: string; color: string }>): string {
+function getGroupLabel(
+  field: ListGroupByField,
+  key: string,
+  categoryConfig: Record<string, { label: string; icon: string; color: string }>,
+  statusLabelMap?: Record<string, string>
+): string {
   switch (field) {
-    case "status": return STATUS_CONFIG[key as ItemStatus]?.label ?? key;
+    case "status":
+      return statusLabelMap?.[key] ?? STATUS_CONFIG[key as ItemStatus]?.label ?? key;
     case "priority": return PRIORITY_CONFIG[key as ItemPriority]?.label ?? key;
     case "category": return categoryConfig[key]?.label ?? key;
     case "type": return TYPE_CONFIG[key as ItemType]?.label ?? key;
@@ -368,7 +374,8 @@ function groupItems(
   field: ListGroupByField,
   categoryConfig: Record<string, { label: string; icon: string; color: string }>,
   itemLinkedClients?: Record<string, string[]>,
-  dynamicPositionMap?: Record<string, number>
+  dynamicPositionMap?: Record<string, number>,
+  statusLabelMap?: Record<string, string>
 ): ItemGroup[] {
   if (field === "none") return [];
 
@@ -383,7 +390,7 @@ function groupItems(
   for (const [key, grpItems] of map) {
     groups.push({
       key,
-      label: getGroupLabel(field, key, categoryConfig),
+      label: getGroupLabel(field, key, categoryConfig, statusLabelMap),
       icon: getGroupIcon(field, key),
       items: grpItems,
     });
@@ -1441,6 +1448,7 @@ export function ListView() {
   const setListCollapsedGroups = useBrainStore((s) => s.setListCollapsedGroups);
   const categories = useBrainStore((s) => s.categories);
   const developmentStages = useBrainStore((s) => s.developmentStages);
+  const itemStatusesArr = useBrainStore((s) => s.itemStatuses);
   const categoryConfig = useCategoryConfig();
   const itemLinkedClients = useBrainStore((s) => s.itemLinkedClients);
   const removeItemsLocal = useBrainStore((s) => s.removeItemsLocal);
@@ -1650,9 +1658,15 @@ export function ListView() {
 
   /* ----- grouping ---------------------------------------------------------- */
 
+  const statusLabelMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const s of itemStatusesArr) m[s.id] = s.name;
+    return m;
+  }, [itemStatusesArr]);
+
   const groups = useMemo(
-    () => groupItems(sortedItems, listGroupBy[0], categoryConfig, itemLinkedClients, groupPositionMaps[listGroupBy[0]]),
-    [sortedItems, listGroupBy, categoryConfig, itemLinkedClients, groupPositionMaps]
+    () => groupItems(sortedItems, listGroupBy[0], categoryConfig, itemLinkedClients, groupPositionMaps[listGroupBy[0]], statusLabelMap),
+    [sortedItems, listGroupBy, categoryConfig, itemLinkedClients, groupPositionMaps, statusLabelMap]
   );
 
   const isGrouped = listGroupBy[0] !== "none" && groups.length > 0;
@@ -1663,13 +1677,13 @@ export function ListView() {
     for (const g of groups) {
       keys.push(g.key);
       if (hasLevel2) {
-        for (const sub of groupItems(g.items, listGroupBy[1], categoryConfig, itemLinkedClients, groupPositionMaps[listGroupBy[1]])) {
+        for (const sub of groupItems(g.items, listGroupBy[1], categoryConfig, itemLinkedClients, groupPositionMaps[listGroupBy[1]], statusLabelMap)) {
           keys.push(`${g.key}::${sub.key}`);
         }
       }
     }
     return keys;
-  }, [groups, hasLevel2, listGroupBy, categoryConfig]);
+  }, [groups, hasLevel2, listGroupBy, categoryConfig, itemLinkedClients, groupPositionMaps, statusLabelMap]);
 
   const allGroupsCollapsed = isGrouped && allGroupKeys.length > 0 && allGroupKeys.every((k) => collapsedGroups.has(k));
 
@@ -2161,16 +2175,20 @@ export function ListView() {
 
   /* ----- Select option builders ------------------------------------------ */
 
-  const statusOptions = useMemo(
-    () =>
-      (
-        Object.entries(STATUS_CONFIG) as [
-          ItemStatus,
-          (typeof STATUS_CONFIG)[ItemStatus],
-        ][]
-      ).map(([key, cfg]) => ({ key, label: cfg.label })),
-    []
-  );
+  // Status options come from the user-editable item_statuses table at runtime.
+  // Falls back to the hardcoded STATUS_CONFIG keys/labels until the store has
+  // loaded (first-paint before fetchInit completes).
+  // (itemStatusesArr is declared earlier near other store selectors so the
+  //  status group label / sort logic can read it before this point.)
+  const statusOptions = useMemo(() => {
+    if (itemStatusesArr.length === 0) {
+      return (Object.entries(STATUS_CONFIG) as [ItemStatus, (typeof STATUS_CONFIG)[ItemStatus]][])
+        .map(([key, cfg]) => ({ key, label: cfg.label }));
+    }
+    return [...itemStatusesArr]
+      .sort((a, b) => a.position - b.position)
+      .map((s) => ({ key: s.id as ItemStatus, label: s.name }));
+  }, [itemStatusesArr]);
 
   const priorityOptions = useMemo(
     () =>
@@ -2744,7 +2762,7 @@ export function ListView() {
 
                       // Level 2 sub-groups
                       const level2Groups = hasLevel2
-                        ? groupItems(group.items, listGroupBy[1], categoryConfig, itemLinkedClients, groupPositionMaps[listGroupBy[1]])
+                        ? groupItems(group.items, listGroupBy[1], categoryConfig, itemLinkedClients, groupPositionMaps[listGroupBy[1]], statusLabelMap)
                         : null;
 
                       return (
@@ -3473,7 +3491,19 @@ const ItemRow = memo(function ItemRow({
   };
 
   const itemCategoryConfig = useCategoryConfig();
-  const statusCfg = STATUS_CONFIG[item.status as ItemStatus];
+  const itemStatusesInRow = useBrainStore((s) => s.itemStatuses);
+  // Resolve status display: prefer the user-editable item_statuses row if
+  // present (custom or renamed), fall back to the legacy STATUS_CONFIG keys
+  // so display works during the first paint before fetchInit lands.
+  const statusRow = itemStatusesInRow.find((s) => s.id === item.status);
+  const statusCfg: { label: string; tailwindCls?: string; hex?: string } = statusRow
+    ? { label: statusRow.name, hex: statusRow.color }
+    : (() => {
+        const fallback = STATUS_CONFIG[item.status as ItemStatus];
+        return fallback
+          ? { label: fallback.label, tailwindCls: fallback.color }
+          : { label: item.status, tailwindCls: "bg-slate-100 text-slate-700" };
+      })();
   const categoryCfg = itemCategoryConfig[item.category];
   const typeCfg = TYPE_CONFIG[item.type as ItemType];
 
@@ -3652,8 +3682,16 @@ const ItemRow = memo(function ItemRow({
               variant="secondary"
               className={cn(
                 "text-[10px] font-medium px-1.5 py-0 rounded-md",
-                statusCfg.color
+                statusCfg.tailwindCls
               )}
+              style={
+                statusCfg.hex
+                  ? {
+                      backgroundColor: `${statusCfg.hex}1A`,
+                      color: statusCfg.hex,
+                    }
+                  : undefined
+              }
             >
               {statusCfg.label}
             </Badge>
