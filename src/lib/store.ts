@@ -74,7 +74,11 @@ interface BrainStore {
   updateCategory: (id: string, updates: Partial<Category>) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
   createItem: (payload: CreateItemPayload) => Promise<ItemWithSubtasks>;
-  updateItem: (id: string, payload: UpdateItemPayload) => Promise<void>;
+  updateItem: (id: string, payload: UpdateItemPayload, opts?: { skipOptimistic?: boolean }) => Promise<void>;
+  updateItemsLocal: (ids: string[], payload: UpdateItemPayload) => void;
+  fetchItem: (id: string) => Promise<void>;
+  mergeRemoteItem: (remote: Partial<Item> & { id: string }) => void;
+  applyRemoteDelete: (id: string) => void;
   deleteItem: (id: string) => Promise<void>;
   removeItemsLocal: (ids: string[]) => void;
   restoreItemsLocal: (items: ItemWithSubtasks[]) => void;
@@ -242,6 +246,100 @@ const defaultFilters: Filters = {
   advancedGroups: [],
   useAdvanced: false,
 };
+
+/* ------------------------------------------------------------------ */
+/*  Optimistic mutation tracking (module-level — survives across calls) */
+/* ------------------------------------------------------------------ */
+
+// Fields with an in-flight mutation per itemId. Realtime / fetchItem mergers
+// MUST skip these fields to avoid clobbering the user's pending edit.
+const pendingFields = new Map<string, Set<string>>();
+// Per (itemId + sorted field-set) AbortController. A new mutation on the same
+// (id, fields) tuple aborts the previous one — last-write-wins protection.
+const pendingControllers = new Map<string, AbortController>();
+
+function fieldSetKey(itemId: string, fields: string[]): string {
+  return `${itemId}:${[...fields].sort().join(",")}`;
+}
+
+function startPending(itemId: string, fields: string[]): AbortController {
+  let set = pendingFields.get(itemId);
+  if (!set) { set = new Set(); pendingFields.set(itemId, set); }
+  for (const f of fields) set.add(f);
+  const key = fieldSetKey(itemId, fields);
+  const prev = pendingControllers.get(key);
+  if (prev) prev.abort();
+  const ctrl = new AbortController();
+  pendingControllers.set(key, ctrl);
+  return ctrl;
+}
+
+function endPending(itemId: string, fields: string[], ctrl: AbortController) {
+  const set = pendingFields.get(itemId);
+  if (set) {
+    for (const f of fields) set.delete(f);
+    if (set.size === 0) pendingFields.delete(itemId);
+  }
+  const key = fieldSetKey(itemId, fields);
+  if (pendingControllers.get(key) === ctrl) pendingControllers.delete(key);
+}
+
+export function getPendingFields(itemId: string): ReadonlySet<string> {
+  return pendingFields.get(itemId) ?? new Set();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Item-tree helpers (operate on items[] which contains subtasks[])    */
+/* ------------------------------------------------------------------ */
+
+// Returns Item (covers both top-level ItemWithSubtasks and Item subtasks).
+function findItemInTree(
+  items: ItemWithSubtasks[],
+  id: string
+): Item | null {
+  for (const i of items) {
+    if (i.id === id) return i;
+    if (i.subtasks) {
+      const sub = i.subtasks.find((s) => s.id === id);
+      if (sub) return sub;
+    }
+  }
+  return null;
+}
+
+// patcher operates on Item; the cast at the top-level call is safe because
+// shallowApplyPayload preserves all fields not present in `payload` —
+// including subtasks/tags/participants for ItemWithSubtasks.
+function patchItemInTree(
+  items: ItemWithSubtasks[],
+  id: string,
+  patcher: (it: Item) => Item
+): ItemWithSubtasks[] {
+  return items.map((i) => {
+    if (i.id === id) return patcher(i) as ItemWithSubtasks;
+    if (i.subtasks?.some((s) => s.id === id)) {
+      return {
+        ...i,
+        subtasks: i.subtasks.map((s) => (s.id === id ? patcher(s) : s)),
+      };
+    }
+    return i;
+  });
+}
+
+function shallowApplyPayload<T extends Item>(
+  it: T,
+  payload: Record<string, unknown>,
+  skip?: ReadonlySet<string>
+): T {
+  const merged: Record<string, unknown> = { ...(it as unknown as Record<string, unknown>) };
+  for (const [k, v] of Object.entries(payload)) {
+    if (k === "id") continue;
+    if (skip?.has(k)) continue;
+    merged[k] = v;
+  }
+  return merged as unknown as T;
+}
 
 export const useBrainStore = create<BrainStore>()(
   persist(
@@ -476,25 +574,209 @@ export const useBrainStore = create<BrainStore>()(
     }
   },
 
-  updateItem: async (id, payload) => {
-    const res = await fetch(`/api/items/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) throw new Error("Failed to update item");
-    const updated: ItemWithSubtasks = await res.json();
-    // Optimistic: replace in store
+  updateItem: async (id, payload, opts) => {
+    const fields = Object.keys(payload);
+    if (fields.length === 0) return;
+
+    const snapshot = findItemInTree(get().items, id);
+    if (!snapshot) return;
+
+    // Snapshot the fields we're about to change (for rollback on error).
+    const snapshotPayload: Record<string, unknown> = {};
+    for (const f of fields) {
+      snapshotPayload[f] = (snapshot as unknown as Record<string, unknown>)[f];
+    }
+
+    // Optimistic apply (skip if caller already applied via updateItemsLocal).
+    if (!opts?.skipOptimistic) {
+      set((s) => ({
+        items: patchItemInTree(s.items, id, (it) =>
+          shallowApplyPayload(it, payload as Record<string, unknown>)
+        ),
+      }));
+    }
+
+    const ctrl = startPending(id, fields);
+
+    try {
+      const res = await fetch(`/api/items/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new Error(`Failed to update item: ${res.status}`);
+      const updated: ItemWithSubtasks = await res.json();
+
+      // Remove our pending fields BEFORE the merge so we can detect overlap
+      // with newer in-flight mutations on the same fields.
+      endPending(id, fields, ctrl);
+      const stillPending = pendingFields.get(id);
+
+      // Merge server response into local item, but skip:
+      //  - any field with another in-flight mutation (newer wins)
+      //  - the field the user is currently editing in the UI
+      const editingId = get().editingItemId;
+      const editingField = get().editingField;
+      const skip = new Set<string>(stillPending ?? []);
+      if (editingId === id && editingField) skip.add(editingField);
+
+      set((s) => ({
+        items: patchItemInTree(s.items, id, (it) =>
+          shallowApplyPayload(it, updated as unknown as Record<string, unknown>, skip)
+        ),
+      }));
+    } catch (err) {
+      // Aborted by a newer mutation on the same (id, fields) — newer one owns
+      // the state now, do nothing (it called startPending which replaced us).
+      if ((err as { name?: string } | null)?.name === "AbortError") {
+        return;
+      }
+      endPending(id, fields, ctrl);
+      // Rollback only the fields we actually changed AND that aren't currently
+      // being mutated by another in-flight request (to avoid clobbering it).
+      const stillPending = pendingFields.get(id);
+      const rollback: Record<string, unknown> = {};
+      for (const f of fields) {
+        if (!stillPending?.has(f)) rollback[f] = snapshotPayload[f];
+      }
+      if (Object.keys(rollback).length > 0) {
+        set((s) => ({
+          items: patchItemInTree(s.items, id, (it) =>
+            shallowApplyPayload(it, rollback)
+          ),
+        }));
+      }
+      throw err;
+    }
+  },
+
+  updateItemsLocal: (ids, payload) => {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    const patch = payload as Record<string, unknown>;
     set((s) => ({
       items: s.items.map((i) => {
-        if (i.id === id) return updated;
-        // Also check subtasks
-        if (i.subtasks?.some((sub) => sub.id === id)) {
-          return { ...i, subtasks: i.subtasks.map((sub) => sub.id === id ? updated : sub) };
+        const hitsTop = idSet.has(i.id);
+        const hitsSub = i.subtasks?.some((sub) => idSet.has(sub.id));
+        if (!hitsTop && !hitsSub) return i;
+        let next = i;
+        if (hitsTop) next = shallowApplyPayload(next, patch);
+        if (hitsSub && next.subtasks) {
+          next = {
+            ...next,
+            subtasks: next.subtasks.map((sub) =>
+              idSet.has(sub.id) ? shallowApplyPayload(sub, patch) : sub
+            ),
+          };
         }
-        return i;
+        return next;
       }),
     }));
+  },
+
+  fetchItem: async (id) => {
+    const res = await fetch(`/api/items/${id}`);
+    if (!res.ok) return;
+    const fresh: ItemWithSubtasks = await res.json();
+
+    const editingId = get().editingItemId;
+    const editingField = get().editingField;
+    const skip = new Set<string>(pendingFields.get(id) ?? []);
+    if (editingId === id && editingField) skip.add(editingField);
+
+    set((s) => {
+      // Update existing top-level item.
+      if (s.items.some((i) => i.id === id)) {
+        return {
+          items: s.items.map((i) =>
+            i.id === id
+              ? shallowApplyPayload(i, fresh as unknown as Record<string, unknown>, skip)
+              : i
+          ),
+        };
+      }
+      // Update existing subtask.
+      if (s.items.some((i) => i.subtasks?.some((sub) => sub.id === id))) {
+        return {
+          items: s.items.map((i) =>
+            i.subtasks?.some((sub) => sub.id === id)
+              ? {
+                  ...i,
+                  subtasks: i.subtasks.map((sub) =>
+                    sub.id === id
+                      ? shallowApplyPayload(sub, fresh as unknown as Record<string, unknown>, skip)
+                      : sub
+                  ),
+                }
+              : i
+          ),
+        };
+      }
+      // Insert new — top-level or as subtask of existing parent.
+      if (!fresh.parent_id) {
+        return { items: [fresh, ...s.items] };
+      }
+      return {
+        items: s.items.map((i) =>
+          i.id === fresh.parent_id
+            ? { ...i, subtasks: [...(i.subtasks ?? []), fresh] }
+            : i
+        ),
+      };
+    });
+  },
+
+  mergeRemoteItem: (remote) => {
+    const local = findItemInTree(get().items, remote.id);
+    if (!local) {
+      // Unknown id — likely created elsewhere. Fetch full row with joins.
+      void get().fetchItem(remote.id);
+      return;
+    }
+    // Echo of our own write: server's updated_at is no newer than what we
+    // already applied (either via optimistic or PUT response). Skip.
+    const localUpdatedAt = (local as unknown as { updated_at?: string }).updated_at;
+    if (
+      remote.updated_at &&
+      localUpdatedAt &&
+      remote.updated_at <= localUpdatedAt
+    ) {
+      return;
+    }
+    const editingId = get().editingItemId;
+    const editingField = get().editingField;
+    const skip = new Set<string>(pendingFields.get(remote.id) ?? []);
+    if (editingId === remote.id && editingField) skip.add(editingField);
+    // Realtime payload is the raw `items` row — never replace joined arrays.
+    skip.add("subtasks");
+    skip.add("tags");
+    skip.add("participants");
+
+    set((s) => ({
+      items: patchItemInTree(s.items, remote.id, (it) =>
+        shallowApplyPayload(it, remote as unknown as Record<string, unknown>, skip)
+      ),
+    }));
+  },
+
+  applyRemoteDelete: (id) => {
+    set((s) => {
+      if (s.items.some((i) => i.id === id)) {
+        return {
+          items: s.items.filter((i) => i.id !== id),
+          isDetailOpen: s.selectedItemId === id ? false : s.isDetailOpen,
+          selectedItemId: s.selectedItemId === id ? null : s.selectedItemId,
+        };
+      }
+      return {
+        items: s.items.map((i) =>
+          i.subtasks?.some((sub) => sub.id === id)
+            ? { ...i, subtasks: i.subtasks.filter((sub) => sub.id !== id) }
+            : i
+        ),
+      };
+    });
   },
 
   deleteItem: async (id) => {
