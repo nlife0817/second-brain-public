@@ -61,6 +61,8 @@ import {
   ChevronsUpDown,
   Search,
   Building2,
+  Undo2,
+  Redo2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
@@ -4302,6 +4304,38 @@ function FilterButton() {
   );
 }
 
+function UndoRedoButtons() {
+  const undoCount = useBrainStore((s) => s.undoStack.length);
+  const redoCount = useBrainStore((s) => s.redoStack.length);
+  const undo = useBrainStore((s) => s.undo);
+  const redo = useBrainStore((s) => s.redo);
+  const isMac =
+    typeof navigator !== "undefined" && /Mac|iPad|iPhone/.test(navigator.platform);
+  const mod = isMac ? "⌘" : "Ctrl";
+  return (
+    <div className="flex items-center gap-0.5">
+      <button
+        type="button"
+        onClick={() => void undo()}
+        disabled={undoCount === 0}
+        className="inline-flex items-center justify-center size-7 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        title={`Отменить (${mod}+Z)${undoCount ? ` — в истории ${undoCount}` : ""}`}
+      >
+        <Undo2 className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => void redo()}
+        disabled={redoCount === 0}
+        className="inline-flex items-center justify-center size-7 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        title={`Повторить (${mod}+Shift+Z)${redoCount ? ` — в истории ${redoCount}` : ""}`}
+      >
+        <Redo2 className="size-3.5" />
+      </button>
+    </div>
+  );
+}
+
 function ListViewToolbar({
   search,
   onSearchChange,
@@ -4360,6 +4394,9 @@ function ListViewToolbar({
 
       {/* Filter */}
       <FilterButton />
+
+      {/* Undo / Redo */}
+      <UndoRedoButtons />
 
       {/* New task */}
       <button
