@@ -46,8 +46,10 @@ const DEADLINE_OPS: Array<{ id: GoalDeadlineOp; label: string; needsDate?: boole
 
 const GROUP_BY_OPTIONS: Array<{ id: GoalGroupBy; label: string }> = [
   { id: "none", label: "Без группировки" },
-  { id: "axis", label: "По оси" },
   { id: "status", label: "По статусу" },
+  { id: "priority", label: "По приоритету" },
+  { id: "category", label: "По категории" },
+  { id: "clients", label: "По клиенту" },
 ];
 
 export function GoalsView() {
@@ -231,13 +233,13 @@ export function GoalsView() {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5" title="Применяется к колонке «Дни»">
           <Layers className="size-3.5 text-slate-400" />
+          <span className="text-[11px] font-medium uppercase tracking-widest text-slate-400">Дни:</span>
           <select
             value={groupBy}
             onChange={(e) => setGroupBy(e.target.value as GoalGroupBy)}
             className="h-7 rounded-md border border-slate-200 bg-white px-1.5 text-xs text-slate-700 focus:border-slate-400 focus:outline-none"
-            title="Группировка целей внутри колонки"
           >
             {GROUP_BY_OPTIONS.map((o) => (
               <option key={o.id} value={o.id}>{o.label}</option>
@@ -333,7 +335,6 @@ export function GoalsView() {
                   levelLabel={GOAL_LEVEL_CONFIG[lvl].label}
                   onCollapse={() => toggleCollapsed(lvl)}
                   today={today}
-                  groupBy={groupBy}
                 />
               </div>
             );

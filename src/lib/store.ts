@@ -74,7 +74,7 @@ export interface GoalDeadlineFilter {
   value: string;
 }
 
-export type GoalGroupBy = "none" | "axis" | "status";
+export type GoalGroupBy = "none" | "status" | "priority" | "category" | "clients";
 
 // One reversible inline edit on an item. `payload` holds the values needed to
 // revert (undo); `newPayload` holds the values that were written (used both for
@@ -1839,9 +1839,22 @@ export const useBrainStore = create<BrainStore>()(
       body: JSON.stringify(payload),
     });
     if (!res.ok) return null;
-    await get().fetchGoals();
     const created = await res.json();
-    return get().goals.find((g) => g.id === created.id) ?? null;
+    // Optimistic insert of just the new parent so the UI reflects it immediately.
+    // Decomposed children (and derived progress/children_count) come in the bg refresh.
+    set((s) => ({
+      goals: [
+        ...s.goals,
+        {
+          ...created,
+          metrics: created.metrics ?? [],
+          progress: created.progress ?? 0,
+          children_count: created.children_count ?? 0,
+        } as GoalFull,
+      ],
+    }));
+    void get().fetchGoals();
+    return created as GoalFull;
   },
   updateGoal: async (id, payload) => {
     // Optimistic patch — apply known fields locally before the server round-trip.
@@ -2052,14 +2065,9 @@ export const useBrainStore = create<BrainStore>()(
         }
       }
       if (state && version < 6) {
-        // goalDeadlineFilter changed from string ('all'|'active'|'overdue'|'upcoming')
-        // to { op, value }.
-        const old = state.goalDeadlineFilter;
-        if (typeof old === "string") {
-          state.goalDeadlineFilter = { op: old as GoalDeadlineOp, value: "" };
-        } else if (!old || typeof old !== "object") {
-          state.goalDeadlineFilter = { op: "all", value: "" };
-        }
+        // goalDeadlineFilter changed shape; force reset to "all" so old values
+        // like "active" (which would hide most decomposed goals) don't confuse users.
+        state.goalDeadlineFilter = { op: "all", value: "" };
       }
       return state;
     },

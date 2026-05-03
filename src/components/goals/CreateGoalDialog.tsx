@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,35 +17,169 @@ interface Props {
   defaultAxis?: GoalAxis | null;
 }
 
+const RU_MONTHS = [
+  "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+];
+const RU_MONTHS_SHORT = ["Янв","Фев","Мар","Апр","Май","Июн","Июл","Авг","Сен","Окт","Ноя","Дек"];
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+function iso(y: number, m1: number, d: number): string {
+  return `${y}-${pad(m1)}-${pad(d)}`;
+}
+function lastDay(y: number, m1: number): number {
+  return new Date(y, m1, 0).getDate();
+}
+function parseISO(s: string | null | undefined): { y: number; m: number; d: number } | null {
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
+}
+function enumerateDays(startISO: string, endISO: string): string[] {
+  const out: string[] = [];
+  const s = new Date(startISO + "T00:00:00");
+  const e = new Date(endISO + "T00:00:00");
+  for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+    out.push(iso(d.getFullYear(), d.getMonth() + 1, d.getDate()));
+  }
+  return out;
+}
+function quarterOfMonth(m1: number): number {
+  return Math.floor((m1 - 1) / 3) + 1;
+}
+
 export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultAxis }: Props) {
   const createGoal = useBrainStore((s) => s.createGoal);
   const goalAxes = useBrainStore((s) => s.goalAxes);
+  const goals = useBrainStore((s) => s.goals);
+
+  const parent = parentId ? goals.find((g) => g.id === parentId) ?? null : null;
+  const parentStart = parseISO(parent?.period_start);
+  const parentEnd = parseISO(parent?.period_end);
+  const todayY = new Date().getFullYear();
+  const todayM = new Date().getMonth() + 1;
+
+  // ---- Level-appropriate period selectors ----
+  const [year, setYear] = useState<number>(parentStart?.y ?? todayY);
+  const [quarterIdx, setQuarterIdx] = useState<number>(
+    parentStart ? quarterOfMonth(parentStart.m) : Math.ceil(todayM / 3),
+  );
+  // Month picker: index 1..12; for month-level, defaults to today's month or parent quarter's first month.
+  const [month, setMonth] = useState<number>(() => {
+    if (parentStart && level === "month") {
+      // Default to first month of parent quarter
+      return parentStart.m;
+    }
+    return todayM;
+  });
+
+  // Week picker: list of Mondays inside the parent month.
+  const weeksInMonth: Array<{ start: string; end: string; label: string }> = useMemo(() => {
+    if (level !== "week" || !parentStart) return [];
+    const y = parentStart.y;
+    const m = parentStart.m;
+    const last = lastDay(y, m);
+    const out: Array<{ start: string; end: string; label: string }> = [];
+    // First partial week (1..first Sunday)
+    const first = new Date(y, m - 1, 1);
+    if (first.getDay() !== 1) {
+      const daysToSun = (7 - first.getDay()) % 7;
+      const sunDay = 1 + daysToSun;
+      out.push({
+        start: iso(y, m, 1),
+        end: iso(y, m, Math.min(sunDay, last)),
+        label: `1 – ${Math.min(sunDay, last)} ${RU_MONTHS_SHORT[m - 1]}`,
+      });
+    }
+    for (let d = 1; d <= last; d++) {
+      const dt = new Date(y, m - 1, d);
+      if (dt.getDay() === 1) {
+        const sun = new Date(dt);
+        sun.setDate(sun.getDate() + 6);
+        out.push({
+          start: iso(y, m, d),
+          end: iso(sun.getFullYear(), sun.getMonth() + 1, sun.getDate()),
+          label: `${d} ${RU_MONTHS_SHORT[m - 1]} – ${sun.getDate()} ${RU_MONTHS_SHORT[sun.getMonth()]}`,
+        });
+      }
+    }
+    return out;
+  }, [level, parentStart?.y, parentStart?.m]);
+  const [weekIdx, setWeekIdx] = useState<number>(0);
+
+  // Day picker: list of days in parent week.
+  const daysInWeek: string[] = useMemo(() => {
+    if (level !== "day" || !parentStart || !parentEnd) return [];
+    return enumerateDays(parent!.period_start!, parent!.period_end!);
+  }, [level, parent, parentStart?.y, parentStart?.m, parentStart?.d, parentEnd?.y, parentEnd?.m, parentEnd?.d]);
+  const [day, setDay] = useState<string>(daysInWeek[0] ?? "");
+
+  // Compute final period_start / period_end based on level + selectors.
+  const period: { start: string | null; end: string | null } = useMemo(() => {
+    if (level === "year") {
+      return { start: iso(year, 1, 1), end: iso(year, 12, 31) };
+    }
+    if (level === "quarter") {
+      const y = parentStart?.y ?? year;
+      const m1 = (quarterIdx - 1) * 3 + 1;
+      const m3 = m1 + 2;
+      return { start: iso(y, m1, 1), end: iso(y, m3, lastDay(y, m3)) };
+    }
+    if (level === "month") {
+      const y = parentStart?.y ?? year;
+      return { start: iso(y, month, 1), end: iso(y, month, lastDay(y, month)) };
+    }
+    if (level === "week") {
+      const w = weeksInMonth[weekIdx];
+      if (!w) return { start: null, end: null };
+      return { start: w.start, end: w.end };
+    }
+    if (level === "day") {
+      return { start: day || null, end: day || null };
+    }
+    return { start: null, end: null };
+  }, [level, year, parentStart?.y, quarterIdx, month, weekIdx, day, weeksInMonth]);
+
+  // Title default — auto-derive from period if user hasn't typed anything.
+  const autoTitle: string = useMemo(() => {
+    if (level === "year") return `${year}`;
+    if (level === "quarter") return `Q${quarterIdx} ${parentStart?.y ?? year}`;
+    if (level === "month") return `${RU_MONTHS[month - 1]} ${parentStart?.y ?? year}`;
+    if (level === "week") return weeksInMonth[weekIdx]?.label ?? "";
+    if (level === "day") return day;
+    return "";
+  }, [level, year, quarterIdx, month, weekIdx, day, weeksInMonth, parentStart?.y]);
+
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [axis, setAxis] = useState<GoalAxis | null>(defaultAxis ?? null);
-  const [periodStart, setPeriodStart] = useState("");
-  const [periodEnd, setPeriodEnd] = useState("");
   const [autoDecompose, setAutoDecompose] = useState(level === "year" || level === "quarter" || level === "month");
   const [saving, setSaving] = useState(false);
 
   const canDecompose = level === "year" || level === "quarter" || level === "month";
+  const finalTitle = title.trim() || autoTitle.trim();
+  const canSubmit = !!finalTitle && !!period.start && !saving;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!title.trim() || saving) return;
+    if (!canSubmit) return;
     setSaving(true);
     try {
-      await createGoal({
-        title: title.trim(),
+      // Close immediately — createGoal is now optimistic + bg refresh.
+      onOpenChange(false);
+      void createGoal({
+        title: finalTitle,
         description: description.trim(),
         level,
         axis,
         parent_id: parentId,
-        period_start: periodStart || null,
-        period_end: periodEnd || null,
+        period_start: period.start,
+        period_end: period.end,
         auto_decompose: canDecompose ? autoDecompose : false,
       });
-      onOpenChange(false);
     } finally {
       setSaving(false);
     }
@@ -60,12 +194,22 @@ export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultA
         <form onSubmit={submit} className="flex flex-col gap-3">
           <div>
             <label className="text-xs font-medium text-slate-600">Название</label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder={autoTitle || "Заголовок цели"}
+              autoFocus
+            />
+            {!title && autoTitle && (
+              <p className="mt-0.5 text-[10px] text-slate-400">Если оставить пустым — будет: «{autoTitle}»</p>
+            )}
           </div>
+
           <div>
             <label className="text-xs font-medium text-slate-600">Описание</label>
             <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
           </div>
+
           <div>
             <label className="text-xs font-medium text-slate-600">Ось</label>
             <div className="mt-1 flex flex-wrap gap-1.5">
@@ -95,16 +239,145 @@ export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultA
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+
+          {/* Level-specific period selectors */}
+          {level === "year" && (
             <div>
-              <label className="text-xs font-medium text-slate-600">Начало</label>
-              <Input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
+              <label className="text-xs font-medium text-slate-600">Год</label>
+              <select
+                value={year}
+                onChange={(e) => setYear(Number(e.target.value))}
+                className="mt-1 h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-700"
+              >
+                {Array.from({ length: 11 }, (_, i) => todayY - 3 + i).map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
             </div>
+          )}
+
+          {level === "quarter" && (
             <div>
-              <label className="text-xs font-medium text-slate-600">Конец</label>
-              <Input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+              <label className="text-xs font-medium text-slate-600">
+                Квартал {parentStart && <span className="text-slate-400">· {parentStart.y}</span>}
+              </label>
+              <div className="mt-1 grid grid-cols-4 gap-1">
+                {[1, 2, 3, 4].map((q) => (
+                  <button
+                    key={q}
+                    type="button"
+                    onClick={() => setQuarterIdx(q)}
+                    className={cn(
+                      "rounded-md border px-2 py-1 text-xs font-medium transition",
+                      quarterIdx === q
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                    )}
+                  >
+                    Q{q}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+
+          {level === "month" && (
+            <div>
+              <label className="text-xs font-medium text-slate-600">
+                Месяц {parentStart && <span className="text-slate-400">· {parentStart.y}</span>}
+              </label>
+              <div className="mt-1 grid grid-cols-4 gap-1">
+                {RU_MONTHS_SHORT.map((nm, i) => {
+                  const m1 = i + 1;
+                  // Constrain to parent quarter range when applicable.
+                  const inRange = !parent || (parentStart && parentEnd
+                    ? m1 >= parentStart.m && m1 <= parentEnd.m
+                    : true);
+                  return (
+                    <button
+                      key={nm}
+                      type="button"
+                      disabled={!inRange}
+                      onClick={() => setMonth(m1)}
+                      className={cn(
+                        "rounded-md border px-2 py-1 text-xs font-medium transition",
+                        month === m1
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : !inRange
+                            ? "border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                      )}
+                    >
+                      {nm}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {level === "week" && (
+            <div>
+              <label className="text-xs font-medium text-slate-600">
+                Неделя {parentStart && <span className="text-slate-400">· {RU_MONTHS[parentStart.m - 1]} {parentStart.y}</span>}
+              </label>
+              {weeksInMonth.length === 0 ? (
+                <p className="mt-1 text-xs text-slate-400">Сначала выберите месяц-родитель</p>
+              ) : (
+                <div className="mt-1 flex flex-col gap-1">
+                  {weeksInMonth.map((w, i) => (
+                    <button
+                      key={w.start}
+                      type="button"
+                      onClick={() => setWeekIdx(i)}
+                      className={cn(
+                        "rounded-md border px-2 py-1.5 text-left text-xs font-medium transition",
+                        weekIdx === i
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                      )}
+                    >
+                      {w.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {level === "day" && (
+            <div>
+              <label className="text-xs font-medium text-slate-600">
+                День {parent && <span className="text-slate-400">· {parent.title}</span>}
+              </label>
+              {daysInWeek.length === 0 ? (
+                <p className="mt-1 text-xs text-slate-400">Сначала выберите неделю-родителя</p>
+              ) : (
+                <div className="mt-1 grid grid-cols-7 gap-1">
+                  {daysInWeek.map((d) => {
+                    const dt = new Date(d + "T00:00:00");
+                    return (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setDay(d)}
+                        className={cn(
+                          "flex flex-col items-center rounded-md border px-1 py-1.5 text-[10px] font-medium transition",
+                          day === d
+                            ? "border-slate-900 bg-slate-900 text-white"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                        )}
+                      >
+                        <span className="uppercase">{["Вс","Пн","Вт","Ср","Чт","Пт","Сб"][dt.getDay()]}</span>
+                        <span className="tabular-nums">{dt.getDate()}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {canDecompose && (
             <label className="flex items-start gap-2 rounded-lg border border-violet-200 bg-violet-50/40 p-2.5 text-xs text-slate-700">
               <input
@@ -122,14 +395,16 @@ export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultA
               </span>
             </label>
           )}
+
           {level === "week" && (
             <p className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-500">
               К новой неделе автоматически добавится метрика «Задачи».
             </p>
           )}
+
           <div className="mt-2 flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
-            <Button type="submit" disabled={!title.trim() || saving}>
+            <Button type="submit" disabled={!canSubmit}>
               {saving ? "Создание…" : "Создать"}
             </Button>
           </div>

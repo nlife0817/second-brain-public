@@ -1,10 +1,9 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
-import { useBrainStore, type GoalGroupBy } from "@/lib/store";
+import { memo, useState } from "react";
+import { useBrainStore } from "@/lib/store";
 import type { GoalLevel, GoalFull, GoalAxisConfig } from "@/types";
-import { GOAL_STATUS_CONFIG } from "@/types";
-import { ChevronRight, ChevronDown, ChevronsLeft, Plus } from "lucide-react";
+import { ChevronRight, ChevronsLeft, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CreateGoalDialog } from "./CreateGoalDialog";
 import { lookupAxis } from "@/lib/goal-axes";
@@ -17,43 +16,15 @@ interface Props {
   onCollapse?: () => void;
   /** today's date in YYYY-MM-DD; used to mark past columns/rows compact */
   today?: string;
-  groupBy?: GoalGroupBy;
 }
 
-export function GoalColumn({ level, goals, parentId, levelLabel, onCollapse, today, groupBy = "none" }: Props) {
+export function GoalColumn({ level, goals, parentId, levelLabel, onCollapse, today }: Props) {
   const selectedMap = useBrainStore((s) => s.goalSelected);
   const selectedId = selectedMap[level] ?? null;
   const selectGoal = useBrainStore((s) => s.selectGoal);
   const axisFilter = useBrainStore((s) => s.goalAxisFilter);
   const goalAxes = useBrainStore((s) => s.goalAxes);
-  const collapsedGroups = useBrainStore((s) => s.goalCollapsedGroups);
-  const toggleGroup = useBrainStore((s) => s.toggleGoalGroupCollapsed);
   const [createOpen, setCreateOpen] = useState(false);
-
-  const collapsedGroupSet = useMemo(() => new Set(collapsedGroups), [collapsedGroups]);
-
-  const groups = useMemo(() => {
-    if (groupBy === "none") return null;
-    const map = new Map<string, { key: string; label: string; color?: string; items: GoalFull[] }>();
-    for (const g of goals) {
-      let key: string;
-      let label: string;
-      let color: string | undefined;
-      if (groupBy === "axis") {
-        const ax = lookupAxis(goalAxes, g.axis);
-        key = ax?.id ?? "__no_axis__";
-        label = ax ? `${ax.icon} ${ax.name}` : "Без оси";
-        color = ax?.color;
-      } else {
-        key = g.status;
-        label = GOAL_STATUS_CONFIG[g.status]?.label ?? g.status;
-      }
-      const existing = map.get(key);
-      if (existing) existing.items.push(g);
-      else map.set(key, { key, label, color, items: [g] });
-    }
-    return Array.from(map.values());
-  }, [goals, groupBy, goalAxes]);
 
   const canCreate = level === "year" || parentId !== null;
 
@@ -94,57 +65,20 @@ export function GoalColumn({ level, goals, parentId, levelLabel, onCollapse, tod
             {canCreate ? "Пусто" : "Выберите родителя"}
           </div>
         )}
-        {groups ? (
-          groups.map((grp) => {
-            const groupKey = `${level}:${groupBy}:${grp.key}`;
-            const isCollapsed = collapsedGroupSet.has(groupKey);
-            return (
-              <div key={grp.key} className="mb-2">
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(groupKey)}
-                  className="mb-1 flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-[10px] font-semibold uppercase tracking-widest text-slate-500 hover:bg-slate-100"
-                >
-                  {isCollapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}
-                  {grp.color && (
-                    <span className="size-2 rounded-full" style={{ backgroundColor: grp.color }} />
-                  )}
-                  <span className="flex-1 truncate">{grp.label}</span>
-                  <span className="tabular-nums text-slate-400">{grp.items.length}</span>
-                </button>
-                {!isCollapsed && grp.items.map((g) => {
-                  const isPast = !!(today && g.period_end && g.period_end < today);
-                  const ax = lookupAxis(goalAxes, g.axis);
-                  return (
-                    <GoalRow
-                      key={g.id}
-                      goal={g}
-                      ax={ax}
-                      isSelected={selectedId === g.id}
-                      isPast={isPast}
-                      onClick={() => selectGoal(level, selectedId === g.id ? null : g.id)}
-                    />
-                  );
-                })}
-              </div>
-            );
-          })
-        ) : (
-          goals.map((g) => {
-            const isPast = !!(today && g.period_end && g.period_end < today);
-            const ax = lookupAxis(goalAxes, g.axis);
-            return (
-              <GoalRow
-                key={g.id}
-                goal={g}
-                ax={ax}
-                isSelected={selectedId === g.id}
-                isPast={isPast}
-                onClick={() => selectGoal(level, selectedId === g.id ? null : g.id)}
-              />
-            );
-          })
-        )}
+        {goals.map((g) => {
+          const isPast = !!(today && g.period_end && g.period_end < today);
+          const ax = lookupAxis(goalAxes, g.axis);
+          return (
+            <GoalRow
+              key={g.id}
+              goal={g}
+              ax={ax}
+              isSelected={selectedId === g.id}
+              isPast={isPast}
+              onClick={() => selectGoal(level, selectedId === g.id ? null : g.id)}
+            />
+          );
+        })}
       </div>
 
       {createOpen && (
