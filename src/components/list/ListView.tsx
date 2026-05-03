@@ -1487,6 +1487,99 @@ export function ListView() {
   const itemLinkedClients = useBrainStore((s) => s.itemLinkedClients);
   const removeItemsLocal = useBrainStore((s) => s.removeItemsLocal);
   const restoreItemsLocal = useBrainStore((s) => s.restoreItemsLocal);
+  const pushUndoEntry = useBrainStore((s) => s.pushUndoEntry);
+  const undo = useBrainStore((s) => s.undo);
+  const redo = useBrainStore((s) => s.redo);
+
+  /* ----- Undoable inline update ------------------------------------------- */
+  // Wraps updateItem: snapshots the fields being changed, pushes an entry to
+  // the undo stack, then forwards to updateItem. Same-cell repeated edits
+  // (e.g. typing in title) get coalesced via debounceKey.
+  const undoableUpdate = useCallback(
+    (
+      id: string,
+      payload: Record<string, unknown>,
+      opts?: { debounceKey?: string }
+    ) => {
+      const all = useBrainStore.getState().items;
+      let found: Item | null = null;
+      for (const top of all) {
+        if (top.id === id) {
+          found = top;
+          break;
+        }
+        const sub = top.subtasks?.find((s) => s.id === id);
+        if (sub) {
+          found = sub;
+          break;
+        }
+      }
+      if (found) {
+        const oldPayload: Record<string, unknown> = {};
+        const newPayload: Record<string, unknown> = {};
+        const fields: string[] = [];
+        for (const f of Object.keys(payload)) {
+          const cur = (found as unknown as Record<string, unknown>)[f];
+          const next = payload[f];
+          // Skip no-ops for primitives. For arrays/objects we always record
+          // (cheap to oversample; conflict check ignores arrays anyway).
+          if (
+            !Array.isArray(cur) &&
+            !Array.isArray(next) &&
+            typeof cur !== "object" &&
+            typeof next !== "object" &&
+            cur === next
+          ) {
+            continue;
+          }
+          oldPayload[f] = cur ?? null;
+          newPayload[f] = next ?? null;
+          fields.push(f);
+        }
+        if (fields.length > 0) {
+          pushUndoEntry({
+            id,
+            fields,
+            payload: oldPayload,
+            newPayload,
+            ts: Date.now(),
+            debounceKey: opts?.debounceKey,
+          });
+        }
+      }
+      return updateItem(id, payload);
+    },
+    [updateItem, pushUndoEntry]
+  );
+
+  /* ----- Ctrl+Z / Ctrl+Shift+Z keyboard handler -------------------------- */
+  useEffect(() => {
+    const isMac =
+      typeof navigator !== "undefined" && /Mac|iPad|iPhone/.test(navigator.platform);
+    const handler = (e: KeyboardEvent) => {
+      const meta = isMac ? e.metaKey : e.ctrlKey;
+      if (!meta) return;
+      const k = e.key.toLowerCase();
+      if (k !== "z" && k !== "y") return;
+      // Don't hijack undo while the user is typing in a field — the browser's
+      // native input undo should win there.
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      const isRedo = (k === "z" && e.shiftKey) || k === "y";
+      e.preventDefault();
+      if (isRedo) void redo();
+      else void undo();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [undo, redo]);
 
   // Build position maps for group ordering
   const groupPositionMaps = useMemo(() => {
@@ -2623,7 +2716,7 @@ export function ListView() {
             editingItemId === row.item.id ? editingField : null
           }
           setEditingItem={setEditingItem}
-          updateItem={updateItem}
+          updateItem={undoableUpdate}
           isExpanded={expandedItems.has(row.item.id)}
           onToggleExpand={toggleExpanded}
           visibleColumns={visibleColumns}

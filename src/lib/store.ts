@@ -45,6 +45,22 @@ import {
   ItemStatusKind,
 } from "@/types";
 
+// One reversible inline edit on an item. `payload` holds the values needed to
+// revert (undo); `newPayload` holds the values that were written (used both for
+// redo and for conflict detection — we skip an undo step if the current item
+// no longer matches what we wrote, e.g. realtime updated the field).
+export interface UndoEntry {
+  id: string;
+  fields: string[];
+  payload: Record<string, unknown>;
+  newPayload: Record<string, unknown>;
+  ts: number;
+  // Coalesces rapid edits on the same field (e.g. typing in the title): when
+  // a new entry arrives within DEBOUNCE_MS with the same key, we merge it into
+  // the previous entry instead of pushing a new one.
+  debounceKey?: string;
+}
+
 interface BrainStore {
   items: ItemWithSubtasks[];
   tags: Tag[];
@@ -113,6 +129,14 @@ interface BrainStore {
   resetActiveFilter: () => void;
   setDetailMode: (mode: "modal" | "panel") => void;
   setListGroupBy: (config: ListGroupByConfig) => void;
+
+  // Undo / redo stack for inline list edits
+  undoStack: UndoEntry[];
+  redoStack: UndoEntry[];
+  pushUndoEntry: (entry: UndoEntry) => void;
+  undo: () => Promise<boolean>;
+  redo: () => Promise<boolean>;
+  clearUndo: () => void;
 
   // App section
   appSection: AppSection;
@@ -375,6 +399,8 @@ export const useBrainStore = create<BrainStore>()(
   activeFilterId: null,
   detailMode: "modal" as "modal" | "panel",
   listGroupBy: ["none", "none"] as ListGroupByConfig,
+  undoStack: [] as UndoEntry[],
+  redoStack: [] as UndoEntry[],
 
   // App section
   appSection: "tasks" as AppSection,
@@ -969,6 +995,94 @@ export const useBrainStore = create<BrainStore>()(
   },
   setListCollapsedGroups: (groups) => set({ listCollapsedGroups: groups }),
   setClientsCollapsedGroups: (groups) => set({ clientsCollapsedGroups: groups }),
+
+  // ----- Undo / redo --------------------------------------------------------
+  pushUndoEntry: (entry) => {
+    const MAX = 30;
+    const DEBOUNCE_MS = 600;
+    set((s) => {
+      let stack = s.undoStack;
+      const last = stack[stack.length - 1];
+      // Coalesce rapid edits on the same id+field (typing in title etc.)
+      if (
+        last &&
+        entry.debounceKey &&
+        last.debounceKey === entry.debounceKey &&
+        entry.ts - last.ts < DEBOUNCE_MS
+      ) {
+        const merged: UndoEntry = {
+          ...last,
+          newPayload: { ...last.newPayload, ...entry.newPayload },
+          ts: entry.ts,
+        };
+        stack = [...stack.slice(0, -1), merged];
+      } else {
+        stack = [...stack, entry];
+      }
+      if (stack.length > MAX) stack = stack.slice(stack.length - MAX);
+      // Any new edit invalidates the redo branch
+      return { undoStack: stack, redoStack: [] };
+    });
+  },
+
+  undo: async () => {
+    const { undoStack } = get();
+    if (undoStack.length === 0) return false;
+    const entry = undoStack[undoStack.length - 1];
+    const cur = findItemInTree(get().items, entry.id);
+    if (!cur) {
+      // Item was deleted (locally or via realtime) — drop the entry silently.
+      set({ undoStack: undoStack.slice(0, -1) });
+      return false;
+    }
+    // If any of the fields we wrote was changed since (realtime conflict),
+    // skip this entry rather than overwriting newer state.
+    for (const f of entry.fields) {
+      const curVal = (cur as unknown as Record<string, unknown>)[f];
+      const expected = entry.newPayload[f];
+      if (Array.isArray(expected) || Array.isArray(curVal)) continue;
+      if ((curVal ?? null) !== (expected ?? null)) {
+        set({ undoStack: undoStack.slice(0, -1) });
+        return false;
+      }
+    }
+    set({
+      undoStack: undoStack.slice(0, -1),
+      redoStack: [...get().redoStack, entry],
+    });
+    await get().updateItem(entry.id, entry.payload as UpdateItemPayload);
+    return true;
+  },
+
+  redo: async () => {
+    const { redoStack } = get();
+    if (redoStack.length === 0) return false;
+    const entry = redoStack[redoStack.length - 1];
+    const cur = findItemInTree(get().items, entry.id);
+    if (!cur) {
+      set({ redoStack: redoStack.slice(0, -1) });
+      return false;
+    }
+    // Symmetrical conflict check: redo only if state still matches what undo
+    // restored.
+    for (const f of entry.fields) {
+      const curVal = (cur as unknown as Record<string, unknown>)[f];
+      const expected = entry.payload[f];
+      if (Array.isArray(expected) || Array.isArray(curVal)) continue;
+      if ((curVal ?? null) !== (expected ?? null)) {
+        set({ redoStack: redoStack.slice(0, -1) });
+        return false;
+      }
+    }
+    set({
+      redoStack: redoStack.slice(0, -1),
+      undoStack: [...get().undoStack, entry],
+    });
+    await get().updateItem(entry.id, entry.newPayload as UpdateItemPayload);
+    return true;
+  },
+
+  clearUndo: () => set({ undoStack: [], redoStack: [] }),
 
   // Staging
   fetchStagingItems: async () => {
