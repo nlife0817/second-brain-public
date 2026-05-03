@@ -14,6 +14,7 @@ import { ClientDetailModal, ClientDetailPanel } from "@/components/clients/Clien
 import { CreateClientDialog } from "@/components/clients/CreateClientDialog";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { StagingView } from "@/components/staging/StagingView";
+import { GoalsView } from "@/components/goals/GoalsView";
 
 export default function Home() {
   const fetchInit = useBrainStore((s) => s.fetchInit);
@@ -40,6 +41,8 @@ export default function Home() {
               <StagingView />
             ) : appSection === "clients" ? (
               <ClientsView />
+            ) : appSection === "goals" ? (
+              <GoalsView />
             ) : viewMode === "weekly" ? (
               <WeeklyView />
             ) : viewMode === "kanban" ? (

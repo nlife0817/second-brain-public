@@ -378,12 +378,15 @@ export interface UpdateClientPayload extends Partial<ClientParams> {
 export type ClientGroupByField = "none" | "status" | "budget" | "operators_per_shift" | "crm_system";
 export type ClientGroupByConfig = [ClientGroupByField, ClientGroupByField];
 
-export type AppSection = "tasks" | "clients" | "staging" | "settings";
+export type AppSection = "tasks" | "clients" | "goals" | "staging" | "settings";
 export type ClientViewMode = "list" | "kanban";
 
 // --- Relations ---
 
+// EntityType covers comments + staging (item|client only — DB CHECK constraint).
 export type EntityType = "item" | "client";
+// RelationEntityType is wider — relations table also accepts goals.
+export type RelationEntityType = "item" | "client" | "goal";
 
 export interface RelationType {
   id: string;
@@ -396,9 +399,9 @@ export interface RelationType {
 
 export interface Relation {
   id: string;
-  source_type: EntityType;
+  source_type: RelationEntityType;
   source_id: string;
-  target_type: EntityType;
+  target_type: RelationEntityType;
   target_id: string;
   relation_type_id: string | null;
   created_at: string;
@@ -408,6 +411,150 @@ export interface RelationWithTarget extends Relation {
   target_title: string;
   relation_type: RelationType | null;
 }
+
+// --- Goals ---
+
+export type GoalLevel = "year" | "quarter" | "month" | "week";
+export type GoalAxis = "income" | "debts" | "project" | "health";
+export type GoalStatus = "active" | "done" | "paused" | "dropped";
+export type MetricKind = "tasks" | "numeric" | "counter" | "checklist" | "boolean";
+
+export interface ChecklistItem {
+  title: string;
+  done: boolean;
+}
+
+export interface MetricPayload {
+  items?: ChecklistItem[];
+  done?: boolean;
+}
+
+export interface GoalMetric {
+  id: string;
+  goal_id: string;
+  kind: MetricKind;
+  title: string;
+  unit: string | null;
+  target_value: number | null;
+  current_value: number | null;
+  start_value: number | null;
+  direction: "up" | "down";
+  payload: MetricPayload | null;
+  weight: number;
+  position: number;
+  created_at: string;
+  updated_at: string;
+  // Filled by API for kind='tasks':
+  tasks_done?: number;
+  tasks_total?: number;
+}
+
+export interface GoalMetricSnapshot {
+  id: string;
+  metric_id: string;
+  value: number;
+  recorded_at: string;
+  note: string;
+}
+
+export interface Goal {
+  id: string;
+  parent_id: string | null;
+  level: GoalLevel;
+  axis: GoalAxis | null;
+  title: string;
+  description: string;
+  status: GoalStatus;
+  period_start: string | null;
+  period_end: string | null;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GoalFull extends Goal {
+  metrics: GoalMetric[];
+  progress: number; // 0..1
+  children_count: number;
+}
+
+export interface CreateGoalPayload {
+  parent_id?: string | null;
+  level: GoalLevel;
+  axis?: GoalAxis | null;
+  title: string;
+  description?: string;
+  status?: GoalStatus;
+  period_start?: string | null;
+  period_end?: string | null;
+  position?: number;
+}
+
+export interface UpdateGoalPayload {
+  parent_id?: string | null;
+  level?: GoalLevel;
+  axis?: GoalAxis | null;
+  title?: string;
+  description?: string;
+  status?: GoalStatus;
+  period_start?: string | null;
+  period_end?: string | null;
+  position?: number;
+}
+
+export interface CreateMetricPayload {
+  kind: MetricKind;
+  title: string;
+  unit?: string | null;
+  target_value?: number | null;
+  current_value?: number | null;
+  start_value?: number | null;
+  direction?: "up" | "down";
+  payload?: MetricPayload | null;
+  weight?: number;
+  position?: number;
+}
+
+export interface UpdateMetricPayload {
+  title?: string;
+  unit?: string | null;
+  target_value?: number | null;
+  current_value?: number | null;
+  start_value?: number | null;
+  direction?: "up" | "down";
+  payload?: MetricPayload | null;
+  weight?: number;
+  position?: number;
+}
+
+export const GOAL_LEVEL_CONFIG: Record<GoalLevel, { label: string; short: string }> = {
+  year: { label: "Год", short: "Г" },
+  quarter: { label: "Квартал", short: "Кв" },
+  month: { label: "Месяц", short: "М" },
+  week: { label: "Неделя", short: "Н" },
+};
+
+export const GOAL_AXIS_CONFIG: Record<GoalAxis, { label: string; icon: string; color: string; bg: string }> = {
+  income: { label: "Доход", icon: "💰", color: "#16a34a", bg: "#dcfce7" },
+  debts: { label: "Долги", icon: "💳", color: "#dc2626", bg: "#fee2e2" },
+  project: { label: "Проект", icon: "🚀", color: "#2563eb", bg: "#dbeafe" },
+  health: { label: "Здоровье", icon: "🏃", color: "#ea580c", bg: "#ffedd5" },
+};
+
+export const GOAL_STATUS_CONFIG: Record<GoalStatus, { label: string; color: string }> = {
+  active: { label: "Активна", color: "text-blue-600" },
+  done: { label: "Достигнута", color: "text-emerald-600" },
+  paused: { label: "На паузе", color: "text-amber-500" },
+  dropped: { label: "Отменена", color: "text-gray-500" },
+};
+
+export const METRIC_KIND_CONFIG: Record<MetricKind, { label: string; icon: string; description: string }> = {
+  tasks: { label: "Задачи", icon: "📎", description: "Прогресс считается по связанным задачам" },
+  numeric: { label: "Число", icon: "📊", description: "Текущее значение к целевому (₽, кг, …)" },
+  counter: { label: "Счётчик", icon: "🔢", description: "Накопительный счётчик до цели" },
+  checklist: { label: "Чек-лист", icon: "✅", description: "Список пунктов с отметками" },
+  boolean: { label: "Да/Нет", icon: "🎯", description: "Сделано или нет" },
+};
 
 // --- Comments (universal) ---
 

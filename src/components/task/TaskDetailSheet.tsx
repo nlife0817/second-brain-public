@@ -48,6 +48,7 @@ import { Separator } from "@/components/ui/separator";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import { SubtaskList } from "./SubtaskList";
 import { RelationsList } from "@/components/relations/RelationsList";
+import { TaskGoalsSection } from "@/components/goals/TaskGoalsSection";
 import { CommentsList } from "@/components/comments/CommentsList";
 import { TimerSection } from "@/components/timing/TimerSection";
 
@@ -1026,6 +1027,11 @@ function TaskDetailContent({
     <RelationsList entityType="item" entityId={item.id} />
   );
 
+  /* ---- Goals block (linked goals via belongs_to_goal relation) ---- */
+  const goalsBlock = (
+    <TaskGoalsSection taskId={item.id} />
+  );
+
   /* ---- Comments block ---- */
   const commentsBlock = (
     <CommentsList entityType="item" entityId={item.id} />
@@ -1054,6 +1060,8 @@ function TaskDetailContent({
           {descriptionBlock}
           {subtasksBlock && <Separator className="bg-slate-200" />}
           {subtasksBlock}
+          <Separator className="bg-slate-200" />
+          {goalsBlock}
           <Separator className="bg-slate-200" />
           {relationsBlock}
           <Separator className="bg-slate-200" />
@@ -1089,6 +1097,8 @@ function TaskDetailContent({
       {descriptionBlock}
       {subtasksBlock && <Separator className="bg-slate-200" />}
       {subtasksBlock}
+      <Separator className="bg-slate-200" />
+      {goalsBlock}
       <Separator className="bg-slate-200" />
       {relationsBlock}
       <Separator className="bg-slate-200" />

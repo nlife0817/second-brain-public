@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRelationsForEntity, createRelation, updateRelation, deleteRelation } from "@/lib/db";
-import type { EntityType } from "@/types";
+import type { RelationEntityType } from "@/types";
 import { getAuthUser } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
-  const entity_type = req.nextUrl.searchParams.get("entity_type") as EntityType | null;
+  const entity_type = req.nextUrl.searchParams.get("entity_type") as RelationEntityType | null;
   const entity_id = req.nextUrl.searchParams.get("entity_id");
   if (!entity_type || !entity_id) return NextResponse.json({ error: "entity_type and entity_id required" }, { status: 400 });
   return NextResponse.json(await getRelationsForEntity(entity_type, entity_id));

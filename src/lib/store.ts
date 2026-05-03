@@ -36,6 +36,15 @@ import {
   RelationWithTarget,
   Comment,
   EntityType,
+  RelationEntityType,
+  GoalFull,
+  GoalLevel,
+  GoalAxis,
+  CreateGoalPayload,
+  UpdateGoalPayload,
+  GoalMetric,
+  CreateMetricPayload,
+  UpdateMetricPayload,
   StagingItem,
   StagingItemParsed,
   StagingParsedData,
@@ -258,10 +267,29 @@ interface BrainStore {
   deleteUser: (email: string) => Promise<void>;
 
   // Relations (fetched per-entity, not global)
-  fetchRelations: (entityType: EntityType, entityId: string) => Promise<RelationWithTarget[]>;
-  createRelation: (source_type: EntityType, source_id: string, target_type: EntityType, target_id: string, relation_type_id?: string | null) => Promise<void>;
+  fetchRelations: (entityType: RelationEntityType, entityId: string) => Promise<RelationWithTarget[]>;
+  createRelation: (source_type: RelationEntityType, source_id: string, target_type: RelationEntityType, target_id: string, relation_type_id?: string | null) => Promise<void>;
   updateRelationType_: (relationId: string, relation_type_id: string | null) => Promise<void>;
   deleteRelation: (id: string) => Promise<void>;
+
+  // Goals
+  goals: GoalFull[];
+  goalsLoaded: boolean;
+  goalAxisFilter: GoalAxis | null;
+  goalSelected: Partial<Record<GoalLevel, string | null>>;
+  fetchGoals: () => Promise<void>;
+  createGoal: (payload: CreateGoalPayload) => Promise<GoalFull | null>;
+  updateGoal: (id: string, payload: UpdateGoalPayload) => Promise<void>;
+  deleteGoal: (id: string) => Promise<void>;
+  createMetric: (goalId: string, payload: CreateMetricPayload) => Promise<GoalMetric | null>;
+  updateMetric: (goalId: string, metricId: string, payload: UpdateMetricPayload) => Promise<void>;
+  deleteMetric: (goalId: string, metricId: string) => Promise<void>;
+  recordSnapshot: (goalId: string, metricId: string, value: number, note?: string) => Promise<void>;
+  setGoalAxisFilter: (axis: GoalAxis | null) => void;
+  selectGoal: (level: GoalLevel, id: string | null) => void;
+  linkTaskToGoal: (goalId: string, taskId: string) => Promise<void>;
+  unlinkTaskFromGoal: (goalId: string, taskId: string) => Promise<void>;
+  getGoalsForTask: (taskId: string) => Promise<RelationWithTarget[]>;
 
   // Comments (fetched per-entity, not global)
   fetchComments: (entityType: EntityType, entityId: string) => Promise<Comment[]>;
@@ -1704,6 +1732,116 @@ export const useBrainStore = create<BrainStore>()(
     const res = await fetch(`/api/users/${encodeURIComponent(email)}`, { method: "DELETE" });
     if (!res.ok) throw new Error(await res.text());
     set((s) => ({ users: s.users.filter((u) => u.email !== email) }));
+  },
+
+  // Goals
+  goals: [],
+  goalsLoaded: false,
+  goalAxisFilter: null,
+  goalSelected: {},
+  fetchGoals: async () => {
+    const res = await fetch("/api/goals");
+    if (!res.ok) return;
+    const goals: GoalFull[] = await res.json();
+    set({ goals, goalsLoaded: true });
+  },
+  createGoal: async (payload) => {
+    const res = await fetch("/api/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return null;
+    await get().fetchGoals();
+    const created = await res.json();
+    return get().goals.find((g) => g.id === created.id) ?? null;
+  },
+  updateGoal: async (id, payload) => {
+    const res = await fetch(`/api/goals/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return;
+    await get().fetchGoals();
+  },
+  deleteGoal: async (id) => {
+    const res = await fetch(`/api/goals/${id}`, { method: "DELETE" });
+    if (!res.ok) return;
+    set((s) => {
+      const next: Partial<Record<GoalLevel, string | null>> = { ...s.goalSelected };
+      for (const k of Object.keys(next) as GoalLevel[]) {
+        if (next[k] === id) next[k] = null;
+      }
+      return { goals: s.goals.filter((g) => g.id !== id), goalSelected: next };
+    });
+    await get().fetchGoals();
+  },
+  createMetric: async (goalId, payload) => {
+    const res = await fetch(`/api/goals/${goalId}/metrics`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return null;
+    const metric: GoalMetric = await res.json();
+    await get().fetchGoals();
+    return metric;
+  },
+  updateMetric: async (goalId, metricId, payload) => {
+    const res = await fetch(`/api/goals/${goalId}/metrics/${metricId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return;
+    await get().fetchGoals();
+  },
+  deleteMetric: async (goalId, metricId) => {
+    const res = await fetch(`/api/goals/${goalId}/metrics/${metricId}`, { method: "DELETE" });
+    if (!res.ok) return;
+    await get().fetchGoals();
+  },
+  recordSnapshot: async (goalId, metricId, value, note) => {
+    const res = await fetch(`/api/goals/${goalId}/metrics/${metricId}/snapshot`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value, note }),
+    });
+    if (!res.ok) return;
+    await get().fetchGoals();
+  },
+  setGoalAxisFilter: (axis) => set({ goalAxisFilter: axis }),
+  selectGoal: (level, id) => set((s) => {
+    const next: Partial<Record<GoalLevel, string | null>> = { ...s.goalSelected, [level]: id };
+    // Clear deeper levels when parent changes.
+    const order: GoalLevel[] = ["year", "quarter", "month", "week"];
+    const idx = order.indexOf(level);
+    for (let i = idx + 1; i < order.length; i++) next[order[i]] = null;
+    return { goalSelected: next };
+  }),
+  linkTaskToGoal: async (goalId, taskId) => {
+    await fetch("/api/relations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_type: "goal", source_id: goalId,
+        target_type: "item", target_id: taskId,
+        relation_type_id: "belongs_to_goal",
+      }),
+    });
+    await get().fetchGoals();
+  },
+  unlinkTaskFromGoal: async (goalId, taskId) => {
+    const rels = await get().fetchRelations("goal", goalId);
+    const rel = rels.find((r) => r.target_type === "item" && r.target_id === taskId);
+    if (!rel) return;
+    await get().deleteRelation(rel.id);
+    await get().fetchGoals();
+  },
+  getGoalsForTask: async (taskId) => {
+    const rels = await get().fetchRelations("item", taskId);
+    return rels.filter((r) => r.target_type === "goal" || (r.relation_type?.id === "belongs_to_goal"));
   },
 }),
   {
