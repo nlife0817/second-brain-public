@@ -1402,6 +1402,70 @@ export async function deleteGoal(id: string): Promise<boolean> {
   return result.changes > 0;
 }
 
+// Bulk-insert helper for goal decomposition. One round-trip instead of N.
+export interface BulkGoalRow {
+  id: string;
+  parent_id: string | null;
+  level: string;
+  axis: string | null;
+  title: string;
+  description: string;
+  status: string;
+  period_start: string | null;
+  period_end: string | null;
+  position: number;
+}
+export interface BulkMetricRow {
+  id: string;
+  goal_id: string;
+  kind: string;
+  title: string;
+  unit: string | null;
+  target_value: number | null;
+  current_value: number | null;
+  start_value: number | null;
+  direction: string;
+  payload: object | null;
+  weight: number;
+  position: number;
+}
+
+export async function bulkInsertGoalsAndMetrics(
+  goals: BulkGoalRow[],
+  metrics: BulkMetricRow[],
+): Promise<void> {
+  if (goals.length === 0 && metrics.length === 0) return;
+  await transaction(async (tx) => {
+    if (goals.length > 0) {
+      const cols = 10;
+      const placeholders = goals.map(() => `(${Array(cols).fill("?").join(",")})`).join(",");
+      const vals: unknown[] = [];
+      for (const g of goals) {
+        vals.push(g.id, g.parent_id, g.level, g.axis, g.title, g.description, g.status, g.period_start, g.period_end, g.position);
+      }
+      await tx.prepare(
+        `INSERT INTO goals (id, parent_id, level, axis, title, description, status, period_start, period_end, position) VALUES ${placeholders}`
+      ).run(...vals);
+    }
+    if (metrics.length > 0) {
+      const cols = 12;
+      const placeholders = metrics.map(() => `(${Array(cols).fill("?").join(",")})`).join(",");
+      const vals: unknown[] = [];
+      for (const m of metrics) {
+        vals.push(
+          m.id, m.goal_id, m.kind, m.title, m.unit,
+          m.target_value, m.current_value, m.start_value, m.direction,
+          m.payload === null ? null : JSON.stringify(m.payload),
+          m.weight, m.position,
+        );
+      }
+      await tx.prepare(
+        `INSERT INTO goal_metrics (id, goal_id, kind, title, unit, target_value, current_value, start_value, direction, payload, weight, position) VALUES ${placeholders}`
+      ).run(...vals);
+    }
+  });
+}
+
 export async function getGoalsChildrenCounts(): Promise<Map<string, number>> {
   const rows = await prepare<{ parent_id: string; c: number }>(
     "SELECT parent_id, COUNT(*) as c FROM goals WHERE parent_id IS NOT NULL GROUP BY parent_id"

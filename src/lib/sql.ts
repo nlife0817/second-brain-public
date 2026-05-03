@@ -53,8 +53,12 @@ function makePrepared<Row = SqlRow>(runner: Runner, query: string): PreparedStat
       return await runner<Row>(pgQuery, flattenParams(params));
     },
     run: async (...params) => {
-      const rows = await runner(pgQuery, flattenParams(params));
-      return { changes: Array.isArray(rows) ? rows.length : 0 };
+      const rows = (await runner(pgQuery, flattenParams(params))) as unknown as
+        (unknown[] & { count?: number });
+      // postgres.js returns an array-like result with a `.count` property
+      // for INSERT/UPDATE/DELETE without RETURNING (rows.length is 0 in that case).
+      const count = typeof rows?.count === "number" ? rows.count : (Array.isArray(rows) ? rows.length : 0);
+      return { changes: count };
     },
   };
 }

@@ -281,6 +281,8 @@ interface BrainStore {
   goalAxes: GoalAxisConfig[];
   goalAxesLoaded: boolean;
   goalAxisFilter: GoalAxis | null;
+  goalHideDone: boolean;
+  goalDeadlineFilter: "all" | "active" | "overdue" | "upcoming";
   goalSelected: Partial<Record<GoalLevel, string | null>>;
   goalCollapsedColumns: GoalLevel[];
   fetchGoalAxes: () => Promise<void>;
@@ -297,6 +299,8 @@ interface BrainStore {
   deleteMetric: (goalId: string, metricId: string) => Promise<void>;
   recordSnapshot: (goalId: string, metricId: string, value: number, note?: string) => Promise<void>;
   setGoalAxisFilter: (axis: GoalAxis | null) => void;
+  setGoalHideDone: (v: boolean) => void;
+  setGoalDeadlineFilter: (v: "all" | "active" | "overdue" | "upcoming") => void;
   selectGoal: (level: GoalLevel, id: string | null) => void;
   linkTaskToGoal: (goalId: string, taskId: string) => Promise<void>;
   unlinkTaskFromGoal: (goalId: string, taskId: string) => Promise<void>;
@@ -1751,6 +1755,8 @@ export const useBrainStore = create<BrainStore>()(
   goalAxes: [],
   goalAxesLoaded: false,
   goalAxisFilter: null,
+  goalHideDone: false,
+  goalDeadlineFilter: "all",
   goalSelected: {},
   goalCollapsedColumns: [],
   fetchGoalAxes: async () => {
@@ -1813,25 +1819,56 @@ export const useBrainStore = create<BrainStore>()(
     return get().goals.find((g) => g.id === created.id) ?? null;
   },
   updateGoal: async (id, payload) => {
+    // Optimistic patch — apply known fields locally before the server round-trip.
+    const prev = get().goals;
+    set((s) => ({
+      goals: s.goals.map((g) =>
+        g.id === id ? { ...g, ...(payload as Partial<GoalFull>) } : g,
+      ),
+    }));
     const res = await fetch(`/api/goals/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) return;
-    await get().fetchGoals();
+    if (!res.ok) {
+      // Roll back on failure.
+      set({ goals: prev });
+      return;
+    }
+    // Refresh in background to pick up server-side derived fields (progress, children_count).
+    void get().fetchGoals();
   },
   deleteGoal: async (id) => {
-    const res = await fetch(`/api/goals/${id}`, { method: "DELETE" });
-    if (!res.ok) return;
+    const prev = get().goals;
+    const prevSelected = get().goalSelected;
+    // Optimistic remove: drop the goal AND every descendant (CASCADE on the server).
+    const toRemove = new Set<string>([id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const g of prev) {
+        if (g.parent_id && toRemove.has(g.parent_id) && !toRemove.has(g.id)) {
+          toRemove.add(g.id);
+          grew = true;
+        }
+      }
+    }
     set((s) => {
       const next: Partial<Record<GoalLevel, string | null>> = { ...s.goalSelected };
       for (const k of Object.keys(next) as GoalLevel[]) {
-        if (next[k] === id) next[k] = null;
+        if (next[k] && toRemove.has(next[k]!)) next[k] = null;
       }
-      return { goals: s.goals.filter((g) => g.id !== id), goalSelected: next };
+      return { goals: s.goals.filter((g) => !toRemove.has(g.id)), goalSelected: next };
     });
-    await get().fetchGoals();
+    const res = await fetch(`/api/goals/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      // Roll back optimistic state on real failure.
+      set({ goals: prev, goalSelected: prevSelected });
+      return;
+    }
+    // Background refresh to fix derived counts on the parent (children_count, progress).
+    void get().fetchGoals();
   },
   createMetric: async (goalId, payload) => {
     const res = await fetch(`/api/goals/${goalId}/metrics`, {
@@ -1868,6 +1905,8 @@ export const useBrainStore = create<BrainStore>()(
     await get().fetchGoals();
   },
   setGoalAxisFilter: (axis) => set({ goalAxisFilter: axis }),
+  setGoalHideDone: (v) => set({ goalHideDone: v }),
+  setGoalDeadlineFilter: (v) => set({ goalDeadlineFilter: v }),
   selectGoal: (level, id) => set((s) => {
     const next: Partial<Record<GoalLevel, string | null>> = { ...s.goalSelected, [level]: id };
     // Clear deeper levels when parent changes.
@@ -1958,6 +1997,8 @@ export const useBrainStore = create<BrainStore>()(
       clientsCollapsedGroups: state.clientsCollapsedGroups,
       currentPlanId: state.currentPlanId,
       goalCollapsedColumns: state.goalCollapsedColumns,
+      goalHideDone: state.goalHideDone,
+      goalDeadlineFilter: state.goalDeadlineFilter,
       filters: {
         categories: state.filters.categories,
         priorities: state.filters.priorities,

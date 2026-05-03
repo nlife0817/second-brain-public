@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { useBrainStore } from "@/lib/store";
-import type { GoalLevel, GoalFull } from "@/types";
+import type { GoalLevel, GoalFull, GoalAxisConfig } from "@/types";
 import { ChevronRight, ChevronsLeft, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CreateGoalDialog } from "./CreateGoalDialog";
@@ -14,12 +14,16 @@ interface Props {
   parentId: string | null;
   levelLabel: string;
   onCollapse?: () => void;
+  /** today's date in YYYY-MM-DD; used to mark past columns/rows compact */
+  today?: string;
 }
 
-export function GoalColumn({ level, goals, parentId, levelLabel, onCollapse }: Props) {
-  const selected = useBrainStore((s) => s.goalSelected);
+export function GoalColumn({ level, goals, parentId, levelLabel, onCollapse, today }: Props) {
+  const selectedMap = useBrainStore((s) => s.goalSelected);
+  const selectedId = selectedMap[level] ?? null;
   const selectGoal = useBrainStore((s) => s.selectGoal);
   const axisFilter = useBrainStore((s) => s.goalAxisFilter);
+  const goalAxes = useBrainStore((s) => s.goalAxes);
   const [createOpen, setCreateOpen] = useState(false);
 
   const canCreate = level === "year" || parentId !== null;
@@ -61,14 +65,20 @@ export function GoalColumn({ level, goals, parentId, levelLabel, onCollapse }: P
             {canCreate ? "Пусто" : "Выберите родителя"}
           </div>
         )}
-        {goals.map((g) => (
-          <GoalRow
-            key={g.id}
-            goal={g}
-            isSelected={selected[level] === g.id}
-            onClick={() => selectGoal(level, selected[level] === g.id ? null : g.id)}
-          />
-        ))}
+        {goals.map((g) => {
+          const isPast = !!(today && g.period_end && g.period_end < today);
+          const ax = lookupAxis(goalAxes, g.axis);
+          return (
+            <GoalRow
+              key={g.id}
+              goal={g}
+              ax={ax}
+              isSelected={selectedId === g.id}
+              isPast={isPast}
+              onClick={() => selectGoal(level, selectedId === g.id ? null : g.id)}
+            />
+          );
+        })}
       </div>
 
       {createOpen && (
@@ -84,18 +94,38 @@ export function GoalColumn({ level, goals, parentId, levelLabel, onCollapse }: P
   );
 }
 
-function GoalRow({
-  goal,
-  isSelected,
-  onClick,
-}: {
+interface RowProps {
   goal: GoalFull;
+  ax: GoalAxisConfig | null;
   isSelected: boolean;
+  isPast: boolean;
   onClick: () => void;
-}) {
-  const goalAxes = useBrainStore((s) => s.goalAxes);
-  const ax = lookupAxis(goalAxes, goal.axis);
-  const pct = Math.round(goal.progress * 100);
+}
+
+const GoalRow = memo(function GoalRow({ goal, ax, isSelected, isPast, onClick }: RowProps) {
+  const pct = Math.round((goal.progress ?? 0) * 100);
+
+  if (isPast && !isSelected) {
+    return (
+      <button
+        onClick={onClick}
+        title={`${goal.title} · ${pct}% · период завершён`}
+        className={cn(
+          "group/row mb-0.5 flex w-full items-center gap-2 rounded-md border border-transparent bg-white/40 px-2 py-1 text-left transition",
+          "opacity-60 hover:opacity-100 hover:border-slate-200 hover:bg-white",
+        )}
+      >
+        <span
+          className="size-1.5 shrink-0 rounded-full"
+          style={{ backgroundColor: ax?.color ?? "#cbd5e1" }}
+        />
+        <span className="flex-1 truncate text-[11px] text-slate-500">{goal.title}</span>
+        <span className="w-7 text-right text-[10px] tabular-nums text-slate-400">{pct}%</span>
+        <ChevronRight className="size-3 shrink-0 text-slate-300" />
+      </button>
+    );
+  }
+
   return (
     <button
       onClick={onClick}
@@ -104,6 +134,7 @@ function GoalRow({
         isSelected
           ? "border-slate-300 bg-white shadow-sm"
           : "border-transparent bg-white/50 hover:border-slate-200 hover:bg-white",
+        isPast && "opacity-80",
       )}
     >
       <span
@@ -122,6 +153,9 @@ function GoalRow({
           )}
           {goal.children_count > 0 && (
             <span className="text-[10px] text-slate-400">↳ {goal.children_count}</span>
+          )}
+          {isPast && (
+            <span className="text-[9px] uppercase tracking-wide text-slate-400">завершён</span>
           )}
         </div>
         <div className="mt-1 truncate text-[13px] font-medium text-slate-900">{goal.title}</div>
@@ -143,4 +177,4 @@ function GoalRow({
       />
     </button>
   );
-}
+});
