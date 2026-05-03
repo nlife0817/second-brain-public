@@ -3,12 +3,15 @@
 import { useState } from "react";
 import { useBrainStore } from "@/lib/store";
 import {
-  GOAL_AXIS_CONFIG, GOAL_LEVEL_CONFIG, GOAL_STATUS_CONFIG,
-  type GoalFull, type GoalAxis, type GoalStatus,
+  GOAL_LEVEL_CONFIG, GOAL_STATUS_CONFIG,
+  type GoalFull, type GoalStatus,
 } from "@/types";
+import { lookupAxis } from "@/lib/goal-axes";
 import { MetricCard } from "./MetricCard";
 import { CreateMetricDialog } from "./CreateMetricDialog";
 import { LinkedTasksPanel } from "./LinkedTasksPanel";
+import { LinkedGoalsSection } from "./LinkedGoalsSection";
+import { CommentsList } from "@/components/comments/CommentsList";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -20,6 +23,7 @@ interface Props {
 
 export function GoalDetailPanel({ goal }: Props) {
   const deleteGoal = useBrainStore((s) => s.deleteGoal);
+  const goalAxes = useBrainStore((s) => s.goalAxes);
   const [editing, setEditing] = useState(false);
   const [createMetricOpen, setCreateMetricOpen] = useState(false);
 
@@ -33,7 +37,7 @@ export function GoalDetailPanel({ goal }: Props) {
     );
   }
 
-  const ax = goal.axis ? GOAL_AXIS_CONFIG[goal.axis as GoalAxis] : null;
+  const ax = lookupAxis(goalAxes, goal.axis);
   const pct = Math.round(goal.progress * 100);
 
   return (
@@ -45,7 +49,7 @@ export function GoalDetailPanel({ goal }: Props) {
               className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide"
               style={{ backgroundColor: ax.bg, color: ax.color }}
             >
-              {ax.icon} {ax.label}
+              {ax.icon} {ax.name}
             </span>
           )}
           <span className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
@@ -117,6 +121,14 @@ export function GoalDetailPanel({ goal }: Props) {
 
         <section className="border-t border-slate-200 p-4">
           <LinkedTasksPanel goalId={goal.id} />
+        </section>
+
+        <section className="border-t border-slate-200 p-4">
+          <LinkedGoalsSection goal={goal} />
+        </section>
+
+        <section className="border-t border-slate-200 p-4">
+          <CommentsList entityType="goal" entityId={goal.id} />
         </section>
       </div>
 

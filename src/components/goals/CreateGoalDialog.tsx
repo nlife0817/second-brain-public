@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useBrainStore } from "@/lib/store";
-import { GOAL_AXIS_CONFIG, type GoalAxis, type GoalLevel } from "@/types";
+import type { GoalAxis, GoalLevel } from "@/types";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -19,12 +19,16 @@ interface Props {
 
 export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultAxis }: Props) {
   const createGoal = useBrainStore((s) => s.createGoal);
+  const goalAxes = useBrainStore((s) => s.goalAxes);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [axis, setAxis] = useState<GoalAxis | null>(defaultAxis ?? null);
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
+  const [autoDecompose, setAutoDecompose] = useState(level === "year" || level === "quarter" || level === "month");
   const [saving, setSaving] = useState(false);
+
+  const canDecompose = level === "year" || level === "quarter" || level === "month";
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,6 +43,7 @@ export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultA
         parent_id: parentId,
         period_start: periodStart || null,
         period_end: periodEnd || null,
+        auto_decompose: canDecompose ? autoDecompose : false,
       });
       onOpenChange(false);
     } finally {
@@ -74,18 +79,18 @@ export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultA
               >
                 Без оси
               </button>
-              {(Object.entries(GOAL_AXIS_CONFIG) as [GoalAxis, typeof GOAL_AXIS_CONFIG.income][]).map(([key, ax]) => (
+              {goalAxes.map((ax) => (
                 <button
                   type="button"
-                  key={key}
-                  onClick={() => setAxis(key)}
+                  key={ax.id}
+                  onClick={() => setAxis(ax.id)}
                   className={cn(
                     "rounded-full border px-2.5 py-0.5 text-xs font-medium",
-                    axis === key ? "text-white" : "border-slate-200 bg-white text-slate-700",
+                    axis === ax.id ? "text-white" : "border-slate-200 bg-white text-slate-700",
                   )}
-                  style={axis === key ? { backgroundColor: ax.color, borderColor: ax.color } : undefined}
+                  style={axis === ax.id ? { backgroundColor: ax.color, borderColor: ax.color } : undefined}
                 >
-                  {ax.icon} {ax.label}
+                  {ax.icon} {ax.name}
                 </button>
               ))}
             </div>
@@ -100,6 +105,28 @@ export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultA
               <Input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
             </div>
           </div>
+          {canDecompose && (
+            <label className="flex items-start gap-2 rounded-lg border border-violet-200 bg-violet-50/40 p-2.5 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                checked={autoDecompose}
+                onChange={(e) => setAutoDecompose(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <strong className="font-medium">Авто-декомпозиция.</strong>{" "}
+                {level === "year" && "Создать 4 квартала, 12 месяцев и недели внутри каждого месяца."}
+                {level === "quarter" && "Создать 3 месяца и недели внутри каждого."}
+                {level === "month" && "Создать недели (Пн–Вс) внутри месяца."}{" "}
+                <span className="text-slate-500">К каждой неделе подвяжется метрика «Задачи».</span>
+              </span>
+            </label>
+          )}
+          {level === "week" && (
+            <p className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-500">
+              К новой неделе автоматически добавится метрика «Задачи».
+            </p>
+          )}
           <div className="mt-2 flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
             <Button type="submit" disabled={!title.trim() || saving}>
@@ -113,5 +140,5 @@ export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultA
 }
 
 function levelLabel(l: GoalLevel) {
-  return { year: "год", quarter: "квартал", month: "месяц", week: "неделя" }[l];
+  return { year: "год", quarter: "квартал", month: "месяц", week: "неделя", day: "день" }[l];
 }

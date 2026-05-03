@@ -3,9 +3,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { useBrainStore } from "@/lib/store";
 import {
-  GOAL_AXIS_CONFIG, GOAL_LEVEL_CONFIG,
-  type GoalFull, type RelationWithTarget, type GoalAxis,
+  GOAL_LEVEL_CONFIG,
+  type GoalFull, type RelationWithTarget,
 } from "@/types";
+import { lookupAxis } from "@/lib/goal-axes";
 import { Target, Plus, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,9 @@ export function TaskGoalsSection({ taskId }: { taskId: string }) {
   const goals = useBrainStore((s) => s.goals);
   const goalsLoaded = useBrainStore((s) => s.goalsLoaded);
   const fetchGoals = useBrainStore((s) => s.fetchGoals);
+  const goalAxes = useBrainStore((s) => s.goalAxes);
+  const goalAxesLoaded = useBrainStore((s) => s.goalAxesLoaded);
+  const fetchGoalAxes = useBrainStore((s) => s.fetchGoalAxes);
   const fetchRelations = useBrainStore((s) => s.fetchRelations);
   const linkTaskToGoal = useBrainStore((s) => s.linkTaskToGoal);
   const unlinkTaskFromGoal = useBrainStore((s) => s.unlinkTaskFromGoal);
@@ -38,9 +42,10 @@ export function TaskGoalsSection({ taskId }: { taskId: string }) {
 
   useEffect(() => {
     if (!goalsLoaded) void fetchGoals();
+    if (!goalAxesLoaded) void fetchGoalAxes();
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
-  }, [taskId, goalsLoaded, fetchGoals, refresh]);
+  }, [taskId, goalsLoaded, fetchGoals, refresh, goalAxesLoaded, fetchGoalAxes]);
 
   const linkedIds = new Set(
     linked.map((r) => (r.source_type === "goal" ? r.source_id : r.target_id)),
@@ -79,7 +84,7 @@ export function TaskGoalsSection({ taskId }: { taskId: string }) {
         {linked.map((r) => {
           const goalId = r.source_type === "goal" ? r.source_id : r.target_id;
           const g = goals.find((x) => x.id === goalId);
-          const ax = g?.axis ? GOAL_AXIS_CONFIG[g.axis as GoalAxis] : null;
+          const ax = lookupAxis(goalAxes, g?.axis ?? null);
           return (
             <div
               key={r.id}
@@ -145,7 +150,7 @@ export function TaskGoalsSection({ taskId }: { taskId: string }) {
           />
           <div className="mt-1 max-h-40 overflow-y-auto">
             {candidates.map((c) => {
-              const ax = c.axis ? GOAL_AXIS_CONFIG[c.axis as GoalAxis] : null;
+              const ax = lookupAxis(goalAxes, c.axis);
               return (
                 <button
                   key={c.id}

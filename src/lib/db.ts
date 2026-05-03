@@ -1266,8 +1266,57 @@ export async function deleteComment(id: string): Promise<boolean> {
 
 import type {
   Goal, GoalMetric, GoalMetricSnapshot, GoalLevel, GoalAxis, GoalStatus,
+  GoalAxisConfig, CreateGoalAxisPayload, UpdateGoalAxisPayload,
   CreateGoalPayload, UpdateGoalPayload, CreateMetricPayload, UpdateMetricPayload, MetricPayload,
 } from "@/types";
+
+// ---------------- Goal axes (user-managed axis tags) ----------------
+
+const GOAL_AXIS_UPDATE_FIELDS = ["name", "color", "bg", "icon", "position"] as const;
+
+export async function getGoalAxes(): Promise<GoalAxisConfig[]> {
+  return await prepare<GoalAxisConfig>(
+    "SELECT * FROM goal_axes ORDER BY position ASC, name ASC"
+  ).all();
+}
+
+export async function getGoalAxisById(id: string): Promise<GoalAxisConfig | undefined> {
+  return await prepare<GoalAxisConfig>("SELECT * FROM goal_axes WHERE id = ?").get(id);
+}
+
+export async function createGoalAxis(data: CreateGoalAxisPayload & { id: string }): Promise<GoalAxisConfig> {
+  const maxPos = await prepare<{ p: number }>(
+    "SELECT COALESCE(MAX(position), -1) + 1 as p FROM goal_axes"
+  ).get();
+  const position = data.position ?? Number(maxPos?.p ?? 0);
+  await prepare(
+    `INSERT INTO goal_axes (id, name, color, bg, icon, position, is_system)
+     VALUES (?, ?, ?, ?, ?, ?, 0)`
+  ).run(
+    data.id, data.name.trim(),
+    data.color ?? "#64748b", data.bg ?? "#f1f5f9",
+    data.icon ?? "◆", position,
+  );
+  return (await getGoalAxisById(data.id))!;
+}
+
+export async function updateGoalAxis(id: string, updates: UpdateGoalAxisPayload): Promise<GoalAxisConfig | undefined> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, GOAL_AXIS_UPDATE_FIELDS);
+  if (!built) return await getGoalAxisById(id);
+  await prepare(`UPDATE goal_axes SET ${built.sql}, updated_at = ? WHERE id = ?`)
+    .run(...built.values, new Date().toISOString(), id);
+  return await getGoalAxisById(id);
+}
+
+export async function deleteGoalAxis(id: string): Promise<{ ok: boolean; reason?: string }> {
+  const axis = await getGoalAxisById(id);
+  if (!axis) return { ok: false, reason: "not_found" };
+  if (axis.is_system) return { ok: false, reason: "system" };
+  // Detach axis from any goals that reference it.
+  await prepare("UPDATE goals SET axis = NULL WHERE axis = ?").run(id);
+  await prepare("DELETE FROM goal_axes WHERE id = ?").run(id);
+  return { ok: true };
+}
 
 const GOAL_UPDATE_FIELDS = [
   "parent_id", "level", "axis", "title", "description", "status",

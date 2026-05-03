@@ -2,19 +2,21 @@
 
 import { useState } from "react";
 import { useBrainStore } from "@/lib/store";
-import { GOAL_AXIS_CONFIG, type GoalLevel, type GoalAxis, type GoalFull } from "@/types";
-import { ChevronRight, Plus } from "lucide-react";
+import type { GoalLevel, GoalFull } from "@/types";
+import { ChevronRight, ChevronsLeft, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CreateGoalDialog } from "./CreateGoalDialog";
+import { lookupAxis } from "@/lib/goal-axes";
 
 interface Props {
   level: GoalLevel;
   goals: GoalFull[];
   parentId: string | null;
   levelLabel: string;
+  onCollapse?: () => void;
 }
 
-export function GoalColumn({ level, goals, parentId, levelLabel }: Props) {
+export function GoalColumn({ level, goals, parentId, levelLabel, onCollapse }: Props) {
   const selected = useBrainStore((s) => s.goalSelected);
   const selectGoal = useBrainStore((s) => s.selectGoal);
   const axisFilter = useBrainStore((s) => s.goalAxisFilter);
@@ -23,7 +25,7 @@ export function GoalColumn({ level, goals, parentId, levelLabel }: Props) {
   const canCreate = level === "year" || parentId !== null;
 
   return (
-    <div className="flex min-w-0 flex-col bg-slate-50/30">
+    <div className="flex h-full min-w-0 flex-col bg-slate-50/30">
       <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2">
         <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
           {levelLabel}
@@ -42,6 +44,15 @@ export function GoalColumn({ level, goals, parentId, levelLabel }: Props) {
         >
           <Plus className="size-3.5" />
         </button>
+        {onCollapse && (
+          <button
+            onClick={onCollapse}
+            title="Свернуть колонку"
+            className="flex size-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          >
+            <ChevronsLeft className="size-3.5" />
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-2">
@@ -82,7 +93,8 @@ function GoalRow({
   isSelected: boolean;
   onClick: () => void;
 }) {
-  const ax = goal.axis ? GOAL_AXIS_CONFIG[goal.axis as GoalAxis] : null;
+  const goalAxes = useBrainStore((s) => s.goalAxes);
+  const ax = lookupAxis(goalAxes, goal.axis);
   const pct = Math.round(goal.progress * 100);
   return (
     <button
@@ -105,7 +117,7 @@ function GoalRow({
               className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide"
               style={{ backgroundColor: ax.bg, color: ax.color }}
             >
-              {ax.icon} {ax.label}
+              {ax.icon} {ax.name}
             </span>
           )}
           {goal.children_count > 0 && (

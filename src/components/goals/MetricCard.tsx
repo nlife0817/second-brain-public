@@ -6,8 +6,9 @@ import { METRIC_KIND_CONFIG, type GoalMetric, type ChecklistItem } from "@/types
 import { metricProgress, formatMetricValue } from "@/lib/goals-progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Trash2, Plus, Check } from "lucide-react";
+import { Trash2, Plus, Check, History } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SnapshotHistory } from "./SnapshotHistory";
 
 interface Props {
   goalId: string;
@@ -22,6 +23,8 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
 
   const cfg = METRIC_KIND_CONFIG[metric.kind];
   const pct = Math.round(metricProgress(metric) * 100);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const supportsHistory = metric.kind === "numeric" || metric.kind === "counter";
 
   return (
     <div className="mb-2 rounded-lg border border-slate-200 bg-white p-2.5">
@@ -34,6 +37,18 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
           <div className="text-[10px] tabular-nums text-slate-500">{formatMetricValue(metric)}</div>
         </div>
         <span className="text-xs font-semibold tabular-nums text-slate-700">{pct}%</span>
+        {supportsHistory && (
+          <button
+            onClick={() => setHistoryOpen((v) => !v)}
+            className={cn(
+              "text-slate-300 hover:text-violet-600",
+              historyOpen && "text-violet-600",
+            )}
+            title="История значений"
+          >
+            <History className="size-3.5" />
+          </button>
+        )}
         <button
           onClick={async () => {
             if (confirm(`Удалить метрику «${metric.title}»?`)) {
@@ -79,6 +94,10 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
           </p>
         )}
       </div>
+
+      {historyOpen && supportsHistory && (
+        <SnapshotHistory goalId={goalId} metric={metric} onClose={() => setHistoryOpen(false)} />
+      )}
     </div>
   );
 }

@@ -40,6 +40,7 @@ import { CategoryManager } from "./CategoryManager";
 import { OrderableListSection } from "./OrderableListSection";
 import { UserManager } from "./UserManager";
 import { NotificationsSettings } from "./NotificationsSettings";
+import { GoalAxesSection } from "./GoalAxesSection";
 import { TimingSettingsCard } from "@/components/timing/TimingSettings";
 import { Tag, Layers, Users, ListChecks } from "lucide-react";
 
@@ -1248,6 +1249,9 @@ export function SettingsView() {
           <section className="rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-sm">
             <CrmSystemsSection />
           </section>
+
+          {/* Goal axes */}
+          <GoalAxesSection />
 
           {/* Tags */}
           <TagsSection />

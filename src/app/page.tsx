@@ -61,6 +61,8 @@ export default function Home() {
       {appSection === "clients" && <CreateClientDialog />}
       {/* Task detail modal opened from Clients section (e.g. via relations) */}
       {appSection === "clients" && isDetailOpen && <TaskDetailModal forceModal />}
+      {/* Same for Goals section — клик по связанной задаче внутри цели открывает модалку. */}
+      {appSection === "goals" && isDetailOpen && <TaskDetailModal forceModal />}
     </div>
   );
 }

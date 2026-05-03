@@ -383,8 +383,8 @@ export type ClientViewMode = "list" | "kanban";
 
 // --- Relations ---
 
-// EntityType covers comments + staging (item|client only — DB CHECK constraint).
-export type EntityType = "item" | "client";
+// EntityType covers comments — extended to include goals after migration 0013.
+export type EntityType = "item" | "client" | "goal";
 // RelationEntityType is wider — relations table also accepts goals.
 export type RelationEntityType = "item" | "client" | "goal";
 
@@ -414,10 +414,43 @@ export interface RelationWithTarget extends Relation {
 
 // --- Goals ---
 
-export type GoalLevel = "year" | "quarter" | "month" | "week";
-export type GoalAxis = "income" | "debts" | "project" | "health";
+export type GoalLevel = "year" | "quarter" | "month" | "week" | "day";
+/**
+ * Axis is a free-form id matching a row in the user-managed `goal_axes` table.
+ * Built-in seeds: "income" | "debts" | "project" | "health". Users can add more.
+ */
+export type GoalAxis = string;
 export type GoalStatus = "active" | "done" | "paused" | "dropped";
 export type MetricKind = "tasks" | "numeric" | "counter" | "checklist" | "boolean";
+
+export interface GoalAxisConfig {
+  id: string;
+  name: string;
+  color: string;
+  bg: string;
+  icon: string;
+  position: number;
+  is_system: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateGoalAxisPayload {
+  id?: string;
+  name: string;
+  color?: string;
+  bg?: string;
+  icon?: string;
+  position?: number;
+}
+
+export interface UpdateGoalAxisPayload {
+  name?: string;
+  color?: string;
+  bg?: string;
+  icon?: string;
+  position?: number;
+}
 
 export interface ChecklistItem {
   title: string;
@@ -488,6 +521,8 @@ export interface CreateGoalPayload {
   period_start?: string | null;
   period_end?: string | null;
   position?: number;
+  /** When true (default) and level is year/quarter/month, the API auto-creates the child tree down to weeks. */
+  auto_decompose?: boolean;
 }
 
 export interface UpdateGoalPayload {
@@ -532,13 +567,18 @@ export const GOAL_LEVEL_CONFIG: Record<GoalLevel, { label: string; short: string
   quarter: { label: "Квартал", short: "Кв" },
   month: { label: "Месяц", short: "М" },
   week: { label: "Неделя", short: "Н" },
+  day: { label: "День", short: "Д" },
 };
 
-export const GOAL_AXIS_CONFIG: Record<GoalAxis, { label: string; icon: string; color: string; bg: string }> = {
-  income: { label: "Доход", icon: "💰", color: "#16a34a", bg: "#dcfce7" },
-  debts: { label: "Долги", icon: "💳", color: "#dc2626", bg: "#fee2e2" },
-  project: { label: "Проект", icon: "🚀", color: "#2563eb", bg: "#dbeafe" },
-  health: { label: "Здоровье", icon: "🏃", color: "#ea580c", bg: "#ffedd5" },
+/**
+ * Fallback for axes that aren't loaded from the store yet (or were deleted).
+ * Live values come from useBrainStore.goalAxes.
+ */
+export const FALLBACK_AXIS_CONFIG: Pick<GoalAxisConfig, "name" | "icon" | "color" | "bg"> = {
+  name: "Без оси",
+  icon: "◆",
+  color: "#64748b",
+  bg: "#f1f5f9",
 };
 
 export const GOAL_STATUS_CONFIG: Record<GoalStatus, { label: string; color: string }> = {
@@ -601,7 +641,7 @@ export interface StagingParsedData {
   participants?: DevelopmentParticipantInput[];
   parent_id?: string | null;
   subtasks?: { title: string; description?: string }[];
-  relations?: { target_type: EntityType; target_id?: string; target_title?: string; relation_type_id?: string | null; relation_type?: string }[];
+  relations?: { target_type: StagingEntityType; target_id?: string; target_title?: string; relation_type_id?: string | null; relation_type?: string }[];
 
   // Client fields
   budget?: string;

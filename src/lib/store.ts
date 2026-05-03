@@ -40,6 +40,9 @@ import {
   GoalFull,
   GoalLevel,
   GoalAxis,
+  GoalAxisConfig,
+  CreateGoalAxisPayload,
+  UpdateGoalAxisPayload,
   CreateGoalPayload,
   UpdateGoalPayload,
   GoalMetric,
@@ -275,8 +278,16 @@ interface BrainStore {
   // Goals
   goals: GoalFull[];
   goalsLoaded: boolean;
+  goalAxes: GoalAxisConfig[];
+  goalAxesLoaded: boolean;
   goalAxisFilter: GoalAxis | null;
   goalSelected: Partial<Record<GoalLevel, string | null>>;
+  goalCollapsedColumns: GoalLevel[];
+  fetchGoalAxes: () => Promise<void>;
+  createGoalAxis: (payload: CreateGoalAxisPayload) => Promise<GoalAxisConfig | null>;
+  updateGoalAxis: (id: string, payload: UpdateGoalAxisPayload) => Promise<void>;
+  deleteGoalAxis: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  toggleGoalColumnCollapsed: (level: GoalLevel) => void;
   fetchGoals: () => Promise<void>;
   createGoal: (payload: CreateGoalPayload) => Promise<GoalFull | null>;
   updateGoal: (id: string, payload: UpdateGoalPayload) => Promise<void>;
@@ -1737,8 +1748,53 @@ export const useBrainStore = create<BrainStore>()(
   // Goals
   goals: [],
   goalsLoaded: false,
+  goalAxes: [],
+  goalAxesLoaded: false,
   goalAxisFilter: null,
   goalSelected: {},
+  goalCollapsedColumns: [],
+  fetchGoalAxes: async () => {
+    const res = await fetch("/api/goal-axes");
+    if (!res.ok) return;
+    const axes: GoalAxisConfig[] = await res.json();
+    set({ goalAxes: axes, goalAxesLoaded: true });
+  },
+  createGoalAxis: async (payload) => {
+    const res = await fetch("/api/goal-axes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return null;
+    const axis: GoalAxisConfig = await res.json();
+    await get().fetchGoalAxes();
+    return axis;
+  },
+  updateGoalAxis: async (id, payload) => {
+    const res = await fetch(`/api/goal-axes/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return;
+    await get().fetchGoalAxes();
+  },
+  deleteGoalAxis: async (id) => {
+    const res = await fetch(`/api/goal-axes/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, error: body.error };
+    }
+    await get().fetchGoalAxes();
+    await get().fetchGoals();
+    return { ok: true };
+  },
+  toggleGoalColumnCollapsed: (level) => set((s) => {
+    const cur = new Set(s.goalCollapsedColumns);
+    if (cur.has(level)) cur.delete(level);
+    else cur.add(level);
+    return { goalCollapsedColumns: Array.from(cur) };
+  }),
   fetchGoals: async () => {
     const res = await fetch("/api/goals");
     if (!res.ok) return;
@@ -1815,7 +1871,7 @@ export const useBrainStore = create<BrainStore>()(
   selectGoal: (level, id) => set((s) => {
     const next: Partial<Record<GoalLevel, string | null>> = { ...s.goalSelected, [level]: id };
     // Clear deeper levels when parent changes.
-    const order: GoalLevel[] = ["year", "quarter", "month", "week"];
+    const order: GoalLevel[] = ["year", "quarter", "month", "week", "day"];
     const idx = order.indexOf(level);
     for (let i = idx + 1; i < order.length; i++) next[order[i]] = null;
     return { goalSelected: next };
@@ -1901,6 +1957,7 @@ export const useBrainStore = create<BrainStore>()(
       listCollapsedGroups: state.listCollapsedGroups,
       clientsCollapsedGroups: state.clientsCollapsedGroups,
       currentPlanId: state.currentPlanId,
+      goalCollapsedColumns: state.goalCollapsedColumns,
       filters: {
         categories: state.filters.categories,
         priorities: state.filters.priorities,
