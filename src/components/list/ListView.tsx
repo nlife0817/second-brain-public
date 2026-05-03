@@ -1554,31 +1554,28 @@ export function ListView() {
 
   /* ----- Ctrl+Z / Ctrl+Shift+Z keyboard handler -------------------------- */
   useEffect(() => {
-    const isMac =
-      typeof navigator !== "undefined" && /Mac|iPad|iPhone/.test(navigator.platform);
     const handler = (e: KeyboardEvent) => {
-      const meta = isMac ? e.metaKey : e.ctrlKey;
+      // Accept either modifier — works for Mac (Cmd) and Win/Linux (Ctrl).
+      // Some installed PWAs don't populate navigator.platform reliably, so we
+      // don't gate on OS detection.
+      const meta = e.metaKey || e.ctrlKey;
       if (!meta) return;
       const k = e.key.toLowerCase();
       if (k !== "z" && k !== "y") return;
-      // Don't hijack undo while the user is typing in a field — the browser's
-      // native input undo should win there.
-      const t = e.target as HTMLElement | null;
-      if (
-        t &&
-        (t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable)
-      ) {
-        return;
-      }
+      // Skip only inside rich text editors (Tiptap / contentEditable). Plain
+      // text inputs (search, inline create) still get our global undo so the
+      // shortcut keeps working when focus happens to land on one.
+      const active = (document.activeElement ?? e.target) as HTMLElement | null;
+      if (active?.isContentEditable) return;
       const isRedo = (k === "z" && e.shiftKey) || k === "y";
       e.preventDefault();
+      e.stopPropagation();
       if (isRedo) void redo();
       else void undo();
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    // Capture phase so we beat input-level handlers (incl. browser native undo).
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
   }, [undo, redo]);
 
   // Build position maps for group ordering
