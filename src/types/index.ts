@@ -705,6 +705,7 @@ export interface TimeEntry {
   source: TimeEntrySource;
   pomodoro_mode: PomodoroMode | null;
   pomodoro_phase: PomodoroPhase | null;
+  client_request_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -713,6 +714,9 @@ export interface ActiveTimerSnapshot {
   entry: TimeEntry | null;
   item_title: string | null;
   server_now: string;            // ISO timestamp from server, for clock-drift correction
+  /** When start replaced an existing active timer, this holds the closed entry — used for the 3s "Undo" toast. */
+  replaced_entry?: TimeEntry | null;
+  replaced_item_title?: string | null;
 }
 
 export interface TimingSettings {

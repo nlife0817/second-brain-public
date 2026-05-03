@@ -7,7 +7,7 @@ import type { ActiveTimerSnapshot, PomodoroMode } from "@/types";
 const VALID_POMODORO: PomodoroMode[] = ["25_5", "50_10"];
 
 export const POST = withAuth(async (req, _ctx, user) => {
-  let body: { item_id?: unknown; pomodoro_mode?: unknown };
+  let body: { item_id?: unknown; pomodoro_mode?: unknown; client_request_id?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -31,6 +31,11 @@ export const POST = withAuth(async (req, _ctx, user) => {
     pomodoroMode = body.pomodoro_mode as PomodoroMode;
   }
 
+  const clientRequestId =
+    typeof body.client_request_id === "string" && body.client_request_id.trim()
+      ? body.client_request_id.trim().slice(0, 64)
+      : null;
+
   const item = await prepare<{ id: string; title: string }>(
     "SELECT id, title FROM items WHERE id = ?"
   ).get(itemId);
@@ -38,16 +43,29 @@ export const POST = withAuth(async (req, _ctx, user) => {
     return NextResponse.json({ error: "item not found" }, { status: 404 });
   }
 
-  const entry = await startTimer({
+  const { entry, replaced } = await startTimer({
     userEmail: user.email,
     itemId,
     pomodoroMode,
+    clientRequestId,
   });
+
+  let replacedItemTitle: string | null = null;
+  if (replaced && replaced.item_id !== entry.item_id) {
+    const r = await prepare<{ title: string }>(
+      "SELECT title FROM items WHERE id = ?"
+    ).get(replaced.item_id);
+    replacedItemTitle = r?.title ?? null;
+  } else if (replaced) {
+    replacedItemTitle = item.title;
+  }
 
   const snapshot: ActiveTimerSnapshot = {
     entry,
     item_title: item.title,
     server_now: new Date().toISOString(),
+    replaced_entry: replaced,
+    replaced_item_title: replacedItemTitle,
   };
   return NextResponse.json(snapshot, { status: 201 });
 });

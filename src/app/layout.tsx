@@ -7,6 +7,7 @@ import { RealtimeProvider } from "@/components/RealtimeProvider";
 import { TimingProvider } from "@/components/timing/TimingProvider";
 import { GlobalTimerWidget } from "@/components/timing/GlobalTimerWidget";
 import { IdleDialog } from "@/components/timing/IdleDialog";
+import { TimerUndoToast } from "@/components/timing/TimerUndoToast";
 import "./globals.css";
 
 const inter = Inter({
@@ -64,6 +65,7 @@ export default function RootLayout({
           <TimingProvider />
           <GlobalTimerWidget />
           <IdleDialog />
+          <TimerUndoToast />
         </ErrorBoundary>
       </body>
     </html>

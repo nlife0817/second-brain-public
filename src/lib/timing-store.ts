@@ -13,6 +13,17 @@ import { TIMING_SETTINGS_DEFAULTS } from "@/types";
 const BROADCAST_CHANNEL = "second-brain-timing";
 const STORAGE_KEY = "sb-timing-v1";
 
+/** Pending undo of a mutex_replace — set by start() when the server reported a replacement. */
+export interface PendingUndo {
+  /** id of the new active entry (the one that replaced) */
+  current_active_id: string;
+  /** the entry that was just closed (mutex_replace) */
+  replaced_entry: TimeEntry;
+  replaced_item_title: string | null;
+  /** Date.now() when the replace happened — used to clamp the 4s undo window. */
+  at: number;
+}
+
 interface TimingStore {
   // ----- state -----
   activeEntry: TimeEntry | null;
@@ -31,6 +42,8 @@ interface TimingStore {
   totalsByItem: Record<string, number>;
   /** User's per-account timer settings. */
   settings: Pick<TimingSettings, "idle_threshold_min" | "reminder_interval_min" | "hard_cap_hours" | "default_pomodoro">;
+  /** A pending mutex_replace that the user can still undo (cleared after ~4s). */
+  pendingUndo: PendingUndo | null;
 
   // ----- actions -----
   hydrate: () => Promise<void>;
@@ -43,6 +56,8 @@ interface TimingStore {
   touchActive: () => void;
   setIdlePromptOpen: (open: boolean) => void;
   setPipOpen: (open: boolean) => void;
+  clearPendingUndo: () => void;
+  undoReplace: () => Promise<void>;
   /** Server-aligned current time in ms. */
   serverNow: () => number;
   /** Elapsed seconds for the active entry (server-aligned). */
@@ -78,6 +93,7 @@ function makeOptimisticEntry(opts: {
   itemId: string;
   pomodoroMode: PomodoroMode | null;
   startedAt: string;
+  clientRequestId: string;
 }): TimeEntry {
   return {
     id: `optimistic-${Date.now()}`,
@@ -92,9 +108,18 @@ function makeOptimisticEntry(opts: {
     source: "manual",
     pomodoro_mode: opts.pomodoroMode,
     pomodoro_phase: opts.pomodoroMode ? "focus" : null,
+    client_request_id: opts.clientRequestId,
     created_at: opts.startedAt,
     updated_at: opts.startedAt,
   };
+}
+
+function genClientRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  // Fallback (older WebViews): timestamp + random.
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 interface InitResponse {
@@ -115,6 +140,7 @@ export const useTimingStore = create<TimingStore>()(
       pipOpen: false,
       totalsByItem: {},
       settings: { ...TIMING_SETTINGS_DEFAULTS },
+      pendingUndo: null,
 
       hydrate: async () => {
         try {
@@ -187,8 +213,14 @@ export const useTimingStore = create<TimingStore>()(
       start: async (itemId, opts) => {
         const startedAt = new Date(Date.now() + get().serverOffsetMs).toISOString();
         const pomodoroMode = opts?.pomodoroMode ?? null;
+        const clientRequestId = genClientRequestId();
         // Optimistic: replace store immediately so UI reacts.
-        const optimistic = makeOptimisticEntry({ itemId, pomodoroMode, startedAt });
+        const optimistic = makeOptimisticEntry({
+          itemId,
+          pomodoroMode,
+          startedAt,
+          clientRequestId,
+        });
         set({
           activeEntry: optimistic,
           itemTitle: opts?.itemTitle ?? get().itemTitle,
@@ -207,7 +239,11 @@ export const useTimingStore = create<TimingStore>()(
           const res = await fetch("/api/timing/start", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ item_id: itemId, pomodoro_mode: pomodoroMode }),
+            body: JSON.stringify({
+              item_id: itemId,
+              pomodoro_mode: pomodoroMode,
+              client_request_id: clientRequestId,
+            }),
           });
           if (!res.ok) {
             await get().hydrate();
@@ -215,6 +251,20 @@ export const useTimingStore = create<TimingStore>()(
           }
           const snap = (await res.json()) as ActiveTimerSnapshot;
           get().applySnapshot(snap);
+          // Capture replaced entry for the Undo toast (only if it points to a
+          // different item — replacing the same item is a noop the user
+          // wouldn't want to "undo").
+          if (snap.replaced_entry && snap.entry &&
+              snap.replaced_entry.item_id !== snap.entry.item_id) {
+            set({
+              pendingUndo: {
+                current_active_id: snap.entry.id,
+                replaced_entry: snap.replaced_entry,
+                replaced_item_title: snap.replaced_item_title ?? null,
+                at: Date.now(),
+              },
+            });
+          }
           void get().refreshTotals();
         } catch (e) {
           // Hydration above already restored truth from server.
@@ -226,7 +276,7 @@ export const useTimingStore = create<TimingStore>()(
         // Optimistic: clear immediately so the widget UI snaps off.
         const previousEntry = get().activeEntry;
         const previousTitle = get().itemTitle;
-        set({ activeEntry: null, itemTitle: null, idlePromptOpen: false });
+        set({ activeEntry: null, itemTitle: null, idlePromptOpen: false, pendingUndo: null });
         broadcast({ type: "stopped" });
 
         try {
@@ -287,6 +337,32 @@ export const useTimingStore = create<TimingStore>()(
 
       setIdlePromptOpen: (open) => set({ idlePromptOpen: open }),
       setPipOpen: (open) => set({ pipOpen: open }),
+      clearPendingUndo: () => set({ pendingUndo: null }),
+
+      undoReplace: async () => {
+        const undo = get().pendingUndo;
+        if (!undo) return;
+        set({ pendingUndo: null });
+        try {
+          const res = await fetch("/api/timing/undo-replace", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              current_active_id: undo.current_active_id,
+              replaced_entry_id: undo.replaced_entry.id,
+            }),
+          });
+          if (!res.ok) {
+            await get().hydrate();
+            return;
+          }
+          const snap = (await res.json()) as ActiveTimerSnapshot;
+          get().applySnapshot(snap);
+          void get().refreshTotals();
+        } catch {
+          await get().hydrate();
+        }
+      },
 
       serverNow: () => Date.now() + get().serverOffsetMs,
 

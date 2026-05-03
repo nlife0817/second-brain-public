@@ -25,32 +25,47 @@ export async function getActiveEntry(userEmail: string): Promise<TimeEntry | und
 
 /**
  * Start a new timer on `itemId`. Atomically closes any currently active timer
- * for the user (mutex), then inserts a fresh row. Returns the new active entry.
+ * for the user (mutex), then inserts a fresh row. Returns the new active entry
+ * and the replaced one (if any) for the "Undo" toast.
+ *
+ * If `clientRequestId` is provided and a row already exists for it, that row
+ * is returned without changes — idempotent retry support for flaky networks.
  */
 export async function startTimer(opts: {
   userEmail: string;
   itemId: string;
   pomodoroMode?: PomodoroMode | null;
+  clientRequestId?: string | null;
   now?: Date;
-}): Promise<TimeEntry> {
+}): Promise<{ entry: TimeEntry; replaced: TimeEntry | null }> {
   const now = (opts.now ?? new Date()).toISOString();
   const newId = uuid();
+  const cri = opts.clientRequestId ?? null;
 
-  const newEntry = await transaction(async (tx) => {
+  const result = await transaction(async (tx) => {
+    // Idempotency: if this client_request_id already produced a row, return it.
+    if (cri) {
+      const existing = await tx.prepare<TimeEntry>(
+        "SELECT * FROM time_entries WHERE user_email = ? AND client_request_id = ?"
+      ).get(opts.userEmail, cri);
+      if (existing) return { entry: existing, replaced: null as TimeEntry | null };
+    }
+
     // Close any currently active entry as `mutex_replace`.
-    await tx.prepare(`
+    const replaced = await tx.prepare<TimeEntry>(`
       UPDATE time_entries
       SET ended_at = ?, source = 'mutex_replace', updated_at = ?
       WHERE user_email = ? AND ended_at IS NULL
-    `).run(now, now, opts.userEmail);
+      RETURNING *
+    `).get(now, now, opts.userEmail);
 
     // Insert new active entry.
     await tx.prepare(`
       INSERT INTO time_entries (
         id, user_email, item_id, started_at, last_heartbeat_at, last_active_at,
-        source, pomodoro_mode, pomodoro_phase, created_at, updated_at
+        source, pomodoro_mode, pomodoro_phase, client_request_id, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?)
     `).run(
       newId,
       opts.userEmail,
@@ -60,17 +75,72 @@ export async function startTimer(opts: {
       now,
       opts.pomodoroMode ?? null,
       opts.pomodoroMode ? "focus" : null,
+      cri,
       now,
       now,
     );
 
-    return await tx.prepare<TimeEntry>(
+    const entry = await tx.prepare<TimeEntry>(
       "SELECT * FROM time_entries WHERE id = ?"
     ).get(newId);
+    if (!entry) throw new Error("startTimer: failed to insert entry");
+    return { entry, replaced: replaced ?? null };
   });
 
-  if (!newEntry) throw new Error("startTimer: failed to insert entry");
-  return newEntry;
+  return result;
+}
+
+/**
+ * Undo a recent mutex_replace: close the current active entry and resurrect
+ * the previously-closed one (set ended_at = NULL, source back to 'manual').
+ *
+ * Validates: caller owns both rows, replaced entry was closed via mutex_replace
+ * within the last `maxAgeMs` ms, current active matches expected id.
+ */
+export async function undoMutexReplace(opts: {
+  userEmail: string;
+  currentActiveId: string;
+  replacedEntryId: string;
+  maxAgeMs?: number;
+}): Promise<{ resurrected: TimeEntry | null }> {
+  const maxAgeMs = opts.maxAgeMs ?? 60_000;
+  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+  const now = new Date().toISOString();
+
+  return await transaction(async (tx) => {
+    // 1. Verify replaced entry: belongs to user, mutex_replace, recent.
+    const replaced = await tx.prepare<TimeEntry>(`
+      SELECT * FROM time_entries
+      WHERE id = ? AND user_email = ? AND source = 'mutex_replace'
+        AND ended_at IS NOT NULL AND ended_at >= ?
+    `).get(opts.replacedEntryId, opts.userEmail, cutoff);
+    if (!replaced) return { resurrected: null };
+
+    // 2. Verify current active matches.
+    const current = await tx.prepare<TimeEntry>(`
+      SELECT * FROM time_entries
+      WHERE id = ? AND user_email = ? AND ended_at IS NULL
+    `).get(opts.currentActiveId, opts.userEmail);
+    if (!current) return { resurrected: null };
+
+    // 3. Hard-delete the brand-new entry (it was a mistake — no learning value
+    //    from keeping a 2-second session in history).
+    await tx.prepare(
+      "DELETE FROM time_entries WHERE id = ? AND user_email = ?"
+    ).run(opts.currentActiveId, opts.userEmail);
+
+    // 4. Resurrect: clear ended_at, restore source to 'manual'.
+    await tx.prepare(`
+      UPDATE time_entries
+      SET ended_at = NULL, source = 'manual', updated_at = ?
+      WHERE id = ? AND user_email = ?
+    `).run(now, opts.replacedEntryId, opts.userEmail);
+
+    const resurrected = await tx.prepare<TimeEntry>(
+      "SELECT * FROM time_entries WHERE id = ?"
+    ).get(opts.replacedEntryId);
+    return { resurrected: resurrected ?? null };
+  });
 }
 
 /**
