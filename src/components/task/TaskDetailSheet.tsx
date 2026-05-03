@@ -1137,8 +1137,7 @@ export function TaskDetailModal({ forceModal }: { forceModal?: boolean } = {}) {
     >
       <DialogContent
         className={cn(
-          "max-w-[calc(100%-1rem)] sm:max-w-[92vw] md:max-w-[90vw] lg:max-w-5xl xl:max-w-7xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-6 lg:p-8 bg-white",
-          forceModal && "z-[60]"
+          "max-w-[calc(100%-1rem)] sm:max-w-[92vw] md:max-w-[90vw] lg:max-w-5xl xl:max-w-7xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-6 lg:p-8 bg-white"
         )}
         showCloseButton
       >

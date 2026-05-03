@@ -7,7 +7,8 @@ import { GoalColumn } from "./GoalColumn";
 import { GoalDetailPanel } from "./GoalDetailPanel";
 import { DayColumn } from "./DayColumn";
 import { cn } from "@/lib/utils";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Layers } from "lucide-react";
+import type { GoalDeadlineOp, GoalGroupBy } from "@/lib/store";
 
 const LEVEL_ORDER: GoalLevel[] = ["year", "quarter", "month", "week", "day"];
 
@@ -15,6 +16,39 @@ const TODAY_ISO = (): string => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
+
+function startOfWeekISO(today: string): string {
+  const d = new Date(today + "T00:00:00");
+  const dow = d.getDay(); // 0 = Sunday
+  const diff = dow === 0 ? -6 : 1 - dow;
+  d.setDate(d.getDate() + diff);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function endOfWeekISO(today: string): string {
+  const d = new Date(startOfWeekISO(today) + "T00:00:00");
+  d.setDate(d.getDate() + 6);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+const DEADLINE_OPS: Array<{ id: GoalDeadlineOp; label: string; needsDate?: boolean }> = [
+  { id: "all", label: "Все" },
+  { id: "today", label: "Сегодня" },
+  { id: "this_week", label: "На этой неделе" },
+  { id: "active", label: "Сейчас активна" },
+  { id: "overdue", label: "Просрочены" },
+  { id: "upcoming", label: "Будущие" },
+  { id: "before", label: "До даты", needsDate: true },
+  { id: "after", label: "После даты", needsDate: true },
+  { id: "is_empty", label: "Без срока" },
+  { id: "is_not_empty", label: "Со сроком" },
+];
+
+const GROUP_BY_OPTIONS: Array<{ id: GoalGroupBy; label: string }> = [
+  { id: "none", label: "Без группировки" },
+  { id: "axis", label: "По оси" },
+  { id: "status", label: "По статусу" },
+];
 
 export function GoalsView() {
   const goals = useBrainStore((s) => s.goals);
@@ -29,6 +63,8 @@ export function GoalsView() {
   const setHideDone = useBrainStore((s) => s.setGoalHideDone);
   const deadlineFilter = useBrainStore((s) => s.goalDeadlineFilter);
   const setDeadlineFilter = useBrainStore((s) => s.setGoalDeadlineFilter);
+  const groupBy = useBrainStore((s) => s.goalGroupBy);
+  const setGroupBy = useBrainStore((s) => s.setGoalGroupBy);
   const selected = useBrainStore((s) => s.goalSelected);
   const collapsed = useBrainStore((s) => s.goalCollapsedColumns);
   const toggleCollapsed = useBrainStore((s) => s.toggleGoalColumnCollapsed);
@@ -44,13 +80,26 @@ export function GoalsView() {
   const filtered = useMemo(() => {
     const byId = new Map(goals.map((g) => [g.id, g]));
     const isDone = (g: GoalFull): boolean => g.status === "done" || (g.progress ?? 0) >= 0.999;
+    const weekStart = startOfWeekISO(today);
+    const weekEnd = endOfWeekISO(today);
     const matchesDeadline = (g: GoalFull): boolean => {
-      if (deadlineFilter === "all") return true;
+      const op = deadlineFilter.op;
+      if (op === "all") return true;
       const end = g.period_end;
+      const start = g.period_start;
+      if (op === "is_empty") return !end;
+      if (op === "is_not_empty") return !!end;
       if (!end) return false;
-      if (deadlineFilter === "active") return end >= today && (g.period_start ?? "") <= today;
-      if (deadlineFilter === "overdue") return end < today && !isDone(g);
-      if (deadlineFilter === "upcoming") return (g.period_start ?? "") > today;
+      if (op === "today") return start ? (start <= today && today <= end) : end === today;
+      if (op === "this_week") {
+        const s = start ?? end;
+        return !(end < weekStart || s > weekEnd);
+      }
+      if (op === "active") return end >= today && (start ?? "") <= today;
+      if (op === "overdue") return end < today && !isDone(g);
+      if (op === "upcoming") return (start ?? "") > today;
+      if (op === "before") return deadlineFilter.value ? end < deadlineFilter.value : true;
+      if (op === "after") return deadlineFilter.value ? end > deadlineFilter.value : true;
       return true;
     };
     const matchesAxis = (g: GoalFull): boolean => {
@@ -108,12 +157,7 @@ export function GoalsView() {
   const collapsedSet = useMemo(() => new Set(collapsed), [collapsed]);
   const visibleLevels = LEVEL_ORDER.filter((l) => !collapsedSet.has(l));
 
-  const DEADLINE_TABS: Array<{ id: typeof deadlineFilter; label: string; title: string }> = [
-    { id: "all", label: "Все сроки", title: "Все цели независимо от дедлайна" },
-    { id: "active", label: "Сейчас", title: "Цели, чей период идёт сейчас" },
-    { id: "overdue", label: "Просрочены", title: "Период закончился, цель не достигнута" },
-    { id: "upcoming", label: "Будущие", title: "Период ещё не начался" },
-  ];
+  const needsDate = deadlineFilter.op === "before" || deadlineFilter.op === "after";
 
   return (
     <div className="flex h-full flex-col">
@@ -158,21 +202,47 @@ export function GoalsView() {
 
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] font-medium uppercase tracking-widest text-slate-400">Срок:</span>
-          {DEADLINE_TABS.map((t) => (
+          <select
+            value={deadlineFilter.op}
+            onChange={(e) => setDeadlineFilter({ op: e.target.value as GoalDeadlineOp, value: deadlineFilter.value })}
+            className="h-7 rounded-md border border-slate-200 bg-white px-1.5 text-xs text-slate-700 focus:border-slate-400 focus:outline-none"
+          >
+            {DEADLINE_OPS.map((o) => (
+              <option key={o.id} value={o.id}>{o.label}</option>
+            ))}
+          </select>
+          {needsDate && (
+            <input
+              type="date"
+              value={deadlineFilter.value}
+              onChange={(e) => setDeadlineFilter({ op: deadlineFilter.op, value: e.target.value })}
+              className="h-7 rounded-md border border-slate-200 bg-white px-1.5 text-xs text-slate-700 focus:border-slate-400 focus:outline-none"
+            />
+          )}
+          {(deadlineFilter.op !== "all" || deadlineFilter.value) && (
             <button
-              key={t.id}
-              onClick={() => setDeadlineFilter(t.id)}
-              title={t.title}
-              className={cn(
-                "rounded-full border px-2.5 py-0.5 text-xs font-medium transition",
-                deadlineFilter === t.id
-                  ? "border-slate-900 bg-slate-900 text-white"
-                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
-              )}
+              type="button"
+              onClick={() => setDeadlineFilter({ op: "all", value: "" })}
+              className="text-[11px] text-slate-400 hover:text-slate-600"
+              title="Сбросить фильтр срока"
             >
-              {t.label}
+              ×
             </button>
-          ))}
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Layers className="size-3.5 text-slate-400" />
+          <select
+            value={groupBy}
+            onChange={(e) => setGroupBy(e.target.value as GoalGroupBy)}
+            className="h-7 rounded-md border border-slate-200 bg-white px-1.5 text-xs text-slate-700 focus:border-slate-400 focus:outline-none"
+            title="Группировка целей внутри колонки"
+          >
+            {GROUP_BY_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>{o.label}</option>
+            ))}
+          </select>
         </div>
 
         <label className="flex items-center gap-1.5 text-xs text-slate-700 select-none cursor-pointer">
@@ -263,6 +333,7 @@ export function GoalsView() {
                   levelLabel={GOAL_LEVEL_CONFIG[lvl].label}
                   onCollapse={() => toggleCollapsed(lvl)}
                   today={today}
+                  groupBy={groupBy}
                 />
               </div>
             );

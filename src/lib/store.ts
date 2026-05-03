@@ -57,6 +57,25 @@ import {
   ItemStatusKind,
 } from "@/types";
 
+export type GoalDeadlineOp =
+  | "all"
+  | "today"
+  | "this_week"
+  | "overdue"
+  | "upcoming"
+  | "active"
+  | "before"
+  | "after"
+  | "is_empty"
+  | "is_not_empty";
+
+export interface GoalDeadlineFilter {
+  op: GoalDeadlineOp;
+  value: string;
+}
+
+export type GoalGroupBy = "none" | "axis" | "status";
+
 // One reversible inline edit on an item. `payload` holds the values needed to
 // revert (undo); `newPayload` holds the values that were written (used both for
 // redo and for conflict detection — we skip an undo step if the current item
@@ -282,9 +301,11 @@ interface BrainStore {
   goalAxesLoaded: boolean;
   goalAxisFilter: GoalAxis | null;
   goalHideDone: boolean;
-  goalDeadlineFilter: "all" | "active" | "overdue" | "upcoming";
+  goalDeadlineFilter: GoalDeadlineFilter;
+  goalGroupBy: GoalGroupBy;
   goalSelected: Partial<Record<GoalLevel, string | null>>;
   goalCollapsedColumns: GoalLevel[];
+  goalCollapsedGroups: string[];
   fetchGoalAxes: () => Promise<void>;
   createGoalAxis: (payload: CreateGoalAxisPayload) => Promise<GoalAxisConfig | null>;
   updateGoalAxis: (id: string, payload: UpdateGoalAxisPayload) => Promise<void>;
@@ -300,7 +321,9 @@ interface BrainStore {
   recordSnapshot: (goalId: string, metricId: string, value: number, note?: string) => Promise<void>;
   setGoalAxisFilter: (axis: GoalAxis | null) => void;
   setGoalHideDone: (v: boolean) => void;
-  setGoalDeadlineFilter: (v: "all" | "active" | "overdue" | "upcoming") => void;
+  setGoalDeadlineFilter: (v: GoalDeadlineFilter) => void;
+  setGoalGroupBy: (v: GoalGroupBy) => void;
+  toggleGoalGroupCollapsed: (key: string) => void;
   selectGoal: (level: GoalLevel, id: string | null) => void;
   linkTaskToGoal: (goalId: string, taskId: string) => Promise<void>;
   unlinkTaskFromGoal: (goalId: string, taskId: string) => Promise<void>;
@@ -1756,9 +1779,11 @@ export const useBrainStore = create<BrainStore>()(
   goalAxesLoaded: false,
   goalAxisFilter: null,
   goalHideDone: false,
-  goalDeadlineFilter: "all",
+  goalDeadlineFilter: { op: "all", value: "" },
+  goalGroupBy: "none",
   goalSelected: {},
   goalCollapsedColumns: [],
+  goalCollapsedGroups: [],
   fetchGoalAxes: async () => {
     const res = await fetch("/api/goal-axes");
     if (!res.ok) return;
@@ -1878,35 +1903,84 @@ export const useBrainStore = create<BrainStore>()(
     });
     if (!res.ok) return null;
     const metric: GoalMetric = await res.json();
-    await get().fetchGoals();
+    // Optimistic local insert; fetchGoals in background to refresh derived progress.
+    set((s) => ({
+      goals: s.goals.map((g) =>
+        g.id === goalId ? { ...g, metrics: [...(g.metrics ?? []), metric] } : g,
+      ),
+    }));
+    void get().fetchGoals();
     return metric;
   },
   updateMetric: async (goalId, metricId, payload) => {
+    const prev = get().goals;
+    set((s) => ({
+      goals: s.goals.map((g) =>
+        g.id !== goalId ? g : {
+          ...g,
+          metrics: (g.metrics ?? []).map((m) =>
+            m.id === metricId ? { ...m, ...(payload as Partial<GoalMetric>) } : m,
+          ),
+        },
+      ),
+    }));
     const res = await fetch(`/api/goals/${goalId}/metrics/${metricId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) return;
-    await get().fetchGoals();
+    if (!res.ok) {
+      set({ goals: prev });
+      return;
+    }
+    void get().fetchGoals();
   },
   deleteMetric: async (goalId, metricId) => {
+    const prev = get().goals;
+    set((s) => ({
+      goals: s.goals.map((g) =>
+        g.id !== goalId ? g : { ...g, metrics: (g.metrics ?? []).filter((m) => m.id !== metricId) },
+      ),
+    }));
     const res = await fetch(`/api/goals/${goalId}/metrics/${metricId}`, { method: "DELETE" });
-    if (!res.ok) return;
-    await get().fetchGoals();
+    if (!res.ok) {
+      set({ goals: prev });
+      return;
+    }
+    void get().fetchGoals();
   },
   recordSnapshot: async (goalId, metricId, value, note) => {
+    const prev = get().goals;
+    set((s) => ({
+      goals: s.goals.map((g) =>
+        g.id !== goalId ? g : {
+          ...g,
+          metrics: (g.metrics ?? []).map((m) =>
+            m.id === metricId ? { ...m, current_value: value } : m,
+          ),
+        },
+      ),
+    }));
     const res = await fetch(`/api/goals/${goalId}/metrics/${metricId}/snapshot`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value, note }),
     });
-    if (!res.ok) return;
-    await get().fetchGoals();
+    if (!res.ok) {
+      set({ goals: prev });
+      return;
+    }
+    void get().fetchGoals();
   },
   setGoalAxisFilter: (axis) => set({ goalAxisFilter: axis }),
   setGoalHideDone: (v) => set({ goalHideDone: v }),
   setGoalDeadlineFilter: (v) => set({ goalDeadlineFilter: v }),
+  setGoalGroupBy: (v) => set({ goalGroupBy: v, goalCollapsedGroups: [] }),
+  toggleGoalGroupCollapsed: (key) => set((s) => {
+    const cur = new Set(s.goalCollapsedGroups);
+    if (cur.has(key)) cur.delete(key); else cur.add(key);
+    return { goalCollapsedGroups: Array.from(cur) };
+  }),
   selectGoal: (level, id) => set((s) => {
     const next: Partial<Record<GoalLevel, string | null>> = { ...s.goalSelected, [level]: id };
     // Clear deeper levels when parent changes.
@@ -1925,14 +1999,14 @@ export const useBrainStore = create<BrainStore>()(
         relation_type_id: "belongs_to_goal",
       }),
     });
-    await get().fetchGoals();
+    void get().fetchGoals();
   },
   unlinkTaskFromGoal: async (goalId, taskId) => {
     const rels = await get().fetchRelations("goal", goalId);
     const rel = rels.find((r) => r.target_type === "item" && r.target_id === taskId);
     if (!rel) return;
     await get().deleteRelation(rel.id);
-    await get().fetchGoals();
+    void get().fetchGoals();
   },
   getGoalsForTask: async (taskId) => {
     const rels = await get().fetchRelations("item", taskId);
@@ -1941,7 +2015,7 @@ export const useBrainStore = create<BrainStore>()(
 }),
   {
     name: "second-brain-settings",
-    version: 5,
+    version: 6,
     storage: createJSONStorage(() => localStorage),
     migrate: (persisted: unknown, version: number) => {
       const state = persisted as Record<string, unknown> | null;
@@ -1977,6 +2051,16 @@ export const useBrainStore = create<BrainStore>()(
           state.listColumnOrder = next;
         }
       }
+      if (state && version < 6) {
+        // goalDeadlineFilter changed from string ('all'|'active'|'overdue'|'upcoming')
+        // to { op, value }.
+        const old = state.goalDeadlineFilter;
+        if (typeof old === "string") {
+          state.goalDeadlineFilter = { op: old as GoalDeadlineOp, value: "" };
+        } else if (!old || typeof old !== "object") {
+          state.goalDeadlineFilter = { op: "all", value: "" };
+        }
+      }
       return state;
     },
     partialize: (state) => ({
@@ -1997,8 +2081,10 @@ export const useBrainStore = create<BrainStore>()(
       clientsCollapsedGroups: state.clientsCollapsedGroups,
       currentPlanId: state.currentPlanId,
       goalCollapsedColumns: state.goalCollapsedColumns,
+      goalCollapsedGroups: state.goalCollapsedGroups,
       goalHideDone: state.goalHideDone,
       goalDeadlineFilter: state.goalDeadlineFilter,
+      goalGroupBy: state.goalGroupBy,
       filters: {
         categories: state.filters.categories,
         priorities: state.filters.priorities,

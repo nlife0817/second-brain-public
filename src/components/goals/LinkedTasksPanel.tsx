@@ -74,9 +74,9 @@ export function LinkedTasksPanel({ goalId }: { goalId: string }) {
                 {r.target_title || "(удалено)"}
               </button>
               <button
-                onClick={async () => {
-                  await unlinkTaskFromGoal(goalId, r.target_id);
-                  await refresh();
+                onClick={() => {
+                  setLinked((prev) => prev.filter((x) => x.id !== r.id));
+                  void unlinkTaskFromGoal(goalId, r.target_id).then(() => void refresh());
                 }}
                 className="text-slate-300 hover:text-red-500"
                 title="Отвязать"
@@ -115,10 +115,9 @@ export function LinkedTasksPanel({ goalId }: { goalId: string }) {
             {candidates.map((c) => (
               <button
                 key={c.id}
-                onClick={async () => {
-                  await linkTaskToGoal(goalId, c.id);
-                  await refresh();
+                onClick={() => {
                   setSearch("");
+                  void linkTaskToGoal(goalId, c.id).then(() => void refresh());
                 }}
                 className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs hover:bg-slate-100"
               >
