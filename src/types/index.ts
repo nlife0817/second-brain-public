@@ -31,7 +31,7 @@ export type SubtaskDisplayMode = "inline" | "accordion" | "detached";
 export type ListGroupByField = "none" | "status" | "priority" | "category" | "type" | "development_stage" | "participants" | "clients" | "estimated_minutes";
 export type ListGroupByConfig = [ListGroupByField, ListGroupByField];
 
-export type FilterOperator = "is" | "is_not" | "contains" | "not_contains" | "before" | "after" | "is_empty" | "is_not_empty";
+export type FilterOperator = "is" | "is_not" | "contains" | "not_contains" | "before" | "after" | "is_today" | "is_this_week" | "is_empty" | "is_not_empty";
 export type FilterField = "status" | "priority" | "category" | "type" | "tags" | "title" | "description" | "due_date" | "has_parent" | "development_stage" | "participants";
 export type FilterLogic = "and" | "or";
 

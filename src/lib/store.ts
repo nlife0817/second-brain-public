@@ -1826,6 +1826,23 @@ function matchCondition(item: ItemWithSubtasks, cond: FilterCondition): boolean 
     case "not_contains": return !fieldValue.toLowerCase().includes(cond.value.toLowerCase());
     case "before": return !!fieldValue && fieldValue < cond.value;
     case "after": return !!fieldValue && fieldValue > cond.value;
+    case "is_today": {
+      if (cond.field !== "due_date" || !fieldValue) return false;
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      return fieldValue.slice(0, 10) === today;
+    }
+    case "is_this_week": {
+      if (cond.field !== "due_date" || !fieldValue) return false;
+      const now = new Date();
+      const day = now.getDay(); // 0=Sun..6=Sat
+      const diffToMon = day === 0 ? -6 : 1 - day;
+      const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMon);
+      const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+      const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const v = fieldValue.slice(0, 10);
+      return v >= fmt(monday) && v <= fmt(sunday);
+    }
     case "is_empty": return !fieldValue || fieldValue === "";
     case "is_not_empty": return !!fieldValue && fieldValue !== "";
     default: return true;

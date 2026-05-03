@@ -24,7 +24,6 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { Plus, X, Layers, Power, Bookmark, Check, Save, RefreshCw, CalendarDays, CalendarClock } from "lucide-react";
-import { format, startOfWeek, endOfWeek } from "date-fns";
 
 /* -------------------------------------------------------------------------- */
 /*  Constants & labels                                                         */
@@ -64,6 +63,8 @@ const OPERATOR_OPTIONS: Record<FieldKind, { value: FilterOperator; label: string
     { value: "is_not_empty", label: "не пусто" },
   ],
   date: [
+    { value: "is_today", label: "сегодня" },
+    { value: "is_this_week", label: "на текущей неделе" },
     { value: "before", label: "до" },
     { value: "after", label: "после" },
     { value: "is_empty", label: "пусто" },
@@ -107,7 +108,7 @@ const LOGIC_LABELS: Record<FilterLogic, string> = {
 };
 
 function needsValue(operator: FilterOperator): boolean {
-  return operator !== "is_empty" && operator !== "is_not_empty";
+  return operator !== "is_empty" && operator !== "is_not_empty" && operator !== "is_today" && operator !== "is_this_week";
 }
 
 function defaultOperatorForField(field: FilterField): FilterOperator {
@@ -168,12 +169,11 @@ export function AdvancedFilterBuilder() {
   /* ---- built-in dynamic presets ----------------------------------------- */
 
   const applyTodayFilter = useCallback(() => {
-    const today = format(new Date(), "yyyy-MM-dd");
     const group: FilterGroup = {
       id: uuid(),
       logic: "and",
       conditions: [
-        { id: uuid(), field: "due_date", operator: "is", value: today },
+        { id: uuid(), field: "due_date", operator: "is_today", value: "" },
       ],
     };
     setAdvancedFilters([group]);
@@ -182,15 +182,11 @@ export function AdvancedFilterBuilder() {
   }, [setAdvancedFilters, useAdvanced, toggleAdvancedFilters, resetActiveFilter]);
 
   const applyThisWeekFilter = useCallback(() => {
-    const now = new Date();
-    const weekStart = format(startOfWeek(now, { weekStartsOn: 1 }), "yyyy-MM-dd");
-    const weekEnd = format(endOfWeek(now, { weekStartsOn: 1 }), "yyyy-MM-dd");
     const group: FilterGroup = {
       id: uuid(),
       logic: "and",
       conditions: [
-        { id: uuid(), field: "due_date", operator: "after", value: weekStart },
-        { id: uuid(), field: "due_date", operator: "before", value: weekEnd },
+        { id: uuid(), field: "due_date", operator: "is_this_week", value: "" },
       ],
     };
     setAdvancedFilters([group]);
