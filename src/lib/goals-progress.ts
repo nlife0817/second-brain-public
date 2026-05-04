@@ -1,6 +1,9 @@
 import type { Goal, GoalMetric, GoalFull, MetricPayload } from "@/types";
 
 // Progress of a single Key Result, normalized to [0..1].
+// Reads `effective_current` (set by `computeMetricEffectives`) when present —
+// that's the rolled-up value from child KRs. Falls back to `current_value` for
+// leaf KRs.
 export function metricProgress(m: GoalMetric): number {
   switch (m.kind) {
     case "tasks": {
@@ -11,7 +14,7 @@ export function metricProgress(m: GoalMetric): number {
     }
     case "numeric": {
       const target = numOr(m.target_value, 0);
-      const current = numOr(m.current_value, 0);
+      const current = numOr(m.effective_current ?? m.current_value, 0);
       if (m.direction === "down") {
         const start = numOr(m.start_value, current);
         const span = start - target;
@@ -23,7 +26,7 @@ export function metricProgress(m: GoalMetric): number {
     }
     case "counter": {
       const target = numOr(m.target_value, 0);
-      const current = numOr(m.current_value, 0);
+      const current = numOr(m.effective_current ?? m.current_value, 0);
       if (target === 0) return 0;
       return clamp(current / target);
     }
@@ -34,6 +37,8 @@ export function metricProgress(m: GoalMetric): number {
       return clamp(done / items.length);
     }
     case "boolean": {
+      // For parent KRs the effective_current carries the AND result (1/0).
+      if (m.effective_current != null) return m.effective_current >= 1 ? 1 : 0;
       return (m.payload as MetricPayload | null)?.done ? 1 : 0;
     }
   }
@@ -61,10 +66,18 @@ export function goalProgress(
 }
 
 // Build progress for the entire goals tree in one pass (post-order DFS).
+// Mutates metrics in `metricsByGoal` to fill `effective_current` and (for
+// parent `tasks` KRs) the rolled-up tasks_done / tasks_total.
 export function computeProgressTree(
   goals: Goal[],
   metricsByGoal: Map<string, GoalMetric[]>,
 ): Map<string, number> {
+  // Roll up KR values across the metric inheritance tree first. Metric tree is
+  // independent of goal tree (parent_metric_id can span any goals).
+  const allMetrics: GoalMetric[] = [];
+  for (const arr of metricsByGoal.values()) allMetrics.push(...arr);
+  computeMetricEffectives(allMetrics);
+
   const childrenByParent = new Map<string | null, Goal[]>();
   for (const g of goals) {
     const arr = childrenByParent.get(g.parent_id) ?? [];
@@ -83,6 +96,76 @@ export function computeProgressTree(
   return out;
 }
 
+// Compute `effective_current` for every KR by post-order DFS over the metric
+// tree (parent_metric_id). Mutates input array.
+//
+// Aggregation rules (only when KR has children):
+//   numeric up / counter   → sum(child.effective_current)
+//   numeric down           → min(child.effective_current ?? start_value)
+//   tasks                  → sum tasks_done/tasks_total + effective_current=done
+//   boolean                → 1 if every child.payload.done else 0
+//   checklist              → not aggregated (kept own current_value)
+export function computeMetricEffectives(metrics: GoalMetric[]): void {
+  const childrenOf = new Map<string, GoalMetric[]>();
+  for (const m of metrics) {
+    if (m.parent_metric_id) {
+      const arr = childrenOf.get(m.parent_metric_id) ?? [];
+      arr.push(m);
+      childrenOf.set(m.parent_metric_id, arr);
+    }
+  }
+  const visited = new Set<string>();
+  function visit(m: GoalMetric): void {
+    if (visited.has(m.id)) return;
+    visited.add(m.id);
+    const kids = childrenOf.get(m.id) ?? [];
+    for (const k of kids) visit(k);
+
+    if (kids.length === 0) {
+      m.effective_current = m.current_value ?? null;
+      return;
+    }
+
+    if (m.kind === "checklist") {
+      m.effective_current = m.current_value ?? null;
+      return;
+    }
+
+    if (m.kind === "boolean") {
+      const allDone = kids.every((c) => {
+        if (c.effective_current != null) return c.effective_current >= 1;
+        return (c.payload as MetricPayload | null)?.done === true;
+      });
+      m.effective_current = allDone ? 1 : 0;
+      return;
+    }
+
+    if (m.kind === "tasks") {
+      let done = 0; let total = 0;
+      for (const c of kids) {
+        done += c.tasks_done ?? 0;
+        total += c.tasks_total ?? 0;
+      }
+      m.tasks_done = done;
+      m.tasks_total = total;
+      m.effective_current = total === 0 ? 0 : done;
+      return;
+    }
+
+    // numeric / counter
+    const childVals = kids
+      .map((c) => c.effective_current ?? c.current_value ?? c.start_value ?? null)
+      .filter((v): v is number => v != null && Number.isFinite(Number(v)))
+      .map(Number);
+    if (m.kind === "numeric" && m.direction === "down") {
+      m.effective_current = childVals.length ? Math.min(...childVals) : (m.current_value ?? null);
+    } else {
+      m.effective_current = childVals.reduce((s, v) => s + v, 0);
+    }
+  }
+  for (const m of metrics) visit(m);
+}
+
 export function formatMetricValue(m: GoalMetric): string {
   const unit = m.unit ? ` ${m.unit}` : "";
   switch (m.kind) {
@@ -90,14 +173,17 @@ export function formatMetricValue(m: GoalMetric): string {
       return `${m.tasks_done ?? 0}/${m.tasks_total ?? 0}`;
     case "numeric":
     case "counter":
-      return `${fmt(m.current_value)} / ${fmt(m.target_value)}${unit}`;
+      return `${fmt(m.effective_current ?? m.current_value)} / ${fmt(m.target_value)}${unit}`;
     case "checklist": {
       const items = (m.payload as MetricPayload | null)?.items ?? [];
       const done = items.filter((i) => i.done).length;
       return `${done} / ${items.length}`;
     }
-    case "boolean":
-      return (m.payload as MetricPayload | null)?.done ? "Готово" : "Не сделано";
+    case "boolean": {
+      const eff = m.effective_current;
+      const flag = eff != null ? eff >= 1 : (m.payload as MetricPayload | null)?.done;
+      return flag ? "Готово" : "Не сделано";
+    }
   }
 }
 

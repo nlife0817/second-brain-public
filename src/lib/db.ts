@@ -1337,6 +1337,15 @@ function mapMetric(row: MetricRow): GoalMetric {
   if (row.payload != null) {
     payload = typeof row.payload === "string" ? JSON.parse(row.payload) : (row.payload as MetricPayload);
   }
+  let cats: string[] | null = null;
+  const rawCats = (row as unknown as { tasks_category_ids?: unknown }).tasks_category_ids;
+  if (rawCats != null) {
+    if (typeof rawCats === "string") {
+      try { cats = JSON.parse(rawCats); } catch { cats = null; }
+    } else if (Array.isArray(rawCats)) {
+      cats = rawCats as string[];
+    }
+  }
   return {
     id: row.id,
     goal_id: row.goal_id,
@@ -1352,7 +1361,7 @@ function mapMetric(row: MetricRow): GoalMetric {
     position: Number(row.position ?? 0),
     parent_metric_id: row.parent_metric_id ?? null,
     tasks_mode: (row.tasks_mode ?? null) as GoalMetric["tasks_mode"],
-    tasks_category_ids: row.tasks_category_ids ?? null,
+    tasks_category_ids: cats,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -1464,7 +1473,9 @@ export async function bulkInsertGoalsAndMetrics(
           m.target_value, m.current_value, m.start_value, m.direction,
           m.payload === null ? null : JSON.stringify(m.payload),
           m.weight, m.position,
-          m.parent_metric_id, m.tasks_mode, m.tasks_category_ids,
+          m.parent_metric_id,
+          m.tasks_mode,
+          m.tasks_category_ids === null ? null : JSON.stringify(m.tasks_category_ids),
         );
       }
       await tx.prepare(
@@ -1490,7 +1501,9 @@ export async function getMetricsForGoal(goalId: string): Promise<GoalMetric[]> {
     "SELECT * FROM goal_metrics WHERE goal_id = ? ORDER BY position ASC, created_at ASC"
   ).all(goalId);
   const metrics = rows.map(mapMetric);
-  await fillTaskMetricCounts(metrics);
+  const goal = await getGoalById(goalId);
+  const goalsById = goal ? new Map<string, Goal>([[goal.id, goal]]) : new Map();
+  await fillTaskMetricCounts(metrics, goalsById);
   return metrics;
 }
 
@@ -1502,7 +1515,11 @@ export async function getMetricsForGoals(goalIds: string[]): Promise<Map<string,
     `SELECT * FROM goal_metrics WHERE goal_id IN (${placeholders}) ORDER BY position ASC, created_at ASC`
   ).all(...goalIds);
   const metrics = rows.map(mapMetric);
-  await fillTaskMetricCounts(metrics);
+  const goalRows = await prepare<GoalRow>(
+    `SELECT * FROM goals WHERE id IN (${placeholders})`
+  ).all(...goalIds);
+  const goalsById = new Map(goalRows.map((g) => [g.id, g]));
+  await fillTaskMetricCounts(metrics, goalsById);
   for (const m of metrics) {
     const arr = out.get(m.goal_id) ?? [];
     arr.push(m);
@@ -1511,31 +1528,61 @@ export async function getMetricsForGoals(goalIds: string[]): Promise<Map<string,
   return out;
 }
 
-// For all `tasks` KRs, count linked items via relations. Fills tasks_done/tasks_total in-place.
-async function fillTaskMetricCounts(metrics: GoalMetric[]): Promise<void> {
+// For all `tasks` KRs, count linked items. Fills tasks_done/tasks_total in-place.
+// - manual mode: counts relations source_type=goal -> items.
+// - auto mode: counts items by category_id ∈ KR.tasks_category_ids and
+//   due_date inside the parent goal's [period_start, period_end].
+async function fillTaskMetricCounts(metrics: GoalMetric[], goalsById: Map<string, Goal>): Promise<void> {
   const taskMetrics = metrics.filter((m) => m.kind === "tasks");
   if (taskMetrics.length === 0) return;
-  const goalIds = Array.from(new Set(taskMetrics.map((m) => m.goal_id)));
-  const placeholders = goalIds.map(() => "?").join(",");
-  const rows = await prepare<{ goal_id: string; status: string; c: number }>(
-    `SELECT r.source_id as goal_id, i.status as status, COUNT(*) as c
-       FROM relations r JOIN items i ON i.id = r.target_id
-      WHERE r.source_type = 'goal' AND r.target_type = 'item'
-        AND r.relation_type_id = 'belongs_to_goal'
-        AND r.source_id IN (${placeholders})
-      GROUP BY r.source_id, i.status`
-  ).all(...goalIds);
-  const totals = new Map<string, { done: number; total: number }>();
-  for (const r of rows) {
-    const cur = totals.get(r.goal_id) ?? { done: 0, total: 0 };
-    cur.total += Number(r.c);
-    if (r.status === "done") cur.done += Number(r.c);
-    totals.set(r.goal_id, cur);
+
+  const manualMetrics = taskMetrics.filter((m) => (m.tasks_mode ?? "manual") === "manual");
+  if (manualMetrics.length > 0) {
+    const goalIds = Array.from(new Set(manualMetrics.map((m) => m.goal_id)));
+    const placeholders = goalIds.map(() => "?").join(",");
+    const rows = await prepare<{ goal_id: string; status: string; c: number }>(
+      `SELECT r.source_id as goal_id, i.status as status, COUNT(*) as c
+         FROM relations r JOIN items i ON i.id = r.target_id
+        WHERE r.source_type = 'goal' AND r.target_type = 'item'
+          AND r.relation_type_id = 'belongs_to_goal'
+          AND r.source_id IN (${placeholders})
+        GROUP BY r.source_id, i.status`
+    ).all(...goalIds);
+    const totals = new Map<string, { done: number; total: number }>();
+    for (const r of rows) {
+      const cur = totals.get(r.goal_id) ?? { done: 0, total: 0 };
+      cur.total += Number(r.c);
+      if (r.status === "done") cur.done += Number(r.c);
+      totals.set(r.goal_id, cur);
+    }
+    for (const m of manualMetrics) {
+      const t = totals.get(m.goal_id) ?? { done: 0, total: 0 };
+      m.tasks_done = t.done;
+      m.tasks_total = t.total;
+    }
   }
-  for (const m of taskMetrics) {
-    const t = totals.get(m.goal_id) ?? { done: 0, total: 0 };
-    m.tasks_done = t.done;
-    m.tasks_total = t.total;
+
+  const autoMetrics = taskMetrics.filter((m) => m.tasks_mode === "auto");
+  for (const m of autoMetrics) {
+    const cats = m.tasks_category_ids ?? [];
+    const goal = goalsById.get(m.goal_id);
+    if (cats.length === 0 || !goal?.period_start || !goal?.period_end) {
+      m.tasks_done = 0;
+      m.tasks_total = 0;
+      continue;
+    }
+    const catPlaceholders = cats.map(() => "?").join(",");
+    const row = await prepare<{ done: number | string; total: number | string }>(
+      `SELECT COUNT(*) FILTER (WHERE i.status = 'done') AS done, COUNT(*) AS total
+         FROM items i
+        WHERE i.category IN (${catPlaceholders})
+          AND i.due_date IS NOT NULL
+          AND SUBSTR(i.due_date, 1, 10) >= ?
+          AND SUBSTR(i.due_date, 1, 10) <= ?
+          AND i.status <> 'archived'`
+    ).get(...cats, goal.period_start, goal.period_end);
+    m.tasks_done = Number(row?.done ?? 0);
+    m.tasks_total = Number(row?.total ?? 0);
   }
 }
 
@@ -1545,8 +1592,8 @@ export async function createMetric(data: CreateMetricPayload & { id: string; goa
   ).get(data.goal_id);
   const position = data.position ?? Number(maxPos?.p ?? 0);
   const tasksMode = data.kind === "tasks" ? (data.tasks_mode ?? "manual") : null;
-  const tasksCats = data.kind === "tasks" && tasksMode === "auto"
-    ? (data.tasks_category_ids ?? null)
+  const tasksCats = data.kind === "tasks" && tasksMode === "auto" && data.tasks_category_ids
+    ? JSON.stringify(data.tasks_category_ids)
     : null;
   await prepare(
     `INSERT INTO goal_metrics (id, goal_id, kind, title, unit, target_value, current_value, start_value,
@@ -1562,7 +1609,11 @@ export async function createMetric(data: CreateMetricPayload & { id: string; goa
   );
   const created = await prepare<MetricRow>("SELECT * FROM goal_metrics WHERE id = ?").get(data.id);
   const metric = mapMetric(created!);
-  if (metric.kind === "tasks") await fillTaskMetricCounts([metric]);
+  if (metric.kind === "tasks") {
+    const goal = await getGoalById(metric.goal_id);
+    const goalsById = goal ? new Map<string, Goal>([[goal.id, goal]]) : new Map();
+    await fillTaskMetricCounts([metric], goalsById);
+  }
   return metric;
 }
 
@@ -1570,6 +1621,11 @@ export async function updateMetric(id: string, updates: UpdateMetricPayload): Pr
   const normalized: Record<string, unknown> = { ...updates };
   if (Object.prototype.hasOwnProperty.call(normalized, "payload")) {
     normalized.payload = normalized.payload == null ? null : JSON.stringify(normalized.payload);
+  }
+  if (Object.prototype.hasOwnProperty.call(normalized, "tasks_category_ids")) {
+    normalized.tasks_category_ids = normalized.tasks_category_ids == null
+      ? null
+      : JSON.stringify(normalized.tasks_category_ids);
   }
   const built = buildUpdateClause(normalized, METRIC_UPDATE_FIELDS);
   if (!built) {
@@ -1582,7 +1638,11 @@ export async function updateMetric(id: string, updates: UpdateMetricPayload): Pr
   const row = await prepare<MetricRow>("SELECT * FROM goal_metrics WHERE id = ?").get(id);
   if (!row) return undefined;
   const metric = mapMetric(row);
-  if (metric.kind === "tasks") await fillTaskMetricCounts([metric]);
+  if (metric.kind === "tasks") {
+    const goal = await getGoalById(metric.goal_id);
+    const goalsById = goal ? new Map<string, Goal>([[goal.id, goal]]) : new Map();
+    await fillTaskMetricCounts([metric], goalsById);
+  }
   return metric;
 }
 
