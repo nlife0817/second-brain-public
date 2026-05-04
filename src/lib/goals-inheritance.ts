@@ -1,4 +1,6 @@
+import { v4 as uuid } from "uuid";
 import { prepare } from "@/lib/sql";
+import { bulkInsertGoalsAndMetrics, type BulkMetricRow } from "@/lib/db";
 import type { Goal, GoalMetric } from "@/types";
 
 interface MetricRow {
@@ -55,6 +57,79 @@ export async function getInheritableMetrics(parentGoalId: string): Promise<GoalM
     "SELECT id, goal_id, kind, title FROM goal_metrics WHERE goal_id = ? ORDER BY position",
   ).all(parentGoalId);
   return rows as unknown as GoalMetric[];
+}
+
+/**
+ * Walks the goal subtree rooted at `rootGoalId` and creates a copy of
+ * `rootMetric` on every descendant, with `parent_metric_id` chain matching the
+ * goal tree (each child KR points at the metric living on its goal-parent).
+ *
+ * Used when the user adds a top-level KR (e.g. «Выручка 20M ₽» on a year) and
+ * wants it materialized across all already-decomposed children. Idempotency
+ * guard: descendants that already have a KR with `parent_metric_id` pointing
+ * at the rootMetric are skipped.
+ */
+export async function propagateMetricToDescendants(
+  rootGoalId: string,
+  rootMetric: GoalMetric,
+): Promise<number> {
+  const allGoals = await prepare<Goal>("SELECT * FROM goals").all();
+  const childrenOf = new Map<string | null, Goal[]>();
+  for (const g of allGoals) {
+    const arr = childrenOf.get(g.parent_id) ?? [];
+    arr.push(g);
+    childrenOf.set(g.parent_id, arr);
+  }
+
+  // Pre-load existing replicas so re-running propagation is idempotent.
+  const existing = await prepare<{ goal_id: string; id: string; parent_metric_id: string | null }>(
+    "SELECT id, goal_id, parent_metric_id FROM goal_metrics WHERE parent_metric_id = ?",
+  ).all(rootMetric.id);
+  const directReplicaByGoal = new Map<string, string>();
+  for (const r of existing) directReplicaByGoal.set(r.goal_id, r.id);
+
+  const newMetrics: BulkMetricRow[] = [];
+  const parentMetricByGoal = new Map<string, string>();
+  parentMetricByGoal.set(rootGoalId, rootMetric.id);
+
+  // BFS: ensures we always have parent's KR id before creating child's.
+  const queue: string[] = [rootGoalId];
+  while (queue.length > 0) {
+    const goalId = queue.shift()!;
+    const kids = childrenOf.get(goalId) ?? [];
+    for (const k of kids) {
+      const parentMetricId = parentMetricByGoal.get(goalId)!;
+      let metricId = directReplicaByGoal.get(k.id);
+      if (!metricId) {
+        metricId = uuid();
+        const isDownNumeric = rootMetric.kind === "numeric" && rootMetric.direction === "down";
+        newMetrics.push({
+          id: metricId,
+          goal_id: k.id,
+          kind: rootMetric.kind,
+          title: rootMetric.title,
+          unit: rootMetric.unit,
+          target_value: null,
+          current_value: null,
+          start_value: isDownNumeric ? rootMetric.start_value : null,
+          direction: rootMetric.direction,
+          payload: null,
+          weight: rootMetric.weight,
+          position: rootMetric.position,
+          parent_metric_id: parentMetricId,
+          tasks_mode: rootMetric.tasks_mode,
+          tasks_category_ids: rootMetric.tasks_category_ids,
+        });
+      }
+      parentMetricByGoal.set(k.id, metricId);
+      queue.push(k.id);
+    }
+  }
+
+  if (newMetrics.length > 0) {
+    await bulkInsertGoalsAndMetrics([], newMetrics);
+  }
+  return newMetrics.length;
 }
 
 /**
