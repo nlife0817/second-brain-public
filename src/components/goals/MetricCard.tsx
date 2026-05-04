@@ -2,13 +2,24 @@
 
 import { useMemo, useState } from "react";
 import { useBrainStore } from "@/lib/store";
-import { METRIC_KIND_CONFIG, type GoalMetric, type ChecklistItem } from "@/types";
+import {
+  METRIC_KIND_CONFIG, GOAL_LEVEL_CONFIG,
+  type GoalMetric, type ChecklistItem, type GoalLevel,
+} from "@/types";
 import { metricProgress, formatMetricValue } from "@/lib/goals-progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Trash2, Plus, Check, History, Layers } from "lucide-react";
+import { Trash2, Plus, Check, History, Layers, Split } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SnapshotHistory } from "./SnapshotHistory";
+import { DistributeMetricDialog } from "./DistributeMetricDialog";
+
+const NEXT_LEVEL: Record<GoalLevel, GoalLevel | null> = {
+  year: "quarter",
+  quarter: "month",
+  month: "week",
+  week: null,
+};
 
 interface Props {
   goalId: string;
@@ -25,22 +36,62 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
   const cfg = METRIC_KIND_CONFIG[metric.kind];
   const pct = Math.round(metricProgress(metric) * 100);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [distributeOpen, setDistributeOpen] = useState(false);
   const supportsHistory = metric.kind === "numeric";
+
+  const parentGoal = useMemo(() => goals.find((g) => g.id === goalId) ?? null, [goals, goalId]);
+
+  // Direct children of this goal at the next level — drives the "Распределить"
+  // button visibility and the divergence indicator.
+  const directChildGoals = useMemo(() => {
+    if (!parentGoal) return [];
+    const childLevel = NEXT_LEVEL[parentGoal.level];
+    if (!childLevel) return [];
+    return goals.filter((g) => g.parent_id === goalId && g.level === childLevel);
+  }, [goals, goalId, parentGoal]);
 
   // Has any descendant KR pointing back at this one? When yes, current_value
   // is overridden by the rolled-up effective_current — surface that to user.
-  const hasChildKRs = useMemo(() => {
+  const childKRs = useMemo(() => {
+    const out: GoalMetric[] = [];
     for (const g of goals) {
       for (const m of g.metrics ?? []) {
-        if (m.parent_metric_id === metric.id) return true;
+        if (m.parent_metric_id === metric.id) out.push(m);
       }
     }
-    return false;
+    return out;
   }, [goals, metric.id]);
+  const hasChildKRs = childKRs.length > 0;
   const overrideShown = hasChildKRs
     && metric.effective_current != null
     && metric.current_value != null
     && Number(metric.effective_current) !== Number(metric.current_value);
+
+  // Distribute is only meaningful for numeric/checklist/boolean — tasks-KR
+  // cascades automatically via parent_metric_id and shares categories.
+  const canDistribute = metric.kind === "numeric"
+    && parentGoal != null
+    && NEXT_LEVEL[parentGoal.level] != null
+    && directChildGoals.length > 0;
+
+  // Sum of direct-child plans for divergence indicator. Only count children
+  // that live on a goal in directChildGoals (one level down).
+  const childPlanSum = useMemo(() => {
+    if (metric.kind !== "numeric") return null;
+    const childGoalIds = new Set(directChildGoals.map((g) => g.id));
+    let sum: number | null = null;
+    let any = false;
+    for (const km of childKRs) {
+      if (!childGoalIds.has(km.goal_id)) continue;
+      if (km.target_value == null) continue;
+      sum = (sum ?? 0) + Number(km.target_value);
+      any = true;
+    }
+    return any ? sum : null;
+  }, [childKRs, directChildGoals, metric.kind]);
+  const planDiff = childPlanSum != null && metric.target_value != null
+    ? childPlanSum - Number(metric.target_value)
+    : null;
 
   return (
     <div className="mb-2 rounded-lg border border-slate-200 bg-white p-2.5">
@@ -85,6 +136,15 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
           </div>
         </div>
         <span className="text-xs font-semibold tabular-nums text-slate-700">{pct}%</span>
+        {canDistribute && (
+          <button
+            onClick={() => setDistributeOpen(true)}
+            className="text-slate-300 hover:text-violet-600"
+            title={`Распределить по ${GOAL_LEVEL_CONFIG[NEXT_LEVEL[parentGoal!.level]!].label.toLowerCase()}ам`}
+          >
+            <Split className="size-3.5" />
+          </button>
+        )}
         {supportsHistory && (
           <button
             onClick={() => setHistoryOpen((v) => !v)}
@@ -109,6 +169,19 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
           <Trash2 className="size-3.5" />
         </button>
       </div>
+
+      {planDiff != null && Math.abs(planDiff) > 0.0001 && (
+        <div className="mt-1 flex items-center justify-between rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+          <span>Перепланирование</span>
+          <span className="tabular-nums font-medium">
+            {planDiff > 0 ? "+" : ""}{planDiff.toLocaleString("ru-RU")}
+            {metric.unit ? ` ${metric.unit}` : ""}
+            <span className="ml-1 text-amber-500">
+              (дети: {childPlanSum?.toLocaleString("ru-RU")} / план: {Number(metric.target_value).toLocaleString("ru-RU")})
+            </span>
+          </span>
+        </div>
+      )}
 
       <div className="mt-2 h-1 rounded-full bg-slate-100 overflow-hidden">
         <div
@@ -145,6 +218,15 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
 
       {historyOpen && supportsHistory && (
         <SnapshotHistory goalId={goalId} metric={metric} onClose={() => setHistoryOpen(false)} />
+      )}
+
+      {distributeOpen && parentGoal && (
+        <DistributeMetricDialog
+          open={distributeOpen}
+          onOpenChange={setDistributeOpen}
+          parentGoal={parentGoal}
+          parentMetric={metric}
+        />
       )}
     </div>
   );
