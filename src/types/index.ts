@@ -490,6 +490,42 @@ export interface GoalMetric {
   effective_current?: number | null;
 }
 
+export type ClientRevenueStatus = "active" | "churned";
+
+export interface ClientRevenueEntry {
+  id: string;
+  goal_id: string;
+  client_id: string;
+  amount: number;
+  status: ClientRevenueStatus;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+  // Filled by API for convenience.
+  client_name?: string;
+}
+
+export interface ClientRevenueAggregateRow {
+  client_id: string;
+  client_name: string;
+  total_amount: number;
+  active_in_last_week: boolean;
+  weeks: { goal_id: string; period_start: string | null; amount: number; status: ClientRevenueStatus }[];
+}
+
+export interface CreateClientRevenuePayload {
+  client_id: string;
+  amount?: number;
+  status?: ClientRevenueStatus;
+  notes?: string;
+}
+
+export interface UpdateClientRevenuePayload {
+  amount?: number;
+  status?: ClientRevenueStatus;
+  notes?: string;
+}
+
 export type MetricHistoryEventType = "snapshot" | "target_change" | "manual_edit";
 
 export interface GoalMetricHistoryEntry {

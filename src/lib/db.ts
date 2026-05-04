@@ -1268,6 +1268,7 @@ import type {
   Goal, GoalMetric, GoalMetricHistoryEntry, GoalLevel, GoalAxis, GoalStatus,
   GoalAxisConfig, CreateGoalAxisPayload, UpdateGoalAxisPayload,
   CreateGoalPayload, UpdateGoalPayload, CreateMetricPayload, UpdateMetricPayload, MetricPayload,
+  ClientRevenueEntry, ClientRevenueAggregateRow,
 } from "@/types";
 
 // ---------------- Goal axes (user-managed axis tags) ----------------
@@ -1778,6 +1779,181 @@ export async function deleteMetricHistoryEntry(id: string): Promise<boolean> {
       .run(newCurrent, new Date().toISOString(), row.metric_id);
   }
   return true;
+}
+
+// ---------------- Client revenue ledger ----------------
+
+interface ClientRevenueRow {
+  id: string;
+  goal_id: string;
+  client_id: string;
+  amount: number | string;
+  status: "active" | "churned";
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  client_name?: string;
+}
+
+function mapClientRevenue(row: ClientRevenueRow): ClientRevenueEntry {
+  return {
+    id: row.id,
+    goal_id: row.goal_id,
+    client_id: row.client_id,
+    amount: Number(row.amount ?? 0),
+    status: row.status,
+    notes: row.notes ?? "",
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    client_name: row.client_name,
+  };
+}
+
+export async function getClientRevenueForGoal(goalId: string): Promise<ClientRevenueEntry[]> {
+  const rows = await prepare<ClientRevenueRow>(
+    `SELECT cr.*, c.name AS client_name
+       FROM client_revenue_entries cr
+       LEFT JOIN clients c ON c.id = cr.client_id
+      WHERE cr.goal_id = ?
+      ORDER BY cr.created_at ASC`,
+  ).all(goalId);
+  return rows.map(mapClientRevenue);
+}
+
+export async function createClientRevenue(data: {
+  id: string; goal_id: string; client_id: string;
+  amount?: number; status?: "active" | "churned"; notes?: string;
+}): Promise<ClientRevenueEntry> {
+  const now = new Date().toISOString();
+  await prepare(
+    `INSERT INTO client_revenue_entries (id, goal_id, client_id, amount, status, notes, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    data.id, data.goal_id, data.client_id,
+    data.amount ?? 0, data.status ?? "active", data.notes ?? "", now, now,
+  );
+  const row = await prepare<ClientRevenueRow>(
+    `SELECT cr.*, c.name AS client_name FROM client_revenue_entries cr
+       LEFT JOIN clients c ON c.id = cr.client_id WHERE cr.id = ?`,
+  ).get(data.id);
+  return mapClientRevenue(row!);
+}
+
+const CLIENT_REVENUE_FIELDS = ["amount", "status", "notes"] as const;
+
+export async function updateClientRevenue(
+  id: string, updates: { amount?: number; status?: "active" | "churned"; notes?: string },
+): Promise<ClientRevenueEntry | undefined> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, CLIENT_REVENUE_FIELDS);
+  if (!built) {
+    const row = await prepare<ClientRevenueRow>(
+      `SELECT cr.*, c.name AS client_name FROM client_revenue_entries cr
+         LEFT JOIN clients c ON c.id = cr.client_id WHERE cr.id = ?`,
+    ).get(id);
+    return row ? mapClientRevenue(row) : undefined;
+  }
+  await prepare(
+    `UPDATE client_revenue_entries SET ${built.sql}, updated_at = ? WHERE id = ?`,
+  ).run(...built.values, new Date().toISOString(), id);
+  const row = await prepare<ClientRevenueRow>(
+    `SELECT cr.*, c.name AS client_name FROM client_revenue_entries cr
+       LEFT JOIN clients c ON c.id = cr.client_id WHERE cr.id = ?`,
+  ).get(id);
+  return row ? mapClientRevenue(row) : undefined;
+}
+
+export async function deleteClientRevenue(id: string): Promise<boolean> {
+  const r = await prepare("DELETE FROM client_revenue_entries WHERE id = ?").run(id);
+  return r.changes > 0;
+}
+
+/**
+ * Aggregate client revenue across all weekly goals that descend from `goalId`.
+ * Returns one row per client with total amount over the period and a flag for
+ * whether the client was active in the latest closed week.
+ */
+export async function getClientRevenueAggregate(goalId: string): Promise<{
+  rows: ClientRevenueAggregateRow[];
+  weekly_totals: { goal_id: string; period_start: string | null; total: number; active_count: number }[];
+}> {
+  // Collect all descendant week goal ids by walking the goals tree in memory.
+  const allGoals = await prepare<{ id: string; parent_id: string | null; level: GoalLevel; period_start: string | null }>(
+    "SELECT id, parent_id, level, period_start FROM goals",
+  ).all();
+  const childrenOf = new Map<string | null, typeof allGoals>();
+  for (const g of allGoals) {
+    const arr = childrenOf.get(g.parent_id) ?? [];
+    arr.push(g);
+    childrenOf.set(g.parent_id, arr);
+  }
+  const weekGoals: typeof allGoals = [];
+  const stack: string[] = [goalId];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    const kids = childrenOf.get(cur) ?? [];
+    for (const k of kids) {
+      if (k.level === "week") weekGoals.push(k);
+      else stack.push(k.id);
+    }
+  }
+  const me = allGoals.find((g) => g.id === goalId);
+  if (me?.level === "week") weekGoals.push(me);
+
+  if (weekGoals.length === 0) {
+    return { rows: [], weekly_totals: [] };
+  }
+
+  const ids = weekGoals.map((g) => g.id);
+  const placeholders = ids.map(() => "?").join(",");
+  const entries = await prepare<ClientRevenueRow>(
+    `SELECT cr.*, c.name AS client_name
+       FROM client_revenue_entries cr
+       LEFT JOIN clients c ON c.id = cr.client_id
+      WHERE cr.goal_id IN (${placeholders})`,
+  ).all(...ids);
+
+  // Identify the "latest closed week" — the week whose period_start is the
+  // most recent among week goals (proxy for "latest week with data"; we don't
+  // require period_end < today to keep it predictable).
+  const sorted = [...weekGoals].sort((a, b) => (a.period_start ?? "").localeCompare(b.period_start ?? ""));
+  const latestWeekId = sorted[sorted.length - 1]?.id ?? null;
+
+  // Per-client aggregation.
+  const byClient = new Map<string, ClientRevenueAggregateRow>();
+  for (const e of entries) {
+    const existing = byClient.get(e.client_id) ?? {
+      client_id: e.client_id,
+      client_name: e.client_name ?? "(удалён)",
+      total_amount: 0,
+      active_in_last_week: false,
+      weeks: [],
+    };
+    existing.total_amount += Number(e.amount ?? 0);
+    const wk = weekGoals.find((g) => g.id === e.goal_id);
+    existing.weeks.push({
+      goal_id: e.goal_id,
+      period_start: wk?.period_start ?? null,
+      amount: Number(e.amount ?? 0),
+      status: e.status,
+    });
+    if (e.goal_id === latestWeekId && e.status === "active") existing.active_in_last_week = true;
+    byClient.set(e.client_id, existing);
+  }
+  const rows = [...byClient.values()].sort((a, b) => b.total_amount - a.total_amount);
+
+  // Weekly totals (for sparkline).
+  const weekly: { goal_id: string; period_start: string | null; total: number; active_count: number }[] = [];
+  for (const g of sorted) {
+    const wkEntries = entries.filter((e) => e.goal_id === g.id);
+    weekly.push({
+      goal_id: g.id,
+      period_start: g.period_start,
+      total: wkEntries.reduce((s, e) => s + Number(e.amount ?? 0), 0),
+      active_count: wkEntries.filter((e) => e.status === "active").length,
+    });
+  }
+
+  return { rows, weekly_totals: weekly };
 }
 
 // ---------------- Integrations ----------------
