@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useBrainStore } from "@/lib/store";
 import { METRIC_KIND_CONFIG, type GoalMetric, type ChecklistItem } from "@/types";
 import { metricProgress, formatMetricValue } from "@/lib/goals-progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Trash2, Plus, Check, History } from "lucide-react";
+import { Trash2, Plus, Check, History, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SnapshotHistory } from "./SnapshotHistory";
 
@@ -20,11 +20,27 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
   const updateMetric = useBrainStore((s) => s.updateMetric);
   const deleteMetric = useBrainStore((s) => s.deleteMetric);
   const recordSnapshot = useBrainStore((s) => s.recordSnapshot);
+  const goals = useBrainStore((s) => s.goals);
 
   const cfg = METRIC_KIND_CONFIG[metric.kind];
   const pct = Math.round(metricProgress(metric) * 100);
   const [historyOpen, setHistoryOpen] = useState(false);
   const supportsHistory = metric.kind === "numeric" || metric.kind === "counter";
+
+  // Has any descendant KR pointing back at this one? When yes, current_value
+  // is overridden by the rolled-up effective_current — surface that to user.
+  const hasChildKRs = useMemo(() => {
+    for (const g of goals) {
+      for (const m of g.metrics ?? []) {
+        if (m.parent_metric_id === metric.id) return true;
+      }
+    }
+    return false;
+  }, [goals, metric.id]);
+  const overrideShown = hasChildKRs
+    && metric.effective_current != null
+    && metric.current_value != null
+    && Number(metric.effective_current) !== Number(metric.current_value);
 
   return (
     <div className="mb-2 rounded-lg border border-slate-200 bg-white p-2.5">
@@ -33,8 +49,40 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-xs font-medium text-slate-900">{metric.title}</span>
+            {hasChildKRs && (
+              <span
+                className="inline-flex items-center gap-0.5 rounded bg-violet-50 px-1 py-0.5 text-[9px] font-medium text-violet-600"
+                title="Считается из дочерних KR"
+              >
+                <Layers className="size-2.5" />
+                агрегат
+              </span>
+            )}
+            {metric.parent_metric_id && (
+              <span
+                className="rounded bg-slate-100 px-1 py-0.5 text-[9px] font-medium text-slate-500"
+                title="Наследник родительского KR"
+              >
+                ↑ от родителя
+              </span>
+            )}
+            {metric.kind === "tasks" && metric.tasks_mode === "auto" && (
+              <span
+                className="rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-medium text-emerald-600"
+                title="Считается автоматически по категориям задач"
+              >
+                авто
+              </span>
+            )}
           </div>
-          <div className="text-[10px] tabular-nums text-slate-500">{formatMetricValue(metric)}</div>
+          <div className="text-[10px] tabular-nums text-slate-500">
+            {formatMetricValue(metric)}
+            {overrideShown && (
+              <span className="ml-1 text-slate-400">
+                · ручное: {fmtNum(metric.current_value)}
+              </span>
+            )}
+          </div>
         </div>
         <span className="text-xs font-semibold tabular-nums text-slate-700">{pct}%</span>
         {supportsHistory && (
@@ -88,9 +136,14 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
             onToggle={(done) => updateMetric(goalId, metric.id, { payload: { done } })}
           />
         )}
-        {metric.kind === "tasks" && (
+        {metric.kind === "tasks" && metric.tasks_mode !== "auto" && (
           <p className="text-[11px] text-slate-400">
             Авто-прогресс. Привяжите задачи в секции ниже.
+          </p>
+        )}
+        {metric.kind === "tasks" && metric.tasks_mode === "auto" && (
+          <p className="text-[11px] text-slate-400">
+            Считается по задачам в выбранных категориях за период цели.
           </p>
         )}
       </div>
@@ -100,6 +153,12 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
       )}
     </div>
   );
+}
+
+function fmtNum(v: number | null | undefined): string {
+  if (v == null) return "—";
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toLocaleString("ru-RU") : "—";
 }
 
 function NumericEditor({ metric, onSnapshot }: { metric: GoalMetric; onSnapshot: (v: number) => void }) {
