@@ -25,7 +25,7 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
   const cfg = METRIC_KIND_CONFIG[metric.kind];
   const pct = Math.round(metricProgress(metric) * 100);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const supportsHistory = metric.kind === "numeric" || metric.kind === "counter";
+  const supportsHistory = metric.kind === "numeric";
 
   // Has any descendant KR pointing back at this one? When yes, current_value
   // is overridden by the rolled-up effective_current — surface that to user.
@@ -118,7 +118,7 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
       </div>
 
       <div className="mt-2.5">
-        {(metric.kind === "numeric" || metric.kind === "counter") && (
+        {metric.kind === "numeric" && (
           <NumericEditor
             metric={metric}
             onSnapshot={(v) => recordSnapshot(goalId, metric.id, v)}

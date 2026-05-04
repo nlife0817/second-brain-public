@@ -24,12 +24,6 @@ export function metricProgress(m: GoalMetric): number {
       if (target === 0) return 0;
       return clamp(current / target);
     }
-    case "counter": {
-      const target = numOr(m.target_value, 0);
-      const current = numOr(m.effective_current ?? m.current_value, 0);
-      if (target === 0) return 0;
-      return clamp(current / target);
-    }
     case "checklist": {
       const items = (m.payload as MetricPayload | null)?.items ?? [];
       if (items.length === 0) return 0;
@@ -100,7 +94,7 @@ export function computeProgressTree(
 // tree (parent_metric_id). Mutates input array.
 //
 // Aggregation rules (only when KR has children):
-//   numeric up / counter   → sum(child.effective_current)
+//   numeric up             → sum(child.effective_current)
 //   numeric down           → min(child.effective_current ?? start_value)
 //   tasks                  → sum tasks_done/tasks_total + effective_current=done
 //   boolean                → 1 if every child.payload.done else 0
@@ -152,7 +146,7 @@ export function computeMetricEffectives(metrics: GoalMetric[]): void {
       return;
     }
 
-    // numeric / counter
+    // numeric
     const childVals = kids
       .map((c) => c.effective_current ?? c.current_value ?? c.start_value ?? null)
       .filter((v): v is number => v != null && Number.isFinite(Number(v)))
@@ -172,7 +166,6 @@ export function formatMetricValue(m: GoalMetric): string {
     case "tasks":
       return `${m.tasks_done ?? 0}/${m.tasks_total ?? 0}`;
     case "numeric":
-    case "counter":
       return `${fmt(m.effective_current ?? m.current_value)} / ${fmt(m.target_value)}${unit}`;
     case "checklist": {
       const items = (m.payload as MetricPayload | null)?.items ?? [];

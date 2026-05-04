@@ -421,7 +421,7 @@ export type GoalLevel = "year" | "quarter" | "month" | "week";
  */
 export type GoalAxis = string;
 export type GoalStatus = "active" | "done" | "paused" | "dropped";
-export type MetricKind = "tasks" | "numeric" | "counter" | "checklist" | "boolean";
+export type MetricKind = "tasks" | "numeric" | "checklist" | "boolean";
 
 export interface GoalAxisConfig {
   id: string;
@@ -609,7 +609,6 @@ export const GOAL_STATUS_CONFIG: Record<GoalStatus, { label: string; color: stri
 export const METRIC_KIND_CONFIG: Record<MetricKind, { label: string; icon: string; description: string }> = {
   tasks: { label: "Задачи", icon: "📎", description: "Прогресс считается по связанным задачам" },
   numeric: { label: "Число", icon: "📊", description: "Текущее значение к целевому (₽, кг, …)" },
-  counter: { label: "Счётчик", icon: "🔢", description: "Накопительный счётчик до цели" },
   checklist: { label: "Чек-лист", icon: "✅", description: "Список пунктов с отметками" },
   boolean: { label: "Да/Нет", icon: "🎯", description: "Сделано или нет" },
 };

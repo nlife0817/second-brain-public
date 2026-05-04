@@ -101,9 +101,9 @@ export function CreateMetricDialog({ open, onOpenChange, goalId }: Props) {
         // and only when the goal actually has descendants.
         propagate_to_children: !parentMetricId && hasDescendants && propagate,
       };
-      if (effectiveKind === "numeric" || effectiveKind === "counter") {
+      if (effectiveKind === "numeric") {
         payload.target_value = target ? Number(target) : null;
-        if (effectiveKind === "numeric" && effectiveDirection === "down") {
+        if (effectiveDirection === "down") {
           payload.start_value = start ? Number(start) : null;
           payload.current_value = start ? Number(start) : null;
         } else {
@@ -190,7 +190,7 @@ export function CreateMetricDialog({ open, onOpenChange, goalId }: Props) {
             <Input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
           </div>
 
-          {(effectiveKind === "numeric" || effectiveKind === "counter") && (
+          {effectiveKind === "numeric" && (
             <>
               <div className="grid grid-cols-2 gap-2">
                 <div>
