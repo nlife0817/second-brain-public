@@ -132,6 +132,9 @@ function walk(
         payload: null,
         weight: 1,
         position: 0,
+        parent_metric_id: null,
+        tasks_mode: "manual",
+        tasks_category_ids: null,
       });
     } else {
       walk(id, child.level, child.period_start, axis, outGoals, outMetrics);

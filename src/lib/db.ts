@@ -1326,10 +1326,11 @@ const GOAL_UPDATE_FIELDS = [
 const METRIC_UPDATE_FIELDS = [
   "title", "unit", "target_value", "current_value", "start_value",
   "direction", "payload", "weight", "position",
+  "parent_metric_id", "tasks_mode", "tasks_category_ids",
 ] as const;
 
 type GoalRow = Omit<Goal, never>;
-type MetricRow = Omit<GoalMetric, "payload" | "tasks_done" | "tasks_total"> & { payload: unknown };
+type MetricRow = Omit<GoalMetric, "payload" | "tasks_done" | "tasks_total" | "effective_current"> & { payload: unknown };
 
 function mapMetric(row: MetricRow): GoalMetric {
   let payload: MetricPayload | null = null;
@@ -1349,6 +1350,9 @@ function mapMetric(row: MetricRow): GoalMetric {
     payload,
     weight: Number(row.weight ?? 1),
     position: Number(row.position ?? 0),
+    parent_metric_id: row.parent_metric_id ?? null,
+    tasks_mode: (row.tasks_mode ?? null) as GoalMetric["tasks_mode"],
+    tasks_category_ids: row.tasks_category_ids ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -1428,6 +1432,9 @@ export interface BulkMetricRow {
   payload: object | null;
   weight: number;
   position: number;
+  parent_metric_id: string | null;
+  tasks_mode: "auto" | "manual" | null;
+  tasks_category_ids: string[] | null;
 }
 
 export async function bulkInsertGoalsAndMetrics(
@@ -1448,7 +1455,7 @@ export async function bulkInsertGoalsAndMetrics(
       ).run(...vals);
     }
     if (metrics.length > 0) {
-      const cols = 12;
+      const cols = 15;
       const placeholders = metrics.map(() => `(${Array(cols).fill("?").join(",")})`).join(",");
       const vals: unknown[] = [];
       for (const m of metrics) {
@@ -1457,10 +1464,11 @@ export async function bulkInsertGoalsAndMetrics(
           m.target_value, m.current_value, m.start_value, m.direction,
           m.payload === null ? null : JSON.stringify(m.payload),
           m.weight, m.position,
+          m.parent_metric_id, m.tasks_mode, m.tasks_category_ids,
         );
       }
       await tx.prepare(
-        `INSERT INTO goal_metrics (id, goal_id, kind, title, unit, target_value, current_value, start_value, direction, payload, weight, position) VALUES ${placeholders}`
+        `INSERT INTO goal_metrics (id, goal_id, kind, title, unit, target_value, current_value, start_value, direction, payload, weight, position, parent_metric_id, tasks_mode, tasks_category_ids) VALUES ${placeholders}`
       ).run(...vals);
     }
   });
@@ -1536,15 +1544,21 @@ export async function createMetric(data: CreateMetricPayload & { id: string; goa
     "SELECT COALESCE(MAX(position), -1) + 1 as p FROM goal_metrics WHERE goal_id = ?"
   ).get(data.goal_id);
   const position = data.position ?? Number(maxPos?.p ?? 0);
+  const tasksMode = data.kind === "tasks" ? (data.tasks_mode ?? "manual") : null;
+  const tasksCats = data.kind === "tasks" && tasksMode === "auto"
+    ? (data.tasks_category_ids ?? null)
+    : null;
   await prepare(
     `INSERT INTO goal_metrics (id, goal_id, kind, title, unit, target_value, current_value, start_value,
-                                direction, payload, weight, position)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                                direction, payload, weight, position,
+                                parent_metric_id, tasks_mode, tasks_category_ids)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     data.id, data.goal_id, data.kind, data.title.trim(),
     data.unit ?? null, data.target_value ?? null, data.current_value ?? null, data.start_value ?? null,
     data.direction ?? "up", data.payload ? JSON.stringify(data.payload) : null,
     data.weight ?? 1, position,
+    data.parent_metric_id ?? null, tasksMode, tasksCats,
   );
   const created = await prepare<MetricRow>("SELECT * FROM goal_metrics WHERE id = ?").get(data.id);
   const metric = mapMetric(created!);

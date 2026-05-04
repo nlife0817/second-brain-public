@@ -462,6 +462,8 @@ export interface MetricPayload {
   done?: boolean;
 }
 
+export type MetricTasksMode = "auto" | "manual";
+
 export interface GoalMetric {
   id: string;
   goal_id: string;
@@ -475,11 +477,19 @@ export interface GoalMetric {
   payload: MetricPayload | null;
   weight: number;
   position: number;
+  /** Inheritance: when set, points to the parent-level KR this one rolls up into. */
+  parent_metric_id: string | null;
+  /** Only meaningful when kind='tasks'. */
+  tasks_mode: MetricTasksMode | null;
+  /** Only meaningful when kind='tasks' and tasks_mode='auto'. */
+  tasks_category_ids: string[] | null;
   created_at: string;
   updated_at: string;
   // Filled by API for kind='tasks':
   tasks_done?: number;
   tasks_total?: number;
+  /** Filled by API: aggregated current value when this KR has children. */
+  effective_current?: number | null;
 }
 
 export interface GoalMetricSnapshot {
@@ -548,6 +558,9 @@ export interface CreateMetricPayload {
   payload?: MetricPayload | null;
   weight?: number;
   position?: number;
+  parent_metric_id?: string | null;
+  tasks_mode?: MetricTasksMode | null;
+  tasks_category_ids?: string[] | null;
 }
 
 export interface UpdateMetricPayload {
@@ -560,6 +573,9 @@ export interface UpdateMetricPayload {
   payload?: MetricPayload | null;
   weight?: number;
   position?: number;
+  parent_metric_id?: string | null;
+  tasks_mode?: MetricTasksMode | null;
+  tasks_category_ids?: string[] | null;
 }
 
 export const GOAL_LEVEL_CONFIG: Record<GoalLevel, { label: string; short: string }> = {
