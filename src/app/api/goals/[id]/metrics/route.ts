@@ -25,11 +25,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       const err = await validateParentMetric(id, body.kind, body.parent_metric_id);
       if (err) return NextResponse.json({ error: err }, { status: 400 });
     }
-    if (body.kind === "tasks" && body.tasks_mode === "auto") {
+    if (body.kind === "tasks") {
       const cats = body.tasks_category_ids ?? [];
       if (!Array.isArray(cats) || cats.length === 0) {
         return NextResponse.json(
-          { error: "tasks_category_ids: at least one category required for auto mode" },
+          { error: "tasks_category_ids: at least one category required" },
           { status: 400 },
         );
       }

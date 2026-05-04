@@ -462,8 +462,6 @@ export interface MetricPayload {
   done?: boolean;
 }
 
-export type MetricTasksMode = "auto" | "manual";
-
 export interface GoalMetric {
   id: string;
   goal_id: string;
@@ -479,9 +477,9 @@ export interface GoalMetric {
   position: number;
   /** Inheritance: when set, points to the parent-level KR this one rolls up into. */
   parent_metric_id: string | null;
-  /** Only meaningful when kind='tasks'. */
-  tasks_mode: MetricTasksMode | null;
-  /** Only meaningful when kind='tasks' and tasks_mode='auto'. */
+  /** Only meaningful when kind='tasks'. Tasks are bound to the KR via
+   *  `due_date ∈ goal.period AND category_id ∈ tasks_category_ids` — there are
+   *  no manual relations. */
   tasks_category_ids: string[] | null;
   created_at: string;
   updated_at: string;
@@ -559,7 +557,6 @@ export interface CreateMetricPayload {
   weight?: number;
   position?: number;
   parent_metric_id?: string | null;
-  tasks_mode?: MetricTasksMode | null;
   tasks_category_ids?: string[] | null;
   /** When true, the API also creates a linked copy of this KR on every
    *  descendant goal (parent_metric_id chain matches the goal tree). */
@@ -577,7 +574,6 @@ export interface UpdateMetricPayload {
   weight?: number;
   position?: number;
   parent_metric_id?: string | null;
-  tasks_mode?: MetricTasksMode | null;
   tasks_category_ids?: string[] | null;
 }
 

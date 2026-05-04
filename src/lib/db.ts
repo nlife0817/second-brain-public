@@ -1326,7 +1326,7 @@ const GOAL_UPDATE_FIELDS = [
 const METRIC_UPDATE_FIELDS = [
   "title", "unit", "target_value", "current_value", "start_value",
   "direction", "payload", "weight", "position",
-  "parent_metric_id", "tasks_mode", "tasks_category_ids",
+  "parent_metric_id", "tasks_category_ids",
 ] as const;
 
 type GoalRow = Omit<Goal, never>;
@@ -1360,7 +1360,6 @@ function mapMetric(row: MetricRow): GoalMetric {
     weight: Number(row.weight ?? 1),
     position: Number(row.position ?? 0),
     parent_metric_id: row.parent_metric_id ?? null,
-    tasks_mode: (row.tasks_mode ?? null) as GoalMetric["tasks_mode"],
     tasks_category_ids: cats,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -1442,7 +1441,6 @@ export interface BulkMetricRow {
   weight: number;
   position: number;
   parent_metric_id: string | null;
-  tasks_mode: "auto" | "manual" | null;
   tasks_category_ids: string[] | null;
 }
 
@@ -1464,7 +1462,7 @@ export async function bulkInsertGoalsAndMetrics(
       ).run(...vals);
     }
     if (metrics.length > 0) {
-      const cols = 15;
+      const cols = 14;
       const placeholders = metrics.map(() => `(${Array(cols).fill("?").join(",")})`).join(",");
       const vals: unknown[] = [];
       for (const m of metrics) {
@@ -1474,12 +1472,11 @@ export async function bulkInsertGoalsAndMetrics(
           m.payload === null ? null : JSON.stringify(m.payload),
           m.weight, m.position,
           m.parent_metric_id,
-          m.tasks_mode,
           m.tasks_category_ids === null ? null : JSON.stringify(m.tasks_category_ids),
         );
       }
       await tx.prepare(
-        `INSERT INTO goal_metrics (id, goal_id, kind, title, unit, target_value, current_value, start_value, direction, payload, weight, position, parent_metric_id, tasks_mode, tasks_category_ids) VALUES ${placeholders}`
+        `INSERT INTO goal_metrics (id, goal_id, kind, title, unit, target_value, current_value, start_value, direction, payload, weight, position, parent_metric_id, tasks_category_ids) VALUES ${placeholders}`
       ).run(...vals);
     }
   });
@@ -1528,42 +1525,16 @@ export async function getMetricsForGoals(goalIds: string[]): Promise<Map<string,
   return out;
 }
 
-// For all `tasks` KRs, count linked items. Fills tasks_done/tasks_total in-place.
-// - manual mode: counts relations source_type=goal -> items.
-// - auto mode: counts items by category_id ∈ KR.tasks_category_ids and
-//   due_date inside the parent goal's [period_start, period_end].
+// For all `tasks` KRs, count linked items. Fills tasks_done/tasks_total
+// in-place. Tasks are bound to a KR via:
+//   - category_id ∈ KR.tasks_category_ids
+//   - due_date inside the goal's [period_start, period_end]
+// No manual relations — attachment is purely declarative through categories.
 async function fillTaskMetricCounts(metrics: GoalMetric[], goalsById: Map<string, Goal>): Promise<void> {
   const taskMetrics = metrics.filter((m) => m.kind === "tasks");
   if (taskMetrics.length === 0) return;
 
-  const manualMetrics = taskMetrics.filter((m) => (m.tasks_mode ?? "manual") === "manual");
-  if (manualMetrics.length > 0) {
-    const goalIds = Array.from(new Set(manualMetrics.map((m) => m.goal_id)));
-    const placeholders = goalIds.map(() => "?").join(",");
-    const rows = await prepare<{ goal_id: string; status: string; c: number }>(
-      `SELECT r.source_id as goal_id, i.status as status, COUNT(*) as c
-         FROM relations r JOIN items i ON i.id = r.target_id
-        WHERE r.source_type = 'goal' AND r.target_type = 'item'
-          AND r.relation_type_id = 'belongs_to_goal'
-          AND r.source_id IN (${placeholders})
-        GROUP BY r.source_id, i.status`
-    ).all(...goalIds);
-    const totals = new Map<string, { done: number; total: number }>();
-    for (const r of rows) {
-      const cur = totals.get(r.goal_id) ?? { done: 0, total: 0 };
-      cur.total += Number(r.c);
-      if (r.status === "done") cur.done += Number(r.c);
-      totals.set(r.goal_id, cur);
-    }
-    for (const m of manualMetrics) {
-      const t = totals.get(m.goal_id) ?? { done: 0, total: 0 };
-      m.tasks_done = t.done;
-      m.tasks_total = t.total;
-    }
-  }
-
-  const autoMetrics = taskMetrics.filter((m) => m.tasks_mode === "auto");
-  for (const m of autoMetrics) {
+  for (const m of taskMetrics) {
     const cats = m.tasks_category_ids ?? [];
     const goal = goalsById.get(m.goal_id);
     if (cats.length === 0 || !goal?.period_start || !goal?.period_end) {
@@ -1591,21 +1562,20 @@ export async function createMetric(data: CreateMetricPayload & { id: string; goa
     "SELECT COALESCE(MAX(position), -1) + 1 as p FROM goal_metrics WHERE goal_id = ?"
   ).get(data.goal_id);
   const position = data.position ?? Number(maxPos?.p ?? 0);
-  const tasksMode = data.kind === "tasks" ? (data.tasks_mode ?? "manual") : null;
-  const tasksCats = data.kind === "tasks" && tasksMode === "auto" && data.tasks_category_ids
+  const tasksCats = data.kind === "tasks" && data.tasks_category_ids
     ? JSON.stringify(data.tasks_category_ids)
     : null;
   await prepare(
     `INSERT INTO goal_metrics (id, goal_id, kind, title, unit, target_value, current_value, start_value,
                                 direction, payload, weight, position,
-                                parent_metric_id, tasks_mode, tasks_category_ids)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                                parent_metric_id, tasks_category_ids)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     data.id, data.goal_id, data.kind, data.title.trim(),
     data.unit ?? null, data.target_value ?? null, data.current_value ?? null, data.start_value ?? null,
     data.direction ?? "up", data.payload ? JSON.stringify(data.payload) : null,
     data.weight ?? 1, position,
-    data.parent_metric_id ?? null, tasksMode, tasksCats,
+    data.parent_metric_id ?? null, tasksCats,
   );
   const created = await prepare<MetricRow>("SELECT * FROM goal_metrics WHERE id = ?").get(data.id);
   const metric = mapMetric(created!);

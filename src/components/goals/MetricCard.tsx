@@ -66,7 +66,7 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
                 ↑ от родителя
               </span>
             )}
-            {metric.kind === "tasks" && metric.tasks_mode === "auto" && (
+            {metric.kind === "tasks" && (metric.tasks_category_ids?.length ?? 0) > 0 && (
               <span
                 className="rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-medium text-emerald-600"
                 title="Считается автоматически по категориям задач"
@@ -136,12 +136,7 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
             onToggle={(done) => updateMetric(goalId, metric.id, { payload: { done } })}
           />
         )}
-        {metric.kind === "tasks" && metric.tasks_mode !== "auto" && (
-          <p className="text-[11px] text-slate-400">
-            Авто-прогресс. Привяжите задачи в секции ниже.
-          </p>
-        )}
-        {metric.kind === "tasks" && metric.tasks_mode === "auto" && (
+        {metric.kind === "tasks" && (
           <p className="text-[11px] text-slate-400">
             Считается по задачам в выбранных категориях за период цели.
           </p>

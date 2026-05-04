@@ -147,7 +147,6 @@ function walk(
         weight: pm.weight,
         position: pm.position,
         parent_metric_id: pm.id,
-        tasks_mode: pm.tasks_mode,
         tasks_category_ids: pm.tasks_category_ids,
       };
       outMetrics.push(replica);
@@ -180,7 +179,6 @@ function walk(
         weight: 1,
         position: parentMetrics.length,
         parent_metric_id: null,
-        tasks_mode: "manual",
         tasks_category_ids: null,
       });
     } else if (child.level !== "week") {

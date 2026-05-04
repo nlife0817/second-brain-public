@@ -8,7 +8,6 @@ import { useBrainStore } from "@/lib/store";
 import {
   METRIC_KIND_CONFIG,
   type MetricKind,
-  type MetricTasksMode,
   type CreateMetricPayload,
   type GoalMetric,
 } from "@/types";
@@ -70,8 +69,6 @@ export function CreateMetricDialog({ open, onOpenChange, goalId }: Props) {
   const effectiveDirection = inheritedFrom?.direction ?? direction;
   const effectiveUnit = inheritedFrom?.unit ?? unit;
 
-  const [tasksMode, setTasksMode] = useState<MetricTasksMode>("manual");
-  const effectiveTasksMode: MetricTasksMode = (inheritedFrom?.tasks_mode as MetricTasksMode) ?? tasksMode;
   const [tasksCats, setTasksCats] = useState<string[]>([]);
   const effectiveTasksCats = inheritedFrom?.tasks_category_ids ?? tasksCats;
 
@@ -114,8 +111,7 @@ export function CreateMetricDialog({ open, onOpenChange, goalId }: Props) {
       } else if (effectiveKind === "boolean") {
         payload.payload = { done: false };
       } else if (effectiveKind === "tasks") {
-        payload.tasks_mode = effectiveTasksMode;
-        payload.tasks_category_ids = effectiveTasksMode === "auto" ? effectiveTasksCats : null;
+        payload.tasks_category_ids = effectiveTasksCats;
       }
       await createMetric(goalId, payload);
       onOpenChange(false);
@@ -247,63 +243,36 @@ export function CreateMetricDialog({ open, onOpenChange, goalId }: Props) {
 
           {effectiveKind === "tasks" && (
             <div className="rounded-md border border-slate-200 bg-slate-50 p-2.5">
-              <label className="text-xs font-medium text-slate-600">Источник задач</label>
-              <div className="mt-1 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setTasksMode("manual")}
-                  disabled={!!inheritedFrom}
-                  className={cn(
-                    "flex-1 rounded-md border px-2.5 py-1 text-xs font-medium",
-                    effectiveTasksMode === "manual" ? "border-slate-900 bg-white" : "border-slate-200 bg-white text-slate-500",
-                    inheritedFrom && "opacity-60",
-                  )}
-                >
-                  Ручная привязка
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTasksMode("auto")}
-                  disabled={!!inheritedFrom}
-                  className={cn(
-                    "flex-1 rounded-md border px-2.5 py-1 text-xs font-medium",
-                    effectiveTasksMode === "auto" ? "border-slate-900 bg-white" : "border-slate-200 bg-white text-slate-500",
-                    inheritedFrom && "opacity-60",
-                  )}
-                >
-                  По категориям
-                </button>
+              <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                Категории задач {inheritedFrom && <span className="ml-1 normal-case text-slate-400">(наследуются)</span>}
               </div>
-              {effectiveTasksMode === "auto" && (
-                <div className="mt-2">
-                  <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                    Категории {inheritedFrom && <span className="ml-1 normal-case text-slate-400">(наследуются)</span>}
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {categories.map((c) => {
-                      const active = (effectiveTasksCats ?? []).includes(c.id);
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          disabled={!!inheritedFrom}
-                          onClick={() => toggleCategory(c.id)}
-                          className={cn(
-                            "flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
-                            active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600",
-                            inheritedFrom && "opacity-60 cursor-not-allowed",
-                          )}
-                        >
-                          <span style={{ color: active ? c.color : undefined }}>{c.icon}</span>
-                          {c.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {(effectiveTasksCats ?? []).length === 0 && (
-                    <p className="mt-1 text-[10px] text-rose-500">Выбери хотя бы одну категорию</p>
-                  )}
-                </div>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Задачи попадают в KR автоматически: если у задачи дедлайн внутри
+                периода цели и категория из выбранных ниже.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {categories.map((c) => {
+                  const active = (effectiveTasksCats ?? []).includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      disabled={!!inheritedFrom}
+                      onClick={() => toggleCategory(c.id)}
+                      className={cn(
+                        "flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                        active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600",
+                        inheritedFrom && "opacity-60 cursor-not-allowed",
+                      )}
+                    >
+                      <span style={{ color: active ? c.color : undefined }}>{c.icon}</span>
+                      {c.name}
+                    </button>
+                  );
+                })}
+              </div>
+              {(effectiveTasksCats ?? []).length === 0 && (
+                <p className="mt-1 text-[10px] text-rose-500">Выбери хотя бы одну категорию</p>
               )}
             </div>
           )}

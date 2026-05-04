@@ -117,7 +117,6 @@ export async function propagateMetricToDescendants(
           weight: rootMetric.weight,
           position: rootMetric.position,
           parent_metric_id: parentMetricId,
-          tasks_mode: rootMetric.tasks_mode,
           tasks_category_ids: rootMetric.tasks_category_ids,
         });
       }
