@@ -1,7 +1,3 @@
-// Backward-compatible thin wrapper: snapshots now live in goal_metric_history
-// (see /history). Existing clients that hit /snapshot keep working — GET
-// returns only event_type='snapshot' entries, POST records a new snapshot.
-
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { getMetricHistory, recordMetricSnapshot } from "@/lib/db";
@@ -10,7 +6,7 @@ import { getAuthUser } from "@/lib/auth";
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ mid: string }> }) {
   const { mid } = await ctx.params;
   const entries = await getMetricHistory(mid);
-  return NextResponse.json(entries.filter((e) => e.event_type === "snapshot"));
+  return NextResponse.json(entries);
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ mid: string }> }) {

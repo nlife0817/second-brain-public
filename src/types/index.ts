@@ -490,10 +490,18 @@ export interface GoalMetric {
   effective_current?: number | null;
 }
 
-export interface GoalMetricSnapshot {
+export type MetricHistoryEventType = "snapshot" | "target_change" | "manual_edit";
+
+export interface GoalMetricHistoryEntry {
   id: string;
   metric_id: string;
-  value: number;
+  event_type: MetricHistoryEventType;
+  /** Numeric "after" value (for snapshot/target_change/manual_edit). */
+  value: number | null;
+  /** Numeric "before" value when it makes sense (target_change/manual_edit). */
+  prev_value: number | null;
+  /** Free-form structured payload for non-numeric events. */
+  payload: Record<string, unknown> | null;
   recorded_at: string;
   note: string;
 }

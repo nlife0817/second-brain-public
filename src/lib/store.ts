@@ -1978,7 +1978,7 @@ export const useBrainStore = create<BrainStore>()(
         },
       ),
     }));
-    const res = await fetch(`/api/goals/${goalId}/metrics/${metricId}/snapshot`, {
+    const res = await fetch(`/api/goals/${goalId}/metrics/${metricId}/history`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value, note }),

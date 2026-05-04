@@ -1265,7 +1265,7 @@ export async function deleteComment(id: string): Promise<boolean> {
 // ---------------- Goals ----------------
 
 import type {
-  Goal, GoalMetric, GoalMetricSnapshot, GoalLevel, GoalAxis, GoalStatus,
+  Goal, GoalMetric, GoalMetricHistoryEntry, GoalLevel, GoalAxis, GoalStatus,
   GoalAxisConfig, CreateGoalAxisPayload, UpdateGoalAxisPayload,
   CreateGoalPayload, UpdateGoalPayload, CreateMetricPayload, UpdateMetricPayload, MetricPayload,
 } from "@/types";
@@ -1593,6 +1593,16 @@ export async function createMetric(data: CreateMetricPayload & { id: string; goa
 }
 
 export async function updateMetric(id: string, updates: UpdateMetricPayload): Promise<GoalMetric | undefined> {
+  // Capture prev target_value so we can record a 'target_change' history entry
+  // when it actually changes — that's the audit log of plan revisions.
+  let prevTarget: number | null = null;
+  if (Object.prototype.hasOwnProperty.call(updates, "target_value")) {
+    const cur = await prepare<{ target_value: number | string | null }>(
+      "SELECT target_value FROM goal_metrics WHERE id = ?",
+    ).get(id);
+    prevTarget = cur?.target_value == null ? null : Number(cur.target_value);
+  }
+
   const normalized: Record<string, unknown> = { ...updates };
   if (Object.prototype.hasOwnProperty.call(normalized, "payload")) {
     normalized.payload = normalized.payload == null ? null : JSON.stringify(normalized.payload);
@@ -1613,6 +1623,21 @@ export async function updateMetric(id: string, updates: UpdateMetricPayload): Pr
   const row = await prepare<MetricRow>("SELECT * FROM goal_metrics WHERE id = ?").get(id);
   if (!row) return undefined;
   const metric = mapMetric(row);
+
+  // Record plan revision in history when target_value actually changed.
+  if (Object.prototype.hasOwnProperty.call(updates, "target_value")) {
+    const newTarget = updates.target_value == null ? null : Number(updates.target_value);
+    const changed = (prevTarget ?? null) !== (newTarget ?? null);
+    if (changed) {
+      await recordTargetChange({
+        id: cryptoRandomId(),
+        metric_id: id,
+        prev_value: prevTarget,
+        value: newTarget,
+      });
+    }
+  }
+
   if (metric.kind === "tasks") {
     const goal = await getGoalById(metric.goal_id);
     const goalsById = goal ? new Map<string, Goal>([[goal.id, goal]]) : new Map();
@@ -1621,27 +1646,138 @@ export async function updateMetric(id: string, updates: UpdateMetricPayload): Pr
   return metric;
 }
 
+function cryptoRandomId(): string {
+  // Lightweight UUID-ish fallback; the ids only need to be unique within
+  // goal_metric_history. Falls back to Math.random when crypto is unavailable.
+  const c = (globalThis as { crypto?: Crypto }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `h-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export async function deleteMetric(id: string): Promise<boolean> {
   const result = await prepare("DELETE FROM goal_metrics WHERE id = ?").run(id);
   return result.changes > 0;
 }
 
-export async function recordMetricSnapshot(data: {
-  id: string; metric_id: string; value: number; note?: string;
-}): Promise<GoalMetricSnapshot> {
-  const now = new Date().toISOString();
-  await prepare(
-    "INSERT INTO goal_metric_snapshots (id, metric_id, value, recorded_at, note) VALUES (?, ?, ?, ?, ?)"
-  ).run(data.id, data.metric_id, data.value, now, data.note ?? "");
-  await prepare("UPDATE goal_metrics SET current_value = ?, updated_at = ? WHERE id = ?")
-    .run(data.value, now, data.metric_id);
-  return (await prepare<GoalMetricSnapshot>("SELECT * FROM goal_metric_snapshots WHERE id = ?").get(data.id))!;
+interface HistoryRow {
+  id: string;
+  metric_id: string;
+  event_type: GoalMetricHistoryEntry["event_type"];
+  value: string | number | null;
+  prev_value: string | number | null;
+  payload: string | object | null;
+  recorded_at: string;
+  note: string | null;
 }
 
-export async function getMetricSnapshots(metricId: string, limit = 50): Promise<GoalMetricSnapshot[]> {
-  return await prepare<GoalMetricSnapshot>(
-    "SELECT * FROM goal_metric_snapshots WHERE metric_id = ? ORDER BY recorded_at DESC LIMIT ?"
+function mapHistoryRow(row: HistoryRow): GoalMetricHistoryEntry {
+  let payload: Record<string, unknown> | null = null;
+  if (row.payload != null) {
+    payload = typeof row.payload === "string"
+      ? JSON.parse(row.payload)
+      : (row.payload as Record<string, unknown>);
+  }
+  return {
+    id: row.id,
+    metric_id: row.metric_id,
+    event_type: row.event_type,
+    value: row.value == null ? null : Number(row.value),
+    prev_value: row.prev_value == null ? null : Number(row.prev_value),
+    payload,
+    recorded_at: row.recorded_at,
+    note: row.note ?? "",
+  };
+}
+
+export async function getMetricHistory(metricId: string, limit = 50): Promise<GoalMetricHistoryEntry[]> {
+  const rows = await prepare<HistoryRow>(
+    "SELECT * FROM goal_metric_history WHERE metric_id = ? ORDER BY recorded_at DESC LIMIT ?"
   ).all(metricId, limit);
+  return rows.map(mapHistoryRow);
+}
+
+export async function recordMetricSnapshot(data: {
+  id: string; metric_id: string; value: number; note?: string;
+}): Promise<GoalMetricHistoryEntry> {
+  const now = new Date().toISOString();
+  // Read prev current_value for the prev_value column.
+  const cur = await prepare<{ current_value: number | string | null }>(
+    "SELECT current_value FROM goal_metrics WHERE id = ?"
+  ).get(data.metric_id);
+  const prev = cur?.current_value == null ? null : Number(cur.current_value);
+  await prepare(
+    `INSERT INTO goal_metric_history (id, metric_id, event_type, value, prev_value, recorded_at, note)
+     VALUES (?, ?, 'snapshot', ?, ?, ?, ?)`
+  ).run(data.id, data.metric_id, data.value, prev, now, data.note ?? "");
+  await prepare("UPDATE goal_metrics SET current_value = ?, updated_at = ? WHERE id = ?")
+    .run(data.value, now, data.metric_id);
+  const row = await prepare<HistoryRow>("SELECT * FROM goal_metric_history WHERE id = ?").get(data.id);
+  return mapHistoryRow(row!);
+}
+
+export async function recordTargetChange(data: {
+  id: string; metric_id: string; prev_value: number | null; value: number | null; note?: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+  await prepare(
+    `INSERT INTO goal_metric_history (id, metric_id, event_type, value, prev_value, recorded_at, note)
+     VALUES (?, ?, 'target_change', ?, ?, ?, ?)`
+  ).run(data.id, data.metric_id, data.value, data.prev_value, now, data.note ?? "");
+}
+
+export async function updateMetricHistoryEntry(
+  id: string, updates: { value?: number | null; note?: string },
+): Promise<GoalMetricHistoryEntry | undefined> {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (Object.prototype.hasOwnProperty.call(updates, "value")) {
+    sets.push("value = ?");
+    vals.push(updates.value);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "note")) {
+    sets.push("note = ?");
+    vals.push(updates.note ?? "");
+  }
+  if (sets.length === 0) {
+    const row = await prepare<HistoryRow>("SELECT * FROM goal_metric_history WHERE id = ?").get(id);
+    return row ? mapHistoryRow(row) : undefined;
+  }
+  await prepare(`UPDATE goal_metric_history SET ${sets.join(", ")} WHERE id = ?`).run(...vals, id);
+  const row = await prepare<HistoryRow>("SELECT * FROM goal_metric_history WHERE id = ?").get(id);
+  if (!row) return undefined;
+  // If this entry is the latest snapshot, also reflect the edit in the metric's
+  // current_value so KR display stays in sync with the corrected history.
+  if (row.event_type === "snapshot") {
+    const latest = await prepare<{ id: string }>(
+      `SELECT id FROM goal_metric_history
+        WHERE metric_id = ? AND event_type = 'snapshot'
+        ORDER BY recorded_at DESC LIMIT 1`,
+    ).get(row.metric_id);
+    if (latest?.id === id) {
+      await prepare("UPDATE goal_metrics SET current_value = ?, updated_at = ? WHERE id = ?")
+        .run(row.value, new Date().toISOString(), row.metric_id);
+    }
+  }
+  return mapHistoryRow(row);
+}
+
+export async function deleteMetricHistoryEntry(id: string): Promise<boolean> {
+  const row = await prepare<HistoryRow>("SELECT * FROM goal_metric_history WHERE id = ?").get(id);
+  if (!row) return false;
+  await prepare("DELETE FROM goal_metric_history WHERE id = ?").run(id);
+  // If we removed the latest snapshot, recompute current_value from the next
+  // surviving snapshot (or null if none).
+  if (row.event_type === "snapshot") {
+    const next = await prepare<{ value: number | string | null }>(
+      `SELECT value FROM goal_metric_history
+        WHERE metric_id = ? AND event_type = 'snapshot'
+        ORDER BY recorded_at DESC LIMIT 1`,
+    ).get(row.metric_id);
+    const newCurrent = next?.value == null ? null : Number(next.value);
+    await prepare("UPDATE goal_metrics SET current_value = ?, updated_at = ? WHERE id = ?")
+      .run(newCurrent, new Date().toISOString(), row.metric_id);
+  }
+  return true;
 }
 
 // ---------------- Integrations ----------------
