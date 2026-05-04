@@ -41,6 +41,17 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
 
   const parentGoal = useMemo(() => goals.find((g) => g.id === goalId) ?? null, [goals, goalId]);
 
+  // Lazy auto-freeze: when the goal's period_end is in the past we treat the
+  // KR as closed and render plan/fact instead of the live editor. Editing is
+  // still allowed (postfactum corrections show up in history).
+  const isClosed = useMemo(() => {
+    const end = parentGoal?.period_end;
+    if (!end) return false;
+    const endDay = end.length >= 10 ? end.slice(0, 10) : end;
+    const today = new Date().toISOString().slice(0, 10);
+    return endDay < today;
+  }, [parentGoal?.period_end]);
+
   // Direct children of this goal at the next level — drives the "Распределить"
   // button visibility and the divergence indicator.
   const directChildGoals = useMemo(() => {
@@ -100,6 +111,14 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-xs font-medium text-slate-900">{metric.title}</span>
+            {isClosed && (
+              <span
+                className="rounded bg-slate-200 px-1 py-0.5 text-[9px] font-medium text-slate-600"
+                title="Период закрыт — показано план vs факт"
+              >
+                закрыто
+              </span>
+            )}
             {hasChildKRs && (
               <span
                 className="inline-flex items-center gap-0.5 rounded bg-violet-50 px-1 py-0.5 text-[9px] font-medium text-violet-600"
@@ -126,14 +145,18 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
               </span>
             )}
           </div>
-          <div className="text-[10px] tabular-nums text-slate-500">
-            {formatMetricValue(metric)}
-            {overrideShown && (
-              <span className="ml-1 text-slate-400">
-                · ручное: {fmtNum(metric.current_value)}
-              </span>
-            )}
-          </div>
+          {isClosed && metric.kind === "numeric" ? (
+            <PlanFactLine metric={metric} />
+          ) : (
+            <div className="text-[10px] tabular-nums text-slate-500">
+              {formatMetricValue(metric)}
+              {overrideShown && (
+                <span className="ml-1 text-slate-400">
+                  · ручное: {fmtNum(metric.current_value)}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <span className="text-xs font-semibold tabular-nums text-slate-700">{pct}%</span>
         {canDistribute && (
@@ -236,6 +259,30 @@ function fmtNum(v: number | null | undefined): string {
   if (v == null) return "—";
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString("ru-RU") : "—";
+}
+
+function PlanFactLine({ metric }: { metric: GoalMetric }) {
+  const fact = metric.effective_current ?? metric.current_value;
+  const plan = metric.target_value;
+  const diffPct = plan != null && Number(plan) !== 0 && fact != null
+    ? Math.round(((Number(fact) - Number(plan)) / Number(plan)) * 100)
+    : null;
+  const unit = metric.unit ? ` ${metric.unit}` : "";
+  return (
+    <div className="text-[10px] tabular-nums text-slate-500">
+      План: <span className="text-slate-700">{fmtNum(plan)}{unit}</span>
+      <span className="mx-1 text-slate-300">·</span>
+      Факт: <span className="text-slate-700">{fmtNum(fact)}{unit}</span>
+      {diffPct != null && (
+        <span className={cn(
+          "ml-1",
+          diffPct >= 0 ? "text-emerald-600" : "text-rose-500",
+        )}>
+          {diffPct >= 0 ? "+" : ""}{diffPct}%
+        </span>
+      )}
+    </div>
+  );
 }
 
 function NumericEditor({ metric, onSnapshot }: { metric: GoalMetric; onSnapshot: (v: number) => void }) {
