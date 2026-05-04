@@ -11,6 +11,7 @@ import { MetricCard } from "./MetricCard";
 import { CreateMetricDialog } from "./CreateMetricDialog";
 import { LinkedTasksPanel } from "./LinkedTasksPanel";
 import { LinkedGoalsSection } from "./LinkedGoalsSection";
+import { ClientRevenueSection } from "./ClientRevenueSection";
 import { CommentsList } from "@/components/comments/CommentsList";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2 } from "lucide-react";
@@ -118,6 +119,12 @@ export function GoalDetailPanel({ goal }: Props) {
             <MetricCard key={m.id} goalId={goal.id} metric={m} axisColor={ax?.color ?? "#64748b"} />
           ))}
         </section>
+
+        {goal.level === "week" && (
+          <section className="border-t border-slate-200 p-4">
+            <ClientRevenueSection goal={goal} />
+          </section>
+        )}
 
         <section className="border-t border-slate-200 p-4">
           <LinkedTasksPanel goalId={goal.id} />
