@@ -12,6 +12,7 @@ import { CreateMetricDialog } from "./CreateMetricDialog";
 import { LinkedTasksPanel } from "./LinkedTasksPanel";
 import { LinkedGoalsSection } from "./LinkedGoalsSection";
 import { ClientRevenueSection } from "./ClientRevenueSection";
+import { ClientRevenueAggregateSection } from "./ClientRevenueAggregateSection";
 import { CommentsList } from "@/components/comments/CommentsList";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2 } from "lucide-react";
@@ -120,11 +121,11 @@ export function GoalDetailPanel({ goal }: Props) {
           ))}
         </section>
 
-        {goal.level === "week" && (
-          <section className="border-t border-slate-200 p-4">
-            <ClientRevenueSection goal={goal} />
-          </section>
-        )}
+        <section className="border-t border-slate-200 p-4">
+          {goal.level === "week"
+            ? <ClientRevenueSection goal={goal} />
+            : <ClientRevenueAggregateSection goal={goal} />}
+        </section>
 
         <section className="border-t border-slate-200 p-4">
           <LinkedTasksPanel goalId={goal.id} />
