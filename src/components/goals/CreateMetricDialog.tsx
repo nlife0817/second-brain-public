@@ -40,20 +40,7 @@ export function CreateMetricDialog({ open, onOpenChange, goalId }: Props) {
     return out;
   }, [goals, goalId]);
 
-  // Whether this goal has any descendants (BFS through goals tree). Drives
-  // visibility of the "распределить по детям" checkbox.
-  const hasDescendants = useMemo(() => {
-    const childrenOf = new Map<string | null, string[]>();
-    for (const g of goals) {
-      const arr = childrenOf.get(g.parent_id) ?? [];
-      arr.push(g.id);
-      childrenOf.set(g.parent_id, arr);
-    }
-    return (childrenOf.get(goalId) ?? []).length > 0;
-  }, [goals, goalId]);
-
   const [parentMetricId, setParentMetricId] = useState<string>("");
-  const [propagate, setPropagate] = useState<boolean>(true);
   const inheritedFrom = parentMetricId
     ? inheritableKRs.find((x) => x.metric.id === parentMetricId)?.metric ?? null
     : null;
@@ -85,7 +72,7 @@ export function CreateMetricDialog({ open, onOpenChange, goalId }: Props) {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || saving) return;
-    if (effectiveKind === "tasks" && effectiveTasksMode === "auto" && effectiveTasksCats.length === 0) return;
+    if (effectiveKind === "tasks" && effectiveTasksCats.length === 0) return;
     setSaving(true);
     try {
       const payload: CreateMetricPayload = {
@@ -94,9 +81,6 @@ export function CreateMetricDialog({ open, onOpenChange, goalId }: Props) {
         unit: (effectiveUnit || "").trim() || null,
         direction: effectiveDirection,
         parent_metric_id: parentMetricId || null,
-        // Propagation only makes sense for top-level KRs (not inherited copies)
-        // and only when the goal actually has descendants.
-        propagate_to_children: !parentMetricId && hasDescendants && propagate,
       };
       if (effectiveKind === "numeric") {
         payload.target_value = target ? Number(target) : null;
@@ -275,25 +259,6 @@ export function CreateMetricDialog({ open, onOpenChange, goalId }: Props) {
                 <p className="mt-1 text-[10px] text-rose-500">Выбери хотя бы одну категорию</p>
               )}
             </div>
-          )}
-
-          {!parentMetricId && hasDescendants && (
-            <label className="flex items-start gap-2 rounded-lg border border-violet-200 bg-violet-50/40 p-2.5 text-xs text-slate-700">
-              <input
-                type="checkbox"
-                checked={propagate}
-                onChange={(e) => setPropagate(e.target.checked)}
-                className="mt-0.5"
-              />
-              <span>
-                <strong className="font-medium">Распределить по дочерним целям.</strong>{" "}
-                Тот же KR появится у каждого квартала / месяца / недели внутри —
-                с пустой целью, готовый к ручному вводу плана.{" "}
-                <span className="text-slate-500">
-                  Факт ребёнка автоматически суммируется в этот KR.
-                </span>
-              </span>
-            </label>
           )}
 
           <div className="mt-2 flex justify-end gap-2">

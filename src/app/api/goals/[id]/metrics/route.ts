@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { getMetricsForGoal, createMetric, getGoalById } from "@/lib/db";
-import { validateParentMetric, propagateMetricToDescendants } from "@/lib/goals-inheritance";
+import { validateParentMetric } from "@/lib/goals-inheritance";
 import type { CreateMetricPayload } from "@/types";
 import { getAuthUser } from "@/lib/auth";
 
@@ -35,9 +35,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       }
     }
     const metric = await createMetric({ ...body, id: uuid(), goal_id: id });
-    if (body.propagate_to_children) {
-      await propagateMetricToDescendants(id, metric);
-    }
     return NextResponse.json(metric, { status: 201 });
   } catch (e) {
     console.error("POST /api/goals/[id]/metrics failed", e);

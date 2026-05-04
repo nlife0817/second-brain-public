@@ -558,9 +558,6 @@ export interface CreateMetricPayload {
   position?: number;
   parent_metric_id?: string | null;
   tasks_category_ids?: string[] | null;
-  /** When true, the API also creates a linked copy of this KR on every
-   *  descendant goal (parent_metric_id chain matches the goal tree). */
-  propagate_to_children?: boolean;
 }
 
 export interface UpdateMetricPayload {
