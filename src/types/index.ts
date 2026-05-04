@@ -414,7 +414,7 @@ export interface RelationWithTarget extends Relation {
 
 // --- Goals ---
 
-export type GoalLevel = "year" | "quarter" | "month" | "week" | "day";
+export type GoalLevel = "year" | "quarter" | "month" | "week";
 /**
  * Axis is a free-form id matching a row in the user-managed `goal_axes` table.
  * Built-in seeds: "income" | "debts" | "project" | "health". Users can add more.
@@ -567,7 +567,6 @@ export const GOAL_LEVEL_CONFIG: Record<GoalLevel, { label: string; short: string
   quarter: { label: "Квартал", short: "Кв" },
   month: { label: "Месяц", short: "М" },
   week: { label: "Неделя", short: "Н" },
-  day: { label: "День", short: "Д" },
 };
 
 /**

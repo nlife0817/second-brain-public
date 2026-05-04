@@ -38,15 +38,6 @@ function parseISO(s: string | null | undefined): { y: number; m: number; d: numb
   if (!m) return null;
   return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
 }
-function enumerateDays(startISO: string, endISO: string): string[] {
-  const out: string[] = [];
-  const s = new Date(startISO + "T00:00:00");
-  const e = new Date(endISO + "T00:00:00");
-  for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-    out.push(iso(d.getFullYear(), d.getMonth() + 1, d.getDate()));
-  }
-  return out;
-}
 function quarterOfMonth(m1: number): number {
   return Math.floor((m1 - 1) / 3) + 1;
 }
@@ -110,13 +101,6 @@ export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultA
   }, [level, parentStart?.y, parentStart?.m]);
   const [weekIdx, setWeekIdx] = useState<number>(0);
 
-  // Day picker: list of days in parent week.
-  const daysInWeek: string[] = useMemo(() => {
-    if (level !== "day" || !parentStart || !parentEnd) return [];
-    return enumerateDays(parent!.period_start!, parent!.period_end!);
-  }, [level, parent, parentStart?.y, parentStart?.m, parentStart?.d, parentEnd?.y, parentEnd?.m, parentEnd?.d]);
-  const [day, setDay] = useState<string>(daysInWeek[0] ?? "");
-
   // Compute final period_start / period_end based on level + selectors.
   const period: { start: string | null; end: string | null } = useMemo(() => {
     if (level === "year") {
@@ -137,11 +121,8 @@ export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultA
       if (!w) return { start: null, end: null };
       return { start: w.start, end: w.end };
     }
-    if (level === "day") {
-      return { start: day || null, end: day || null };
-    }
     return { start: null, end: null };
-  }, [level, year, parentStart?.y, quarterIdx, month, weekIdx, day, weeksInMonth]);
+  }, [level, year, parentStart?.y, quarterIdx, month, weekIdx, weeksInMonth]);
 
   // Title default — auto-derive from period if user hasn't typed anything.
   const autoTitle: string = useMemo(() => {
@@ -149,9 +130,8 @@ export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultA
     if (level === "quarter") return `Q${quarterIdx} ${parentStart?.y ?? year}`;
     if (level === "month") return `${RU_MONTHS[month - 1]} ${parentStart?.y ?? year}`;
     if (level === "week") return weeksInMonth[weekIdx]?.label ?? "";
-    if (level === "day") return day;
     return "";
-  }, [level, year, quarterIdx, month, weekIdx, day, weeksInMonth, parentStart?.y]);
+  }, [level, year, quarterIdx, month, weekIdx, weeksInMonth, parentStart?.y]);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -340,39 +320,6 @@ export function CreateGoalDialog({ open, onOpenChange, level, parentId, defaultA
                       {w.label}
                     </button>
                   ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {level === "day" && (
-            <div>
-              <label className="text-xs font-medium text-slate-600">
-                День {parent && <span className="text-slate-400">· {parent.title}</span>}
-              </label>
-              {daysInWeek.length === 0 ? (
-                <p className="mt-1 text-xs text-slate-400">Сначала выберите неделю-родителя</p>
-              ) : (
-                <div className="mt-1 grid grid-cols-7 gap-1">
-                  {daysInWeek.map((d) => {
-                    const dt = new Date(d + "T00:00:00");
-                    return (
-                      <button
-                        key={d}
-                        type="button"
-                        onClick={() => setDay(d)}
-                        className={cn(
-                          "flex flex-col items-center rounded-md border px-1 py-1.5 text-[10px] font-medium transition",
-                          day === d
-                            ? "border-slate-900 bg-slate-900 text-white"
-                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
-                        )}
-                      >
-                        <span className="uppercase">{["Вс","Пн","Вт","Ср","Чт","Пт","Сб"][dt.getDay()]}</span>
-                        <span className="tabular-nums">{dt.getDate()}</span>
-                      </button>
-                    );
-                  })}
                 </div>
               )}
             </div>

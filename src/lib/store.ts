@@ -76,6 +76,9 @@ export interface GoalDeadlineFilter {
 
 export type GoalGroupBy = "none" | "status" | "priority" | "category" | "clients";
 
+/** Visual column keys in the Goals view. "day" is a virtual column showing tasks of the selected week by date. */
+export type GoalColumnKey = GoalLevel | "day";
+
 // One reversible inline edit on an item. `payload` holds the values needed to
 // revert (undo); `newPayload` holds the values that were written (used both for
 // redo and for conflict detection — we skip an undo step if the current item
@@ -304,13 +307,14 @@ interface BrainStore {
   goalDeadlineFilter: GoalDeadlineFilter;
   goalGroupBy: GoalGroupBy;
   goalSelected: Partial<Record<GoalLevel, string | null>>;
-  goalCollapsedColumns: GoalLevel[];
+  /** Column collapse state. "day" is a virtual column (tasks-of-week projection), not a goal level. */
+  goalCollapsedColumns: GoalColumnKey[];
   goalCollapsedGroups: string[];
   fetchGoalAxes: () => Promise<void>;
   createGoalAxis: (payload: CreateGoalAxisPayload) => Promise<GoalAxisConfig | null>;
   updateGoalAxis: (id: string, payload: UpdateGoalAxisPayload) => Promise<void>;
   deleteGoalAxis: (id: string) => Promise<{ ok: boolean; error?: string }>;
-  toggleGoalColumnCollapsed: (level: GoalLevel) => void;
+  toggleGoalColumnCollapsed: (level: GoalColumnKey) => void;
   fetchGoals: () => Promise<void>;
   createGoal: (payload: CreateGoalPayload) => Promise<GoalFull | null>;
   updateGoal: (id: string, payload: UpdateGoalPayload) => Promise<void>;
@@ -1997,7 +2001,7 @@ export const useBrainStore = create<BrainStore>()(
   selectGoal: (level, id) => set((s) => {
     const next: Partial<Record<GoalLevel, string | null>> = { ...s.goalSelected, [level]: id };
     // Clear deeper levels when parent changes.
-    const order: GoalLevel[] = ["year", "quarter", "month", "week", "day"];
+    const order: GoalLevel[] = ["year", "quarter", "month", "week"];
     const idx = order.indexOf(level);
     for (let i = idx + 1; i < order.length; i++) next[order[i]] = null;
     return { goalSelected: next };
@@ -2028,7 +2032,7 @@ export const useBrainStore = create<BrainStore>()(
 }),
   {
     name: "second-brain-settings",
-    version: 6,
+    version: 7,
     storage: createJSONStorage(() => localStorage),
     migrate: (persisted: unknown, version: number) => {
       const state = persisted as Record<string, unknown> | null;
@@ -2068,6 +2072,15 @@ export const useBrainStore = create<BrainStore>()(
         // goalDeadlineFilter changed shape; force reset to "all" so old values
         // like "active" (which would hide most decomposed goals) don't confuse users.
         state.goalDeadlineFilter = { op: "all", value: "" };
+      }
+      if (state && version < 7) {
+        // "day" goal level removed; drop persisted day selection / collapse keys.
+        const sel = state.goalSelected as Record<string, unknown> | undefined;
+        if (sel && "day" in sel) delete sel.day;
+        const col = state.goalCollapsedColumns as string[] | undefined;
+        if (Array.isArray(col)) {
+          state.goalCollapsedColumns = col.filter((c) => c !== "day");
+        }
       }
       return state;
     },

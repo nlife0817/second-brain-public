@@ -8,9 +8,20 @@ import { GoalDetailPanel } from "./GoalDetailPanel";
 import { DayColumn } from "./DayColumn";
 import { cn } from "@/lib/utils";
 import { ChevronRight, Layers } from "lucide-react";
-import type { GoalDeadlineOp, GoalGroupBy } from "@/lib/store";
+import type { GoalColumnKey, GoalDeadlineOp, GoalGroupBy } from "@/lib/store";
 
-const LEVEL_ORDER: GoalLevel[] = ["year", "quarter", "month", "week", "day"];
+/** Real goal levels (drive selection cascade and `goal_metrics` parent-chain). */
+const LEVEL_ORDER: GoalLevel[] = ["year", "quarter", "month", "week"];
+/** All visible columns including the virtual "day" tasks projection. */
+const COLUMN_ORDER: GoalColumnKey[] = ["year", "quarter", "month", "week", "day"];
+
+const COLUMN_LABEL: Record<GoalColumnKey, { label: string; short: string }> = {
+  year: GOAL_LEVEL_CONFIG.year,
+  quarter: GOAL_LEVEL_CONFIG.quarter,
+  month: GOAL_LEVEL_CONFIG.month,
+  week: GOAL_LEVEL_CONFIG.week,
+  day: { label: "Дни", short: "Д" },
+};
 
 const TODAY_ISO = (): string => {
   const d = new Date();
@@ -70,7 +81,6 @@ export function GoalsView() {
   const selected = useBrainStore((s) => s.goalSelected);
   const collapsed = useBrainStore((s) => s.goalCollapsedColumns);
   const toggleCollapsed = useBrainStore((s) => s.toggleGoalColumnCollapsed);
-  const selectGoal = useBrainStore((s) => s.selectGoal);
 
   useEffect(() => {
     if (!goalsLoaded) void fetchGoals();
@@ -156,8 +166,8 @@ export function GoalsView() {
     return null;
   }, [selected, goals]);
 
-  const collapsedSet = useMemo(() => new Set(collapsed), [collapsed]);
-  const visibleLevels = LEVEL_ORDER.filter((l) => !collapsedSet.has(l));
+  const collapsedSet = useMemo(() => new Set<GoalColumnKey>(collapsed), [collapsed]);
+  const visibleColumns = COLUMN_ORDER.filter((l) => !collapsedSet.has(l));
 
   const needsDate = deadlineFilter.op === "before" || deadlineFilter.op === "after";
 
@@ -259,13 +269,13 @@ export function GoalsView() {
 
         <div className="ml-auto flex flex-wrap items-center gap-1">
           <span className="text-[11px] font-medium uppercase tracking-widest text-slate-400">Колонки:</span>
-          {LEVEL_ORDER.map((lvl) => {
-            const isCollapsed = collapsedSet.has(lvl);
+          {COLUMN_ORDER.map((col) => {
+            const isCollapsed = collapsedSet.has(col);
             return (
               <button
-                key={lvl}
-                onClick={() => toggleCollapsed(lvl)}
-                title={isCollapsed ? `Развернуть «${GOAL_LEVEL_CONFIG[lvl].label}»` : `Свернуть «${GOAL_LEVEL_CONFIG[lvl].label}»`}
+                key={col}
+                onClick={() => toggleCollapsed(col)}
+                title={isCollapsed ? `Развернуть «${COLUMN_LABEL[col].label}»` : `Свернуть «${COLUMN_LABEL[col].label}»`}
                 className={cn(
                   "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase",
                   isCollapsed
@@ -273,7 +283,7 @@ export function GoalsView() {
                     : "border-slate-900 bg-slate-900 text-white",
                 )}
               >
-                {GOAL_LEVEL_CONFIG[lvl].short}
+                {COLUMN_LABEL[col].short}
               </button>
             );
           })}
@@ -282,24 +292,24 @@ export function GoalsView() {
 
       <div className="flex flex-1 min-h-0">
         <div className="flex flex-1 min-w-0 divide-x divide-slate-200 overflow-hidden">
-          {LEVEL_ORDER.map((lvl) => {
-            const isCollapsed = collapsedSet.has(lvl);
+          {COLUMN_ORDER.map((col) => {
+            const isCollapsed = collapsedSet.has(col);
             if (isCollapsed) {
-              const selectedId = selected[lvl];
+              const selectedId = col === "day" ? null : selected[col as GoalLevel];
               const sel = selectedId ? goals.find((g) => g.id === selectedId) : null;
               return (
                 <button
-                  key={lvl}
-                  onClick={() => toggleCollapsed(lvl)}
+                  key={col}
+                  onClick={() => toggleCollapsed(col)}
                   className="group flex w-9 shrink-0 flex-col items-center gap-2 border-slate-200 bg-slate-50/40 py-3 text-slate-500 hover:bg-slate-100"
-                  title={`Развернуть «${GOAL_LEVEL_CONFIG[lvl].label}»`}
+                  title={`Развернуть «${COLUMN_LABEL[col].label}»`}
                 >
                   <ChevronRight className="size-3.5 opacity-50 group-hover:opacity-100" />
                   <span
                     className="text-[11px] font-semibold uppercase tracking-widest"
                     style={{ writingMode: "vertical-rl" }}
                   >
-                    {GOAL_LEVEL_CONFIG[lvl].label}
+                    {COLUMN_LABEL[col].label}
                     {sel && (
                       <span className="ml-2 font-normal text-slate-400"> · {sel.title}</span>
                     )}
@@ -307,21 +317,19 @@ export function GoalsView() {
                 </button>
               );
             }
-            const flexBasis = `${100 / visibleLevels.length}%`;
-            if (lvl === "day") {
+            const flexBasis = `${100 / visibleColumns.length}%`;
+            if (col === "day") {
               return (
-                <div key={lvl} style={{ flex: `1 1 ${flexBasis}`, minWidth: 0 }}>
+                <div key={col} style={{ flex: `1 1 ${flexBasis}`, minWidth: 0 }}>
                   <DayColumn
                     parentWeekId={selected.week ?? null}
-                    selectedDayGoalId={selected.day ?? null}
-                    onSelectDayGoal={(id) => selectGoal("day", id)}
-                    levelLabel={GOAL_LEVEL_CONFIG.day.label}
+                    levelLabel={COLUMN_LABEL.day.label}
                     onCollapse={() => toggleCollapsed("day")}
-                    dayGoals={columnGoals.get("day") ?? []}
                   />
                 </div>
               );
             }
+            const lvl = col as GoalLevel;
             return (
               <div key={lvl} style={{ flex: `1 1 ${flexBasis}`, minWidth: 0 }}>
                 <GoalColumn
