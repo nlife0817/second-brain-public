@@ -1543,6 +1543,10 @@ async function fillTaskMetricCounts(metrics: GoalMetric[], goalsById: Map<string
       continue;
     }
     const catPlaceholders = cats.map(() => "?").join(",");
+    // Count only leaf tasks: items with no children. A parent task with
+    // subtasks is excluded so subtasks (which carry the actual work) are
+    // counted instead — and a 3-day parent stays "in progress" while its
+    // subtasks roll up.
     const row = await prepare<{ done: number | string; total: number | string }>(
       `SELECT COUNT(*) FILTER (WHERE i.status = 'done') AS done, COUNT(*) AS total
          FROM items i
@@ -1550,7 +1554,8 @@ async function fillTaskMetricCounts(metrics: GoalMetric[], goalsById: Map<string
           AND i.due_date IS NOT NULL
           AND SUBSTR(i.due_date, 1, 10) >= ?
           AND SUBSTR(i.due_date, 1, 10) <= ?
-          AND i.status <> 'archived'`
+          AND i.status <> 'archived'
+          AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = i.id)`
     ).get(...cats, goal.period_start, goal.period_end);
     m.tasks_done = Number(row?.done ?? 0);
     m.tasks_total = Number(row?.total ?? 0);
