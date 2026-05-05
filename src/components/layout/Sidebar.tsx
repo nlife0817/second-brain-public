@@ -11,7 +11,6 @@ import {
   Settings,
   ClipboardCheck,
   RefreshCw,
-  Target,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -41,7 +40,6 @@ interface SectionEntry {
 
 const sections: SectionEntry[] = [
   { key: "tasks", label: "Задачи", icon: ClipboardList },
-  { key: "goals", label: "Цели", icon: Target },
   { key: "clients", label: "Клиенты", icon: Contact },
   { key: "staging", label: "Согласование", icon: ClipboardCheck },
   { key: "settings", label: "Настройки", icon: Settings },
@@ -60,7 +58,6 @@ export function Sidebar() {
   const viewMode = useBrainStore((s) => s.viewMode);
   const setViewMode = useBrainStore((s) => s.setViewMode);
   const clients = useBrainStore((s) => s.clients);
-  const goals = useBrainStore((s) => s.goals);
   const stagingItems = useBrainStore((s) => s.stagingItems);
   const fetchItems = useBrainStore((s) => s.fetchItems);
   const fetchStagingItems = useBrainStore((s) => s.fetchStagingItems);
@@ -165,7 +162,6 @@ export function Sidebar() {
             const count = key === "tasks"
               ? (counts.all ?? 0)
               : key === "clients" ? clients.length
-              : key === "goals" ? goals.length
               : key === "staging" ? stagingItems.length : 0;
 
             const button = (

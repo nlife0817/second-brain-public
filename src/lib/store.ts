@@ -37,17 +37,6 @@ import {
   Comment,
   EntityType,
   RelationEntityType,
-  GoalFull,
-  GoalLevel,
-  GoalAxis,
-  GoalAxisConfig,
-  CreateGoalAxisPayload,
-  UpdateGoalAxisPayload,
-  CreateGoalPayload,
-  UpdateGoalPayload,
-  GoalMetric,
-  CreateMetricPayload,
-  UpdateMetricPayload,
   StagingItem,
   StagingItemParsed,
   StagingParsedData,
@@ -56,28 +45,6 @@ import {
   ItemStatusRow,
   ItemStatusKind,
 } from "@/types";
-
-export type GoalDeadlineOp =
-  | "all"
-  | "today"
-  | "this_week"
-  | "overdue"
-  | "upcoming"
-  | "active"
-  | "before"
-  | "after"
-  | "is_empty"
-  | "is_not_empty";
-
-export interface GoalDeadlineFilter {
-  op: GoalDeadlineOp;
-  value: string;
-}
-
-export type GoalGroupBy = "none" | "status" | "priority" | "category" | "clients";
-
-/** Visual column keys in the Goals view. "day" is a virtual column showing tasks of the selected week by date. */
-export type GoalColumnKey = GoalLevel | "day";
 
 // One reversible inline edit on an item. `payload` holds the values needed to
 // revert (undo); `newPayload` holds the values that were written (used both for
@@ -296,42 +263,6 @@ interface BrainStore {
   createRelation: (source_type: RelationEntityType, source_id: string, target_type: RelationEntityType, target_id: string, relation_type_id?: string | null) => Promise<void>;
   updateRelationType_: (relationId: string, relation_type_id: string | null) => Promise<void>;
   deleteRelation: (id: string) => Promise<void>;
-
-  // Goals
-  goals: GoalFull[];
-  goalsLoaded: boolean;
-  goalAxes: GoalAxisConfig[];
-  goalAxesLoaded: boolean;
-  goalAxisFilter: GoalAxis | null;
-  goalHideDone: boolean;
-  goalDeadlineFilter: GoalDeadlineFilter;
-  goalGroupBy: GoalGroupBy;
-  goalSelected: Partial<Record<GoalLevel, string | null>>;
-  /** Column collapse state. "day" is a virtual column (tasks-of-week projection), not a goal level. */
-  goalCollapsedColumns: GoalColumnKey[];
-  goalCollapsedGroups: string[];
-  fetchGoalAxes: () => Promise<void>;
-  createGoalAxis: (payload: CreateGoalAxisPayload) => Promise<GoalAxisConfig | null>;
-  updateGoalAxis: (id: string, payload: UpdateGoalAxisPayload) => Promise<void>;
-  deleteGoalAxis: (id: string) => Promise<{ ok: boolean; error?: string }>;
-  toggleGoalColumnCollapsed: (level: GoalColumnKey) => void;
-  fetchGoals: () => Promise<void>;
-  createGoal: (payload: CreateGoalPayload) => Promise<GoalFull | null>;
-  updateGoal: (id: string, payload: UpdateGoalPayload) => Promise<void>;
-  deleteGoal: (id: string) => Promise<void>;
-  createMetric: (goalId: string, payload: CreateMetricPayload) => Promise<GoalMetric | null>;
-  updateMetric: (goalId: string, metricId: string, payload: UpdateMetricPayload) => Promise<void>;
-  deleteMetric: (goalId: string, metricId: string) => Promise<void>;
-  recordSnapshot: (goalId: string, metricId: string, value: number, note?: string) => Promise<void>;
-  setGoalAxisFilter: (axis: GoalAxis | null) => void;
-  setGoalHideDone: (v: boolean) => void;
-  setGoalDeadlineFilter: (v: GoalDeadlineFilter) => void;
-  setGoalGroupBy: (v: GoalGroupBy) => void;
-  toggleGoalGroupCollapsed: (key: string) => void;
-  selectGoal: (level: GoalLevel, id: string | null) => void;
-  linkTaskToGoal: (goalId: string, taskId: string) => Promise<void>;
-  unlinkTaskFromGoal: (goalId: string, taskId: string) => Promise<void>;
-  getGoalsForTask: (taskId: string) => Promise<RelationWithTarget[]>;
 
   // Comments (fetched per-entity, not global)
   fetchComments: (entityType: EntityType, entityId: string) => Promise<Comment[]>;
@@ -1775,264 +1706,10 @@ export const useBrainStore = create<BrainStore>()(
     if (!res.ok) throw new Error(await res.text());
     set((s) => ({ users: s.users.filter((u) => u.email !== email) }));
   },
-
-  // Goals
-  goals: [],
-  goalsLoaded: false,
-  goalAxes: [],
-  goalAxesLoaded: false,
-  goalAxisFilter: null,
-  goalHideDone: false,
-  goalDeadlineFilter: { op: "all", value: "" },
-  goalGroupBy: "none",
-  goalSelected: {},
-  goalCollapsedColumns: [],
-  goalCollapsedGroups: [],
-  fetchGoalAxes: async () => {
-    const res = await fetch("/api/goal-axes");
-    if (!res.ok) return;
-    const axes: GoalAxisConfig[] = await res.json();
-    set({ goalAxes: axes, goalAxesLoaded: true });
-  },
-  createGoalAxis: async (payload) => {
-    const res = await fetch("/api/goal-axes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) return null;
-    const axis: GoalAxisConfig = await res.json();
-    await get().fetchGoalAxes();
-    return axis;
-  },
-  updateGoalAxis: async (id, payload) => {
-    const res = await fetch(`/api/goal-axes/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) return;
-    await get().fetchGoalAxes();
-  },
-  deleteGoalAxis: async (id) => {
-    const res = await fetch(`/api/goal-axes/${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, error: body.error };
-    }
-    await get().fetchGoalAxes();
-    await get().fetchGoals();
-    return { ok: true };
-  },
-  toggleGoalColumnCollapsed: (level) => set((s) => {
-    const cur = new Set(s.goalCollapsedColumns);
-    if (cur.has(level)) cur.delete(level);
-    else cur.add(level);
-    return { goalCollapsedColumns: Array.from(cur) };
-  }),
-  fetchGoals: async () => {
-    const res = await fetch("/api/goals");
-    if (!res.ok) return;
-    const goals: GoalFull[] = await res.json();
-    set({ goals, goalsLoaded: true });
-  },
-  createGoal: async (payload) => {
-    const res = await fetch("/api/goals", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) return null;
-    const created = await res.json();
-    // Optimistic insert of just the new parent so the UI reflects it immediately.
-    // Decomposed children (and derived progress/children_count) come in the bg refresh.
-    set((s) => ({
-      goals: [
-        ...s.goals,
-        {
-          ...created,
-          metrics: created.metrics ?? [],
-          progress: created.progress ?? 0,
-          children_count: created.children_count ?? 0,
-        } as GoalFull,
-      ],
-    }));
-    void get().fetchGoals();
-    return created as GoalFull;
-  },
-  updateGoal: async (id, payload) => {
-    // Optimistic patch — apply known fields locally before the server round-trip.
-    const prev = get().goals;
-    set((s) => ({
-      goals: s.goals.map((g) =>
-        g.id === id ? { ...g, ...(payload as Partial<GoalFull>) } : g,
-      ),
-    }));
-    const res = await fetch(`/api/goals/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      // Roll back on failure.
-      set({ goals: prev });
-      return;
-    }
-    // Refresh in background to pick up server-side derived fields (progress, children_count).
-    void get().fetchGoals();
-  },
-  deleteGoal: async (id) => {
-    const prev = get().goals;
-    const prevSelected = get().goalSelected;
-    // Optimistic remove: drop the goal AND every descendant (CASCADE on the server).
-    const toRemove = new Set<string>([id]);
-    let grew = true;
-    while (grew) {
-      grew = false;
-      for (const g of prev) {
-        if (g.parent_id && toRemove.has(g.parent_id) && !toRemove.has(g.id)) {
-          toRemove.add(g.id);
-          grew = true;
-        }
-      }
-    }
-    set((s) => {
-      const next: Partial<Record<GoalLevel, string | null>> = { ...s.goalSelected };
-      for (const k of Object.keys(next) as GoalLevel[]) {
-        if (next[k] && toRemove.has(next[k]!)) next[k] = null;
-      }
-      return { goals: s.goals.filter((g) => !toRemove.has(g.id)), goalSelected: next };
-    });
-    const res = await fetch(`/api/goals/${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      // Roll back optimistic state on real failure.
-      set({ goals: prev, goalSelected: prevSelected });
-      return;
-    }
-    // Background refresh to fix derived counts on the parent (children_count, progress).
-    void get().fetchGoals();
-  },
-  createMetric: async (goalId, payload) => {
-    const res = await fetch(`/api/goals/${goalId}/metrics`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) return null;
-    const metric: GoalMetric = await res.json();
-    // Optimistic local insert; fetchGoals in background to refresh derived progress.
-    set((s) => ({
-      goals: s.goals.map((g) =>
-        g.id === goalId ? { ...g, metrics: [...(g.metrics ?? []), metric] } : g,
-      ),
-    }));
-    void get().fetchGoals();
-    return metric;
-  },
-  updateMetric: async (goalId, metricId, payload) => {
-    const prev = get().goals;
-    set((s) => ({
-      goals: s.goals.map((g) =>
-        g.id !== goalId ? g : {
-          ...g,
-          metrics: (g.metrics ?? []).map((m) =>
-            m.id === metricId ? { ...m, ...(payload as Partial<GoalMetric>) } : m,
-          ),
-        },
-      ),
-    }));
-    const res = await fetch(`/api/goals/${goalId}/metrics/${metricId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      set({ goals: prev });
-      return;
-    }
-    void get().fetchGoals();
-  },
-  deleteMetric: async (goalId, metricId) => {
-    const prev = get().goals;
-    set((s) => ({
-      goals: s.goals.map((g) =>
-        g.id !== goalId ? g : { ...g, metrics: (g.metrics ?? []).filter((m) => m.id !== metricId) },
-      ),
-    }));
-    const res = await fetch(`/api/goals/${goalId}/metrics/${metricId}`, { method: "DELETE" });
-    if (!res.ok) {
-      set({ goals: prev });
-      return;
-    }
-    void get().fetchGoals();
-  },
-  recordSnapshot: async (goalId, metricId, value, note) => {
-    const prev = get().goals;
-    set((s) => ({
-      goals: s.goals.map((g) =>
-        g.id !== goalId ? g : {
-          ...g,
-          metrics: (g.metrics ?? []).map((m) =>
-            m.id === metricId ? { ...m, current_value: value } : m,
-          ),
-        },
-      ),
-    }));
-    const res = await fetch(`/api/goals/${goalId}/metrics/${metricId}/history`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value, note }),
-    });
-    if (!res.ok) {
-      set({ goals: prev });
-      return;
-    }
-    void get().fetchGoals();
-  },
-  setGoalAxisFilter: (axis) => set({ goalAxisFilter: axis }),
-  setGoalHideDone: (v) => set({ goalHideDone: v }),
-  setGoalDeadlineFilter: (v) => set({ goalDeadlineFilter: v }),
-  setGoalGroupBy: (v) => set({ goalGroupBy: v, goalCollapsedGroups: [] }),
-  toggleGoalGroupCollapsed: (key) => set((s) => {
-    const cur = new Set(s.goalCollapsedGroups);
-    if (cur.has(key)) cur.delete(key); else cur.add(key);
-    return { goalCollapsedGroups: Array.from(cur) };
-  }),
-  selectGoal: (level, id) => set((s) => {
-    const next: Partial<Record<GoalLevel, string | null>> = { ...s.goalSelected, [level]: id };
-    // Clear deeper levels when parent changes.
-    const order: GoalLevel[] = ["year", "quarter", "month", "week"];
-    const idx = order.indexOf(level);
-    for (let i = idx + 1; i < order.length; i++) next[order[i]] = null;
-    return { goalSelected: next };
-  }),
-  linkTaskToGoal: async (goalId, taskId) => {
-    await fetch("/api/relations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        source_type: "goal", source_id: goalId,
-        target_type: "item", target_id: taskId,
-        relation_type_id: "belongs_to_goal",
-      }),
-    });
-    void get().fetchGoals();
-  },
-  unlinkTaskFromGoal: async (goalId, taskId) => {
-    const rels = await get().fetchRelations("goal", goalId);
-    const rel = rels.find((r) => r.target_type === "item" && r.target_id === taskId);
-    if (!rel) return;
-    await get().deleteRelation(rel.id);
-    void get().fetchGoals();
-  },
-  getGoalsForTask: async (taskId) => {
-    const rels = await get().fetchRelations("item", taskId);
-    return rels.filter((r) => r.target_type === "goal" || (r.relation_type?.id === "belongs_to_goal"));
-  },
 }),
   {
     name: "second-brain-settings",
-    version: 7,
+    version: 8,
     storage: createJSONStorage(() => localStorage),
     migrate: (persisted: unknown, version: number) => {
       const state = persisted as Record<string, unknown> | null;
@@ -2068,18 +1745,10 @@ export const useBrainStore = create<BrainStore>()(
           state.listColumnOrder = next;
         }
       }
-      if (state && version < 6) {
-        // goalDeadlineFilter changed shape; force reset to "all" so old values
-        // like "active" (which would hide most decomposed goals) don't confuse users.
-        state.goalDeadlineFilter = { op: "all", value: "" };
-      }
-      if (state && version < 7) {
-        // "day" goal level removed; drop persisted day selection / collapse keys.
-        const sel = state.goalSelected as Record<string, unknown> | undefined;
-        if (sel && "day" in sel) delete sel.day;
-        const col = state.goalCollapsedColumns as string[] | undefined;
-        if (Array.isArray(col)) {
-          state.goalCollapsedColumns = col.filter((c) => c !== "day");
+      if (state && version < 8) {
+        // Goals feature removed; strip any persisted goal* / metric* keys.
+        for (const k of Object.keys(state)) {
+          if (k.startsWith("goal") || k === "currentMetricId") delete state[k];
         }
       }
       return state;
@@ -2101,11 +1770,6 @@ export const useBrainStore = create<BrainStore>()(
       listCollapsedGroups: state.listCollapsedGroups,
       clientsCollapsedGroups: state.clientsCollapsedGroups,
       currentPlanId: state.currentPlanId,
-      goalCollapsedColumns: state.goalCollapsedColumns,
-      goalCollapsedGroups: state.goalCollapsedGroups,
-      goalHideDone: state.goalHideDone,
-      goalDeadlineFilter: state.goalDeadlineFilter,
-      goalGroupBy: state.goalGroupBy,
       filters: {
         categories: state.filters.categories,
         priorities: state.filters.priorities,

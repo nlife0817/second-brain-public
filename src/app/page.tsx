@@ -14,7 +14,6 @@ import { ClientDetailModal, ClientDetailPanel } from "@/components/clients/Clien
 import { CreateClientDialog } from "@/components/clients/CreateClientDialog";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { StagingView } from "@/components/staging/StagingView";
-import { GoalsView } from "@/components/goals/GoalsView";
 
 export default function Home() {
   const fetchInit = useBrainStore((s) => s.fetchInit);
@@ -41,8 +40,6 @@ export default function Home() {
               <StagingView />
             ) : appSection === "clients" ? (
               <ClientsView />
-            ) : appSection === "goals" ? (
-              <GoalsView />
             ) : viewMode === "weekly" ? (
               <WeeklyView />
             ) : viewMode === "kanban" ? (
@@ -61,8 +58,6 @@ export default function Home() {
       {appSection === "clients" && <CreateClientDialog />}
       {/* Task detail modal opened from Clients section (e.g. via relations) */}
       {appSection === "clients" && isDetailOpen && <TaskDetailModal forceModal />}
-      {/* Same for Goals section — клик по связанной задаче внутри цели открывает модалку. */}
-      {appSection === "goals" && isDetailOpen && <TaskDetailModal forceModal />}
     </div>
   );
 }
