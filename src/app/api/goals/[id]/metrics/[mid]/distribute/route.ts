@@ -80,9 +80,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const existingByGoal = await getMetricsForGoals(childGoalIds);
 
   const isDownNumeric = parentMetric.kind === "numeric" && parentMetric.direction === "down";
-  const tasksCats = parentMetric.kind === "tasks" && parentMetric.tasks_category_ids
-    ? JSON.stringify(parentMetric.tasks_category_ids)
-    : null;
+  // tasks-KR is rejected above (their categories cascade at decomposition),
+  // so distributed children never carry tasks_category_ids — always null.
+  const tasksCats = null;
   const now = new Date().toISOString();
 
   // All inserts/updates happen in one transaction so a partial failure cannot
