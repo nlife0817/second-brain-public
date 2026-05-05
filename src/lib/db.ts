@@ -1594,16 +1594,6 @@ export async function createMetric(data: CreateMetricPayload & { id: string; goa
 }
 
 export async function updateMetric(id: string, updates: UpdateMetricPayload): Promise<GoalMetric | undefined> {
-  // Capture prev target_value so we can record a 'target_change' history entry
-  // when it actually changes — that's the audit log of plan revisions.
-  let prevTarget: number | null = null;
-  if (Object.prototype.hasOwnProperty.call(updates, "target_value")) {
-    const cur = await prepare<{ target_value: number | string | null }>(
-      "SELECT target_value FROM goal_metrics WHERE id = ?",
-    ).get(id);
-    prevTarget = cur?.target_value == null ? null : Number(cur.target_value);
-  }
-
   const normalized: Record<string, unknown> = { ...updates };
   if (Object.prototype.hasOwnProperty.call(normalized, "payload")) {
     normalized.payload = normalized.payload == null ? null : JSON.stringify(normalized.payload);
@@ -1613,31 +1603,41 @@ export async function updateMetric(id: string, updates: UpdateMetricPayload): Pr
       ? null
       : JSON.stringify(normalized.tasks_category_ids);
   }
+  const wantsTargetChange = Object.prototype.hasOwnProperty.call(updates, "target_value");
+  const newTarget = wantsTargetChange
+    ? (updates.target_value == null ? null : Number(updates.target_value))
+    : null;
+
+  // Atomically: read prev target, apply UPDATE, log target_change history entry
+  // (when it actually changed). This prevents lost updates / mismatched
+  // prev_value when the same KR is patched concurrently.
   const built = buildUpdateClause(normalized, METRIC_UPDATE_FIELDS);
-  if (!built) {
-    const row = await prepare<MetricRow>("SELECT * FROM goal_metrics WHERE id = ?").get(id);
-    return row ? mapMetric(row) : undefined;
-  }
-  await prepare(`UPDATE goal_metrics SET ${built.sql}, updated_at = ? WHERE id = ?`).run(
-    ...built.values, new Date().toISOString(), id,
-  );
-  const row = await prepare<MetricRow>("SELECT * FROM goal_metrics WHERE id = ?").get(id);
+  const row = await transaction(async (tx) => {
+    let prevTarget: number | null = null;
+    if (wantsTargetChange) {
+      const cur = await tx.prepare<{ target_value: number | string | null }>(
+        "SELECT target_value FROM goal_metrics WHERE id = ?",
+      ).get(id);
+      prevTarget = cur?.target_value == null ? null : Number(cur.target_value);
+    }
+    if (built) {
+      await tx.prepare(`UPDATE goal_metrics SET ${built.sql}, updated_at = ? WHERE id = ?`).run(
+        ...built.values, new Date().toISOString(), id,
+      );
+    }
+    const updated = await tx.prepare<MetricRow>("SELECT * FROM goal_metrics WHERE id = ?").get(id);
+    if (!updated) return undefined;
+
+    if (wantsTargetChange && (prevTarget ?? null) !== (newTarget ?? null)) {
+      await tx.prepare(
+        `INSERT INTO goal_metric_history (id, metric_id, event_type, value, prev_value, recorded_at, note)
+         VALUES (?, ?, 'target_change', ?, ?, ?, ?)`,
+      ).run(cryptoRandomId(), id, newTarget, prevTarget, new Date().toISOString(), "");
+    }
+    return updated;
+  });
   if (!row) return undefined;
   const metric = mapMetric(row);
-
-  // Record plan revision in history when target_value actually changed.
-  if (Object.prototype.hasOwnProperty.call(updates, "target_value")) {
-    const newTarget = updates.target_value == null ? null : Number(updates.target_value);
-    const changed = (prevTarget ?? null) !== (newTarget ?? null);
-    if (changed) {
-      await recordTargetChange({
-        id: cryptoRandomId(),
-        metric_id: id,
-        prev_value: prevTarget,
-        value: newTarget,
-      });
-    }
-  }
 
   if (metric.kind === "tasks") {
     const goal = await getGoalById(metric.goal_id);
@@ -1701,18 +1701,22 @@ export async function recordMetricSnapshot(data: {
   id: string; metric_id: string; value: number; note?: string;
 }): Promise<GoalMetricHistoryEntry> {
   const now = new Date().toISOString();
-  // Read prev current_value for the prev_value column.
-  const cur = await prepare<{ current_value: number | string | null }>(
-    "SELECT current_value FROM goal_metrics WHERE id = ?"
-  ).get(data.metric_id);
-  const prev = cur?.current_value == null ? null : Number(cur.current_value);
-  await prepare(
-    `INSERT INTO goal_metric_history (id, metric_id, event_type, value, prev_value, recorded_at, note)
-     VALUES (?, ?, 'snapshot', ?, ?, ?, ?)`
-  ).run(data.id, data.metric_id, data.value, prev, now, data.note ?? "");
-  await prepare("UPDATE goal_metrics SET current_value = ?, updated_at = ? WHERE id = ?")
-    .run(data.value, now, data.metric_id);
-  const row = await prepare<HistoryRow>("SELECT * FROM goal_metric_history WHERE id = ?").get(data.id);
+  // Atomically: read prev current_value, INSERT history entry, UPDATE current_value.
+  // Without a transaction concurrent snapshots could interleave and leave
+  // current_value inconsistent with the latest history row.
+  const row = await transaction(async (tx) => {
+    const cur = await tx.prepare<{ current_value: number | string | null }>(
+      "SELECT current_value FROM goal_metrics WHERE id = ?",
+    ).get(data.metric_id);
+    const prev = cur?.current_value == null ? null : Number(cur.current_value);
+    await tx.prepare(
+      `INSERT INTO goal_metric_history (id, metric_id, event_type, value, prev_value, recorded_at, note)
+       VALUES (?, ?, 'snapshot', ?, ?, ?, ?)`,
+    ).run(data.id, data.metric_id, data.value, prev, now, data.note ?? "");
+    await tx.prepare("UPDATE goal_metrics SET current_value = ?, updated_at = ? WHERE id = ?")
+      .run(data.value, now, data.metric_id);
+    return await tx.prepare<HistoryRow>("SELECT * FROM goal_metric_history WHERE id = ?").get(data.id);
+  });
   return mapHistoryRow(row!);
 }
 
@@ -1729,6 +1733,16 @@ export async function recordTargetChange(data: {
 export async function updateMetricHistoryEntry(
   id: string, updates: { value?: number | null; note?: string },
 ): Promise<GoalMetricHistoryEntry | undefined> {
+  // Reject value=null edits on snapshot rows — current_value would silently
+  // become null, which is almost certainly not what the user intended. To
+  // remove a snapshot, use DELETE.
+  if (Object.prototype.hasOwnProperty.call(updates, "value") && updates.value == null) {
+    const existing = await prepare<HistoryRow>("SELECT event_type FROM goal_metric_history WHERE id = ?").get(id);
+    if (existing?.event_type === "snapshot") {
+      throw new Error("Cannot null out a snapshot value — delete the entry instead");
+    }
+  }
+
   const sets: string[] = [];
   const vals: unknown[] = [];
   if (Object.prototype.hasOwnProperty.call(updates, "value")) {
@@ -1743,42 +1757,49 @@ export async function updateMetricHistoryEntry(
     const row = await prepare<HistoryRow>("SELECT * FROM goal_metric_history WHERE id = ?").get(id);
     return row ? mapHistoryRow(row) : undefined;
   }
-  await prepare(`UPDATE goal_metric_history SET ${sets.join(", ")} WHERE id = ?`).run(...vals, id);
-  const row = await prepare<HistoryRow>("SELECT * FROM goal_metric_history WHERE id = ?").get(id);
-  if (!row) return undefined;
-  // If this entry is the latest snapshot, also reflect the edit in the metric's
-  // current_value so KR display stays in sync with the corrected history.
-  if (row.event_type === "snapshot") {
-    const latest = await prepare<{ id: string }>(
-      `SELECT id FROM goal_metric_history
-        WHERE metric_id = ? AND event_type = 'snapshot'
-        ORDER BY recorded_at DESC LIMIT 1`,
-    ).get(row.metric_id);
-    if (latest?.id === id) {
-      await prepare("UPDATE goal_metrics SET current_value = ?, updated_at = ? WHERE id = ?")
-        .run(row.value, new Date().toISOString(), row.metric_id);
+  // Atomically: UPDATE history + (if latest snapshot) UPDATE current_value.
+  // Without a tx a parallel POST snapshot can land between the two and leave
+  // current_value reflecting the older value.
+  const row = await transaction(async (tx) => {
+    await tx.prepare(`UPDATE goal_metric_history SET ${sets.join(", ")} WHERE id = ?`).run(...vals, id);
+    const updated = await tx.prepare<HistoryRow>("SELECT * FROM goal_metric_history WHERE id = ?").get(id);
+    if (!updated) return undefined;
+    if (updated.event_type === "snapshot") {
+      const latest = await tx.prepare<{ id: string }>(
+        `SELECT id FROM goal_metric_history
+          WHERE metric_id = ? AND event_type = 'snapshot'
+          ORDER BY recorded_at DESC LIMIT 1`,
+      ).get(updated.metric_id);
+      if (latest?.id === id) {
+        await tx.prepare("UPDATE goal_metrics SET current_value = ?, updated_at = ? WHERE id = ?")
+          .run(updated.value, new Date().toISOString(), updated.metric_id);
+      }
     }
-  }
-  return mapHistoryRow(row);
+    return updated;
+  });
+  return row ? mapHistoryRow(row) : undefined;
 }
 
 export async function deleteMetricHistoryEntry(id: string): Promise<boolean> {
-  const row = await prepare<HistoryRow>("SELECT * FROM goal_metric_history WHERE id = ?").get(id);
-  if (!row) return false;
-  await prepare("DELETE FROM goal_metric_history WHERE id = ?").run(id);
-  // If we removed the latest snapshot, recompute current_value from the next
-  // surviving snapshot (or null if none).
-  if (row.event_type === "snapshot") {
-    const next = await prepare<{ value: number | string | null }>(
-      `SELECT value FROM goal_metric_history
-        WHERE metric_id = ? AND event_type = 'snapshot'
-        ORDER BY recorded_at DESC LIMIT 1`,
-    ).get(row.metric_id);
-    const newCurrent = next?.value == null ? null : Number(next.value);
-    await prepare("UPDATE goal_metrics SET current_value = ?, updated_at = ? WHERE id = ?")
-      .run(newCurrent, new Date().toISOString(), row.metric_id);
-  }
-  return true;
+  // Atomically: SELECT + DELETE + (if was latest snapshot) recompute current_value.
+  // Without a tx a parallel POST snapshot can land between DELETE and the
+  // recompute SELECT, leaving current_value pointing to the older value.
+  return await transaction(async (tx) => {
+    const row = await tx.prepare<HistoryRow>("SELECT * FROM goal_metric_history WHERE id = ?").get(id);
+    if (!row) return false;
+    await tx.prepare("DELETE FROM goal_metric_history WHERE id = ?").run(id);
+    if (row.event_type === "snapshot") {
+      const next = await tx.prepare<{ value: number | string | null }>(
+        `SELECT value FROM goal_metric_history
+          WHERE metric_id = ? AND event_type = 'snapshot'
+          ORDER BY recorded_at DESC LIMIT 1`,
+      ).get(row.metric_id);
+      const newCurrent = next?.value == null ? null : Number(next.value);
+      await tx.prepare("UPDATE goal_metrics SET current_value = ?, updated_at = ? WHERE id = ?")
+        .run(newCurrent, new Date().toISOString(), row.metric_id);
+    }
+    return true;
+  });
 }
 
 // ---------------- Client revenue ledger ----------------
@@ -1912,11 +1933,14 @@ export async function getClientRevenueAggregate(goalId: string): Promise<{
       WHERE cr.goal_id IN (${placeholders})`,
   ).all(...ids);
 
-  // Identify the "latest closed week" — the week whose period_start is the
-  // most recent among week goals (proxy for "latest week with data"; we don't
-  // require period_end < today to keep it predictable).
+  // Identify the "latest week" — the most recent (by period_start) week that
+  // actually has at least one revenue entry. This avoids classifying every
+  // client as "churned" when the trailing weeks of the period are still empty
+  // placeholders for the future.
   const sorted = [...weekGoals].sort((a, b) => (a.period_start ?? "").localeCompare(b.period_start ?? ""));
-  const latestWeekId = sorted[sorted.length - 1]?.id ?? null;
+  const goalsWithEntries = new Set(entries.map((e) => e.goal_id));
+  const latestWithEntries = [...sorted].reverse().find((g) => goalsWithEntries.has(g.id));
+  const latestWeekId = latestWithEntries?.id ?? null;
 
   // Per-client aggregation.
   const byClient = new Map<string, ClientRevenueAggregateRow>();

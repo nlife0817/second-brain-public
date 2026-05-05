@@ -25,7 +25,7 @@ interface GoalSeed {
 
 interface MetricSeed {
   id: string;
-  kind: "tasks" | "numeric" | "counter" | "checklist" | "boolean";
+  kind: "tasks" | "numeric" | "checklist" | "boolean";
   title: string;
   unit?: string;
   target?: number;
@@ -124,7 +124,7 @@ const GOALS: GoalSeed[] = [
       },
       {
         id: "seed_kr_project_windows",
-        kind: "counter",
+        kind: "numeric",
         title: "Окна по 30+ мин на проект",
         unit: "окон",
         current: 0,
@@ -142,7 +142,7 @@ const GOALS: GoalSeed[] = [
     metrics: [
       {
         id: "seed_kr_health_workouts",
-        kind: "counter",
+        kind: "numeric",
         title: "Тренировки",
         unit: "сессий",
         current: 0,
@@ -151,7 +151,7 @@ const GOALS: GoalSeed[] = [
       },
       {
         id: "seed_kr_health_sleep_streak",
-        kind: "counter",
+        kind: "numeric",
         title: "Недели сна 7+ ч подряд",
         unit: "нед",
         current: 0,

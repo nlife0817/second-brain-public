@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import {
-  getAllGoals, getMetricsForGoal, getMetricsForGoals, createMetric, updateMetric,
+  getAllGoals, getMetricsForGoal, getMetricsForGoals,
 } from "@/lib/db";
+import { transaction } from "@/lib/sql";
 import { getAuthUser } from "@/lib/auth";
 import type { GoalLevel, GoalMetric } from "@/types";
 
@@ -34,6 +35,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const parentMetrics = await getMetricsForGoal(id);
   const parentMetric = parentMetrics.find((m) => m.id === mid);
   if (!parentMetric) return NextResponse.json({ error: "Parent KR not found" }, { status: 404 });
+
+  // tasks-KR are auto-aggregated from due_date+category — distributing
+  // a target_value plan does not apply (progress is done/total). Cascade of
+  // tasks_category_ids already happens at decomposition time via parent_metric_id.
+  if (parentMetric.kind === "tasks") {
+    return NextResponse.json(
+      { error: "tasks KR cannot be distributed — categories cascade automatically at decomposition" },
+      { status: 400 },
+    );
+  }
 
   const allGoals = await getAllGoals();
   const parentGoal = allGoals.find((g) => g.id === id);
@@ -68,33 +79,72 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const childGoalIds = directChildren.map((g) => g.id);
   const existingByGoal = await getMetricsForGoals(childGoalIds);
 
-  const out: GoalMetric[] = [];
-  for (const c of body.children) {
-    const existing = (existingByGoal.get(c.goal_id) ?? []).find((m) => m.parent_metric_id === mid);
-    const isDownNumeric = parentMetric.kind === "numeric" && parentMetric.direction === "down";
-    if (existing) {
-      const updated = await updateMetric(existing.id, {
-        target_value: c.target_value,
-        ...(isDownNumeric ? { start_value: parentMetric.start_value, current_value: parentMetric.start_value } : {}),
-      });
-      if (updated) out.push(updated);
-    } else {
-      const created = await createMetric({
-        id: uuid(),
-        goal_id: c.goal_id,
-        kind: parentMetric.kind,
-        title: parentMetric.title,
-        unit: parentMetric.unit,
-        direction: parentMetric.direction,
-        target_value: c.target_value,
-        current_value: isDownNumeric ? parentMetric.start_value : 0,
-        start_value: isDownNumeric ? parentMetric.start_value : null,
-        weight: parentMetric.weight,
-        parent_metric_id: mid,
-        tasks_category_ids: parentMetric.tasks_category_ids,
-      });
-      out.push(created);
+  const isDownNumeric = parentMetric.kind === "numeric" && parentMetric.direction === "down";
+  const tasksCats = parentMetric.kind === "tasks" && parentMetric.tasks_category_ids
+    ? JSON.stringify(parentMetric.tasks_category_ids)
+    : null;
+  const now = new Date().toISOString();
+
+  // All inserts/updates happen in one transaction so a partial failure cannot
+  // leave the parent KR with half-applied distribution (some children with
+  // updated plan, others not).
+  const touchedIds: string[] = await transaction(async (tx) => {
+    const ids: string[] = [];
+    for (const c of body.children) {
+      const existing = (existingByGoal.get(c.goal_id) ?? []).find((m) => m.parent_metric_id === mid);
+      if (existing) {
+        if (isDownNumeric) {
+          await tx.prepare(
+            `UPDATE goal_metrics
+                SET target_value = ?, start_value = ?, current_value = ?, updated_at = ?
+              WHERE id = ?`,
+          ).run(c.target_value, parentMetric.start_value, parentMetric.start_value, now, existing.id);
+        } else {
+          await tx.prepare(
+            `UPDATE goal_metrics SET target_value = ?, updated_at = ? WHERE id = ?`,
+          ).run(c.target_value, now, existing.id);
+        }
+        // Log target_change for audit trail (mirrors updateMetric behaviour).
+        const prev = existing.target_value == null ? null : Number(existing.target_value);
+        const next = c.target_value == null ? null : Number(c.target_value);
+        if (prev !== next) {
+          await tx.prepare(
+            `INSERT INTO goal_metric_history (id, metric_id, event_type, value, prev_value, recorded_at, note)
+             VALUES (?, ?, 'target_change', ?, ?, ?, ?)`,
+          ).run(uuid(), existing.id, next, prev, now, "");
+        }
+        ids.push(existing.id);
+      } else {
+        const newId = uuid();
+        const maxPos = await tx.prepare<{ p: number }>(
+          "SELECT COALESCE(MAX(position), -1) + 1 as p FROM goal_metrics WHERE goal_id = ?",
+        ).get(c.goal_id);
+        await tx.prepare(
+          `INSERT INTO goal_metrics (id, goal_id, kind, title, unit, target_value, current_value, start_value,
+                                     direction, payload, weight, position,
+                                     parent_metric_id, tasks_category_ids)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          newId, c.goal_id, parentMetric.kind, parentMetric.title.trim(),
+          parentMetric.unit ?? null, c.target_value,
+          isDownNumeric ? parentMetric.start_value : 0,
+          isDownNumeric ? parentMetric.start_value : null,
+          parentMetric.direction ?? "up", null,
+          parentMetric.weight ?? 1, Number(maxPos?.p ?? 0),
+          mid, tasksCats,
+        );
+        ids.push(newId);
+      }
     }
+    return ids;
+  });
+
+  // Re-fetch outside the tx so callers get fresh rows with mapped types and
+  // tasks_done/tasks_total filled in.
+  const refreshed = await getMetricsForGoals(childGoalIds);
+  const out: GoalMetric[] = [];
+  for (const ms of refreshed.values()) {
+    for (const m of ms) if (touchedIds.includes(m.id)) out.push(m);
   }
 
   return NextResponse.json({ metrics: out }, { status: 201 });
