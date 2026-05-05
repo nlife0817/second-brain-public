@@ -82,6 +82,31 @@ export function DistributeMetricDialog({ open, onOpenChange, parentGoal, parentM
   const targetParent = parentMetric.target_value;
   const diff = sumNumeric != null && targetParent != null ? sumNumeric - Number(targetParent) : null;
 
+  // Rescale all child targets so their sum matches parent.target_value, keeping
+  // the existing distribution proportion. Useful after bumping the parent plan
+  // ("year was 20M, now 25M — keep the per-quarter shape, just stretch them").
+  // If the current sum is 0/empty or parent target is unset, falls back to
+  // equal split.
+  function rescaleProportionally(): void {
+    if (targetParent == null || children.length === 0) return;
+    const target = Number(targetParent);
+    const currentSum = numericValues.reduce<number>((acc, v) => acc + (v ?? 0), 0);
+    const next: Record<string, string> = {};
+    if (currentSum > 0) {
+      const ratio = target / currentSum;
+      for (let i = 0; i < children.length; i++) {
+        const v = numericValues[i] ?? 0;
+        next[children[i].id] = String(Math.round(v * ratio * 100) / 100);
+      }
+    } else {
+      const equal = target / children.length;
+      for (const g of children) {
+        next[g.id] = String(Math.round(equal * 100) / 100);
+      }
+    }
+    setValues(next);
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (saving) return;
@@ -178,11 +203,23 @@ export function DistributeMetricDialog({ open, onOpenChange, parentGoal, parentM
 
           {error && <p className="text-xs text-rose-600">{error}</p>}
 
-          <div className="mt-2 flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
-            <Button type="submit" disabled={saving || children.length === 0}>
-              {saving ? "Сохранение…" : "Сохранить"}
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={saving || children.length === 0 || targetParent == null}
+              onClick={rescaleProportionally}
+              title="Растянуть текущие доли так, чтобы сумма равнялась плану родителя"
+            >
+              Пересчитать пропорционально
             </Button>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
+              <Button type="submit" disabled={saving || children.length === 0}>
+                {saving ? "Сохранение…" : "Сохранить"}
+              </Button>
+            </div>
           </div>
         </form>
       </DialogContent>

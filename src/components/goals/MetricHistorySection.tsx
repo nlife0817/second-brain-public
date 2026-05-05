@@ -1,8 +1,8 @@
 "use client";
 
-// Renamed in spirit to MetricHistorySection — covers all event types
-// (snapshot / target_change / manual_edit) and supports edit/delete. File path
-// kept for compat with existing imports.
+// Unified KR history: covers snapshot / target_change / manual_edit events
+// with inline edit and delete. Used by MetricCard when the user opens the
+// history panel.
 
 import { useEffect, useState } from "react";
 import type { GoalMetric, GoalMetricHistoryEntry } from "@/types";
@@ -14,7 +14,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useBrainStore } from "@/lib/store";
 
-export function SnapshotHistory({
+export function MetricHistorySection({
   goalId,
   metric,
   onClose,

@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Trash2, Plus, Check, History, Layers, Split } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { SnapshotHistory } from "./SnapshotHistory";
+import { MetricHistorySection } from "./MetricHistorySection";
 import { DistributeMetricDialog } from "./DistributeMetricDialog";
 
 const NEXT_LEVEL: Record<GoalLevel, GoalLevel | null> = {
@@ -145,7 +145,7 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
               </span>
             )}
           </div>
-          {isClosed && metric.kind === "numeric" ? (
+          {isClosed && (metric.kind === "numeric" || metric.kind === "tasks") ? (
             <PlanFactLine metric={metric} />
           ) : (
             <div className="text-[10px] tabular-nums text-slate-500">
@@ -240,7 +240,7 @@ export function MetricCard({ goalId, metric, axisColor }: Props) {
       </div>
 
       {historyOpen && supportsHistory && (
-        <SnapshotHistory goalId={goalId} metric={metric} onClose={() => setHistoryOpen(false)} />
+        <MetricHistorySection goalId={goalId} metric={metric} onClose={() => setHistoryOpen(false)} />
       )}
 
       {distributeOpen && parentGoal && (
@@ -262,17 +262,28 @@ function fmtNum(v: number | null | undefined): string {
 }
 
 function PlanFactLine({ metric }: { metric: GoalMetric }) {
-  const fact = metric.effective_current ?? metric.current_value;
+  // For tasks-KR plan = target_value (planned task count), fact = tasks_done
+  // (closed leaves), with tasks_total kept as a sidekick to disambiguate
+  // "delivered fewer because plan was cut" vs "delivered fewer because fewer
+  // landed in the period".
+  const isTasks = metric.kind === "tasks";
   const plan = metric.target_value;
+  const fact = isTasks
+    ? (metric.tasks_done ?? 0)
+    : (metric.effective_current ?? metric.current_value);
+  const total = isTasks ? metric.tasks_total ?? 0 : null;
   const diffPct = plan != null && Number(plan) !== 0 && fact != null
     ? Math.round(((Number(fact) - Number(plan)) / Number(plan)) * 100)
     : null;
-  const unit = metric.unit ? ` ${metric.unit}` : "";
+  const unit = !isTasks && metric.unit ? ` ${metric.unit}` : "";
   return (
     <div className="text-[10px] tabular-nums text-slate-500">
       План: <span className="text-slate-700">{fmtNum(plan)}{unit}</span>
       <span className="mx-1 text-slate-300">·</span>
       Факт: <span className="text-slate-700">{fmtNum(fact)}{unit}</span>
+      {total != null && (
+        <span className="ml-1 text-slate-400">из {total}</span>
+      )}
       {diffPct != null && (
         <span className={cn(
           "ml-1",
