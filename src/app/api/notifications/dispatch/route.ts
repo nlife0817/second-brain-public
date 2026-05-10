@@ -4,6 +4,9 @@ import { fromZonedTime, toZonedTime, format as formatTz } from "date-fns-tz";
 import { prepare } from "@/lib/sql";
 import { sendPushToEmail } from "@/lib/notifications/push";
 
+// Уведомления отправляются ТОЛЬКО по задачам с датой (due_date IS NOT NULL).
+// Тип date_only_morning удалён — для задач с датой без времени пушей нет.
+
 function isAuthorized(req: NextRequest): boolean {
   const expected = process.env.CRON_SECRET;
   if (!expected) {
@@ -109,44 +112,6 @@ async function dispatchOverdueHour() {
 }
 
 // -----------------------------------------------------------------------------
-// Type 2: morning push in day of the deadline (date-only items).
-// Runs at 06:00 UTC == 09:00 MSK.
-// -----------------------------------------------------------------------------
-async function dispatchDateOnlyMorning() {
-  const now = new Date();
-  const users = await getActiveUsers();
-  let sent = 0;
-  const skipped: string[] = [];
-
-  for (const user of users) {
-    const today = todayInTz(now, user.timezone);
-    const items = await prepare<ItemRow>(`
-      SELECT id, title, due_date, due_time, status, category
-      FROM items
-      WHERE due_date = ? AND due_time IS NULL
-        AND status NOT IN ('done', 'archived')
-    `).all(today);
-
-    for (const item of items) {
-      if (!(await logSent("date_only_morning", `${item.id}:${today}`, user.email))) {
-        skipped.push(item.id);
-        continue;
-      }
-      const result = await sendPushToEmail(user.email, {
-        title: `📅 Сегодня дедлайн: ${item.title}`,
-        body: "Дата без точного времени",
-        url: `/?item=${item.id}`,
-        tag: `date-only-${item.id}`,
-        itemId: item.id,
-      });
-      sent += result.sent;
-    }
-  }
-  console.log("[dispatch] type=date_only_morning users=%d sent=%d skipped=%d", users.length, sent, skipped.length);
-  return { type: "date_only_morning", sent, skipped };
-}
-
-// -----------------------------------------------------------------------------
 // Type 3: daily evening summary.
 // Runs at 18:00 UTC == 21:00 MSK.
 // Includes: tasks with due_date = tomorrow + overdue tasks (date < today, not done).
@@ -240,13 +205,11 @@ export async function GET(req: NextRequest) {
     switch (type) {
       case "overdue_hour":
         return NextResponse.json(await dispatchOverdueHour());
-      case "date_only_morning":
-        return NextResponse.json(await dispatchDateOnlyMorning());
       case "daily_summary":
         return NextResponse.json(await dispatchDailySummary());
       default:
         return NextResponse.json(
-          { error: "invalid type; expected overdue_hour | date_only_morning | daily_summary" },
+          { error: "invalid type; expected overdue_hour | daily_summary" },
           { status: 400 }
         );
     }
