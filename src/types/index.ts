@@ -79,8 +79,55 @@ export interface Item {
   estimated_minutes: number | null;
   position: number;
   parent_id: string | null;
+  recurring_series_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// --- Recurring task series ---
+
+export type RecurrenceFreq = "daily" | "weekdays" | "weekly" | "monthly" | "yearly";
+
+export interface RecurrenceRule {
+  freq: RecurrenceFreq;
+  interval: number;
+  byweekday?: number[] | null;
+  bymonthday?: number | null;
+  start_date: string;
+  until_date: string;
+}
+
+export interface RecurringSeries extends RecurrenceRule {
+  id: string;
+  title: string;
+  description: string;
+  type: ItemType;
+  status: ItemStatus;
+  priority: ItemPriority;
+  category: ItemCategory;
+  due_time: string | null;
+  estimated_minutes: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateRecurringSeriesPayload {
+  source_item_id: string;
+  rule: RecurrenceRule;
+}
+
+export interface UpdateRecurringSeriesPayload {
+  rule: RecurrenceRule;
+  template?: {
+    title?: string;
+    description?: string;
+    type?: ItemType;
+    status?: ItemStatus;
+    priority?: ItemPriority;
+    category?: ItemCategory;
+    due_time?: string | null;
+    estimated_minutes?: number | null;
+  };
 }
 
 export interface ItemWithSubtasks extends Item {

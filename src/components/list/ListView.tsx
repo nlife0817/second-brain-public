@@ -48,6 +48,7 @@ import {
   ChevronUp as MoveUpIcon,
   ChevronDown as MoveDownIcon,
   RotateCcw,
+  RotateCw,
   Eye,
   EyeOff,
   Plus,
@@ -3803,6 +3804,12 @@ const ItemRow = memo(function ItemRow({
               )}
               {item.source && item.source !== "system" && (
                 <SourceIcon source={item.source} />
+              )}
+              {item.recurring_series_id && (
+                <RotateCw
+                  className="inline-block size-3 mr-1 text-blue-500 align-[-1px]"
+                  aria-label="Повторяющаяся задача"
+                />
               )}
               {highlightMatch(item.title, searchQuery)}
               {searchRowMatch?.tag && (

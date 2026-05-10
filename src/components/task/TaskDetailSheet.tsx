@@ -65,8 +65,12 @@ import {
   Paperclip,
   Pencil,
   X,
+  RotateCw,
 } from "lucide-react";
 import { TagSelector } from "./TagSelector";
+import { RecurrenceEditor } from "./RecurrenceEditor";
+import { describeRule } from "@/lib/recurrence";
+import { RecurrenceRule, RecurringSeries } from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  RichEditor                                                         */
@@ -820,6 +824,153 @@ function useTaskDetailLogic(item: ItemWithSubtasks | null) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  RecurrenceSection — toggle/edit a recurring series for the item    */
+/* ------------------------------------------------------------------ */
+
+function RecurrenceSection({
+  item,
+  layout,
+}: {
+  item: ItemWithSubtasks;
+  layout: "modal" | "panel";
+}) {
+  const fetchItems = useBrainStore((s) => s.fetchItems);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [series, setSeries] = useState<RecurringSeries | null>(null);
+
+  const seriesId = item.recurring_series_id;
+  // Derived — show a loading placeholder if we have a seriesId but no data yet
+  // for THIS particular id (covers item-switching while a fetch is in-flight).
+  const loading = !!seriesId && (!series || series.id !== seriesId);
+
+  // Lazily load series details when this item is part of one. When seriesId
+  // is null we render the "make recurring" branch and never read `series`,
+  // so we don't bother resetting it here (avoids set-state-in-effect lint).
+  useEffect(() => {
+    if (!seriesId) return;
+    let cancelled = false;
+    const ac = new AbortController();
+    fetch(`/api/recurring-series/${seriesId}`, { signal: ac.signal })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data: RecurringSeries | null) => {
+        if (!cancelled && data) setSeries(data);
+      })
+      .catch(() => { /* aborted or network error — silent */ });
+    return () => { cancelled = true; ac.abort(); };
+  }, [seriesId]);
+
+  const handleCreate = useCallback(async (rule: RecurrenceRule) => {
+    const res = await fetch("/api/recurring-series", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_item_id: item.id, rule }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Не удалось создать серию");
+    }
+    await fetchItems();
+  }, [item.id, fetchItems]);
+
+  const handleUpdate = useCallback(async (rule: RecurrenceRule) => {
+    if (!seriesId) return;
+    const res = await fetch(`/api/recurring-series/${seriesId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rule }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Не удалось обновить серию");
+    }
+    await fetchItems();
+  }, [seriesId, fetchItems]);
+
+  const handleDelete = useCallback(async () => {
+    if (!seriesId) return;
+    const res = await fetch(`/api/recurring-series/${seriesId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Не удалось удалить серию");
+    }
+    await fetchItems();
+  }, [seriesId, fetchItems]);
+
+  const labelCls = cn("font-medium text-slate-500", layout === "panel" ? "text-xs" : "text-sm");
+
+  // No active series — offer to create one. Requires due_date.
+  if (!seriesId) {
+    const hasDue = !!item.due_date;
+    return (
+      <div className="flex flex-col gap-1.5">
+        <span className={labelCls}>Повторение</span>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setEditorOpen(true)}
+          disabled={!hasDue}
+          className="w-full justify-start gap-2 text-xs"
+        >
+          <RotateCw className="size-3.5" />
+          {hasDue ? "Сделать повторяющейся" : "Сначала задайте срок"}
+        </Button>
+        <RecurrenceEditor
+          open={editorOpen}
+          onOpenChange={setEditorOpen}
+          mode="create"
+          defaultStartDate={item.due_date}
+          onSubmit={handleCreate}
+        />
+      </div>
+    );
+  }
+
+  // Active series — show summary and edit/delete buttons.
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className={labelCls}>Повторение</span>
+      <div className="rounded-md border border-blue-200 bg-blue-50/60 px-2.5 py-2 text-xs text-blue-900">
+        <div className="flex items-start gap-1.5">
+          <RotateCw className="size-3.5 shrink-0 mt-0.5 text-blue-500" />
+          <div className="flex-1 min-w-0">
+            {loading && !series && <span className="text-blue-700/60">Загрузка серии…</span>}
+            {series && <span>{describeRule(series)}</span>}
+          </div>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setEditorOpen(true)}
+          disabled={!series}
+          className="flex-1 text-xs"
+        >
+          Изменить серию
+        </Button>
+      </div>
+      {series && (
+        <RecurrenceEditor
+          open={editorOpen}
+          onOpenChange={setEditorOpen}
+          mode="edit"
+          initial={{
+            freq: series.freq,
+            interval: series.interval,
+            byweekday: series.byweekday,
+            bymonthday: series.bymonthday,
+            start_date: series.start_date,
+            until_date: series.until_date,
+          }}
+          onSubmit={handleUpdate}
+          onDelete={handleDelete}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  TaskDetailContent — shared inner content                           */
 /* ------------------------------------------------------------------ */
 
@@ -1021,6 +1172,11 @@ function TaskDetailContent({
     ? <TimerSection item={item} layout={layout} />
     : null;
 
+  /* ---- Recurrence block (tasks only, not subtasks) ---- */
+  const recurrenceBlock = (item.type === "task" && !isSubtask)
+    ? <RecurrenceSection item={item} layout={layout} />
+    : null;
+
   /* ---- Relations block ---- */
   const relationsBlock = (
     <RelationsList entityType="item" entityId={item.id} />
@@ -1063,6 +1219,8 @@ function TaskDetailContent({
         {/* RIGHT column — fields sidebar, stacks below on small screens */}
         <div className="w-full md:w-[260px] lg:w-[280px] shrink-0 flex flex-col gap-4">
           {fieldsBlock}
+          {recurrenceBlock && <Separator className="bg-slate-200" />}
+          {recurrenceBlock}
           {developmentFieldsBlock}
           {tagsBlock}
           {timerBlock && <Separator className="bg-slate-200" />}
@@ -1082,6 +1240,8 @@ function TaskDetailContent({
       {titleBlock}
       <Separator className="bg-slate-200" />
       {fieldsBlock}
+      {recurrenceBlock && <Separator className="bg-slate-200" />}
+      {recurrenceBlock}
       {developmentFieldsBlock}
       {tagsBlock}
       {timerBlock && <Separator className="bg-slate-200" />}

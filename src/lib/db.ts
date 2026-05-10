@@ -11,7 +11,9 @@ import {
   ExternalEntityLink, ExternalSyncState, SyncEntityType, SyncDirection, KaitenImportResult,
   DevelopmentParticipant, DevelopmentParticipantInput, KaitenStageOption, SyncOutboxJob, SyncOutboxStatus,
   ItemStatusRow, ItemStatusKind,
+  RecurrenceRule, RecurringSeries,
 } from "@/types";
+import { generateInstanceDates, validateRecurrenceRule, MAX_INSTANCES } from "./recurrence";
 
 // Schema and migrations now live in Supabase (supabase/migrations/*.sql).
 // ensureDb is kept as a no-op for backwards-compat with any caller that still invokes it.
@@ -63,6 +65,7 @@ function buildUpdateClause(
 const ITEM_UPDATE_FIELDS = [
   "title", "description", "type", "status", "priority", "category", "source",
   "development_stage", "due_date", "due_time", "estimated_minutes", "position", "parent_id",
+  "recurring_series_id",
 ] as const;
 
 const TAG_UPDATE_FIELDS = ["name", "color", "position"] as const;
@@ -268,20 +271,23 @@ export async function setItemParticipants(itemId: string, participants: Developm
   return await getItemParticipants(itemId);
 }
 
-export async function createItem(item: Omit<Item, "created_at" | "updated_at">): Promise<Item> {
+export async function createItem(
+  item: Omit<Item, "created_at" | "updated_at" | "recurring_series_id"> & { recurring_series_id?: string | null }
+): Promise<Item> {
   const now = new Date().toISOString();
   const maxPos = await prepare<{ next_pos: number }>(
     "SELECT COALESCE(MAX(position), -1) + 1 as next_pos FROM items WHERE status = ? AND parent_id IS NOT DISTINCT FROM ?"
   ).get(item.status, item.parent_id ?? null);
 
   await prepare(`
-    INSERT INTO items (id, title, description, type, status, priority, category, source, development_stage, due_date, due_time, estimated_minutes, position, parent_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO items (id, title, description, type, status, priority, category, source, development_stage, due_date, due_time, estimated_minutes, position, parent_id, recurring_series_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     item.id, item.title, item.description, item.type, item.status,
     item.priority, item.category, item.source ?? "system", item.development_stage ?? null,
     item.due_date ?? null, item.due_time ?? null, item.estimated_minutes ?? null,
-    item.position ?? maxPos?.next_pos ?? 0, item.parent_id ?? null, now, now
+    item.position ?? maxPos?.next_pos ?? 0, item.parent_id ?? null,
+    item.recurring_series_id ?? null, now, now
   );
   return (await getItemById(item.id))!;
 }
@@ -303,6 +309,253 @@ export async function deleteItem(id: string): Promise<boolean> {
   const result = await prepare("DELETE FROM items WHERE id = ?").run(id);
   return result.changes > 0;
 }
+
+// ---------------- Recurring series ----------------
+
+const SERIES_TEMPLATE_FIELDS = [
+  "title", "description", "type", "status", "priority", "category",
+  "due_time", "estimated_minutes",
+] as const;
+
+type SeriesRow = {
+  id: string;
+  title: string; description: string;
+  type: string; status: string; priority: string; category: string;
+  due_time: string | null; estimated_minutes: number | null;
+  freq: string; interval: number;
+  byweekday: number[] | null; bymonthday: number | null;
+  start_date: string; until_date: string;
+  created_at: string; updated_at: string;
+};
+
+function mapSeries(row: SeriesRow): RecurringSeries {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description ?? "",
+    type: row.type as RecurringSeries["type"],
+    status: row.status as RecurringSeries["status"],
+    priority: row.priority as RecurringSeries["priority"],
+    category: row.category,
+    due_time: row.due_time,
+    estimated_minutes: row.estimated_minutes,
+    freq: row.freq as RecurringSeries["freq"],
+    interval: row.interval,
+    byweekday: row.byweekday,
+    bymonthday: row.bymonthday,
+    start_date: typeof row.start_date === "string" ? row.start_date : new Date(row.start_date).toISOString().slice(0, 10),
+    until_date: typeof row.until_date === "string" ? row.until_date : new Date(row.until_date).toISOString().slice(0, 10),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function getRecurringSeriesById(id: string): Promise<RecurringSeries | undefined> {
+  const row = await prepare<SeriesRow>("SELECT * FROM recurring_series WHERE id = ?").get(id);
+  return row ? mapSeries(row) : undefined;
+}
+
+/**
+ * Create a recurring series anchored to an existing item. The source item
+ * becomes the first generated instance; subsequent dates are materialised
+ * as new items linked back via `recurring_series_id`.
+ *
+ * Rule's start_date is forced to equal the source item's due_date (or set
+ * if the source had none). Throws if generated count > MAX_INSTANCES.
+ */
+export async function createRecurringSeriesFromItem(
+  sourceItemId: string,
+  rule: RecurrenceRule,
+): Promise<{ series: RecurringSeries; created_count: number }> {
+  validateRecurrenceRule(rule);
+
+  const source = await getItemById(sourceItemId);
+  if (!source) throw new Error("Source item not found");
+  if (source.recurring_series_id) throw new Error("Item is already part of a series");
+  if (source.parent_id) throw new Error("Subtasks cannot be made recurring");
+
+  // Force start_date = source.due_date (or override source.due_date with start_date).
+  const startDate = rule.start_date;
+  const dates = generateInstanceDates(rule);
+  if (dates.length === 0) throw new Error("Правило не порождает ни одного экземпляра");
+  if (dates.length > MAX_INSTANCES) throw new Error(`Слишком много экземпляров (>${MAX_INSTANCES})`);
+  if (dates[0] !== startDate) throw new Error("Первая дата экземпляра должна совпадать со start_date");
+
+  const seriesId = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  await transaction(async (tx) => {
+    await tx.prepare(`
+      INSERT INTO recurring_series (
+        id, title, description, type, status, priority, category,
+        due_time, estimated_minutes,
+        freq, interval, byweekday, bymonthday, start_date, until_date,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      seriesId,
+      source.title, source.description ?? "", source.type, source.status, source.priority, source.category,
+      source.due_time ?? null, source.estimated_minutes ?? null,
+      rule.freq, rule.interval,
+      rule.byweekday && rule.byweekday.length > 0 ? JSON.stringify(rule.byweekday) : null,
+      rule.bymonthday ?? null,
+      rule.start_date, rule.until_date,
+      now, now,
+    );
+
+    // Link the source item as instance #0.
+    await tx.prepare(
+      "UPDATE items SET recurring_series_id = ?, due_date = ?, updated_at = ? WHERE id = ?"
+    ).run(seriesId, startDate, now, sourceItemId);
+
+    // Generate items for all subsequent dates.
+    for (let i = 1; i < dates.length; i++) {
+      const id = crypto.randomUUID();
+      await tx.prepare(`
+        INSERT INTO items (
+          id, title, description, type, status, priority, category, source,
+          development_stage, due_date, due_time, estimated_minutes,
+          position, parent_id, recurring_series_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id, source.title, source.description ?? "", source.type, source.status, source.priority, source.category,
+        source.source ?? "system", source.development_stage ?? null,
+        dates[i], source.due_time ?? null, source.estimated_minutes ?? null,
+        0, null, seriesId, now, now,
+      );
+    }
+  });
+
+  const series = await getRecurringSeriesById(seriesId);
+  return { series: series!, created_count: dates.length };
+}
+
+/**
+ * Update a recurring series: applies the new rule + template to all FUTURE
+ * instances (due_date >= today). Past instances keep their original values.
+ */
+export async function updateRecurringSeriesFollowing(
+  seriesId: string,
+  rule: RecurrenceRule,
+  template: Partial<RecurringSeries>,
+): Promise<{ series: RecurringSeries; deleted_count: number; created_count: number }> {
+  validateRecurrenceRule(rule);
+
+  const existing = await getRecurringSeriesById(seriesId);
+  if (!existing) throw new Error("Series not found");
+
+  const today = new Date().toISOString().slice(0, 10);
+  const fromDate = rule.start_date > today ? rule.start_date : today;
+
+  // Newly-generated dates (only those >= fromDate are inserted).
+  const allDates = generateInstanceDates(rule);
+  const futureDates = allDates.filter((d) => d >= fromDate);
+  if (futureDates.length > MAX_INSTANCES) {
+    throw new Error(`Слишком много будущих экземпляров (>${MAX_INSTANCES})`);
+  }
+
+  const now = new Date().toISOString();
+  let deletedCount = 0;
+  let createdCount = 0;
+
+  await transaction(async (tx) => {
+    // Wipe future instances of the series.
+    const del = await tx.prepare(
+      "DELETE FROM items WHERE recurring_series_id = ? AND due_date >= ?"
+    ).run(seriesId, today);
+    deletedCount = del.changes ?? 0;
+
+    // Update the series template + rule.
+    const merged: Partial<RecurringSeries> = { ...existing, ...template };
+    await tx.prepare(`
+      UPDATE recurring_series SET
+        title = ?, description = ?, type = ?, status = ?, priority = ?, category = ?,
+        due_time = ?, estimated_minutes = ?,
+        freq = ?, interval = ?, byweekday = ?, bymonthday = ?,
+        start_date = ?, until_date = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      merged.title ?? existing.title,
+      merged.description ?? existing.description,
+      merged.type ?? existing.type,
+      merged.status ?? existing.status,
+      merged.priority ?? existing.priority,
+      merged.category ?? existing.category,
+      merged.due_time ?? existing.due_time ?? null,
+      merged.estimated_minutes ?? existing.estimated_minutes ?? null,
+      rule.freq, rule.interval,
+      rule.byweekday && rule.byweekday.length > 0 ? JSON.stringify(rule.byweekday) : null,
+      rule.bymonthday ?? null,
+      rule.start_date, rule.until_date,
+      now, seriesId,
+    );
+
+    // Insert fresh future instances.
+    for (const date of futureDates) {
+      const id = crypto.randomUUID();
+      await tx.prepare(`
+        INSERT INTO items (
+          id, title, description, type, status, priority, category, source,
+          development_stage, due_date, due_time, estimated_minutes,
+          position, parent_id, recurring_series_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        merged.title ?? existing.title,
+        merged.description ?? existing.description,
+        merged.type ?? existing.type,
+        merged.status ?? existing.status,
+        merged.priority ?? existing.priority,
+        merged.category ?? existing.category,
+        "system",
+        null,
+        date,
+        merged.due_time ?? existing.due_time ?? null,
+        merged.estimated_minutes ?? existing.estimated_minutes ?? null,
+        0, null, seriesId, now, now,
+      );
+      createdCount++;
+    }
+  });
+
+  const series = (await getRecurringSeriesById(seriesId))!;
+  return { series, deleted_count: deletedCount, created_count: createdCount };
+}
+
+/**
+ * Delete future instances of a series (due_date >= today). If no instances
+ * remain after deletion, drops the series row itself.
+ */
+export async function deleteRecurringSeriesFollowing(
+  seriesId: string,
+): Promise<{ deleted_count: number; series_removed: boolean }> {
+  const existing = await getRecurringSeriesById(seriesId);
+  if (!existing) return { deleted_count: 0, series_removed: false };
+
+  const today = new Date().toISOString().slice(0, 10);
+  let deleted = 0;
+  let seriesRemoved = false;
+
+  await transaction(async (tx) => {
+    const del = await tx.prepare(
+      "DELETE FROM items WHERE recurring_series_id = ? AND due_date >= ?"
+    ).run(seriesId, today);
+    deleted = del.changes ?? 0;
+
+    const remaining = await tx.prepare<{ c: number }>(
+      "SELECT COUNT(*) as c FROM items WHERE recurring_series_id = ?"
+    ).get(seriesId);
+
+    if ((remaining?.c ?? 0) === 0) {
+      await tx.prepare("DELETE FROM recurring_series WHERE id = ?").run(seriesId);
+      seriesRemoved = true;
+    }
+  });
+
+  return { deleted_count: deleted, series_removed: seriesRemoved };
+}
+
+void SERIES_TEMPLATE_FIELDS;
 
 // ---------------- Tags ----------------
 
