@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, Settings as SettingsIcon } from "lucide-react";
+import { toast } from "sonner";
 import { MetricChart } from "@/components/planning/MetricChart";
 import { MetricActualsTable } from "@/components/planning/MetricActualsTable";
 import { AutoDistributeDialog } from "@/components/planning/AutoDistributeDialog";
