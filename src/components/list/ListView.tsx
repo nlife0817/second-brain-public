@@ -1515,9 +1515,16 @@ export interface ListViewProps {
   excludeIds?: Set<string>;
   /** Если задано — включается режим выбора задач: чекбоксы + клик-toggle. */
   selectionMode?: ListViewSelectionMode;
+  /**
+   * Если true — задачи НЕ отображаются, пока пользователь явно не применит
+   * фильтр через «Применить фильтр». Используется в модалке привязки задач
+   * к инициативе: каталог огромный, отображать всё подряд бессмысленно и
+   * тяжело — пользователь сначала задаёт фильтр, потом видит подходящие.
+   */
+  requireFilterApplied?: boolean;
 }
 
-export function ListView({ itemFilter, excludeIds, selectionMode }: ListViewProps = {}) {
+export function ListView({ itemFilter, excludeIds, selectionMode, requireFilterApplied }: ListViewProps = {}) {
   // «Изолированный» режим: ListView переиспользуется в модалках/панелях
   // планирования. Состояние (groupBy/columnOrder/widths/collapsedGroups,
   // фильтры) держим локально — изменения здесь не должны утекать в основной
@@ -1528,12 +1535,21 @@ export function ListView({ itemFilter, excludeIds, selectionMode }: ListViewProp
   const allItemsFromStore = useBrainStore((s) => s.items);
 
   // Локальный «изолированный» фильтр (advanced groups) — действует только в
-  // isolated режиме и НЕ влияет на основной раздел «Задачи».
+  // isolated режиме и НЕ влияет на основной раздел «Задачи». Это applied-state
+  // (черновик живёт внутри AdvancedFilterBuilder и коммитится сюда только по
+  // кнопке «Применить» — иначе ListView пересчитывал бы фильтрацию по тысячам
+  // задач на каждый keystroke).
   const [localAdvGroups, setLocalAdvGroups] = useState<FilterGroup[]>([]);
   const [localAdvUseAdvanced, setLocalAdvUseAdvanced] = useState<boolean>(false);
 
+  const filterIsActive = localAdvUseAdvanced && localAdvGroups.length > 0;
+  // В режиме «требуется явная активация фильтра» (модалка привязки) пока
+  // пользователь не применит фильтр — ничего не показываем (и не считаем).
+  const awaitingFilter = !!requireFilterApplied && !filterIsActive;
+
   const rawItems = useMemo<ItemWithSubtasks[]>(() => {
     if (!isolated) return filteredFromStore;
+    if (awaitingFilter) return [];
     let arr: ItemWithSubtasks[] = allItemsFromStore;
     // Исключаем archived/parent_id-сабтаски как в основном useFilteredItems.
     arr = arr.filter((i) => i.status !== "archived");
@@ -1542,7 +1558,7 @@ export function ListView({ itemFilter, excludeIds, selectionMode }: ListViewProp
     }
     if (itemFilter) arr = arr.filter(itemFilter);
     // Локальные advanced-фильтры (если включены и есть группы).
-    if (localAdvUseAdvanced && localAdvGroups.length > 0) {
+    if (filterIsActive) {
       arr = arr.filter((item) => {
         const groupResults = localAdvGroups.map((group) => {
           if (group.conditions.length === 0) return true;
@@ -1557,11 +1573,12 @@ export function ListView({ itemFilter, excludeIds, selectionMode }: ListViewProp
     return arr;
   }, [
     isolated,
+    awaitingFilter,
+    filterIsActive,
     filteredFromStore,
     allItemsFromStore,
     excludeIds,
     itemFilter,
-    localAdvUseAdvanced,
     localAdvGroups,
   ]);
 
@@ -2919,7 +2936,11 @@ export function ListView({ itemFilter, excludeIds, selectionMode }: ListViewProp
       <div className="flex flex-col h-full">
         {toolbar}
         <div className="flex-1 min-h-0 overflow-auto">
-          <EmptyState search={searchQuery || undefined} />
+          {awaitingFilter ? (
+            <AwaitingFilterEmptyState />
+          ) : (
+            <EmptyState search={searchQuery || undefined} />
+          )}
         </div>
       </div>
     );
@@ -4388,6 +4409,23 @@ const ItemRow = memo(function ItemRow({
 /*  Empty state                                                               */
 /* -------------------------------------------------------------------------- */
 
+function AwaitingFilterEmptyState() {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 px-6">
+      <div className="flex items-center justify-center size-16 rounded-2xl bg-blue-50 mb-5">
+        <Layers className="size-7 text-blue-500" />
+      </div>
+      <h3 className="text-base font-semibold text-slate-900 mb-1.5">
+        Задайте фильтр, чтобы увидеть задачи
+      </h3>
+      <p className="text-sm text-slate-500 text-center max-w-[360px]">
+        Каталог задач большой — отображать всё подряд бессмысленно. Откройте
+        «Фильтр» в шапке, настройте условия и нажмите «Применить фильтр».
+      </p>
+    </div>
+  );
+}
+
 function EmptyState({ search }: { search?: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 px-6">
@@ -4466,7 +4504,13 @@ function FilterButton({
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-1 z-50 w-[560px] max-w-[90vw] max-h-[70vh] overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl">
-          <AdvancedFilterBuilder isolated={isolated} />
+          <AdvancedFilterBuilder
+            isolated={
+              isolated
+                ? { ...isolated, onApply: () => setOpen(false) }
+                : undefined
+            }
+          />
         </div>
       )}
     </div>

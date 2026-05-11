@@ -64,6 +64,7 @@ export function TaskLinkPicker({ initiativeId, excludeIds, open, onClose }: Prop
           <ListView
             excludeIds={excludeIds}
             selectionMode={{ selected, onToggle }}
+            requireFilterApplied
           />
         </div>
 
