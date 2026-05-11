@@ -4,10 +4,8 @@ import { prepare, transaction } from "@/lib/sql";
 import {
   upsertPeriod,
   listMetrics,
-  listMetricTargets,
   listInitiatives,
   getPlanningSettings,
-  listPeriods,
   getAllDevelopmentParticipants,
   listEffectiveCapacities,
 } from "@/lib/db";
@@ -16,16 +14,27 @@ import type { Item, DevelopmentParticipant } from "@/types";
 import type {
   PlanningPeriod,
   PlanningInitiativeMetricLink,
+  PlanningMetricTarget,
   EffectiveCapacity,
 } from "@/types/planning";
 
 function fmtDate(d: Date): string { return d.toISOString().slice(0, 10); }
 
-async function ensureWeekPeriod(
+// Точечный lookup по слоту (direction_id IS NULL, type='week', year, week_n) —
+// заменяет `listPeriods({year}).find(p => p.week_n === w)`, который грузил
+// все 52+ строки года ради одной.
+async function findWeekPeriod(year: number, week: number): Promise<PlanningPeriod | undefined> {
+  return await prepare<PlanningPeriod>(
+    `SELECT * FROM planning_periods
+     WHERE direction_id IS NULL AND type = 'week' AND year = ? AND week_n = ?
+     LIMIT 1`,
+  ).get(year, week);
+}
+
+async function getOrCreateWeekPeriod(
   year: number, week: number, start: Date, end: Date,
 ): Promise<PlanningPeriod> {
-  const existing = await listPeriods({ type: "week", year, directionId: null });
-  const hit = existing.find((p) => p.week_n === week);
+  const hit = await findWeekPeriod(year, week);
   if (hit) return hit;
   return await upsertPeriod({
     direction_id: null,
@@ -42,7 +51,6 @@ export const GET = withAuth(async (req) => {
   const weekParam = url.searchParams.get("week");
   const directionId = url.searchParams.get("direction_id");
 
-  // Если week передан — берём его. Иначе — текущая неделя.
   let weekInfo;
   if (weekParam) {
     const parsed = parseWeekKey(weekParam);
@@ -55,122 +63,126 @@ export const GET = withAuth(async (req) => {
     weekInfo = isoWeek(new Date());
   }
 
-  const targetPeriod = await ensureWeekPeriod(
+  const targetPeriod = await getOrCreateWeekPeriod(
     weekInfo.year, weekInfo.week, weekInfo.start, weekInfo.end,
   );
 
-  // Carryover: тянем из НЕДЕЛИ, ПРЕДШЕСТВУЮЩЕЙ ВЫБРАННОЙ (а не текущей даты).
-  // На текущей неделе это работает как раньше; на исторических — корректно.
-  // Дополнительно: переносим только если выбранная неделя содержит сегодняшнюю дату
-  // или находится в будущем (на исторических неделях carryover не делаем — это
-  // нарушило бы хронологию).
+  // Carryover из предыдущей недели — только на текущей/будущей неделе.
+  // На исторических неделях carryover не делаем (нарушает хронологию).
   const today = fmtDate(new Date());
   const isCurrentOrFuture = targetPeriod.end_date >= today;
   if (isCurrentOrFuture) {
     const prevStart = new Date(weekInfo.start);
     prevStart.setUTCDate(weekInfo.start.getUTCDate() - 7);
     const prevW = isoWeek(prevStart);
-    const prevPeriod = (await listPeriods({ type: "week", year: prevW.year, directionId: null }))
-      .find((p) => p.week_n === prevW.week);
+    const prevPeriod = await findWeekPeriod(prevW.year, prevW.week);
     if (prevPeriod && prevPeriod.id !== targetPeriod.id) {
-      await transaction(async (tx) => {
-        await tx.prepare(`
-          UPDATE items
-          SET planned_period_id = ?, planned_date = ?, is_carryover = TRUE, updated_at = ?
-          WHERE planned_period_id = ?
-            AND status NOT IN ('done', 'archived')
-        `).run(targetPeriod.id, fmtDate(weekInfo.start), new Date().toISOString(), prevPeriod.id);
-      });
-    }
-  }
-
-  const settings = await getPlanningSettings();
-
-  // Direction-фильтр применяется к метрикам и инициативам.
-  const initiatives = await listInitiatives({
-    includeArchivedAfterDays: 60,
-    ...(directionId ? { directionId } : {}),
-  });
-  const metrics = await listMetrics(directionId ?? undefined);
-
-  // Targets per metric для выбранной недели
-  const targetsByMetric: Record<string, number> = {};
-  for (const m of metrics) {
-    const targets = await listMetricTargets(m.id);
-    const hit = targets.find((t) => t.period_id === targetPeriod.id);
-    if (hit) targetsByMetric[m.id] = Number(hit.target_value);
-  }
-
-  // initiative ↔ metric links — нужны уже сейчас для P4.
-  // Собираем линки по списку текущих инициатив, без N+1 — одним SELECT.
-  let initiativeMetricLinks: PlanningInitiativeMetricLink[] = [];
-  if (initiatives.length > 0) {
-    const placeholders = initiatives.map(() => "?").join(",");
-    initiativeMetricLinks = await prepare<PlanningInitiativeMetricLink>(
-      `SELECT * FROM planning_initiative_metric_link WHERE initiative_id IN (${placeholders})`
-    ).all(...initiatives.map((i) => i.id));
-  }
-
-  // Items в неделе (без фильтра по direction — задачи не имеют direction-колонки,
-  // direction живёт у их инициатив, а не у items).
-  const items = await prepare<Item>(
-    "SELECT * FROM items WHERE planned_period_id = ? ORDER BY planned_date ASC NULLS LAST, position ASC"
-  ).all(targetPeriod.id);
-
-  // Бэклог: при выбранном direction — фильтруем по связи задача→инициатива→direction.
-  // Без direction — весь бэклог.
-  let backlog: Item[];
-  if (directionId) {
-    backlog = await prepare<Item>(`
-      SELECT DISTINCT i.*
-      FROM items i
-      JOIN planning_item_initiative_link l ON l.item_id = i.id
-      JOIN planning_initiatives ini ON ini.id = l.initiative_id
-      WHERE i.type = 'task'
-        AND i.status NOT IN ('done','archived')
-        AND i.planned_period_id IS NULL
-        AND ini.direction_id = ?
-      ORDER BY i.priority DESC, i.created_at DESC
-      LIMIT 200
-    `).all(directionId);
-  } else {
-    backlog = await prepare<Item>(
-      "SELECT * FROM items WHERE type = 'task' AND status NOT IN ('done','archived') AND planned_period_id IS NULL ORDER BY priority DESC, created_at DESC LIMIT 200"
-    ).all();
-  }
-
-  // P3: участники + их effective capacity на эту неделю.
-  const participants: DevelopmentParticipant[] = await getAllDevelopmentParticipants();
-  const effectiveCapacities: EffectiveCapacity[] = await listEffectiveCapacities(targetPeriod.id);
-
-  // P4: факты по метрикам на эту неделю. Для cumulative — сумма всех ticks
-  // за неделю; для non-cumulative — последний tick по measured_at в пределах недели.
-  // Для week-targets агрегация ticks делает только UI, мы отдаём «сырые» ticks
-  // и последний/сумма. Источник measured_at — period.end_date для удобства ввода.
-  const metricActuals: Record<string, { ticks: Array<{ id: string; value: number; measured_at: string; source: string | null }>; aggregated: number | null }> = {};
-  if (metrics.length > 0) {
-    const mIds = metrics.map((m) => m.id);
-    const placeholders = mIds.map(() => "?").join(",");
-    const ticks = await prepare<{ id: string; metric_id: string; value: string | number; measured_at: string; source: string | null }>(
-      `SELECT id, metric_id, value, measured_at, source
-       FROM planning_metric_ticks
-       WHERE metric_id IN (${placeholders})
-         AND measured_at >= ?
-         AND measured_at <= ?
-       ORDER BY measured_at ASC`,
-    ).all(...mIds, targetPeriod.start_date, targetPeriod.end_date);
-    for (const m of metrics) {
-      const mt = ticks
-        .filter((t) => t.metric_id === m.id)
-        .map((t) => ({ id: t.id, value: Number(t.value), measured_at: t.measured_at, source: t.source }));
-      let aggregated: number | null = null;
-      if (mt.length > 0) {
-        aggregated = m.is_cumulative
-          ? mt.reduce((s, t) => s + t.value, 0)
-          : mt[mt.length - 1].value;
+      // EXISTS-чек перед записью: убирает лишний UPDATE+транзакцию на каждом GET,
+      // когда переносить нечего (а это типичный кейс — страница часто перезагружается
+      // после любого drag/save). Без чека UPDATE сериализуется в pg на pk-locks.
+      const hasCandidates = await prepare<{ ok: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM items
+           WHERE planned_period_id = ?
+             AND status NOT IN ('done', 'archived')
+         ) AS ok`,
+      ).get(prevPeriod.id);
+      if (hasCandidates?.ok) {
+        await transaction(async (tx) => {
+          await tx.prepare(`
+            UPDATE items
+            SET planned_period_id = ?, planned_date = ?, is_carryover = TRUE, updated_at = ?
+            WHERE planned_period_id = ?
+              AND status NOT IN ('done', 'archived')
+          `).run(targetPeriod.id, fmtDate(weekInfo.start), new Date().toISOString(), prevPeriod.id);
+        });
       }
-      metricActuals[m.id] = { ticks: mt, aggregated };
     }
+  }
+
+  // Параллелим всё, что не зависит друг от друга. Раньше шло 7 await-ов подряд.
+  const [
+    settings,
+    initiatives,
+    metrics,
+    items,
+    backlog,
+    participants,
+    effectiveCapacities,
+  ] = await Promise.all([
+    getPlanningSettings(),
+    listInitiatives({
+      includeArchivedAfterDays: 60,
+      ...(directionId ? { directionId } : {}),
+    }),
+    listMetrics(directionId ?? undefined),
+    // Items в неделе.
+    prepare<Item>(
+      "SELECT * FROM items WHERE planned_period_id = ? ORDER BY planned_date ASC NULLS LAST, position ASC",
+    ).all(targetPeriod.id),
+    // F5: бэклог — весь пул запланированных задач без фильтра по направлению
+    // (пользователь фильтрует через UI). LIMIT 500 — защита от взрыва payload.
+    prepare<Item>(
+      "SELECT * FROM items WHERE type = 'task' AND status NOT IN ('done','archived') AND planned_period_id IS NULL ORDER BY priority DESC, created_at DESC LIMIT 500",
+    ).all() as Promise<Item[]>,
+    getAllDevelopmentParticipants() as Promise<DevelopmentParticipant[]>,
+    listEffectiveCapacities(targetPeriod.id) as Promise<EffectiveCapacity[]>,
+  ]);
+
+  // Второй фен-аут — зависит от списков metrics/initiatives, поэтому отдельный Promise.all.
+  const metricIds = metrics.map((m) => m.id);
+  const initiativeIds = initiatives.map((i) => i.id);
+
+  const [initiativeMetricLinks, targetRows, tickRows] = await Promise.all([
+    initiativeIds.length === 0
+      ? Promise.resolve([] as PlanningInitiativeMetricLink[])
+      : prepare<PlanningInitiativeMetricLink>(
+          `SELECT * FROM planning_initiative_metric_link
+           WHERE initiative_id IN (${initiativeIds.map(() => "?").join(",")})`,
+        ).all(...initiativeIds),
+    // Было: N+1 — listMetricTargets(metricId) на каждую метрику, грузил все
+    // таргеты по всем периодам, потом JS-find. Стало: один прицельный SELECT.
+    metricIds.length === 0
+      ? Promise.resolve([] as PlanningMetricTarget[])
+      : prepare<PlanningMetricTarget>(
+          `SELECT * FROM planning_metric_targets
+           WHERE period_id = ?
+             AND metric_id IN (${metricIds.map(() => "?").join(",")})`,
+        ).all(targetPeriod.id, ...metricIds),
+    metricIds.length === 0
+      ? Promise.resolve([] as Array<{ id: string; metric_id: string; value: string | number; measured_at: string; source: string | null }>)
+      : prepare<{ id: string; metric_id: string; value: string | number; measured_at: string; source: string | null }>(
+          `SELECT id, metric_id, value, measured_at, source
+           FROM planning_metric_ticks
+           WHERE metric_id IN (${metricIds.map(() => "?").join(",")})
+             AND measured_at >= ?
+             AND measured_at <= ?
+           ORDER BY measured_at ASC`,
+        ).all(...metricIds, targetPeriod.start_date, targetPeriod.end_date),
+  ]);
+
+  const targetsByMetric: Record<string, number> = {};
+  for (const t of targetRows) {
+    targetsByMetric[t.metric_id] = Number(t.target_value);
+  }
+
+  // Тики — один проход. Раньше было O(N×T) из-за filter в цикле по метрикам.
+  const ticksByMetric = new Map<string, Array<{ id: string; value: number; measured_at: string; source: string | null }>>();
+  for (const t of tickRows) {
+    let arr = ticksByMetric.get(t.metric_id);
+    if (!arr) { arr = []; ticksByMetric.set(t.metric_id, arr); }
+    arr.push({ id: t.id, value: Number(t.value), measured_at: t.measured_at, source: t.source });
+  }
+  const metricActuals: Record<string, { ticks: Array<{ id: string; value: number; measured_at: string; source: string | null }>; aggregated: number | null }> = {};
+  for (const m of metrics) {
+    const mt = ticksByMetric.get(m.id) ?? [];
+    let aggregated: number | null = null;
+    if (mt.length > 0) {
+      aggregated = m.is_cumulative
+        ? mt.reduce((s, x) => s + x.value, 0)
+        : mt[mt.length - 1].value;
+    }
+    metricActuals[m.id] = { ticks: mt, aggregated };
   }
 
   return NextResponse.json({

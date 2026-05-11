@@ -23,8 +23,12 @@ export const GET = withAuth(async (req: NextRequest, ctx) => {
 
   const annual = metric.annual_target == null ? null : Number(metric.annual_target);
 
-  // target_ytd
-  const tRow = await prepare<{ s: string }>(`
+  // P5+P8: для business + source='second_brain' источник actual_ytd —
+  // client_deal_payments (SUM amount per год, expected + confirmed, включая
+  // виртуальную выручку от pilot_started). Для остальных — ticks.
+  const useDealPayments = metric.type === "business" && metric.source === "second_brain";
+
+  const targetPromise = prepare<{ s: string }>(`
     SELECT COALESCE(SUM(t.target_value), 0)::text AS s
     FROM planning_metric_targets t
     JOIN planning_periods p ON p.id = t.period_id
@@ -34,42 +38,38 @@ export const GET = withAuth(async (req: NextRequest, ctx) => {
       AND p.end_date <= ?
       AND p.direction_id IS NOT DISTINCT FROM ?
   `).get(id, year, today, metric.direction_id);
-  const target_ytd = tRow ? Number(tRow.s) : 0;
 
-  // actual_ytd
-  // P5+P8: для business + source='second_brain' источник — client_deal_payments
-  // (SUM amount per год, expected + confirmed, включая виртуальную выручку от
-  // pilot_started — пользователь подтвердил включение в метрику).
-  const useDealPayments = metric.type === "business" && metric.source === "second_brain";
+  const actualPromise: Promise<{ s?: string; v?: string } | undefined> = useDealPayments
+    ? prepare<{ s: string }>(`
+        SELECT COALESCE(SUM(amount), 0)::text AS s
+        FROM client_deal_payments
+        WHERE paid_at <= ?
+          AND EXTRACT(YEAR FROM paid_at) = ?
+      `).get(today, year)
+    : metric.is_cumulative
+      ? prepare<{ s: string }>(`
+          SELECT COALESCE(SUM(value), 0)::text AS s
+          FROM planning_metric_ticks
+          WHERE metric_id = ?
+            AND measured_at <= ?
+            AND EXTRACT(YEAR FROM measured_at) = ?
+        `).get(id, today, year)
+      : prepare<{ v: string }>(`
+          SELECT value::text AS v
+          FROM planning_metric_ticks
+          WHERE metric_id = ?
+            AND measured_at <= ?
+            AND EXTRACT(YEAR FROM measured_at) = ?
+          ORDER BY measured_at DESC
+          LIMIT 1
+        `).get(id, today, year);
+
+  const [tRow, aRow] = await Promise.all([targetPromise, actualPromise]);
+  const target_ytd = tRow ? Number(tRow.s) : 0;
   let actual_ytd = 0;
-  if (useDealPayments) {
-    const aRow = await prepare<{ s: string }>(`
-      SELECT COALESCE(SUM(amount), 0)::text AS s
-      FROM client_deal_payments
-      WHERE paid_at <= ?
-        AND EXTRACT(YEAR FROM paid_at) = ?
-    `).get(today, year);
-    actual_ytd = aRow ? Number(aRow.s) : 0;
-  } else if (metric.is_cumulative) {
-    const aRow = await prepare<{ s: string }>(`
-      SELECT COALESCE(SUM(value), 0)::text AS s
-      FROM planning_metric_ticks
-      WHERE metric_id = ?
-        AND measured_at <= ?
-        AND EXTRACT(YEAR FROM measured_at) = ?
-    `).get(id, today, year);
-    actual_ytd = aRow ? Number(aRow.s) : 0;
-  } else {
-    const aRow = await prepare<{ v: string }>(`
-      SELECT value::text AS v
-      FROM planning_metric_ticks
-      WHERE metric_id = ?
-        AND measured_at <= ?
-        AND EXTRACT(YEAR FROM measured_at) = ?
-      ORDER BY measured_at DESC
-      LIMIT 1
-    `).get(id, today, year);
-    actual_ytd = aRow ? Number(aRow.v) : 0;
+  if (aRow) {
+    if (useDealPayments || metric.is_cumulative) actual_ytd = Number(aRow.s);
+    else actual_ytd = Number(aRow.v);
   }
 
   return NextResponse.json({
