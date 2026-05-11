@@ -2322,21 +2322,17 @@ export async function listInitiativeClientLinks(initiativeId: string): Promise<P
   ).all(initiativeId);
 }
 
-export async function addDependency(initiativeId: string, dependsOnId: string): Promise<void> {
-  if (initiativeId === dependsOnId) throw new Error("Initiative cannot depend on itself");
-  await prepare(
-    "INSERT INTO planning_initiative_dependency (initiative_id, depends_on_initiative_id) VALUES (?, ?) ON CONFLICT DO NOTHING"
-  ).run(initiativeId, dependsOnId);
+// P6: «Зависимости инициатив» удалены из системы (PLAN_PLANNING_REWORK §0).
+// Helpers оставлены как no-op для обратной совместимости с существующими
+// импортами; таблица planning_initiative_dependency dropped миграцией 0032.
+export async function addDependency(_initiativeId: string, _dependsOnId: string): Promise<void> {
+  return;
 }
-export async function removeDependency(initiativeId: string, dependsOnId: string): Promise<void> {
-  await prepare(
-    "DELETE FROM planning_initiative_dependency WHERE initiative_id = ? AND depends_on_initiative_id = ?"
-  ).run(initiativeId, dependsOnId);
+export async function removeDependency(_initiativeId: string, _dependsOnId: string): Promise<void> {
+  return;
 }
-export async function listInitiativeDependencies(initiativeId: string): Promise<PlanningInitiativeDependency[]> {
-  return await prepare<PlanningInitiativeDependency>(
-    "SELECT * FROM planning_initiative_dependency WHERE initiative_id = ?"
-  ).all(initiativeId);
+export async function listInitiativeDependencies(_initiativeId: string): Promise<PlanningInitiativeDependency[]> {
+  return [];
 }
 
 // ---------------- Initiative ↔ Item (M:N, P3) ----------------

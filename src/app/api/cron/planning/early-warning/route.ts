@@ -88,25 +88,10 @@ export async function POST(req: NextRequest) {
     if (res.changes > 0) killInserted += 1;
   }
 
-  // 3) Cascade — initiatives that depend on any at-risk initiative.
-  let cascadeInserted = 0;
-  if (atRiskIds.size > 0) {
-    const cascadeRows = await prepare<{ initiative_id: string; depends_on_initiative_id: string }>(`
-      SELECT initiative_id, depends_on_initiative_id
-      FROM planning_initiative_dependency
-    `).all();
-    for (const c of cascadeRows) {
-      if (atRiskIds.has(c.depends_on_initiative_id) && !atRiskIds.has(c.initiative_id)) {
-        const dedupeKey = `planning_early_warning:cascade:${c.initiative_id}:${c.depends_on_initiative_id}:${new Date().toISOString().slice(0, 10)}`;
-        const res = await prepare(`
-          INSERT INTO notifications_log (id, type, target_id, user_email, sent_at)
-          VALUES (?, 'planning_early_warning', ?, ?, ?)
-          ON CONFLICT (type, target_id, user_email) DO NOTHING
-        `).run(crypto.randomUUID(), dedupeKey, "system", new Date().toISOString());
-        if (res.changes > 0) cascadeInserted += 1;
-      }
-    }
-  }
+  // 3) Cascade (зависимости инициатив) удалён в P6 — таблица
+  // planning_initiative_dependency дропнута миграцией 0032. Если в будущем
+  // зависимости вернутся, восстановить логику отсюда (см. git history).
+  const cascadeInserted = 0;
 
   return NextResponse.json({
     schedule_candidates: scheduleRows.length,

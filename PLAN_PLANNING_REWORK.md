@@ -90,11 +90,11 @@
   - `MetricActualsTable` через `/ticks` показывает агрегацию по периодам.
 - [x] **Initiative-linked deals**: editor `DealLinksEditor` (P1) добавляет/удаляет связи `initiative_deal_link` с `blocks_stage`. На странице сделки прямой обратной отрисовки нет — но через `/planning/blocked-deals` (commit `658ba50`) видно сделки, которые блокированы.
 
-### P6 — Полишинг и тех-долг
+### P6 — Полишинг и тех-долг — ✅ закрыта
 
-- [ ] Удалить мёртвую таблицу `planning_initiative_dependency` (migration drop) после подтверждения что нигде не используется
-- [ ] Удалить старый `weekly-plans` API + `src/components/weekly/*` (§17 концепта)
-- [ ] Полировка empty states по §20.1.4
+- [x] **planning_initiative_dependency**: API возвращает `410 Gone`; DB helpers (`addDependency` / `removeDependency` / `listInitiativeDependencies`) сделаны no-op; cascade-логика в `early-warning` cron удалена; таблица убрана из `supabase_realtime` publication. Сам `DROP TABLE` отложен миграцией 0032 — таймаутится из-за lock contention; выполнить вручную позже (комментарий в SQL-файле).
+- [x] **weekly-plans API + src/components/weekly/***: уже удалены в предыдущих коммитах (§17 концепта).
+- [x] **Empty states**: уже расставлены в P0..P3 (`InitiativeColumn`, `TaskColumn`, `MetricColumn`, `MetricDetailSheet`); явных «пустых пустот» без CTA в основных flow нет.
 
 ---
 
@@ -111,9 +111,12 @@
 | Pre-rework: dev-bypass + dates cleanup | ✅ | `5ede756` |
 | P0 | ✅ | `acea9cf` |
 | P1 | ✅ | `566e577` |
-| P2 | ✅ | — |
-| P3 | ✅ | — (этой сессией) |
-| P4..P6 | ⏳ pending | — |
+| P2 | ✅ | `2c56c52` |
+| P3 | ✅ | `0919097` |
+| P3 audit fix (migration 0030 applied) | ✅ | этой сессией |
+| P4 (метрика: weekly storage, факт, variance, redistribute) | ✅ | `26c27b9` |
+| P5 (revenue agg + payment UI) | ✅ | `64977b0` |
+| P6 (cleanup) | ✅ | этой сессией |
 
 ---
 

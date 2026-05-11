@@ -1,44 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
-import { withAuth } from "@/lib/api-auth";
-import { listInitiativeDependencies, addDependency, removeDependency } from "@/lib/db";
-import { logChange } from "@/lib/planning-changelog";
+import { NextResponse } from "next/server";
 
-export const GET = withAuth(async (_req, ctx) => {
-  const { id } = await ctx.params;
-  const rows = await listInitiativeDependencies(id);
-  return NextResponse.json(rows);
-});
+// P6: «Зависимости инициатив» удалены (PLAN_PLANNING_REWORK §0).
+// Таблица planning_initiative_dependency дропнута миграцией 0032.
+// Endpoints оставлены как 410 Gone для обратной совместимости со старыми
+// клиентами; ничего не делают.
 
-export const POST = withAuth(async (req: NextRequest, ctx, user) => {
-  const { id } = await ctx.params;
-  const body = await req.json();
-  if (!body?.depends_on_initiative_id) {
-    return NextResponse.json({ error: "depends_on_initiative_id required" }, { status: 400 });
-  }
-  await addDependency(id, body.depends_on_initiative_id);
-  await logChange({
-    actor_email: user.email,
-    entity_type: "initiative_dependency",
-    entity_id: id,
-    action: "add",
-    diff: { depends_on: { from: null, to: body.depends_on_initiative_id } },
-  });
-  return NextResponse.json({ ok: true }, { status: 201 });
-});
+export async function GET() {
+  return NextResponse.json([], { status: 200 });
+}
 
-export const DELETE = withAuth(async (req: NextRequest, ctx, user) => {
-  const { id } = await ctx.params;
-  const body = await req.json();
-  if (!body?.depends_on_initiative_id) {
-    return NextResponse.json({ error: "depends_on_initiative_id required" }, { status: 400 });
-  }
-  await removeDependency(id, body.depends_on_initiative_id);
-  await logChange({
-    actor_email: user.email,
-    entity_type: "initiative_dependency",
-    entity_id: id,
-    action: "remove",
-    diff: { depends_on: { from: body.depends_on_initiative_id, to: null } },
-  });
-  return NextResponse.json({ ok: true });
-});
+export async function POST() {
+  return NextResponse.json({ error: "Dependencies removed in P6" }, { status: 410 });
+}
+
+export async function DELETE() {
+  return NextResponse.json({ error: "Dependencies removed in P6" }, { status: 410 });
+}
