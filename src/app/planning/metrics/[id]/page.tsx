@@ -308,6 +308,8 @@ export default function MetricPage() {
         year={year}
         initialYearTarget={yearTarget}
         unit={metric.unit}
+        periods={periods}
+        existingTargets={targets}
         onApplied={fetchAll}
       />
     </div>

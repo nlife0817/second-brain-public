@@ -3,6 +3,7 @@
 import { memo } from "react";
 import Link from "next/link";
 import { LineChart, Line, ResponsiveContainer } from "recharts";
+import { Pencil, ExternalLink } from "lucide-react";
 import type { PlanningMetric } from "@/types/planning";
 import { InlineTextField } from "./InlineTextField";
 import { usePlanningStore } from "@/lib/planning-store";
@@ -12,6 +13,7 @@ interface Props {
   metric: PlanningMetric;
   selected: boolean;
   onSelect: () => void;
+  onOpenDetail?: () => void;
   sparkline?: number[];
   latestValue?: number | null;
 }
@@ -28,7 +30,7 @@ const TYPE_TONE: Record<PlanningMetric["type"], string> = {
   delivery: "bg-violet-50 text-violet-700",
 };
 
-function MetricCardBase({ metric, selected, onSelect, sparkline, latestValue }: Props) {
+function MetricCardBase({ metric, selected, onSelect, onOpenDetail, sparkline, latestValue }: Props) {
   const updateMetric = usePlanningStore((s) => s.updateMetric);
   const series = (sparkline ?? []).map((v, i) => ({ i, v }));
 
@@ -68,14 +70,27 @@ function MetricCardBase({ metric, selected, onSelect, sparkline, latestValue }: 
             )}
           </div>
         </div>
-        <Link
-          href={`/planning/metrics/${metric.id}`}
+        <div
+          className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
           onClick={(e) => e.stopPropagation()}
-          className="rounded-md px-1.5 py-0.5 text-xs text-blue-600 opacity-0 transition-opacity group-hover:opacity-100"
-          title="Открыть страницу метрики"
         >
-          →
-        </Link>
+          {onOpenDetail && (
+            <button
+              onClick={onOpenDetail}
+              className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-blue-600"
+              title="Редактировать метрику (drawer)"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+          )}
+          <Link
+            href={`/planning/metrics/${metric.id}`}
+            className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-blue-600"
+            title="Открыть полную страницу метрики"
+          >
+            <ExternalLink className="size-3.5" />
+          </Link>
+        </div>
       </div>
 
       {/* Текущее значение + sparkline. Concept §20.2.1: «sparkline (Recharts mini LineChart 50×20)». */}

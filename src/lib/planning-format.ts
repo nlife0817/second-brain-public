@@ -4,6 +4,8 @@ import type { PlanningPeriod } from "@/types/planning";
 
 const MONTH_SHORT = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
+const CURRENT_YEAR = () => new Date().getUTCFullYear();
+
 // Short period label for card chips: "W23", "Q2", "май", "2026".
 export function formatPeriodShort(period: PlanningPeriod): string {
   switch (period.type) {
@@ -14,24 +16,46 @@ export function formatPeriodShort(period: PlanningPeriod): string {
   }
 }
 
-// Full human label for tables: "Q1 (янв–мар)", "май", "W23 · 1–7 июн", "2026".
+/**
+ * Human label for tables / chips. Strips redundant context:
+ * - hides year if it matches the current calendar year
+ * - shows days ONLY for weeks (quarters/months don't need day-level detail)
+ *
+ * Examples (current year):
+ *   year     → "Год"
+ *   quarter  → "Q1 · янв–мар"
+ *   month    → "май"
+ *   week     → "W19 · 4–10 май"
+ *
+ * Examples (non-current year):
+ *   year     → "2027"
+ *   quarter  → "Q1 2027 · янв–мар"
+ *   month    → "май 2027"
+ *   week     → "W19 2027 · 4–10 май"
+ */
 export function formatPeriodFull(period: PlanningPeriod): string {
   const startD = new Date(period.start_date);
   const endD = new Date(period.end_date);
-  const dStart = startD.getUTCDate();
-  const dEnd = endD.getUTCDate();
   const mStart = MONTH_SHORT[startD.getUTCMonth()] ?? "";
   const mEnd = MONTH_SHORT[endD.getUTCMonth()] ?? "";
+  const dStart = startD.getUTCDate();
+  const dEnd = endD.getUTCDate();
+  const isCurrentYear = period.year === CURRENT_YEAR();
+  const yearSuffix = isCurrentYear ? "" : ` ${period.year}`;
+
   switch (period.type) {
     case "year":
-      return String(period.year);
+      return isCurrentYear ? "Год" : String(period.year);
     case "quarter":
-      return `Q${period.quarter_n} (${mStart}–${mEnd})`;
+      return `Q${period.quarter_n}${yearSuffix} · ${mStart}–${mEnd}`;
     case "month":
-      return mStart;
-    case "week":
-      if (mStart === mEnd) return `W${period.week_n} · ${dStart}–${dEnd} ${mStart}`;
-      return `W${period.week_n} · ${dStart} ${mStart} – ${dEnd} ${mEnd}`;
+      return isCurrentYear ? mStart : `${mStart} ${period.year}`;
+    case "week": {
+      const range = mStart === mEnd
+        ? `${dStart}–${dEnd} ${mStart}`
+        : `${dStart} ${mStart} – ${dEnd} ${mEnd}`;
+      return `W${period.week_n}${yearSuffix} · ${range}`;
+    }
   }
 }
 

@@ -9,6 +9,7 @@ import { InitiativeColumn } from "@/components/planning/InitiativeColumn";
 import { TaskColumn } from "@/components/planning/TaskColumn";
 import { InlineTextField } from "@/components/planning/InlineTextField";
 import { InitiativeDetailSheet } from "@/components/planning/InitiativeDetailSheet";
+import { MetricDetailSheet } from "@/components/planning/MetricDetailSheet";
 
 export default function PlanningColumnsPage() {
   const fetchAll = usePlanningStore((s) => s.fetchAll);
@@ -20,6 +21,8 @@ export default function PlanningColumnsPage() {
   const loaded = usePlanningStore((s) => s.loaded);
   const detailInitiativeId = usePlanningStore((s) => s.detailInitiativeId);
   const closeInitiativeDetail = usePlanningStore((s) => s.closeInitiativeDetail);
+  const detailMetricId = usePlanningStore((s) => s.detailMetricId);
+  const closeMetricDetail = usePlanningStore((s) => s.closeMetricDetail);
   const [newName, setNewName] = useState("");
 
   useEffect(() => {
@@ -37,7 +40,7 @@ export default function PlanningColumnsPage() {
   return (
     <div className="flex h-[calc(100vh-3rem)]">
       {/* Direction sidebar */}
-      <aside className="flex w-[200px] flex-col border-r border-slate-200 bg-slate-50">
+      <aside className="flex w-[180px] shrink-0 flex-col border-r border-slate-200 bg-slate-50">
         <div className="flex h-10 items-center justify-between border-b border-slate-200 px-3">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Направления</h3>
         </div>
@@ -94,9 +97,10 @@ export default function PlanningColumnsPage() {
             />
           </div>
         )}
-        <div className="flex flex-1 overflow-x-auto">
+        <div className="flex flex-1 min-w-0 overflow-x-auto">
           <MetricColumn />
           <InitiativeColumn />
+          {/* TaskColumn uses flex-1 internally — it absorbs remaining horizontal space. */}
           <TaskColumn />
         </div>
       </div>
@@ -104,6 +108,10 @@ export default function PlanningColumnsPage() {
       <InitiativeDetailSheet
         initiativeId={detailInitiativeId}
         onClose={closeInitiativeDetail}
+      />
+      <MetricDetailSheet
+        metricId={detailMetricId}
+        onClose={closeMetricDetail}
       />
     </div>
   );

@@ -41,6 +41,33 @@ export function InitiativeColumn() {
     return () => { cancelled = true; setLinkedIds(null); };
   }, [metricId, all]);
 
+  // Per concept §3 — Initiatives live UNDER a Metric. Without a selected metric,
+  // there's nothing meaningful to show — render a guided empty state.
+  if (!metricId) {
+    if (collapsed) {
+      return <CollapsedColumn title="Инициативы" count={0} onExpand={() => toggleCollapse("initiatives")} />;
+    }
+    return (
+      <div className="flex h-full w-[380px] shrink-0 flex-col border-r border-slate-200">
+        <div className="flex h-10 items-center justify-between border-b border-slate-200 px-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Инициативы</h3>
+          <button
+            onClick={() => toggleCollapse("initiatives")}
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            title="Свернуть колонку"
+          >
+            <ChevronsLeft className="size-4" />
+          </button>
+        </div>
+        <div className="flex flex-1 items-center justify-center px-6 text-center">
+          <p className="max-w-[260px] text-sm text-slate-500">
+            Выберите метрику слева — инициативы привязываются к метрике и движут её к цели.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   let initiatives: PlanningInitiative[] = all.filter((i) => !directionId || i.direction_id === directionId);
   if (linkedIds) initiatives = initiatives.filter((i) => linkedIds.has(i.id));
 

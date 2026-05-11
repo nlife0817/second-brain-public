@@ -3,8 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
-import Link from "next/link";
-import { Play, Square, Search, Loader2, PictureInPicture2, PictureInPicture, History } from "lucide-react";
+import { Square, Search, Loader2, PictureInPicture2, PictureInPicture, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -57,13 +56,24 @@ export function GlobalTimerWidget() {
   const stop = useTimingStore((s) => s.stop);
 
   const [stopping, setStopping] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   const pip = usePipTimer();
 
   const elapsed = useTickingElapsed(hasActive);
 
+  // Reset "dismissed" whenever a NEW timer starts so the widget reappears.
+  // We key on activeItemId — different task means different timer session.
+  useEffect(() => {
+    if (hasActive) setDismissed(false);
+  }, [hasActive, activeItemId]);
+
   // We render immediately from persisted state; no need to wait for hydrate().
   // Hidden routes (/login, /m/*) still skip render entirely.
   if (hidden) return null;
+  // No active timer → don't render anything (per user feedback: no idle "Запустить" pill).
+  if (!hasActive || !activeItemId) return null;
+  // User dismissed the widget for the current session — timer keeps running silently.
+  if (dismissed) return null;
 
   const handleStop = async () => {
     if (stopping) return;
@@ -86,81 +96,50 @@ export function GlobalTimerWidget() {
           "flex items-stretch gap-1 rounded-xl border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur",
         )}
       >
-        {hasActive && activeItemId ? (
-          <>
-            <div className="flex flex-col justify-center px-2.5 py-1 min-w-0">
-              <span
-                className="text-[11px] leading-tight text-muted-foreground truncate max-w-[180px]"
-                title={itemTitle ?? undefined}
-              >
-                {itemTitle ?? "Задача"}
-              </span>
-              <span className="font-mono tabular-nums text-base leading-tight font-medium">
-                {formatHMS(elapsed)}
-              </span>
-            </div>
-            <SwitchTimerButton activeItemId={activeItemId} />
-            {pip.supported && (
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={pip.open ? "Закрыть мини-окно" : "Открепить (мини-окно поверх всего)"}
-                title={pip.open ? "Закрыть мини-окно" : "Открепить поверх всех окон"}
-                onClick={() => (pip.open ? pip.close() : void pip.requestOpen())}
-              >
-                {pip.open ? <PictureInPicture /> : <PictureInPicture2 />}
-              </Button>
-            )}
-            <Button
-              variant="destructive"
-              size="icon"
-              aria-label="Остановить таймер"
-              onClick={handleStop}
-              disabled={stopping}
-            >
-              {stopping ? <Loader2 className="animate-spin" /> : <Square />}
-            </Button>
-          </>
-        ) : (
-          <>
-            <StartTimerButton />
-            <Link
-              href="/timing"
-              className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-              aria-label="Журнал учёта времени"
-              title="Журнал учёта времени"
-            >
-              <History className="size-4" />
-            </Link>
-          </>
+        <div className="flex flex-col justify-center px-2.5 py-1 min-w-0">
+          <span
+            className="text-[11px] leading-tight text-muted-foreground truncate max-w-[180px]"
+            title={itemTitle ?? undefined}
+          >
+            {itemTitle ?? "Задача"}
+          </span>
+          <span className="font-mono tabular-nums text-base leading-tight font-medium">
+            {formatHMS(elapsed)}
+          </span>
+        </div>
+        <SwitchTimerButton activeItemId={activeItemId} />
+        {pip.supported && (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={pip.open ? "Закрыть мини-окно" : "Открепить (мини-окно поверх всего)"}
+            title={pip.open ? "Закрыть мини-окно" : "Открепить поверх всех окон"}
+            onClick={() => (pip.open ? pip.close() : void pip.requestOpen())}
+          >
+            {pip.open ? <PictureInPicture /> : <PictureInPicture2 />}
+          </Button>
         )}
+        <Button
+          variant="destructive"
+          size="icon"
+          aria-label="Остановить таймер"
+          onClick={handleStop}
+          disabled={stopping}
+        >
+          {stopping ? <Loader2 className="animate-spin" /> : <Square />}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Скрыть виджет (таймер продолжит идти)"
+          title="Скрыть виджет — таймер продолжит идти в фоне"
+          onClick={() => setDismissed(true)}
+        >
+          <X />
+        </Button>
       </div>
       {pip.containerNode && createPortal(<PipTimerWidget />, pip.containerNode)}
     </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Start (no active timer): popover with task search
-// ---------------------------------------------------------------------------
-function StartTimerButton() {
-  const [open, setOpen] = useState(false);
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={(
-          <Button variant="default" size="sm" aria-label="Запустить таймер">
-            <Play /> Запустить
-          </Button>
-        )}
-      />
-      <PopoverContent align="end" side="top" className="w-80 p-0">
-        <TaskPickerCommand
-          onPick={() => setOpen(false)}
-          mode="start"
-        />
-      </PopoverContent>
-    </Popover>
   );
 }
 
@@ -194,7 +173,7 @@ function SwitchTimerButton({ activeItemId }: { activeItemId: string }) {
 // ---------------------------------------------------------------------------
 function TaskPickerCommand(props: {
   onPick: () => void;
-  mode: "start" | "switch";
+  mode: "switch";
   activeItemId?: string;
 }) {
   const items = useBrainStore((s) => s.items);
@@ -230,7 +209,7 @@ function TaskPickerCommand(props: {
         <CommandEmpty>
           {items.length === 0 ? "Задачи не загружены — открой раздел задач" : "Ничего не найдено"}
         </CommandEmpty>
-        <CommandGroup heading={props.mode === "switch" ? "Переключиться на" : "Запустить таймер"}>
+        <CommandGroup heading="Переключиться на">
           {candidates.map((item) => (
             <CommandItem
               key={item.id}

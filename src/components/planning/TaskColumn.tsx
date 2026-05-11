@@ -8,17 +8,47 @@ import { CreateTaskDrawer } from "./CreateTaskDrawer";
 import { CollapsedColumn } from "./CollapsedColumn";
 
 export function TaskColumn() {
+  const metricId = usePlanningStore((s) => s.selectedMetricId);
   const initiativeId = usePlanningStore((s) => s.selectedInitiativeId);
-  const tasks = usePlanningStore((s) => s.tasks).filter((t) =>
-    initiativeId ? t.initiative_id === initiativeId : !t.initiative_id
-  );
   const collapsed = usePlanningStore((s) => s.collapsedColumns.includes("tasks"));
   const toggleCollapse = usePlanningStore((s) => s.toggleColumnCollapsed);
+  const tasks = usePlanningStore((s) => s.tasks).filter((t) =>
+    initiativeId ? t.initiative_id === initiativeId : false
+  );
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<"all" | "open" | "done">("all");
 
   if (collapsed) {
     return <CollapsedColumn title="Задачи" count={tasks.length} onExpand={() => toggleCollapse("tasks")} />;
+  }
+
+  // Per concept §3 — Tasks live UNDER an Initiative. With no parent selected,
+  // there's nothing to show — render a guided empty state instead of leaking
+  // all unassigned tasks into this column.
+  if (!initiativeId) {
+    return (
+      <div className="flex h-full min-w-[400px] flex-1 flex-col">
+        <div className="flex h-10 items-center justify-between border-b border-slate-200 px-3">
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Задачи</h3>
+          </div>
+          <button
+            onClick={() => toggleCollapse("tasks")}
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            title="Свернуть колонку"
+          >
+            <ChevronsLeft className="size-4" />
+          </button>
+        </div>
+        <div className="flex flex-1 items-center justify-center px-6 text-center">
+          <p className="max-w-[280px] text-sm text-slate-500">
+            {metricId
+              ? "Выберите инициативу слева — задачи показываются под конкретной инициативой."
+              : "Сначала выберите метрику, затем инициативу. Задачи вложены в инициативу."}
+          </p>
+        </div>
+      </div>
+    );
   }
 
   const filtered = tasks.filter((t) => {
@@ -33,11 +63,11 @@ export function TaskColumn() {
   const tabInactive = "text-slate-500 hover:bg-slate-100";
 
   return (
-    <div className="flex h-full w-[400px] shrink-0 flex-col">
+    <div className="flex h-full min-w-[400px] flex-1 flex-col">
       <div className="flex h-10 items-center justify-between border-b border-slate-200 px-3">
         <div className="flex items-center gap-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            {initiativeId ? "Задачи инициативы" : "Задачи без инициативы"}
+            Задачи инициативы
           </h3>
           <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-500">
             {tasks.length}

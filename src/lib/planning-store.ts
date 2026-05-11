@@ -55,6 +55,8 @@ interface PlanningStore {
   selectedMetricId: string | null;
   selectedInitiativeId: string | null;
   detailInitiativeId: string | null; // ← opens InitiativeDetailSheet
+  detailMetricId: string | null;     // ← opens MetricDetailSheet
+  detailMetricAutoOpenSettings: boolean; // pop the settings tab when sheet mounts
   showArchived: boolean;
   initiativeSort: SortMode;
   collapsedColumns: ColumnKey[];
@@ -72,6 +74,8 @@ interface PlanningStore {
   setSelectedInitiative: (id: string | null) => void;
   openInitiativeDetail: (id: string) => void;
   closeInitiativeDetail: () => void;
+  openMetricDetail: (id: string, opts?: { autoOpenSettings?: boolean }) => void;
+  closeMetricDetail: () => void;
   setShowArchived: (v: boolean) => void;
   setInitiativeSort: (s: SortMode) => void;
   toggleColumnCollapsed: (key: ColumnKey) => void;
@@ -107,6 +111,8 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   selectedMetricId: null,
   selectedInitiativeId: null,
   detailInitiativeId: null,
+  detailMetricId: null,
+  detailMetricAutoOpenSettings: false,
   showArchived: false,
   initiativeSort: "deadline",
   collapsedColumns: loadCollapsedFromStorage(),
@@ -168,6 +174,9 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   setSelectedInitiative: (id) => set({ selectedInitiativeId: id }),
   openInitiativeDetail: (id) => set({ detailInitiativeId: id, selectedInitiativeId: id }),
   closeInitiativeDetail: () => set({ detailInitiativeId: null }),
+  openMetricDetail: (id, opts) =>
+    set({ detailMetricId: id, selectedMetricId: id, detailMetricAutoOpenSettings: !!opts?.autoOpenSettings }),
+  closeMetricDetail: () => set({ detailMetricId: null, detailMetricAutoOpenSettings: false }),
   setShowArchived: (v) => { set({ showArchived: v }); get().fetchAll(); },
   setInitiativeSort: (s) => set({ initiativeSort: s }),
   toggleColumnCollapsed: (key) => {
@@ -200,7 +209,15 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
     });
     const row = await jsonOrNull<PlanningMetric>(res);
     if (!row) { toast.error("Не удалось создать метрику"); return null; }
-    set((s) => ({ metrics: [...s.metrics, row], selectedMetricId: row.id }));
+    // Auto-open the detail drawer with the settings tab expanded — per concept §20.1.4
+    // "Empty states with CTA" and user feedback: critical fields shouldn't be hidden
+    // behind a "Settings" toggle right after creation.
+    set((s) => ({
+      metrics: [...s.metrics, row],
+      selectedMetricId: row.id,
+      detailMetricId: row.id,
+      detailMetricAutoOpenSettings: true,
+    }));
     return row;
   },
 
