@@ -6,12 +6,42 @@ import { LineChart, Line, ResponsiveContainer } from "recharts";
 import type { PlanningMetric } from "@/types/planning";
 import { InlineTextField } from "./InlineTextField";
 import { usePlanningStore } from "@/lib/planning-store";
+import { formatMetricValue } from "@/lib/planning-format";
 
-interface Props { metric: PlanningMetric; selected: boolean; onSelect: () => void; sparkline?: number[]; }
+interface Props {
+  metric: PlanningMetric;
+  selected: boolean;
+  onSelect: () => void;
+  sparkline?: number[];
+  latestValue?: number | null;
+}
 
-function MetricCardBase({ metric, selected, onSelect, sparkline }: Props) {
+const TYPE_LABEL: Record<PlanningMetric["type"], string> = {
+  numeric: "Числовая",
+  business: "Бизнес",
+  delivery: "Выполнение",
+};
+
+const TYPE_TONE: Record<PlanningMetric["type"], string> = {
+  numeric: "bg-sky-50 text-sky-700",
+  business: "bg-emerald-50 text-emerald-700",
+  delivery: "bg-violet-50 text-violet-700",
+};
+
+function MetricCardBase({ metric, selected, onSelect, sparkline, latestValue }: Props) {
   const updateMetric = usePlanningStore((s) => s.updateMetric);
   const series = (sparkline ?? []).map((v, i) => ({ i, v }));
+
+  // Тренд для цвета линии: вверх или вниз относительно baseline (если есть)
+  // и относительно direction_value (up/down — что считать «хорошо»).
+  const last = series.length ? series[series.length - 1].v : null;
+  const first = series.length ? series[0].v : null;
+  let lineColor = "#2563eb"; // default: in_progress blue
+  if (last != null && first != null && metric.direction_value) {
+    const improving = metric.direction_value === "up" ? last >= first : last <= first;
+    lineColor = improving ? "#16a34a" : "#dc2626"; // on_track / off_track
+  }
+
   return (
     <div
       onClick={onSelect}
@@ -20,34 +50,54 @@ function MetricCardBase({ metric, selected, onSelect, sparkline }: Props) {
       }`}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="flex-1" onClick={(e) => e.stopPropagation()}>
+        <div className="min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
           <InlineTextField
             value={metric.title}
             onSave={(t) => updateMetric(metric.id, { title: t })}
             className="text-sm font-medium"
           />
-          <p className="px-2 text-xs text-slate-500">
-            {metric.type === "numeric" ? "Числовая" : metric.type === "business" ? "Бизнес" : "Выполнение"}
-            {metric.unit ? ` · ${metric.unit}` : ""}
-          </p>
+          <div className="flex flex-wrap items-center gap-1 px-2 pt-0.5">
+            <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${TYPE_TONE[metric.type]}`}>
+              {TYPE_LABEL[metric.type]}
+            </span>
+            {metric.unit && (
+              <span className="text-[10px] text-slate-400">·</span>
+            )}
+            {metric.unit && (
+              <span className="text-[10px] text-slate-500">{metric.unit}</span>
+            )}
+          </div>
         </div>
         <Link
           href={`/planning/metrics/${metric.id}`}
           onClick={(e) => e.stopPropagation()}
-          className="rounded-md px-1.5 py-0.5 text-xs text-blue-600 opacity-0 group-hover:opacity-100"
+          className="rounded-md px-1.5 py-0.5 text-xs text-blue-600 opacity-0 transition-opacity group-hover:opacity-100"
+          title="Открыть страницу метрики"
         >
           →
         </Link>
       </div>
-      {series.length > 1 && (
-        <div className="h-6 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={series}>
-              <Line type="monotone" dataKey="v" stroke="#2563eb" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-            </LineChart>
-          </ResponsiveContainer>
+
+      {/* Текущее значение + sparkline. Concept §20.2.1: «sparkline (Recharts mini LineChart 50×20)». */}
+      <div className="flex items-end justify-between gap-2 px-2">
+        <div className="flex flex-col">
+          <span className="text-[10px] uppercase tracking-wide text-slate-400">Факт</span>
+          <span className="text-sm font-semibold tabular-nums text-slate-800">
+            {formatMetricValue(latestValue ?? metric.baseline, metric.unit)}
+          </span>
         </div>
-      )}
+        {series.length > 1 ? (
+          <div className="h-5" style={{ width: 50 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={series}>
+                <Line type="monotone" dataKey="v" stroke={lineColor} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <span className="text-[10px] text-slate-300">нет данных</span>
+        )}
+      </div>
     </div>
   );
 }

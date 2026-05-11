@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus } from "lucide-react";
+import { Plus, ChevronsLeft } from "lucide-react";
 import { usePlanningStore } from "@/lib/planning-store";
 import { InitiativeCard } from "./InitiativeCard";
 import { CreateInitiativeDrawer } from "./CreateInitiativeDrawer";
+import { CollapsedColumn } from "./CollapsedColumn";
 import type { PlanningInitiative } from "@/types/planning";
 
 export function InitiativeColumn() {
@@ -17,6 +18,8 @@ export function InitiativeColumn() {
   const all = usePlanningStore((s) => s.initiatives);
   const selectedId = usePlanningStore((s) => s.selectedInitiativeId);
   const setSelected = usePlanningStore((s) => s.setSelectedInitiative);
+  const collapsed = usePlanningStore((s) => s.collapsedColumns.includes("initiatives"));
+  const toggleCollapse = usePlanningStore((s) => s.toggleColumnCollapsed);
   const [open, setOpen] = useState(false);
   const [linkedIds, setLinkedIds] = useState<Set<string> | null>(null);
 
@@ -47,27 +50,83 @@ export function InitiativeColumn() {
       : (a.due_period_id ?? "zzz").localeCompare(b.due_period_id ?? "zzz")
   );
 
+  if (collapsed) {
+    return <CollapsedColumn title="Инициативы" count={initiatives.length} onExpand={() => toggleCollapse("initiatives")} />;
+  }
+
+  // Concept §20.2.1: «Sort tabs на колонке инициатив: «По дедлайну» (default) / «По RICE»».
+  const tabBase = "rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors";
+  const tabActive = "bg-slate-900 text-white";
+  const tabInactive = "text-slate-500 hover:bg-slate-100";
+
   return (
-    <div className="flex h-full w-[380px] flex-col border-r border-slate-200">
+    <div className="flex h-full w-[380px] shrink-0 flex-col border-r border-slate-200">
       <div className="flex h-10 items-center justify-between border-b border-slate-200 px-3">
         <div className="flex items-center gap-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Инициативы</h3>
-          <button onClick={() => setSort(sortMode === "rice" ? "deadline" : "rice")} className="rounded-md px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100" title="Переключить сортировку">
-            {sortMode === "rice" ? "RICE" : "Дедлайн"}
+          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-500">{initiatives.length}</span>
+        </div>
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={() => setOpen(true)}
+            disabled={!directionId}
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
+            title={directionId ? "Добавить инициативу" : "Сначала выберите направление"}
+          >
+            <Plus className="size-4" />
           </button>
-          <button onClick={() => setShowArchived(!showArchived)} className={`rounded-md px-1.5 py-0.5 text-[10px] ${showArchived ? "bg-slate-200 text-slate-700" : "text-slate-400 hover:bg-slate-100"}`} title="Архив">
-            Архив
+          <button
+            onClick={() => toggleCollapse("initiatives")}
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            title="Свернуть колонку"
+          >
+            <ChevronsLeft className="size-4" />
           </button>
         </div>
-        <button onClick={() => setOpen(true)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Добавить инициативу">
-          <Plus className="size-4" />
+      </div>
+
+      {/* Sub-row: sort tabs + archive toggle */}
+      <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-3 py-1.5">
+        <div role="tablist" aria-label="Сортировка инициатив" className="flex items-center gap-1">
+          <button
+            role="tab"
+            aria-selected={sortMode === "deadline"}
+            onClick={() => setSort("deadline")}
+            className={`${tabBase} ${sortMode === "deadline" ? tabActive : tabInactive}`}
+            title="Сортировка по дедлайну (по умолчанию)"
+          >
+            По дедлайну
+          </button>
+          <button
+            role="tab"
+            aria-selected={sortMode === "rice"}
+            onClick={() => setSort("rice")}
+            className={`${tabBase} ${sortMode === "rice" ? tabActive : tabInactive}`}
+            title="Сортировка по RICE-score"
+          >
+            По RICE
+          </button>
+        </div>
+        <button
+          onClick={() => setShowArchived(!showArchived)}
+          className={`rounded-md px-1.5 py-0.5 text-[10px] transition-colors ${
+            showArchived ? "bg-slate-200 text-slate-700" : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          }`}
+          title="Показывать архивные инициативы (>30 дней done)"
+        >
+          {showArchived ? "Архив виден" : "Архив скрыт"}
         </button>
       </div>
+
       <div className="flex-1 overflow-y-auto p-2">
         {initiatives.length === 0 ? (
           <div className="mt-8 text-center text-sm text-slate-500">
-            <p>Инициатив нет.</p>
-            <button onClick={() => setOpen(true)} className="mt-3 rounded-md bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700">
+            <p>{metricId ? "По выбранной метрике инициатив нет." : "Инициатив нет."}</p>
+            <button
+              onClick={() => setOpen(true)}
+              disabled={!directionId}
+              className="mt-3 rounded-md bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
+            >
               Создать инициативу
             </button>
           </div>

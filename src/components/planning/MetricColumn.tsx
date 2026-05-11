@@ -1,30 +1,51 @@
 "use client";
 
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, ChevronsLeft } from "lucide-react";
 import { usePlanningStore } from "@/lib/planning-store";
 import { MetricCard } from "./MetricCard";
 import { CreateMetricDrawer } from "./CreateMetricDrawer";
+import { CollapsedColumn } from "./CollapsedColumn";
 
 export function MetricColumn() {
   const directionId = usePlanningStore((s) => s.selectedDirectionId);
   const metrics = usePlanningStore((s) => s.metrics).filter((m) => !directionId || m.direction_id === directionId);
   const selectedMetricId = usePlanningStore((s) => s.selectedMetricId);
   const setSelectedMetric = usePlanningStore((s) => s.setSelectedMetric);
+  const sparklines = usePlanningStore((s) => s.metricSparklines);
+  const latest = usePlanningStore((s) => s.metricLatest);
+  const collapsed = usePlanningStore((s) => s.collapsedColumns.includes("metrics"));
+  const toggleCollapse = usePlanningStore((s) => s.toggleColumnCollapsed);
   const [openCreate, setOpenCreate] = useState(false);
 
+  if (collapsed) {
+    return <CollapsedColumn title="Метрики" count={metrics.length} onExpand={() => toggleCollapse("metrics")} />;
+  }
+
   return (
-    <div className="flex h-full w-[320px] flex-col border-r border-slate-200">
+    <div className="flex h-full w-[320px] shrink-0 flex-col border-r border-slate-200">
       <div className="flex h-10 items-center justify-between border-b border-slate-200 px-3">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Метрики</h3>
-        <button
-          onClick={() => setOpenCreate(true)}
-          disabled={!directionId}
-          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
-          title="Добавить метрику"
-        >
-          <Plus className="size-4" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Метрики</h3>
+          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-500">{metrics.length}</span>
+        </div>
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={() => setOpenCreate(true)}
+            disabled={!directionId}
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
+            title={directionId ? "Добавить метрику" : "Сначала выберите направление"}
+          >
+            <Plus className="size-4" />
+          </button>
+          <button
+            onClick={() => toggleCollapse("metrics")}
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            title="Свернуть колонку"
+          >
+            <ChevronsLeft className="size-4" />
+          </button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto p-2">
         {metrics.length === 0 ? (
@@ -42,6 +63,8 @@ export function MetricColumn() {
                 metric={m}
                 selected={m.id === selectedMetricId}
                 onSelect={() => setSelectedMetric(m.id)}
+                sparkline={sparklines[m.id]}
+                latestValue={latest[m.id] ?? null}
               />
             ))}
           </div>

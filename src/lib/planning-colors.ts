@@ -8,7 +8,7 @@
 //   in_progress        — blue
 //   archived           — dark slate
 
-import type { InitiativeStatus, ExperimentDecision } from "@/types/planning";
+import type { InitiativeStatus, ExperimentDecision, PlanningInitiative, PlanningPeriod } from "@/types/planning";
 
 export type SemanticTone = "on_track" | "at_risk" | "off_track" | "future" | "in_progress" | "archived";
 
@@ -54,3 +54,26 @@ export const INITIATIVE_STATUS_LABEL: Record<InitiativeStatus, string> = {
   done: "Сделана",
   killed: "Убита",
 };
+
+// Concept §20.1.5 + §4: подсветка раннего предупреждения.
+// — done/killed/planned/in_progress наследуют базовый тон, НО:
+//   • дедлайн прошёл и статус не done → off_track
+//   • дедлайн в окне раннего предупреждения (early_warning_weeks) → at_risk
+export function initiativeDeadlineTone(
+  initiative: PlanningInitiative,
+  periods: PlanningPeriod[],
+  earlyWarningWeeks: number,
+  now: Date = new Date(),
+): SemanticTone {
+  const base = initiativeStatusTone(initiative.status);
+  if (initiative.status === "done" || initiative.status === "killed") return base;
+  if (!initiative.due_period_id) return base;
+  const period = periods.find((p) => p.id === initiative.due_period_id);
+  if (!period) return base;
+  const endTs = new Date(period.end_date).getTime();
+  const nowTs = now.getTime();
+  if (endTs < nowTs) return "off_track";
+  const weeksLeft = (endTs - nowTs) / (7 * 86400000);
+  if (weeksLeft <= earlyWarningWeeks) return "at_risk";
+  return base;
+}

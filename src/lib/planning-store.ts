@@ -8,10 +8,34 @@ import type {
   PlanningInitiative,
   PlanningSettings,
   PlanningInitiativeMetricLink,
+  PlanningPeriod,
+  PlanningMetricTarget,
 } from "@/types/planning";
 import type { Item } from "@/types";
 
 type SortMode = "deadline" | "rice";
+
+export type ColumnKey = "metrics" | "initiatives" | "tasks";
+
+const COLLAPSE_STORAGE_KEY = "planning:columns:collapsed";
+
+function loadCollapsedFromStorage(): ColumnKey[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(COLLAPSE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x): x is ColumnKey => x === "metrics" || x === "initiatives" || x === "tasks");
+  } catch {
+    return [];
+  }
+}
+
+function saveCollapsedToStorage(keys: ColumnKey[]): void {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(keys)); } catch { /* ignore */ }
+}
 
 interface PlanningStore {
   // Data
@@ -21,6 +45,10 @@ interface PlanningStore {
   initiativeMetricLinks: PlanningInitiativeMetricLink[];
   tasks: Item[];
   settings: PlanningSettings | null;
+  periods: PlanningPeriod[];
+  metricSparklines: Record<string, number[]>;
+  metricLatest: Record<string, number | null>;
+  metricTargets: Record<string, PlanningMetricTarget[]>;
 
   // Selection state for Miller columns
   selectedDirectionId: string | null;
@@ -29,12 +57,15 @@ interface PlanningStore {
   detailInitiativeId: string | null; // ← opens InitiativeDetailSheet
   showArchived: boolean;
   initiativeSort: SortMode;
+  collapsedColumns: ColumnKey[];
 
   // Loading
   loaded: boolean;
 
   // Actions
   fetchAll: () => Promise<void>;
+  fetchSparkline: (metricId: string) => Promise<void>;
+  fetchMetricTargets: (metricId: string) => Promise<void>;
 
   setSelectedDirection: (id: string | null) => void;
   setSelectedMetric: (id: string | null) => void;
@@ -43,6 +74,7 @@ interface PlanningStore {
   closeInitiativeDetail: () => void;
   setShowArchived: (v: boolean) => void;
   setInitiativeSort: (s: SortMode) => void;
+  toggleColumnCollapsed: (key: ColumnKey) => void;
 
   createDirection: (input: { title: string; year_focus?: string }) => Promise<PlanningDirection | null>;
   createMetric: (input: { title: string; type: PlanningMetric["type"]; unit?: string; direction_id?: string | null }) => Promise<PlanningMetric | null>;
@@ -67,33 +99,68 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   initiativeMetricLinks: [],
   tasks: [],
   settings: null,
+  periods: [],
+  metricSparklines: {},
+  metricLatest: {},
+  metricTargets: {},
   selectedDirectionId: null,
   selectedMetricId: null,
   selectedInitiativeId: null,
   detailInitiativeId: null,
   showArchived: false,
   initiativeSort: "deadline",
+  collapsedColumns: loadCollapsedFromStorage(),
   loaded: false,
 
   fetchAll: async () => {
-    const [dirRes, metRes, iniRes, setRes, taskRes] = await Promise.all([
+    const [dirRes, metRes, iniRes, setRes, taskRes, perRes] = await Promise.all([
       fetch("/api/planning/directions"),
       fetch("/api/planning/metrics"),
       fetch(`/api/planning/initiatives?include_archived=${get().showArchived ? "1" : "0"}`),
       fetch("/api/planning/settings"),
       fetch("/api/items"),
+      fetch("/api/planning/periods"),
     ]);
     const directions = (await jsonOrNull<PlanningDirection[]>(dirRes)) ?? [];
     const metrics = (await jsonOrNull<PlanningMetric[]>(metRes)) ?? [];
     const initiatives = (await jsonOrNull<PlanningInitiative[]>(iniRes)) ?? [];
     const settings = await jsonOrNull<PlanningSettings>(setRes);
     const tasks = ((await jsonOrNull<Item[]>(taskRes)) ?? []).filter((i) => i.type === "task");
+    const periods = (await jsonOrNull<PlanningPeriod[]>(perRes)) ?? [];
 
-    // Collect metric-initiative links — fetch per initiative is too chatty for now; rely on /initiatives/[id] when needed.
-    set({ directions, metrics, initiatives, tasks, settings, loaded: true });
+    set({ directions, metrics, initiatives, tasks, settings, periods, loaded: true });
     if (!get().selectedDirectionId && directions[0]) {
       set({ selectedDirectionId: directions[0].id });
     }
+
+    // Batch-fetch sparkline data (latest 20 ticks) for every metric — used in MetricCard.
+    // Concept §20.2.1: «На карточке метрики — sparkline (Recharts mini LineChart 50×20)».
+    await Promise.all(metrics.map((m) => get().fetchSparkline(m.id)));
+  },
+
+  fetchSparkline: async (metricId: string) => {
+    try {
+      const res = await fetch(`/api/planning/metrics/${metricId}/ticks?limit=20`);
+      if (!res.ok) return;
+      const rows = (await res.json()) as Array<{ value: number; measured_at: string }>;
+      // API returns DESC; reverse to ASC for chart left-to-right time flow.
+      const ordered = [...rows].reverse();
+      const values = ordered.map((r) => Number(r.value)).filter((n) => Number.isFinite(n));
+      const latest = ordered.length > 0 ? Number(ordered[ordered.length - 1].value) : null;
+      set((s) => ({
+        metricSparklines: { ...s.metricSparklines, [metricId]: values },
+        metricLatest: { ...s.metricLatest, [metricId]: latest },
+      }));
+    } catch { /* ignore */ }
+  },
+
+  fetchMetricTargets: async (metricId: string) => {
+    try {
+      const res = await fetch(`/api/planning/metrics/${metricId}/targets`);
+      if (!res.ok) return;
+      const rows = (await res.json()) as PlanningMetricTarget[];
+      set((s) => ({ metricTargets: { ...s.metricTargets, [metricId]: rows } }));
+    } catch { /* ignore */ }
   },
 
   setSelectedDirection: (id) => set({ selectedDirectionId: id, selectedMetricId: null, selectedInitiativeId: null }),
@@ -103,6 +170,12 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   closeInitiativeDetail: () => set({ detailInitiativeId: null }),
   setShowArchived: (v) => { set({ showArchived: v }); get().fetchAll(); },
   setInitiativeSort: (s) => set({ initiativeSort: s }),
+  toggleColumnCollapsed: (key) => {
+    const current = get().collapsedColumns;
+    const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
+    saveCollapsedToStorage(next);
+    set({ collapsedColumns: next });
+  },
 
   createDirection: async (input) => {
     const res = await fetch("/api/planning/directions", {
