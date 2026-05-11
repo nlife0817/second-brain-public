@@ -149,6 +149,10 @@ export interface PlanningInitiative {
   position: number;
   created_at: string;
   updated_at: string;
+  // P7.4: denormalized progress (опционально — заполняется только в `listInitiatives`
+  // для подсветки at-risk/failed; в `getInitiative` отсутствует).
+  tasks_total?: number;
+  tasks_done?: number;
 }
 
 export interface PlanningInitiativeMetricLink {

@@ -5,7 +5,7 @@ import { CalendarClock, AlertTriangle } from "lucide-react";
 import type { PlanningInitiative } from "@/types/planning";
 import { InlineTextField } from "./InlineTextField";
 import { usePlanningStore } from "@/lib/planning-store";
-import { initiativeDeadlineTone, SEMANTIC_CLASS, INITIATIVE_STATUS_LABEL } from "@/lib/planning-colors";
+import { initiativeDeadlineTone, initiativeIsFailed, SEMANTIC_CLASS, INITIATIVE_STATUS_LABEL } from "@/lib/planning-colors";
 import { formatPeriodShort } from "@/lib/planning-format";
 
 interface Props { initiative: PlanningInitiative; selected: boolean; onSelect: () => void; }
@@ -45,6 +45,11 @@ function InitiativeCardBase({ initiative, selected, onSelect }: Props) {
   // Явный badge «Просрочена» (PLAN_PLANNING_REWORK §P2): only when deadline
   // прошёл и инициатива ещё не закрыта/убита.
   const isOverdue = isOffTrack && initiative.status !== "done" && initiative.status !== "killed";
+  // P7.4: «Failed» — overdue + плохой прогресс задач. Показывается вместо
+  // «Просрочена», когда задач почти нет сделанных.
+  const isFailed = isOverdue && initiativeIsFailed(initiative);
+  const total = initiative.tasks_total ?? 0;
+  const done = initiative.tasks_done ?? 0;
 
   return (
     <div
@@ -103,11 +108,26 @@ function InitiativeCardBase({ initiative, selected, onSelect }: Props) {
         )}
         {isOverdue && (
           <span
-            className="inline-flex items-center gap-0.5 rounded-md bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
-            title={`Дедлайн прошёл: ${period?.end_date.slice(0, 10) ?? ""}`}
+            className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white ${
+              isFailed ? "bg-red-700" : "bg-red-600"
+            }`}
+            title={
+              isFailed
+                ? `Failed: дедлайн ${period?.end_date.slice(0, 10) ?? ""} прошёл, ${done}/${total} задач сделано`
+                : `Дедлайн прошёл: ${period?.end_date.slice(0, 10) ?? ""}`
+            }
           >
             <AlertTriangle className="size-3" />
-            Просрочена
+            {isFailed ? "Failed" : "Просрочена"}
+          </span>
+        )}
+        {/* P7.4: показываем прогресс задач для at_risk/off_track инициатив */}
+        {(isAtRisk || isOffTrack) && total > 0 && (
+          <span
+            className="rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 tabular-nums"
+            title="Прогресс связанных задач"
+          >
+            {done}/{total}
           </span>
         )}
         {initiative.parent_initiative_id && (

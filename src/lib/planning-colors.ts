@@ -59,6 +59,8 @@ export const INITIATIVE_STATUS_LABEL: Record<InitiativeStatus, string> = {
 // — done/killed/planned/in_progress наследуют базовый тон, НО:
 //   • дедлайн прошёл и статус не done → off_track
 //   • дедлайн в окне раннего предупреждения (early_warning_weeks) → at_risk
+// P7.4: учитываем прогресс задач если он передан. Дедлайн в окне раннего
+// предупреждения + tasks_done/total < 0.5 → at_risk даже если по дате ещё рано.
 export function initiativeDeadlineTone(
   initiative: PlanningInitiative,
   periods: PlanningPeriod[],
@@ -78,5 +80,22 @@ export function initiativeDeadlineTone(
   if (endTs < nowTs) return "off_track";
   const weeksLeft = (endTs - nowTs) / (7 * 86400000);
   if (weeksLeft <= earlyWarningWeeks) return "at_risk";
+  // Прогресс-aware: если задач очень мало сделано и инициатива уже в работе —
+  // подсвечиваем заранее, не дожидаясь окна.
+  if (initiative.status === "in_progress"
+      && (initiative.tasks_total ?? 0) > 0
+      && (initiative.tasks_done ?? 0) / (initiative.tasks_total ?? 1) < 0.3
+      && weeksLeft <= earlyWarningWeeks * 2) {
+    return "at_risk";
+  }
   return base;
+}
+
+// P7.4: «дедлайн прошёл и задачи не выполнены» — отличаем «Failed» (явная
+// неудача: нет прогресса или меньше 80%) от «Просрочена» (просто опоздание).
+export function initiativeIsFailed(initiative: PlanningInitiative): boolean {
+  if (initiative.status === "done" || initiative.status === "killed") return false;
+  const total = initiative.tasks_total ?? 0;
+  const done = initiative.tasks_done ?? 0;
+  return total === 0 || done / total < 0.8;
 }

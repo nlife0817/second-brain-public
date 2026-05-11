@@ -83,6 +83,43 @@ export function WeekGridPicker({ periods, startId, endId, onChange, year, mode =
     onChange(null, null);
   };
 
+  // Quick presets: end = base + offset. Base = start (если задан) | now-week | первая
+  // неделя текущего displayYear. start не трогаем; в single mode — выставляем обоим
+  // одну и ту же неделю (offset от now).
+  const findWeekAtDaysOffset = (baseDate: string, days: number): PlanningPeriod | null => {
+    const target = new Date(baseDate).getTime() + days * 86400000;
+    let best: PlanningPeriod | null = null;
+    let bestDelta = Infinity;
+    for (const w of periods) {
+      if (w.type !== "week") continue;
+      const wMid = (new Date(w.start_date).getTime() + new Date(w.end_date).getTime()) / 2;
+      const d = Math.abs(wMid - target);
+      if (d < bestDelta) { best = w; bestDelta = d; }
+    }
+    return best;
+  };
+
+  const applyPreset = (days: number) => {
+    const baseStart = start ?? nowPeriod ?? periods.find((p) => p.type === "week" && p.year === displayYear) ?? null;
+    if (!baseStart) return;
+    const target = findWeekAtDaysOffset(baseStart.start_date, days);
+    if (!target) return;
+    if (mode === "single") {
+      onChange(target.id, target.id);
+    } else {
+      onChange(baseStart.id, target.id);
+    }
+    setPendingStart(null);
+  };
+
+  const PRESETS: Array<{ label: string; days: number }> = [
+    { label: "+1w",  days: 7 },
+    { label: "+2w",  days: 14 },
+    { label: "+1m",  days: 30 },
+    { label: "+3m",  days: 90 },
+    { label: "+6m",  days: 180 },
+  ];
+
   return (
     <div className={`flex flex-col gap-2 ${className ?? ""}`}>
       <div className="flex items-center justify-between gap-2">
@@ -117,6 +154,23 @@ export function WeekGridPicker({ periods, startId, endId, onChange, year, mode =
             </button>
           )}
         </div>
+      </div>
+
+      {/* Quick presets: deadline = base + offset (P7.2). Base = start (если есть)
+          либо текущая неделя. */}
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="text-[10px] uppercase tracking-wide text-slate-400">Quick</span>
+        {PRESETS.map((p) => (
+          <button
+            key={p.label}
+            type="button"
+            onClick={() => applyPreset(p.days)}
+            className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+            title={`Дедлайн = ${start ? "начало" : "текущая неделя"} + ${p.days} дн.`}
+          >
+            {p.label}
+          </button>
+        ))}
       </div>
 
       <div className="flex flex-col gap-1">

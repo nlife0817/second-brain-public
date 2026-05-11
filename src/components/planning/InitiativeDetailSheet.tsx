@@ -218,7 +218,7 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
               {/* Type + inline hint */}
               <section className="text-sm">
                 <label className="block">
-                  <span className="mb-1 block text-xs font-medium text-slate-600">Тип</span>
+                  <span className="mb-1 block text-xs font-medium text-slate-600">Type</span>
                   <select
                     value={data.type}
                     onChange={(e) => patch({ type: e.target.value as InitiativeType })}
@@ -235,7 +235,7 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
               {/* Status + Estimate */}
               <section className="grid grid-cols-2 gap-3 text-sm">
                 <div className="block">
-                  <span className="mb-1 block text-xs font-medium text-slate-600">Статус</span>
+                  <span className="mb-1 block text-xs font-medium text-slate-600">Status</span>
                   <div className="flex flex-wrap gap-1">
                     {STATUSES.map((s) => {
                       const tone = initiativeStatusTone(s);
@@ -255,26 +255,19 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                   </div>
                 </div>
 
-                <label className="block">
-                  <span className="mb-1 block text-xs font-medium text-slate-600">Оценка (ч)</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.5}
-                    defaultValue={data.estimate_hours ?? ""}
-                    onBlur={(e) => {
-                      const v = e.target.value === "" ? null : Number(e.target.value);
-                      if (v !== data.estimate_hours) patch({ estimate_hours: v });
-                    }}
-                    className="w-full rounded-md border border-slate-300 px-2 py-1.5 tabular-nums"
+                <div className="block">
+                  <span className="mb-1 block text-xs font-medium text-slate-600">Estimate (h)</span>
+                  <EstimateInput
+                    value={data.estimate_hours}
+                    onChange={(v) => { if (v !== data.estimate_hours) patch({ estimate_hours: v }); }}
                   />
-                </label>
+                </div>
               </section>
 
               {/* Week range — start..end (last week = deadline). §P2: grid 4×13. */}
               <section>
                 <span className="mb-1 block text-xs font-medium text-slate-600">
-                  Диапазон недель (старт → дедлайн)
+                  Week range (start → deadline)
                 </span>
                 <WeekGridPicker
                   periods={periods}
@@ -290,19 +283,19 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                   }}
                 />
                 <p className="mt-1 text-[11px] text-slate-500">
-                  Сдвиг дедлайна (последней недели) у уже существующего диапазона = переплан
-                  и спросит причину.
+                  Shifting the deadline (last week) of an existing range = replan
+                  and will ask for a reason.
                 </p>
               </section>
 
               {/* Description */}
               <section>
-                <span className="mb-1 block text-xs font-medium text-slate-600">Описание</span>
+                <span className="mb-1 block text-xs font-medium text-slate-600">Description</span>
                 <textarea
                   defaultValue={data.description ?? ""}
                   rows={4}
                   onBlur={(e) => { const v = e.target.value.trim() || null; if (v !== data.description) patch({ description: v }); }}
-                  placeholder="Контекст, конкуренты, ссылки…"
+                  placeholder="Context, competitors, links…"
                   className="w-full resize-y rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
                 />
               </section>
@@ -311,9 +304,9 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
               {(data.type === "client_blocker" || data.type === "product_maturity") && (
                 <section>
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-slate-600">JTBD (работа клиента) *</span>
+                    <span className="text-xs font-medium text-slate-600">JTBD (customer&apos;s job) *</span>
                     <span className="text-[10px] uppercase tracking-wide text-slate-400" title={JTBD_HINT_BY_TYPE[data.type].description}>
-                      Пример ниже
+                      Example below
                     </span>
                   </div>
                   <textarea
@@ -353,7 +346,7 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                   <textarea
                     defaultValue={data.kill_criteria ?? ""}
                     rows={2}
-                    placeholder="При каком сигнале убиваем"
+                    placeholder="Signal that triggers kill"
                     onBlur={(e) => { const v = e.target.value.trim() || null; if (v !== data.kill_criteria) patch({ kill_criteria: v }); }}
                     className="w-full resize-y rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
                   />
@@ -375,7 +368,7 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
 
               {/* Linked metrics */}
               <LinkedMulti
-                title="Связанные метрики"
+                title="Linked metrics"
                 allItems={metrics.map((m) => ({ id: m.id, label: m.title }))}
                 selectedIds={data.linked_metrics.map((l) => l.metric_id)}
                 onChange={async (next) => {
@@ -399,7 +392,7 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                 />
               ) : (
                 <LinkedMulti
-                  title="Связанные сделки"
+                  title="Linked deals"
                   allItems={allDeals.map((d) => ({ id: d.id, label: `${d.title} · ${d.stage}` }))}
                   selectedIds={data.linked_deals.map((l) => l.deal_id)}
                   onChange={async (next) => {
@@ -463,16 +456,59 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
   );
 }
 
+// P7.3: estimate input + preset chips (4h / 8h / 16h / 40h = полдня/день/2дня/неделя).
+function EstimateInput({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const [draft, setDraft] = useState<string>(value == null ? "" : String(value));
+  const PRESETS = [4, 8, 16, 40];
+  const apply = (h: number) => {
+    setDraft(String(h));
+    onChange(h);
+  };
+  return (
+    <div className="flex flex-col gap-1">
+      <input
+        type="number"
+        min={0}
+        step={0.5}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          const v = draft === "" ? null : Number(draft);
+          onChange(v);
+        }}
+        className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm tabular-nums"
+      />
+      <div className="flex flex-wrap gap-1">
+        {PRESETS.map((h) => (
+          <button
+            key={h}
+            type="button"
+            onClick={() => apply(h)}
+            className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium tabular-nums transition-colors ${
+              Number(draft) === h
+                ? "border-blue-500 bg-blue-50 text-blue-700"
+                : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+            }`}
+            title={h === 4 ? "Полдня" : h === 8 ? "День" : h === 16 ? "2 дня" : "Неделя"}
+          >
+            {h}h
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function KeyAssumptions({ values, onChange }: { values: string[]; onChange: (arr: string[]) => void }) {
   return (
     <section>
-      <span className="mb-1 block text-xs font-medium text-slate-600">Ключевые допущения (до 3)</span>
+      <span className="mb-1 block text-xs font-medium text-slate-600">Key assumptions (up to 3)</span>
       <div className="flex flex-col gap-1">
         {[0, 1, 2].map((i) => (
           <input
             key={i}
             defaultValue={values[i] ?? ""}
-            placeholder={`Допущение ${i + 1}`}
+            placeholder={`Assumption ${i + 1}`}
             onBlur={(e) => {
               const v = e.target.value.trim();
               const next = [...values];
@@ -505,11 +541,11 @@ function LinkedMulti({ title, allItems, selectedIds, onChange }: {
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h3>
         <button type="button" onClick={() => setOpen(!open)} className="text-[10px] uppercase text-blue-600 hover:underline">
-          {open ? "свернуть" : "редактировать"}
+          {open ? "collapse" : "edit"}
         </button>
       </div>
       {selectedIds.length === 0 ? (
-        <p className="text-xs text-slate-400">Не выбрано</p>
+        <p className="text-xs text-slate-400">None selected</p>
       ) : (
         <ul className="flex flex-wrap gap-1">
           {selectedIds.map((id) => (
@@ -528,7 +564,7 @@ function LinkedMulti({ title, allItems, selectedIds, onChange }: {
               <span className="truncate">{it.label}</span>
             </label>
           ))}
-          {allItems.length === 0 && <p className="px-2 py-2 text-xs text-slate-400">Пусто</p>}
+          {allItems.length === 0 && <p className="px-2 py-2 text-xs text-slate-400">Empty</p>}
         </div>
       )}
     </section>
@@ -580,20 +616,20 @@ function DealLinksEditor({
   return (
     <section className="rounded-lg border border-rose-200 bg-rose-50/30 p-3">
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-rose-700">Заблокированные сделки</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-rose-700">Blocked deals</h3>
         <button
           type="button"
           onClick={() => setPicker((v) => !v)}
           disabled={available.length === 0 || busy}
           className="rounded-md border border-rose-300 bg-white px-2 py-0.5 text-[10px] uppercase text-rose-700 hover:bg-rose-50 disabled:opacity-40"
         >
-          {picker ? "закрыть" : "+ добавить"}
+          {picker ? "close" : "+ add"}
         </button>
       </div>
 
       {links.length === 0 ? (
         <p className="text-xs text-slate-500">
-          Привяжите сделки, которые ждут эту инициативу. RICE-reach автоматически считает их.
+          Link deals that are waiting for this initiative. RICE Reach counts them automatically.
         </p>
       ) : (
         <ul className="grid gap-1.5">
@@ -609,9 +645,9 @@ function DealLinksEditor({
                   onChange={(e) => setLink(l.deal_id, (e.target.value || null) as DealBlockingStage | null)}
                   disabled={busy}
                   className="rounded-md border border-slate-300 px-1.5 py-0.5 text-xs"
-                  title="На какой стадии сделка заблокирована этой инициативой"
+                  title="At which stage the deal is blocked by this initiative"
                 >
-                  <option value="">блокирует —</option>
+                  <option value="">blocks —</option>
                   <option value="pilot">pilot</option>
                   <option value="production">production</option>
                 </select>
@@ -620,7 +656,7 @@ function DealLinksEditor({
                   onClick={() => removeLink(l.deal_id)}
                   disabled={busy}
                   className="rounded-md p-1 text-slate-400 hover:bg-rose-100 hover:text-rose-700"
-                  title="Убрать связь"
+                  title="Remove link"
                 >
                   <X className="size-3.5" />
                 </button>
@@ -633,7 +669,7 @@ function DealLinksEditor({
       {picker && (
         <div className="mt-2 max-h-44 overflow-y-auto rounded-md border border-slate-200 bg-white">
           {available.length === 0 ? (
-            <p className="px-2 py-2 text-xs text-slate-400">Все сделки уже привязаны.</p>
+            <p className="px-2 py-2 text-xs text-slate-400">All deals are already linked.</p>
           ) : (
             available.map((d) => (
               <button

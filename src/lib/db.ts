@@ -2211,12 +2211,31 @@ export async function listInitiatives(filter?: {
     conditions.push(`(i.status != 'done' OR i.done_at IS NULL OR i.done_at >= now() - INTERVAL '${days} days')`);
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  return await prepare<PlanningInitiative>(
-    `SELECT i.* FROM planning_initiatives i
+  // P7.4: денормализуем tasks_total / tasks_done через planning_item_initiative_link
+  // (M:N из P3). Подзадачи родителей-привязанных тоже считаются — `linkItemToInitiative`
+  // в db.ts включает их автоматически.
+  const rows = await prepare<PlanningInitiative & { tasks_total: string | number; tasks_done: string | number }>(
+    `SELECT i.*,
+            COALESCE(t.total, 0) AS tasks_total,
+            COALESCE(t.done_count, 0) AS tasks_done
+     FROM planning_initiatives i
      LEFT JOIN planning_periods p ON p.id = i.due_period_id
+     LEFT JOIN (
+       SELECT l.initiative_id,
+              COUNT(*) AS total,
+              SUM(CASE WHEN it.status = 'done' THEN 1 ELSE 0 END) AS done_count
+       FROM planning_item_initiative_link l
+       JOIN items it ON it.id = l.item_id
+       GROUP BY l.initiative_id
+     ) t ON t.initiative_id = i.id
      ${where}
      ORDER BY i.position ASC, i.created_at ASC`
   ).all(...params);
+  return rows.map((r) => ({
+    ...r,
+    tasks_total: Number(r.tasks_total),
+    tasks_done: Number(r.tasks_done),
+  }));
 }
 
 export async function getInitiative(id: string): Promise<PlanningInitiative | undefined> {
