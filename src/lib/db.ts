@@ -2052,7 +2052,7 @@ export async function listMetricTargetsForPeriodType(
     id: `agg:${r.period_id}`,
     metric_id: r.metric_id,
     period_id: r.period_id,
-    target_value: r.target_value,
+    target_value: Number(r.target_value),
     created_at: r.created_at ?? new Date().toISOString(),
     updated_at: r.updated_at ?? new Date().toISOString(),
   }));
