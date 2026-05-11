@@ -5,7 +5,7 @@ function isMobileUserAgent(ua: string): boolean {
   return /Mobile|Android|iPhone|iPad|iPod/i.test(ua);
 }
 
-const PUBLIC_PATHS = ["/login", "/auth/callback"];
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/mockup"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -61,6 +61,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next|api/cron|api/notifications/dispatch|api/timing/watchdog|icons|favicon|manifest|sw\\.js).*)",
+    "/((?!_next|api/cron|api/notifications/dispatch|api/timing/watchdog|api/integrations/grafana|icons|favicon|manifest|sw\\.js).*)",
   ],
 };

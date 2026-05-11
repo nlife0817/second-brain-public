@@ -387,6 +387,7 @@ export interface UpdateDealInput {
   client_id?: string | null;
   icp_segment_id?: string | null;
   stage?: DealStage;
+  stage_changed_at?: string;
   pilot_started_at?: string | null;
   pilot_default_duration_days?: number | null;
   pilot_planned_end_at?: string | null;
