@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { usePlanningStore } from "@/lib/planning-store";
-import { TaskSelectionList } from "./TaskSelectionList";
+import { ListView } from "@/components/list/ListView";
 
 interface Props {
   initiativeId: string;
@@ -13,9 +13,10 @@ interface Props {
 }
 
 // Полная модалка для bulk-привязки задач к инициативе. Использует общий
-// TaskSelectionList — UX идентичен «Задачи инициативы» (фильтры, сорт,
-// группировка, колонки), плюс чекбоксы для выбора и нижняя панель действий.
-// Локальный state — изменения тут НЕ влияют на основной раздел «Задачи».
+// ListView в isolated + selectionMode режиме — UX идентичен разделу «Задачи»
+// (фильтры, сорт, группировка, колонки), плюс чекбоксы и плавающая панель
+// действий снизу. Изменения настроек ListView здесь НЕ влияют на основной
+// раздел «Задачи» (isolated state).
 
 export function TaskLinkPicker({ initiativeId, excludeIds, open, onClose }: Props) {
   const linkItems = usePlanningStore((s) => s.linkItemsToInitiative);
@@ -46,7 +47,7 @@ export function TaskLinkPicker({ initiativeId, excludeIds, open, onClose }: Prop
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex h-[80vh] w-full max-w-5xl flex-col rounded-lg bg-white shadow-xl">
+      <div className="flex h-[85vh] w-full max-w-6xl flex-col rounded-lg bg-white shadow-xl">
         <header className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold">Привязать задачи к инициативе</h2>
@@ -60,11 +61,9 @@ export function TaskLinkPicker({ initiativeId, excludeIds, open, onClose }: Prop
         </header>
 
         <div className="min-h-0 flex-1">
-          <TaskSelectionList
+          <ListView
             excludeIds={excludeIds}
             selectionMode={{ selected, onToggle }}
-            storageKey="planning.taskLinkPicker.cols.v1"
-            density="regular"
           />
         </div>
 

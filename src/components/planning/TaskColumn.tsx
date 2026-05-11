@@ -2,19 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link2, ChevronsLeft } from "lucide-react";
-import type { Item } from "@/types";
+import type { ItemWithSubtasks } from "@/types";
 import { usePlanningStore } from "@/lib/planning-store";
-import { useBrainStore } from "@/lib/store";
 import { CollapsedColumn } from "./CollapsedColumn";
 import { TaskLinkPicker } from "./TaskLinkPicker";
-import { TaskSelectionList } from "./TaskSelectionList";
+import { ListView } from "@/components/list/ListView";
 
 // «Задачи инициативы» (правая колонка планирования).
-// Визуально/функционально — паритет с разделом «Задачи» (тот же тулбар,
-// фильтры, сорт, группировка, колонки) через общий компонент TaskSelectionList,
-// но с локальным state — изменения тут НЕ влияют на основной раздел «Задачи».
-// Источник задач — useBrainStore.items, отфильтрованный по M:N-связям инициативы.
-// Открытие задачи — общий TaskDetailModal (через useBrainStore.openDetail).
+// Использует общий ListView с itemFilter по M:N-связям инициативы — UI
+// идентичен разделу «Задачи» (фильтры, сортировка, группировка, колонки).
+// ListView в isolated режиме (через itemFilter) не пишет изменения
+// настроек в общий store, поэтому здесь они не влияют на основной раздел.
+// Открытие задачи — через useBrainStore.openDetail → общий TaskDetailModal.
 
 export function TaskColumn() {
   const metricId = usePlanningStore((s) => s.selectedMetricId);
@@ -24,10 +23,6 @@ export function TaskColumn() {
   const linkedIds = usePlanningStore((s) => (initiativeId ? s.initiativeItemIds[initiativeId] : undefined));
   const fetchInitiativeItems = usePlanningStore((s) => s.fetchInitiativeItems);
 
-  // Источник правды — flat-список из brain-store: тогда TaskDetailModal
-  // увидит задачу в useSelectedItem без дополнительных мостиков.
-  const brainItems = useBrainStore((s) => s.items);
-
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
@@ -35,24 +30,10 @@ export function TaskColumn() {
   }, [initiativeId, fetchInitiativeItems]);
 
   const linkedSet = useMemo(() => new Set(linkedIds ?? []), [linkedIds]);
-
-  // Плоский список из brain-store, отфильтрованный по linkedSet.
-  // M:N может включать parent — подзадачи добавляем автоматически.
-  const linkedItems: Item[] = useMemo(() => {
-    if (!initiativeId) return [];
-    const flat: Item[] = [];
-    for (const top of brainItems) {
-      if (linkedSet.has(top.id)) {
-        flat.push(top);
-        for (const sub of top.subtasks ?? []) flat.push(sub);
-      } else {
-        for (const sub of top.subtasks ?? []) {
-          if (linkedSet.has(sub.id)) flat.push(sub);
-        }
-      }
-    }
-    return flat;
-  }, [brainItems, linkedSet, initiativeId]);
+  const itemFilter = useMemo(
+    () => (item: ItemWithSubtasks) => linkedSet.has(item.id),
+    [linkedSet]
+  );
 
   const totalLinked = linkedSet.size;
 
@@ -122,11 +103,9 @@ export function TaskColumn() {
       {totalLinked === 0 ? (
         <EmptyState onLink={() => setPickerOpen(true)} />
       ) : (
-        <TaskSelectionList
-          items={linkedItems}
-          storageKey="planning.taskColumn.cols.v2"
-          density="compact"
-        />
+        <div className="min-h-0 flex-1">
+          <ListView itemFilter={itemFilter} />
+        </div>
       )}
 
       {pickerOpen && (

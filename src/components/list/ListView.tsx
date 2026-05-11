@@ -559,17 +559,34 @@ function GroupByPopover({
 /*  Column config popover                                                     */
 /* -------------------------------------------------------------------------- */
 
-function ColumnConfigPopoverContent({ onClose }: { onClose: () => void }) {
-  // Read store ONCE at mount — then work only with local state
-  const [order, setOrder] = useState<string[]>(
-    () => [...useBrainStore.getState().listColumnOrder]
+function ColumnConfigPopoverContent({
+  onClose,
+  isolated,
+  isolatedOrder,
+  isolatedSetOrder,
+  isolatedSetWidths,
+}: {
+  onClose: () => void;
+  isolated?: boolean;
+  isolatedOrder?: string[] | null;
+  isolatedSetOrder?: ((next: string[]) => void) | null;
+  isolatedSetWidths?: ((next: Record<string, number>) => void) | null;
+}) {
+  // Read store ONCE at mount — then work only with local state.
+  // В isolated режиме инициализируемся из переданного локального state,
+  // и не пишем в global store.
+  const [order, setOrder] = useState<string[]>(() =>
+    isolated && isolatedOrder ? [...isolatedOrder] : [...useBrainStore.getState().listColumnOrder]
   );
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  // Persist to store on every change
   const apply = (next: string[]) => {
     setOrder(next);
-    useBrainStore.setState({ listColumnOrder: next });
+    if (isolated && isolatedSetOrder) {
+      isolatedSetOrder(next);
+    } else {
+      useBrainStore.setState({ listColumnOrder: next });
+    }
   };
 
   useEffect(() => {
@@ -714,7 +731,10 @@ function ColumnConfigPopoverContent({ onClose }: { onClose: () => void }) {
       </button>
       <button
         type="button"
-        onClick={() => useBrainStore.getState().setListColumnWidths({})}
+        onClick={() => {
+          if (isolated && isolatedSetWidths) isolatedSetWidths({});
+          else useBrainStore.getState().setListColumnWidths({});
+        }}
         className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-700 px-1.5 py-0.5 rounded hover:bg-slate-50 w-full"
       >
         <RotateCcw className="size-2.5" />
@@ -724,7 +744,17 @@ function ColumnConfigPopoverContent({ onClose }: { onClose: () => void }) {
   );
 }
 
-function ColumnConfigPopover() {
+function ColumnConfigPopover({
+  isolated,
+  isolatedOrder,
+  isolatedSetOrder,
+  isolatedSetWidths,
+}: {
+  isolated?: boolean;
+  isolatedOrder?: string[] | null;
+  isolatedSetOrder?: ((next: string[]) => void) | null;
+  isolatedSetWidths?: ((next: Record<string, number>) => void) | null;
+} = {}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -737,7 +767,15 @@ function ColumnConfigPopover() {
       >
         <Settings2 className="size-3.5" />
       </button>
-      {open && <ColumnConfigPopoverContent onClose={() => setOpen(false)} />}
+      {open && (
+        <ColumnConfigPopoverContent
+          onClose={() => setOpen(false)}
+          isolated={isolated}
+          isolatedOrder={isolatedOrder}
+          isolatedSetOrder={isolatedSetOrder}
+          isolatedSetWidths={isolatedSetWidths}
+        />
+      )}
     </div>
   );
 }
@@ -1464,8 +1502,39 @@ const NEW_ITEM_DEFAULTS = {
   clientName: "",
 };
 
-export function ListView() {
-  const rawItems = useFilteredItems();
+export interface ListViewSelectionMode {
+  selected: Set<string>;
+  onToggle: (id: string) => void;
+}
+
+export interface ListViewProps {
+  /** Опциональный предикат-фильтр поверх items. */
+  itemFilter?: (item: ItemWithSubtasks) => boolean;
+  /** Идентификаторы, которые нужно скрыть (например, уже привязанные). */
+  excludeIds?: Set<string>;
+  /** Если задано — включается режим выбора задач: чекбоксы + клик-toggle. */
+  selectionMode?: ListViewSelectionMode;
+}
+
+export function ListView({ itemFilter, excludeIds, selectionMode }: ListViewProps = {}) {
+  // «Изолированный» режим: ListView переиспользуется в модалках/панелях
+  // планирования. Состояние (groupBy/columnOrder/widths/collapsedGroups,
+  // фильтры) держим локально — изменения здесь не должны утекать в основной
+  // раздел «Задачи».
+  const isolated = !!(itemFilter || excludeIds || selectionMode);
+
+  const filteredFromStore = useFilteredItems();
+  const allItemsFromStore = useBrainStore((s) => s.items);
+  const rawItems = useMemo<ItemWithSubtasks[]>(() => {
+    if (!isolated) return filteredFromStore;
+    let arr: ItemWithSubtasks[] = allItemsFromStore;
+    if (excludeIds && excludeIds.size > 0) {
+      arr = arr.filter((i) => !excludeIds.has(i.id));
+    }
+    if (itemFilter) arr = arr.filter(itemFilter);
+    return arr;
+  }, [isolated, filteredFromStore, allItemsFromStore, excludeIds, itemFilter]);
+
   const { catalog } = useKaitenCatalog();
   const createItem = useBrainStore((s) => s.createItem);
   const openDetail = useBrainStore((s) => s.openDetail);
@@ -1475,14 +1544,32 @@ export function ListView() {
   const updateItem = useBrainStore((s) => s.updateItem);
   const updateItemsLocal = useBrainStore((s) => s.updateItemsLocal);
   const reorderItems = useBrainStore((s) => s.reorderItems);
-  const listColumnOrder = useBrainStore((s) => s.listColumnOrder);
-  const setListColumnOrder = useBrainStore((s) => s.setListColumnOrder);
-  const listColumnWidths = useBrainStore((s) => s.listColumnWidths);
-  const setListColumnWidth = useBrainStore((s) => s.setListColumnWidth);
-  const listGroupBy = useBrainStore((s) => s.listGroupBy);
-  const setListGroupBy = useBrainStore((s) => s.setListGroupBy);
-  const listCollapsedGroupsArr = useBrainStore((s) => s.listCollapsedGroups);
-  const setListCollapsedGroups = useBrainStore((s) => s.setListCollapsedGroups);
+
+  // Локальные «зеркала» list-настроек, активные в isolated режиме.
+  const storeListColumnOrder = useBrainStore((s) => s.listColumnOrder);
+  const storeSetListColumnOrder = useBrainStore((s) => s.setListColumnOrder);
+  const storeListColumnWidths = useBrainStore((s) => s.listColumnWidths);
+  const storeSetListColumnWidth = useBrainStore((s) => s.setListColumnWidth);
+  const storeListGroupBy = useBrainStore((s) => s.listGroupBy);
+  const storeSetListGroupBy = useBrainStore((s) => s.setListGroupBy);
+  const storeListCollapsedGroupsArr = useBrainStore((s) => s.listCollapsedGroups);
+  const storeSetListCollapsedGroups = useBrainStore((s) => s.setListCollapsedGroups);
+
+  const [localColumnOrder, setLocalColumnOrder] = useState<string[]>(() => [...storeListColumnOrder]);
+  const [localColumnWidths, setLocalColumnWidths] = useState<Record<string, number>>(() => ({ ...storeListColumnWidths }));
+  const [localGroupBy, setLocalGroupBy] = useState<ListGroupByConfig>(() => storeListGroupBy);
+  const [localCollapsedGroupsArr, setLocalCollapsedGroupsArr] = useState<string[]>(() => [...storeListCollapsedGroupsArr]);
+
+  const listColumnOrder = isolated ? localColumnOrder : storeListColumnOrder;
+  const setListColumnOrder = isolated ? setLocalColumnOrder : storeSetListColumnOrder;
+  const listColumnWidths = isolated ? localColumnWidths : storeListColumnWidths;
+  const setListColumnWidth = isolated
+    ? (id: string, w: number) => setLocalColumnWidths((p) => ({ ...p, [id]: w }))
+    : storeSetListColumnWidth;
+  const listGroupBy = isolated ? localGroupBy : storeListGroupBy;
+  const setListGroupBy = isolated ? setLocalGroupBy : storeSetListGroupBy;
+  const listCollapsedGroupsArr = isolated ? localCollapsedGroupsArr : storeListCollapsedGroupsArr;
+  const setListCollapsedGroups = isolated ? setLocalCollapsedGroupsArr : storeSetListCollapsedGroups;
   const categories = useBrainStore((s) => s.categories);
   const developmentStages = useBrainStore((s) => s.developmentStages);
   const itemStatusesArr = useBrainStore((s) => s.itemStatuses);
@@ -1596,7 +1683,13 @@ export function ListView() {
   });
 
   const [manualOrder, setManualOrder] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [internalSelectedIds, setInternalSelectedIds] = useState<Set<string>>(new Set());
+  // В selectionMode источник правды — внешний parent. Внутренний state нужен
+  // только для bulk-actions в обычном режиме.
+  const selectedIds = selectionMode ? selectionMode.selected : internalSelectedIds;
+  const setSelectedIds = selectionMode
+    ? ((_v: Set<string> | ((p: Set<string>) => Set<string>)) => { /* контролируется снаружи */ })
+    : setInternalSelectedIds;
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<{
     ids: string[];
@@ -1933,13 +2026,27 @@ export function ListView() {
   }, [allSelected, topLevelIds]);
 
   const toggleOne = useCallback((id: string) => {
-    setSelectedIds((prev) => {
+    if (selectionMode) {
+      selectionMode.onToggle(id);
+      return;
+    }
+    setInternalSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }, []);
+  }, [selectionMode]);
+
+  // В selectionMode клик по «открыть деталь» вместо открытия модалки делает
+  // toggle — это «список выбора», а не навигация.
+  const effectiveOpen = useCallback(
+    (id: string) => {
+      if (selectionMode) selectionMode.onToggle(id);
+      else openDetail(id);
+    },
+    [selectionMode, openDetail]
+  );
 
   /* ----- Bulk action handlers -------------------------------------------- */
 
@@ -2711,7 +2818,7 @@ export function ListView() {
           row={row}
           selected={selectedIds.has(row.item.id)}
           onSelect={toggleOne}
-          onOpen={openDetail}
+          onOpen={effectiveOpen}
           editingField={
             editingItemId === row.item.id ? editingField : null
           }
@@ -2760,6 +2867,10 @@ export function ListView() {
       isGrouped={isGrouped}
       allGroupsCollapsed={allGroupsCollapsed}
       toggleAllGroups={toggleAllGroups}
+      isolated={isolated}
+      isolatedColumnOrder={isolated ? localColumnOrder : null}
+      isolatedSetColumnOrder={isolated ? setLocalColumnOrder : null}
+      isolatedSetColumnWidths={isolated ? setLocalColumnWidths : null}
     />
   );
 
@@ -2962,10 +3073,10 @@ export function ListView() {
         </DndContext>
       </div>
     </ScrollArea>
-    {selectedIds.size > 0 && (
+    {!isolated && selectedIds.size > 0 && (
       <FloatingBulkBar
         count={selectedIds.size}
-        onClearSelection={() => setSelectedIds(new Set())}
+        onClearSelection={() => setInternalSelectedIds(new Set())}
         onStatus={(val) => handleBulkUpdate("status", val)}
         onPriority={(val) => handleBulkUpdate("priority", val)}
         onCategory={(val) => handleBulkUpdate("category", val)}
@@ -4354,6 +4465,10 @@ function ListViewToolbar({
   isGrouped,
   allGroupsCollapsed,
   toggleAllGroups,
+  isolated,
+  isolatedColumnOrder,
+  isolatedSetColumnOrder,
+  isolatedSetColumnWidths,
 }: {
   search: string;
   onSearchChange: (value: string) => void;
@@ -4365,6 +4480,10 @@ function ListViewToolbar({
   isGrouped: boolean;
   allGroupsCollapsed: boolean;
   toggleAllGroups: () => void;
+  isolated?: boolean;
+  isolatedColumnOrder?: string[] | null;
+  isolatedSetColumnOrder?: ((next: string[]) => void) | null;
+  isolatedSetColumnWidths?: ((next: Record<string, number>) => void) | null;
 }) {
   return (
     <div className="flex items-center gap-2 px-2 py-1.5 border-b border-slate-200 bg-white">
@@ -4399,22 +4518,26 @@ function ListViewToolbar({
 
       <div className="flex-1" />
 
-      {/* Filter */}
-      <FilterButton />
+      {/* Filter — глобальные фильтры основного раздела «Задачи». В isolated
+          (модалка привязки, правая колонка) скрыт, чтобы локальный UI не
+          мог менять глобальные правила фильтрации. */}
+      {!isolated && <FilterButton />}
 
-      {/* Undo / Redo */}
-      <UndoRedoButtons />
+      {/* Undo / Redo — глобальная история; в isolated скрыт. */}
+      {!isolated && <UndoRedoButtons />}
 
-      {/* New task */}
-      <button
-        type="button"
-        onClick={onNewTask}
-        className="inline-flex items-center gap-1 px-2 h-7 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white transition-colors"
-        title="Новая задача"
-      >
-        <Plus className="size-3.5" />
-        Новая
-      </button>
+      {/* New task — создание идёт в основном разделе. */}
+      {!isolated && (
+        <button
+          type="button"
+          onClick={onNewTask}
+          className="inline-flex items-center gap-1 px-2 h-7 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white transition-colors"
+          title="Новая задача"
+        >
+          <Plus className="size-3.5" />
+          Новая
+        </button>
+      )}
 
       {/* Collapse all groups (only when grouping is on) */}
       {isGrouped && (
@@ -4432,7 +4555,12 @@ function ListViewToolbar({
       <GroupByPopover value={listGroupBy} onChange={setListGroupBy} />
 
       {/* Column config */}
-      <ColumnConfigPopover />
+      <ColumnConfigPopover
+        isolated={isolated}
+        isolatedOrder={isolatedColumnOrder ?? null}
+        isolatedSetOrder={isolatedSetColumnOrder ?? null}
+        isolatedSetWidths={isolatedSetColumnWidths ?? null}
+      />
     </div>
   );
 }
