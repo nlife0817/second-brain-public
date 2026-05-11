@@ -66,6 +66,9 @@ const ITEM_UPDATE_FIELDS = [
   "title", "description", "type", "status", "priority", "category", "source",
   "development_stage", "due_date", "due_time", "estimated_minutes", "position", "parent_id",
   "recurring_series_id",
+  // Planning V3 (0023 + 0024)
+  "initiative_id", "linked_deal_id", "planned_period_id", "planned_date",
+  "why", "replan_reason", "is_carryover",
 ] as const;
 
 const TAG_UPDATE_FIELDS = ["name", "color", "position"] as const;
@@ -1738,4 +1741,655 @@ export async function deleteUser(email: string): Promise<boolean> {
 export async function getUserCount(): Promise<number> {
   const r = await prepare<{ c: number }>("SELECT COUNT(*) as c FROM users").get();
   return Number(r?.c ?? 0);
+}
+
+// ============================================================================
+// Planning system V3 (migrations 0023 + 0024)
+// ============================================================================
+//
+// Conventions:
+//   * UUID PK columns return as strings from postgres.js — typed as `string`.
+//   * JSONB columns are auto-parsed by postgres.js on read; on write we pass a
+//     JS object — postgres.js serialises automatically when the placeholder
+//     binds to a jsonb param. (We never pass `JSON.stringify(...)` here.)
+//   * `actor_email` is the single-tenant author — no `auth.uid()`.
+//   * All builder helpers reuse `buildUpdateClause()` and the per-entity
+//     allowlists below for SQL-injection-safe updates.
+
+import type {
+  PlanningDirection,
+  PlanningPeriod,
+  PlanningMetric,
+  PlanningMetricTarget,
+  PlanningMetricTick,
+  PlanningInitiative,
+  PlanningInitiativeDependency,
+  PlanningInitiativeMetricLink,
+  PlanningInitiativeDealLink,
+  PlanningInitiativeClientLink,
+  PlanningDeal,
+  PlanningDealPayment,
+  PlanningChangeLogEntry,
+  PlanningSettings,
+  PlanningIcpSegment,
+  PlanningReplanReasonDict,
+  PlanningMetricUnit,
+  PlanningKaitenBoardMapping,
+  PeriodType,
+  DealStage,
+  CreateDirectionInput,
+  UpdateDirectionInput,
+  UpsertPeriodInput,
+  CreateMetricInput,
+  UpdateMetricInput,
+  UpsertMetricTargetInput,
+  CreateMetricTickInput,
+  CreateInitiativeInput,
+  UpdateInitiativeInput,
+  CreateDealInput,
+  UpdateDealInput,
+  CreateDealPaymentInput,
+  UpdateDealPaymentInput,
+  ChangeLogInsertInput,
+  UpdatePlanningSettingsInput,
+  PlanningPeriodRetrospective,
+  InitiativeStatus,
+  DealBlockingStage,
+} from "@/types/planning";
+
+const PLANNING_DIRECTION_UPDATE_FIELDS = ["title", "year_focus", "position"] as const;
+const PLANNING_PERIOD_UPDATE_FIELDS = [
+  "direction_id", "type", "year", "quarter_n", "month_n", "week_n",
+  "start_date", "end_date", "capacity_hours", "metric_targets_snapshot",
+] as const;
+const PLANNING_METRIC_UPDATE_FIELDS = [
+  "title", "type", "unit", "direction_value", "baseline", "source", "source_id",
+  "is_cumulative", "is_emergent", "position",
+] as const;
+const PLANNING_INITIATIVE_UPDATE_FIELDS = [
+  "title", "type", "description", "jtbd", "due_period_id", "estimate_hours",
+  "rice_reach", "rice_impact", "rice_confidence", "key_assumptions", "kill_criteria",
+  "parent_initiative_id", "hypothesis", "success_criteria", "sample_size_or_duration",
+  "experiment_result", "experiment_decision", "status", "done_at", "position",
+] as const;
+const PLANNING_DEAL_UPDATE_FIELDS = [
+  "title", "client_id", "icp_segment_id", "stage", "stage_changed_at",
+  "pilot_started_at", "pilot_default_duration_days", "pilot_planned_end_at",
+  "pilot_ended_at", "production_started_at", "min_monthly_amount",
+  "expected_actual_amount", "description", "position",
+] as const;
+const PLANNING_DEAL_PAYMENT_UPDATE_FIELDS = ["paid_at", "amount", "note", "status"] as const;
+const PLANNING_SETTINGS_UPDATE_FIELDS = [
+  "pilot_default_duration_days", "early_warning_weeks", "strategy_support_ratio",
+  "minor_adjustment_threshold", "daily_capacity_hours", "weekly_capacity_hours",
+  "accent_color", "weekend_days_visible",
+] as const;
+
+// ---------------- Directions ----------------
+
+export async function listDirections(): Promise<PlanningDirection[]> {
+  return await prepare<PlanningDirection>(
+    "SELECT * FROM planning_directions ORDER BY position ASC, created_at ASC"
+  ).all();
+}
+
+export async function getDirection(id: string): Promise<PlanningDirection | undefined> {
+  return await prepare<PlanningDirection>(
+    "SELECT * FROM planning_directions WHERE id = ?"
+  ).get(id);
+}
+
+export async function createDirection(input: CreateDirectionInput): Promise<PlanningDirection> {
+  const row = await prepare<PlanningDirection>(`
+    INSERT INTO planning_directions (title, year_focus, position)
+    VALUES (?, ?, ?)
+    RETURNING *
+  `).get(input.title, input.year_focus ?? null, input.position ?? 0);
+  return row!;
+}
+
+export async function updateDirection(id: string, updates: UpdateDirectionInput): Promise<PlanningDirection | undefined> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_DIRECTION_UPDATE_FIELDS);
+  if (!built) return await getDirection(id);
+  const now = new Date().toISOString();
+  await prepare(`UPDATE planning_directions SET ${built.sql}, updated_at = ? WHERE id = ?`)
+    .run(...built.values, now, id);
+  return await getDirection(id);
+}
+
+export async function deleteDirection(id: string): Promise<boolean> {
+  const r = await prepare("DELETE FROM planning_directions WHERE id = ?").run(id);
+  return r.changes > 0;
+}
+
+// ---------------- Periods ----------------
+
+export async function listPeriods(filter?: {
+  directionId?: string | null;
+  type?: PeriodType;
+  year?: number;
+}): Promise<PlanningPeriod[]> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (filter?.directionId !== undefined) {
+    if (filter.directionId === null) conditions.push("direction_id IS NULL");
+    else { conditions.push("direction_id = ?"); params.push(filter.directionId); }
+  }
+  if (filter?.type) { conditions.push("type = ?"); params.push(filter.type); }
+  if (filter?.year != null) { conditions.push("year = ?"); params.push(filter.year); }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  return await prepare<PlanningPeriod>(
+    `SELECT * FROM planning_periods ${where} ORDER BY start_date ASC`
+  ).all(...params);
+}
+
+export async function getPeriod(id: string): Promise<PlanningPeriod | undefined> {
+  return await prepare<PlanningPeriod>("SELECT * FROM planning_periods WHERE id = ?").get(id);
+}
+
+export async function upsertPeriod(input: UpsertPeriodInput): Promise<PlanningPeriod> {
+  // Slot uniqueness is enforced by uq_planning_periods_slot on
+  // (direction_id, type, year, COALESCE(quarter_n,0), COALESCE(month_n,0), COALESCE(week_n,0)).
+  const row = await prepare<PlanningPeriod>(`
+    INSERT INTO planning_periods (
+      direction_id, type, year, quarter_n, month_n, week_n,
+      start_date, end_date, capacity_hours
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (direction_id, type, year,
+      COALESCE(quarter_n, 0), COALESCE(month_n, 0), COALESCE(week_n, 0))
+    DO UPDATE SET
+      start_date = EXCLUDED.start_date,
+      end_date = EXCLUDED.end_date,
+      capacity_hours = COALESCE(EXCLUDED.capacity_hours, planning_periods.capacity_hours),
+      updated_at = now()
+    RETURNING *
+  `).get(
+    input.direction_id ?? null,
+    input.type, input.year,
+    input.quarter_n ?? null, input.month_n ?? null, input.week_n ?? null,
+    input.start_date, input.end_date,
+    input.capacity_hours ?? null,
+  );
+  return row!;
+}
+
+export async function updateRetrospective(
+  id: string,
+  retrospective: PlanningPeriodRetrospective,
+): Promise<PlanningPeriod | undefined> {
+  await prepare(
+    "UPDATE planning_periods SET retrospective = ?, updated_at = now() WHERE id = ?"
+  ).run(retrospective, id);
+  return await getPeriod(id);
+}
+
+// ---------------- Metrics ----------------
+
+export async function listMetrics(directionId?: string | null): Promise<PlanningMetric[]> {
+  if (directionId === undefined) {
+    return await prepare<PlanningMetric>(
+      "SELECT * FROM planning_metrics ORDER BY position ASC, created_at ASC"
+    ).all();
+  }
+  if (directionId === null) {
+    return await prepare<PlanningMetric>(
+      "SELECT * FROM planning_metrics WHERE direction_id IS NULL ORDER BY position ASC, created_at ASC"
+    ).all();
+  }
+  return await prepare<PlanningMetric>(
+    "SELECT * FROM planning_metrics WHERE direction_id = ? ORDER BY position ASC, created_at ASC"
+  ).all(directionId);
+}
+
+export async function getMetric(id: string): Promise<PlanningMetric | undefined> {
+  return await prepare<PlanningMetric>("SELECT * FROM planning_metrics WHERE id = ?").get(id);
+}
+
+export async function createMetric(input: CreateMetricInput): Promise<PlanningMetric> {
+  const row = await prepare<PlanningMetric>(`
+    INSERT INTO planning_metrics (
+      direction_id, title, type, unit, direction_value, baseline,
+      source, source_id, is_cumulative, is_emergent, position
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING *
+  `).get(
+    input.direction_id ?? null,
+    input.title, input.type,
+    input.unit ?? null, input.direction_value ?? null, input.baseline ?? null,
+    input.source ?? null, input.source_id ?? null,
+    input.is_cumulative ?? true, input.is_emergent ?? false,
+    input.position ?? 0,
+  );
+  return row!;
+}
+
+export async function updateMetric(id: string, updates: UpdateMetricInput): Promise<PlanningMetric | undefined> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_METRIC_UPDATE_FIELDS);
+  if (!built) return await getMetric(id);
+  await prepare(`UPDATE planning_metrics SET ${built.sql}, updated_at = now() WHERE id = ?`)
+    .run(...built.values, id);
+  return await getMetric(id);
+}
+
+export async function deleteMetric(id: string): Promise<boolean> {
+  const r = await prepare("DELETE FROM planning_metrics WHERE id = ?").run(id);
+  return r.changes > 0;
+}
+
+// ---------------- Metric targets ----------------
+
+export async function listMetricTargets(metricId: string): Promise<PlanningMetricTarget[]> {
+  return await prepare<PlanningMetricTarget>(
+    "SELECT * FROM planning_metric_targets WHERE metric_id = ? ORDER BY created_at ASC"
+  ).all(metricId);
+}
+
+export async function bulkUpsertMetricTargets(
+  items: UpsertMetricTargetInput[],
+): Promise<PlanningMetricTarget[]> {
+  if (items.length === 0) return [];
+  const out: PlanningMetricTarget[] = [];
+  await transaction(async (tx) => {
+    for (const it of items) {
+      const row = await tx.prepare<PlanningMetricTarget>(`
+        INSERT INTO planning_metric_targets (metric_id, period_id, target_value)
+        VALUES (?, ?, ?)
+        ON CONFLICT (metric_id, period_id) DO UPDATE
+          SET target_value = EXCLUDED.target_value, updated_at = now()
+        RETURNING *
+      `).get(it.metric_id, it.period_id, it.target_value);
+      if (row) out.push(row);
+    }
+  });
+  return out;
+}
+
+// ---------------- Metric ticks ----------------
+
+export async function listMetricTicks(
+  metricId: string,
+  range?: { from?: string; to?: string; limit?: number },
+): Promise<PlanningMetricTick[]> {
+  const conditions: string[] = ["metric_id = ?"];
+  const params: unknown[] = [metricId];
+  if (range?.from) { conditions.push("measured_at >= ?"); params.push(range.from); }
+  if (range?.to) { conditions.push("measured_at <= ?"); params.push(range.to); }
+  const limit = range?.limit ? ` LIMIT ${Number(range.limit) | 0}` : "";
+  return await prepare<PlanningMetricTick>(
+    `SELECT * FROM planning_metric_ticks WHERE ${conditions.join(" AND ")}
+     ORDER BY measured_at DESC${limit}`
+  ).all(...params);
+}
+
+export async function addMetricTick(input: CreateMetricTickInput): Promise<PlanningMetricTick> {
+  const row = await prepare<PlanningMetricTick>(`
+    INSERT INTO planning_metric_ticks (metric_id, value, measured_at, source)
+    VALUES (?, ?, ?, ?)
+    RETURNING *
+  `).get(input.metric_id, input.value, input.measured_at, input.source ?? null);
+  return row!;
+}
+
+// ---------------- Initiatives ----------------
+
+export async function listInitiatives(filter?: {
+  directionId?: string | null;
+  status?: InitiativeStatus;
+  dueAfter?: string;
+  dueBefore?: string;
+  type?: PlanningInitiative["type"];
+  includeArchivedAfterDays?: number;
+}): Promise<PlanningInitiative[]> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (filter?.directionId !== undefined) {
+    if (filter.directionId === null) conditions.push("i.direction_id IS NULL");
+    else { conditions.push("i.direction_id = ?"); params.push(filter.directionId); }
+  }
+  if (filter?.status) { conditions.push("i.status = ?"); params.push(filter.status); }
+  if (filter?.type) { conditions.push("i.type = ?"); params.push(filter.type); }
+  if (filter?.dueAfter) { conditions.push("(p.end_date IS NULL OR p.end_date >= ?)"); params.push(filter.dueAfter); }
+  if (filter?.dueBefore) { conditions.push("(p.end_date IS NULL OR p.end_date <= ?)"); params.push(filter.dueBefore); }
+  // Auto-archive: hide done > N days unless caller opts in
+  if (filter?.includeArchivedAfterDays !== undefined) {
+    const days = Math.max(0, filter.includeArchivedAfterDays | 0);
+    conditions.push(`(i.status != 'done' OR i.done_at IS NULL OR i.done_at >= now() - INTERVAL '${days} days')`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  return await prepare<PlanningInitiative>(
+    `SELECT i.* FROM planning_initiatives i
+     LEFT JOIN planning_periods p ON p.id = i.due_period_id
+     ${where}
+     ORDER BY i.position ASC, i.created_at ASC`
+  ).all(...params);
+}
+
+export async function getInitiative(id: string): Promise<PlanningInitiative | undefined> {
+  return await prepare<PlanningInitiative>(
+    "SELECT * FROM planning_initiatives WHERE id = ?"
+  ).get(id);
+}
+
+export async function createInitiative(input: CreateInitiativeInput): Promise<PlanningInitiative> {
+  const row = await prepare<PlanningInitiative>(`
+    INSERT INTO planning_initiatives (
+      direction_id, title, type, description, jtbd, due_period_id, estimate_hours,
+      rice_reach, rice_impact, rice_confidence, key_assumptions, kill_criteria,
+      parent_initiative_id, created_from_task_id,
+      hypothesis, success_criteria, sample_size_or_duration
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING *
+  `).get(
+    input.direction_id ?? null,
+    input.title, input.type,
+    input.description ?? null, input.jtbd ?? null,
+    input.due_period_id ?? null, input.estimate_hours ?? null,
+    input.rice_reach ?? null, input.rice_impact ?? null, input.rice_confidence ?? null,
+    input.key_assumptions ?? null, input.kill_criteria ?? null,
+    input.parent_initiative_id ?? null, input.created_from_task_id ?? null,
+    input.hypothesis ?? null, input.success_criteria ?? null,
+    input.sample_size_or_duration ?? null,
+  );
+  return row!;
+}
+
+export async function updateInitiative(id: string, updates: UpdateInitiativeInput): Promise<PlanningInitiative | undefined> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_INITIATIVE_UPDATE_FIELDS);
+  if (!built) return await getInitiative(id);
+  await prepare(`UPDATE planning_initiatives SET ${built.sql}, updated_at = now() WHERE id = ?`)
+    .run(...built.values, id);
+  return await getInitiative(id);
+}
+
+export async function deleteInitiative(id: string): Promise<boolean> {
+  const r = await prepare("DELETE FROM planning_initiatives WHERE id = ?").run(id);
+  return r.changes > 0;
+}
+
+// Initiative ↔ Metric / Deal / Client / Dependency links
+export async function linkInitiativeToMetric(initiativeId: string, metricId: string): Promise<void> {
+  await prepare(
+    "INSERT INTO planning_initiative_metric_link (initiative_id, metric_id) VALUES (?, ?) ON CONFLICT DO NOTHING"
+  ).run(initiativeId, metricId);
+}
+export async function unlinkInitiativeFromMetric(initiativeId: string, metricId: string): Promise<void> {
+  await prepare(
+    "DELETE FROM planning_initiative_metric_link WHERE initiative_id = ? AND metric_id = ?"
+  ).run(initiativeId, metricId);
+}
+export async function listInitiativeMetricLinks(initiativeId: string): Promise<PlanningInitiativeMetricLink[]> {
+  return await prepare<PlanningInitiativeMetricLink>(
+    "SELECT * FROM planning_initiative_metric_link WHERE initiative_id = ?"
+  ).all(initiativeId);
+}
+export async function listMetricInitiativeLinks(metricId: string): Promise<PlanningInitiativeMetricLink[]> {
+  return await prepare<PlanningInitiativeMetricLink>(
+    "SELECT * FROM planning_initiative_metric_link WHERE metric_id = ?"
+  ).all(metricId);
+}
+
+export async function linkInitiativeToDeal(initiativeId: string, dealId: string, blocksStage?: DealBlockingStage | null): Promise<void> {
+  await prepare(`
+    INSERT INTO planning_initiative_deal_link (initiative_id, deal_id, blocks_stage)
+    VALUES (?, ?, ?)
+    ON CONFLICT (initiative_id, deal_id) DO UPDATE SET blocks_stage = EXCLUDED.blocks_stage
+  `).run(initiativeId, dealId, blocksStage ?? null);
+}
+export async function unlinkInitiativeFromDeal(initiativeId: string, dealId: string): Promise<void> {
+  await prepare(
+    "DELETE FROM planning_initiative_deal_link WHERE initiative_id = ? AND deal_id = ?"
+  ).run(initiativeId, dealId);
+}
+export async function listInitiativeDealLinks(initiativeId: string): Promise<PlanningInitiativeDealLink[]> {
+  return await prepare<PlanningInitiativeDealLink>(
+    "SELECT * FROM planning_initiative_deal_link WHERE initiative_id = ?"
+  ).all(initiativeId);
+}
+
+export async function linkInitiativeToClient(initiativeId: string, clientId: string): Promise<void> {
+  await prepare(
+    "INSERT INTO planning_initiative_client_link (initiative_id, client_id) VALUES (?, ?) ON CONFLICT DO NOTHING"
+  ).run(initiativeId, clientId);
+}
+export async function unlinkInitiativeFromClient(initiativeId: string, clientId: string): Promise<void> {
+  await prepare(
+    "DELETE FROM planning_initiative_client_link WHERE initiative_id = ? AND client_id = ?"
+  ).run(initiativeId, clientId);
+}
+export async function listInitiativeClientLinks(initiativeId: string): Promise<PlanningInitiativeClientLink[]> {
+  return await prepare<PlanningInitiativeClientLink>(
+    "SELECT * FROM planning_initiative_client_link WHERE initiative_id = ?"
+  ).all(initiativeId);
+}
+
+export async function addDependency(initiativeId: string, dependsOnId: string): Promise<void> {
+  if (initiativeId === dependsOnId) throw new Error("Initiative cannot depend on itself");
+  await prepare(
+    "INSERT INTO planning_initiative_dependency (initiative_id, depends_on_initiative_id) VALUES (?, ?) ON CONFLICT DO NOTHING"
+  ).run(initiativeId, dependsOnId);
+}
+export async function removeDependency(initiativeId: string, dependsOnId: string): Promise<void> {
+  await prepare(
+    "DELETE FROM planning_initiative_dependency WHERE initiative_id = ? AND depends_on_initiative_id = ?"
+  ).run(initiativeId, dependsOnId);
+}
+export async function listInitiativeDependencies(initiativeId: string): Promise<PlanningInitiativeDependency[]> {
+  return await prepare<PlanningInitiativeDependency>(
+    "SELECT * FROM planning_initiative_dependency WHERE initiative_id = ?"
+  ).all(initiativeId);
+}
+
+// ---------------- Deals ----------------
+
+export async function listDeals(filter?: { stage?: DealStage; clientId?: string }): Promise<PlanningDeal[]> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (filter?.stage) { conditions.push("stage = ?"); params.push(filter.stage); }
+  if (filter?.clientId) { conditions.push("client_id = ?"); params.push(filter.clientId); }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  return await prepare<PlanningDeal>(
+    `SELECT * FROM planning_deals ${where} ORDER BY position ASC, created_at ASC`
+  ).all(...params);
+}
+
+export async function getDeal(id: string): Promise<PlanningDeal | undefined> {
+  return await prepare<PlanningDeal>("SELECT * FROM planning_deals WHERE id = ?").get(id);
+}
+
+export async function createDeal(input: CreateDealInput): Promise<PlanningDeal> {
+  const row = await prepare<PlanningDeal>(`
+    INSERT INTO planning_deals (
+      title, client_id, icp_segment_id, stage, pilot_default_duration_days,
+      min_monthly_amount, expected_actual_amount, description, position
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING *
+  `).get(
+    input.title,
+    input.client_id ?? null, input.icp_segment_id ?? null,
+    input.stage ?? "lead",
+    input.pilot_default_duration_days ?? null,
+    input.min_monthly_amount ?? null, input.expected_actual_amount ?? null,
+    input.description ?? null, input.position ?? 0,
+  );
+  return row!;
+}
+
+export async function updateDeal(id: string, updates: UpdateDealInput): Promise<PlanningDeal | undefined> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_DEAL_UPDATE_FIELDS);
+  if (!built) return await getDeal(id);
+  await prepare(`UPDATE planning_deals SET ${built.sql}, updated_at = now() WHERE id = ?`)
+    .run(...built.values, id);
+  return await getDeal(id);
+}
+
+export async function deleteDeal(id: string): Promise<boolean> {
+  const r = await prepare("DELETE FROM planning_deals WHERE id = ?").run(id);
+  return r.changes > 0;
+}
+
+// ---------------- Deal payments ----------------
+
+export async function listDealPayments(
+  dealId: string,
+  filter?: { from?: string; to?: string; status?: PlanningDealPayment["status"] },
+): Promise<PlanningDealPayment[]> {
+  const conditions: string[] = ["deal_id = ?"];
+  const params: unknown[] = [dealId];
+  if (filter?.from) { conditions.push("paid_at >= ?"); params.push(filter.from); }
+  if (filter?.to) { conditions.push("paid_at <= ?"); params.push(filter.to); }
+  if (filter?.status) { conditions.push("status = ?"); params.push(filter.status); }
+  return await prepare<PlanningDealPayment>(
+    `SELECT * FROM planning_deal_payments WHERE ${conditions.join(" AND ")} ORDER BY paid_at DESC`
+  ).all(...params);
+}
+
+export async function addDealPayment(input: CreateDealPaymentInput): Promise<PlanningDealPayment> {
+  const row = await prepare<PlanningDealPayment>(`
+    INSERT INTO planning_deal_payments (deal_id, paid_at, amount, note, status)
+    VALUES (?, ?, ?, ?, ?)
+    RETURNING *
+  `).get(
+    input.deal_id, input.paid_at, input.amount,
+    input.note ?? null, input.status ?? "expected",
+  );
+  return row!;
+}
+
+export async function updateDealPayment(id: string, updates: UpdateDealPaymentInput): Promise<PlanningDealPayment | undefined> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_DEAL_PAYMENT_UPDATE_FIELDS);
+  if (!built) return await prepare<PlanningDealPayment>("SELECT * FROM planning_deal_payments WHERE id = ?").get(id);
+  await prepare(`UPDATE planning_deal_payments SET ${built.sql}, updated_at = now() WHERE id = ?`)
+    .run(...built.values, id);
+  return await prepare<PlanningDealPayment>("SELECT * FROM planning_deal_payments WHERE id = ?").get(id);
+}
+
+export async function deleteDealPayment(id: string): Promise<boolean> {
+  const r = await prepare("DELETE FROM planning_deal_payments WHERE id = ?").run(id);
+  return r.changes > 0;
+}
+
+// ---------------- Change log ----------------
+
+export async function appendChangeLog(input: ChangeLogInsertInput): Promise<PlanningChangeLogEntry> {
+  const row = await prepare<PlanningChangeLogEntry>(`
+    INSERT INTO planning_change_log (actor_email, entity_type, entity_id, action, diff, replan_reason, context)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    RETURNING *
+  `).get(
+    input.actor_email ?? null,
+    input.entity_type, input.entity_id, input.action,
+    input.diff ?? null, input.replan_reason ?? null, input.context ?? null,
+  );
+  return row!;
+}
+
+export async function listChangeLog(
+  filter?: { entityType?: string; entityId?: string; actorEmail?: string; from?: string; to?: string },
+  limit = 100,
+  offset = 0,
+): Promise<PlanningChangeLogEntry[]> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (filter?.entityType) { conditions.push("entity_type = ?"); params.push(filter.entityType); }
+  if (filter?.entityId) { conditions.push("entity_id = ?"); params.push(filter.entityId); }
+  if (filter?.actorEmail) { conditions.push("actor_email = ?"); params.push(filter.actorEmail); }
+  if (filter?.from) { conditions.push("timestamp >= ?"); params.push(filter.from); }
+  if (filter?.to) { conditions.push("timestamp <= ?"); params.push(filter.to); }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  params.push(Math.max(1, limit | 0), Math.max(0, offset | 0));
+  return await prepare<PlanningChangeLogEntry>(
+    `SELECT * FROM planning_change_log ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`
+  ).all(...params);
+}
+
+// ---------------- Settings ----------------
+
+export async function getPlanningSettings(): Promise<PlanningSettings> {
+  const row = await prepare<PlanningSettings>(
+    "SELECT * FROM planning_settings WHERE id = 'default'"
+  ).get();
+  if (!row) {
+    await prepare("INSERT INTO planning_settings (id) VALUES ('default') ON CONFLICT DO NOTHING").run();
+    return (await prepare<PlanningSettings>(
+      "SELECT * FROM planning_settings WHERE id = 'default'"
+    ).get())!;
+  }
+  return row;
+}
+
+export async function updatePlanningSettings(updates: UpdatePlanningSettingsInput): Promise<PlanningSettings> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_SETTINGS_UPDATE_FIELDS);
+  if (built) {
+    await prepare(`UPDATE planning_settings SET ${built.sql}, updated_at = now() WHERE id = 'default'`)
+      .run(...built.values);
+  }
+  return await getPlanningSettings();
+}
+
+// ---------------- ICP segments ----------------
+
+export async function listIcpSegments(includeArchived = false): Promise<PlanningIcpSegment[]> {
+  const where = includeArchived ? "" : "WHERE archived = false";
+  return await prepare<PlanningIcpSegment>(
+    `SELECT * FROM planning_icp_segments ${where} ORDER BY position ASC, created_at ASC`
+  ).all();
+}
+
+export async function createIcpSegment(title: string): Promise<PlanningIcpSegment> {
+  const row = await prepare<PlanningIcpSegment>(
+    "INSERT INTO planning_icp_segments (title) VALUES (?) RETURNING *"
+  ).get(title);
+  return row!;
+}
+
+export async function updateIcpSegment(id: string, updates: { title?: string; archived?: boolean; position?: number }): Promise<PlanningIcpSegment | undefined> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, ["title", "archived", "position"] as const);
+  if (!built) return await prepare<PlanningIcpSegment>("SELECT * FROM planning_icp_segments WHERE id = ?").get(id);
+  await prepare(`UPDATE planning_icp_segments SET ${built.sql} WHERE id = ?`).run(...built.values, id);
+  return await prepare<PlanningIcpSegment>("SELECT * FROM planning_icp_segments WHERE id = ?").get(id);
+}
+
+// ---------------- Replan reasons & metric units (dictionaries) ----------------
+
+export async function listReplanReasons(): Promise<PlanningReplanReasonDict[]> {
+  return await prepare<PlanningReplanReasonDict>(
+    "SELECT * FROM planning_replan_reasons ORDER BY code ASC"
+  ).all();
+}
+
+export async function listMetricUnits(): Promise<PlanningMetricUnit[]> {
+  return await prepare<PlanningMetricUnit>(
+    "SELECT * FROM planning_metric_units ORDER BY title ASC"
+  ).all();
+}
+
+// ---------------- Kaiten board mapping ----------------
+
+export async function listBoardMappings(): Promise<PlanningKaitenBoardMapping[]> {
+  return await prepare<PlanningKaitenBoardMapping>(
+    "SELECT * FROM planning_kaiten_board_mapping ORDER BY created_at ASC"
+  ).all();
+}
+
+export async function upsertBoardMapping(kaitenBoardId: string, initiativeId: string): Promise<PlanningKaitenBoardMapping> {
+  const row = await prepare<PlanningKaitenBoardMapping>(`
+    INSERT INTO planning_kaiten_board_mapping (kaiten_board_id, initiative_id)
+    VALUES (?, ?)
+    ON CONFLICT (kaiten_board_id) DO UPDATE SET initiative_id = EXCLUDED.initiative_id
+    RETURNING *
+  `).get(kaitenBoardId, initiativeId);
+  return row!;
+}
+
+export async function deleteBoardMapping(kaitenBoardId: string): Promise<boolean> {
+  const r = await prepare("DELETE FROM planning_kaiten_board_mapping WHERE kaiten_board_id = ?").run(kaitenBoardId);
+  return r.changes > 0;
+}
+
+export async function getInitiativeIdByKaitenBoard(boardId: string | number | null): Promise<string | undefined> {
+  if (boardId == null) return undefined;
+  const row = await prepare<{ initiative_id: string }>(
+    "SELECT initiative_id FROM planning_kaiten_board_mapping WHERE kaiten_board_id = ?"
+  ).get(String(boardId));
+  return row?.initiative_id;
 }

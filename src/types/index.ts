@@ -80,6 +80,14 @@ export interface Item {
   position: number;
   parent_id: string | null;
   recurring_series_id?: string | null;
+  // Planning V3 fields (migration 0023 + 0024).
+  initiative_id?: string | null;
+  linked_deal_id?: string | null;
+  planned_period_id?: string | null;
+  planned_date?: string | null;
+  why?: string | null;
+  replan_reason?: import("./planning").ReplanReason | null;
+  is_carryover?: boolean;
   created_at: string;
   updated_at: string;
 }
