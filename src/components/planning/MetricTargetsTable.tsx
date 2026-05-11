@@ -34,7 +34,6 @@ export function MetricTargetsTable({ metric, periods, targets, onChanged }: Prop
         <thead>
           <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
             <th className="px-2 py-1.5">Период</th>
-            <th className="px-2 py-1.5">Даты</th>
             <th className="px-2 py-1.5 text-right">Цель</th>
           </tr>
         </thead>
@@ -46,7 +45,6 @@ export function MetricTargetsTable({ metric, periods, targets, onChanged }: Prop
             return (
               <tr key={id} className="border-b border-slate-100 hover:bg-slate-50/50">
                 <td className="px-2 py-1.5 font-medium text-slate-700">{formatPeriodFull(p)}</td>
-                <td className="px-2 py-1.5 text-xs text-slate-500">{p.start_date} → {p.end_date}</td>
                 <td className="px-2 py-1.5 text-right">
                   {editing ? (
                     <input
@@ -77,7 +75,7 @@ export function MetricTargetsTable({ metric, periods, targets, onChanged }: Prop
         </tbody>
         <tfoot>
           <tr className="bg-slate-50">
-            <td className="px-2 py-1.5 text-xs font-semibold text-slate-500" colSpan={2}>
+            <td className="px-2 py-1.5 text-xs font-semibold text-slate-500">
               Сумма
             </td>
             <td className="px-2 py-1.5 text-right text-sm font-semibold tabular-nums text-slate-700">
