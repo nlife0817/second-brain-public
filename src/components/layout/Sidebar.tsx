@@ -11,7 +11,9 @@ import {
   Settings,
   ClipboardCheck,
   RefreshCw,
+  Target,
 } from "lucide-react";
+import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBrainStore } from "@/lib/store";
@@ -217,6 +219,18 @@ export function Sidebar() {
             }
             return button;
           })}
+
+          {/* External link — Planning system */}
+          <Link
+            href="/planning"
+            className={cn(
+              "group/sec relative flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-600 transition-all duration-150 hover:bg-white/60 hover:text-slate-800 outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50",
+              collapsed && "justify-center px-0"
+            )}
+          >
+            <Target className="size-4 shrink-0 text-slate-400 group-hover/sec:text-slate-500" />
+            {!collapsed && <span className="flex-1 truncate text-left">Планирование</span>}
+          </Link>
         </div>
 
         <Separator className="bg-slate-200" />
