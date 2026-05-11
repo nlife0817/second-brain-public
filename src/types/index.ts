@@ -171,6 +171,12 @@ export interface CreateItemPayload {
   parent_id?: string | null;
   tags?: string[];
   participants?: DevelopmentParticipantInput[];
+  // Planning V3
+  initiative_id?: string | null;
+  linked_deal_id?: string | null;
+  planned_period_id?: string | null;
+  planned_date?: string | null;
+  why?: string | null;
 }
 
 export interface UpdateItemPayload {
@@ -189,6 +195,14 @@ export interface UpdateItemPayload {
   parent_id?: string | null;
   tags?: string[];
   participants?: DevelopmentParticipantInput[];
+  // Planning V3
+  initiative_id?: string | null;
+  linked_deal_id?: string | null;
+  planned_period_id?: string | null;
+  planned_date?: string | null;
+  why?: string | null;
+  replan_reason?: import("./planning").ReplanReason | null;
+  is_carryover?: boolean;
 }
 
 export interface Filters {
