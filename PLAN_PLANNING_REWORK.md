@@ -39,15 +39,15 @@
 - [ ] Удалить UI-секцию «Зависимости» в `InitiativeDetailSheet`
 - [ ] Rename type-label `product_maturity` → «Развитие продукта» в `INITIATIVE_TYPE_LABEL` map (UI only)
 
-### P1 — Рабочий поток инициативы — **этой сессией если хватит токенов**
+### P1 — Рабочий поток инициативы — ✅ закрыта
 
-- [ ] `CreateInitiativeWizard`: модалка-мастер. Шаги: тип → базовые поля → JTBD/гипотеза → связи → save. Поля динамические по типу
-- [ ] JTBD-расшифровка и пример per type. Inline-подсказка под чипом типа
-- [ ] Replanning fix: dialog «Причина изменения» открывается **только** при изменении `end_period_id` у инициативы где `end_period_id_was != null`. При первом задании и при смене `status` — не открывается
-- [ ] RICE-секция в drawer'е: лейблы EN, починить нерабочие кнопки (выяснить где сломано)
-- [ ] Linked deals в drawer'е (для `client_blocker`): полноценный editor — add/remove сделок, поле `blocks_stage` (pilot/production)
-- [ ] Убрать «Зависимости» полностью из drawer'а
-- [ ] Прояснить «убить инициативу»: rename на «Закрыть без реализации» с tooltip; status = `killed` остаётся
+- [x] `CreateInitiativeWizard`: 4-шаговая модалка (тип → базовые → JTBD/Гипотеза → связи). Для tech_debt/support — третий шаг пропускается. Запись через POST с `start_period_id`/`end_period_id`.
+- [x] JTBD-подсказка per type в `src/lib/planning-initiative-meta.ts` (description/example/placeholder). Inline-hint под селектом типа в DetailSheet; пример в JTBD-секции.
+- [x] Replanning fix: `isReplanEndPeriod` = `"end_period_id" in updates && data.end_period_id !== null && updates.end_period_id !== data.end_period_id`. Первое задание дедлайна и смена статуса диалог не открывают.
+- [x] RICE: EN лейблы (Reach / Impact / Confidence / Effort / Score; chips — Minimal..Massive, Low/Medium/High). **Найден и исправлен баг**: postgres.js возвращает `numeric` строкой, поэтому `impact === opt.value` (number) был всегда false → кнопки не залипали. Везде в `RicePicker` добавлен `Number(...)` cast.
+- [x] DealLinksEditor (для client_blocker): add/remove + per-deal `blocks_stage` (pilot/production). Новый API `POST/DELETE /api/planning/initiatives/[id]/deal-links`.
+- [x] «Зависимости» уже убраны в P0.
+- [x] Кнопка «Убить» переименована в «Закрыть без реализации», `Skull` → `XCircle`, tooltip объясняет смысл `killed`-статуса.
 
 ### P2 — Колонка инициатив
 
@@ -104,8 +104,9 @@
 | Фаза | Статус | Коммит |
 |---|---|---|
 | Pre-rework: dev-bypass + dates cleanup | ✅ | `5ede756` |
-| P0 | ⏳ in-progress | — |
-| P1..P6 | ⏳ pending | — |
+| P0 | ✅ | `acea9cf` |
+| P1 | ✅ | — (этой сессией) |
+| P2..P6 | ⏳ pending | — |
 
 ---
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { X, Trash2, GitBranch, Skull } from "lucide-react";
+import { X, Trash2, GitBranch, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import type {
   PlanningInitiative,
@@ -11,6 +11,7 @@ import type {
   PlanningInitiativeClientLink,
   PlanningPeriod,
   PlanningDeal,
+  DealBlockingStage,
   InitiativeStatus,
   InitiativeType,
   ExperimentDecision,
@@ -18,6 +19,7 @@ import type {
 } from "@/types/planning";
 import { usePlanningStore } from "@/lib/planning-store";
 import { INITIATIVE_STATUS_LABEL, SEMANTIC_CLASS, initiativeStatusTone } from "@/lib/planning-colors";
+import { INITIATIVE_TYPE_DESCRIPTION, JTBD_HINT_BY_TYPE } from "@/lib/planning-initiative-meta";
 import { RicePicker } from "./RicePicker";
 import { ExperimentFields } from "./ExperimentFields";
 import { ReplanReasonDialog } from "./ReplanReasonDialog";
@@ -76,18 +78,21 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
     return () => { queueMicrotask(() => setData(null)); };
   }, [open, load]);
 
-  // PATCH helper. For "sensitive" field changes (status / due_period_id / large estimate delta)
-  // we open ReplanReasonDialog and defer the save until the user confirms.
+  // PATCH helper.
+  //
+  // ReplanReasonDialog открывается ТОЛЬКО при изменении end_period_id у инициативы,
+  // у которой дедлайн уже стоял (data.end_period_id !== null). Первое задание дедлайна
+  // и смена status — без диалога (PLAN_PLANNING_REWORK §P1.3).
+  //
+  // status='killed' автоматически проставляет replan_reason = kill_criteria_triggered.
   const patch = async (updates: Partial<DetailData>, replanReason: ReplanReason | null = null) => {
     if (!data) return;
-    const sensitive =
-      ("status" in updates && updates.status !== data.status) ||
-      ("due_period_id" in updates && updates.due_period_id !== data.due_period_id) ||
-      ("estimate_hours" in updates && data.estimate_hours
-        && Math.abs(Number(updates.estimate_hours ?? 0) - Number(data.estimate_hours)) / Number(data.estimate_hours) > 0.2);
+    const isReplanEndPeriod =
+      "end_period_id" in updates
+      && data.end_period_id !== null
+      && updates.end_period_id !== data.end_period_id;
 
-    if (sensitive && !replanReason && updates.status !== "killed") {
-      // Open dialog; defer save.
+    if (isReplanEndPeriod && !replanReason && updates.status !== "killed") {
       setReplanPending({ patch: updates });
       return;
     }
@@ -116,7 +121,7 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
 
   const onKill = async () => {
     if (!data) return;
-    if (!confirm(`Убить инициативу «${data.title}»?`)) return;
+    if (!confirm(`Закрыть инициативу «${data.title}» без реализации?\n\nЭто внутренний статус «killed»: инициатива остаётся в журнале, но не считается выполненной и попадает в архив.`)) return;
     await patch({ status: "killed" });
   };
 
@@ -209,8 +214,8 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
             <div className="p-6 text-sm text-slate-500">{loading ? "Загрузка…" : "Не найдено"}</div>
           ) : (
             <div className="flex flex-col gap-4 p-5">
-              {/* Status / Type / Due */}
-              <section className="grid grid-cols-2 gap-3 text-sm">
+              {/* Type + inline hint */}
+              <section className="text-sm">
                 <label className="block">
                   <span className="mb-1 block text-xs font-medium text-slate-600">Тип</span>
                   <select
@@ -221,7 +226,14 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                     {TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                   </select>
                 </label>
-                <label className="block">
+                <p className="mt-1 text-[11px] leading-snug text-slate-500">
+                  {INITIATIVE_TYPE_DESCRIPTION[data.type]}
+                </p>
+              </section>
+
+              {/* Status + Estimate */}
+              <section className="grid grid-cols-2 gap-3 text-sm">
+                <div className="block">
                   <span className="mb-1 block text-xs font-medium text-slate-600">Статус</span>
                   <div className="flex flex-wrap gap-1">
                     {STATUSES.map((s) => {
@@ -240,26 +252,7 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                       );
                     })}
                   </div>
-                </label>
-
-                <label className="block">
-                  <span className="mb-1 block text-xs font-medium text-slate-600">Дедлайн (неделя/месяц)</span>
-                  <select
-                    value={data.due_period_id ?? ""}
-                    onChange={(e) => patch({ due_period_id: e.target.value || null })}
-                    className="w-full rounded-md border border-slate-300 px-2 py-1.5"
-                  >
-                    <option value="">— не задан —</option>
-                    {periods
-                      .slice()
-                      .sort((a, b) => a.start_date.localeCompare(b.start_date))
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {labelForPeriod(p)}
-                        </option>
-                      ))}
-                  </select>
-                </label>
+                </div>
 
                 <label className="block">
                   <span className="mb-1 block text-xs font-medium text-slate-600">Оценка (ч)</span>
@@ -277,6 +270,15 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                 </label>
               </section>
 
+              {/* Week range — start..end (last week = deadline). */}
+              <WeekRangePicker
+                periods={periods}
+                startPeriodId={data.start_period_id}
+                endPeriodId={data.end_period_id ?? data.due_period_id}
+                onChangeStart={(v) => patch({ start_period_id: v })}
+                onChangeEnd={(v) => patch({ end_period_id: v })}
+              />
+
               {/* Description */}
               <section>
                 <span className="mb-1 block text-xs font-medium text-slate-600">Описание</span>
@@ -292,13 +294,22 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
               {/* JTBD — for blocker/maturity */}
               {(data.type === "client_blocker" || data.type === "product_maturity") && (
                 <section>
-                  <span className="mb-1 block text-xs font-medium text-slate-600">JTBD (работа клиента) *</span>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-slate-600">JTBD (работа клиента) *</span>
+                    <span className="text-[10px] uppercase tracking-wide text-slate-400" title={JTBD_HINT_BY_TYPE[data.type].description}>
+                      Пример ниже
+                    </span>
+                  </div>
                   <textarea
                     defaultValue={data.jtbd ?? ""}
-                    rows={2}
+                    rows={3}
+                    placeholder={JTBD_HINT_BY_TYPE[data.type].placeholder}
                     onBlur={(e) => { const v = e.target.value.trim() || null; if (v !== data.jtbd) patch({ jtbd: v }); }}
                     className="w-full resize-y rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
                   />
+                  <p className="mt-1 text-[11px] italic text-slate-500">
+                    {JTBD_HINT_BY_TYPE[data.type].example}
+                  </p>
                 </section>
               )}
 
@@ -361,20 +372,30 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                 }}
               />
 
-              {/* Linked deals */}
-              <LinkedMulti
-                title="Связанные сделки"
-                allItems={allDeals.map((d) => ({ id: d.id, label: `${d.title} · ${d.stage}` }))}
-                selectedIds={data.linked_deals.map((l) => l.deal_id)}
-                onChange={async (next) => {
-                  await fetch(`/api/planning/initiatives/${data.id}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ linked_deal_ids: next }),
-                  });
-                  load();
-                }}
-              />
+              {/* Linked deals — для client_blocker полный editor с blocks_stage,
+                  для остальных типов — multi-select без stage. */}
+              {data.type === "client_blocker" ? (
+                <DealLinksEditor
+                  links={data.linked_deals}
+                  allDeals={allDeals}
+                  initiativeId={data.id}
+                  onChanged={load}
+                />
+              ) : (
+                <LinkedMulti
+                  title="Связанные сделки"
+                  allItems={allDeals.map((d) => ({ id: d.id, label: `${d.title} · ${d.stage}` }))}
+                  selectedIds={data.linked_deals.map((l) => l.deal_id)}
+                  onChange={async (next) => {
+                    await fetch(`/api/planning/initiatives/${data.id}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ linked_deal_ids: next }),
+                    });
+                    load();
+                  }}
+                />
+              )}
 
               {/* Dependencies section removed (PLAN_PLANNING_REWORK §0). DB table planning_initiative_dependency
                   оставлена пустой для совместимости; UI editor выпилен. */}
@@ -396,9 +417,10 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                     <button
                       type="button"
                       onClick={onKill}
+                      title="Перевести в статус killed: инициатива не выполнена, но и не «забыта» — остаётся в журнале и архиве. Чаще всего применяется по сработавшему kill criteria."
                       className="inline-flex items-center gap-1 rounded-md border border-slate-400 bg-slate-50 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
                     >
-                      <Skull className="size-4" /> Убить
+                      <XCircle className="size-4" /> Закрыть без реализации
                     </button>
                   )}
                 </div>
@@ -508,3 +530,162 @@ function LinkedMulti({ title, allItems, selectedIds, onChange }: {
 
 // Re-export the ExperimentDecision type usage to keep prop typing clean.
 export type { ExperimentDecision };
+
+// WeekRangePicker — пара селектов (старт..конец). Концепт §3.4.1 после P0:
+// дедлайн инициативы — это диапазон недель; last week.end_date = дедлайн.
+function WeekRangePicker({
+  periods, startPeriodId, endPeriodId, onChangeStart, onChangeEnd,
+}: {
+  periods: PlanningPeriod[];
+  startPeriodId: string | null;
+  endPeriodId: string | null;
+  onChangeStart: (v: string | null) => void;
+  onChangeEnd: (v: string | null) => void;
+}) {
+  const weeks = useMemo(
+    () => periods.filter((p) => p.type === "week").slice().sort((a, b) => a.start_date.localeCompare(b.start_date)),
+    [periods],
+  );
+  return (
+    <section>
+      <span className="mb-1 block text-xs font-medium text-slate-600">Диапазон недель (старт → дедлайн)</span>
+      <div className="grid grid-cols-2 gap-2">
+        <select
+          value={startPeriodId ?? ""}
+          onChange={(e) => onChangeStart(e.target.value || null)}
+          className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+        >
+          <option value="">— старт —</option>
+          {weeks.map((p) => <option key={p.id} value={p.id}>{labelForPeriod(p)}</option>)}
+        </select>
+        <select
+          value={endPeriodId ?? ""}
+          onChange={(e) => onChangeEnd(e.target.value || null)}
+          className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+        >
+          <option value="">— дедлайн —</option>
+          {weeks.map((p) => <option key={p.id} value={p.id}>{labelForPeriod(p)}</option>)}
+        </select>
+      </div>
+      <p className="mt-1 text-[11px] text-slate-500">
+        Сдвиг дедлайна (последней недели) у уже существующего диапазона = переплан и спросит причину.
+      </p>
+    </section>
+  );
+}
+
+// DealLinksEditor — таблица сделка/blocks_stage для client_blocker.
+// Replaces the generic LinkedMulti, чтобы пользователь видел и менял stage
+// (pilot / production) рядом с конкретной сделкой.
+function DealLinksEditor({
+  links, allDeals, initiativeId, onChanged,
+}: {
+  links: PlanningInitiativeDealLink[];
+  allDeals: PlanningDeal[];
+  initiativeId: string;
+  onChanged: () => void | Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [picker, setPicker] = useState(false);
+  const dealsById = useMemo(() => new Map(allDeals.map((d) => [d.id, d])), [allDeals]);
+  const usedIds = new Set(links.map((l) => l.deal_id));
+  const available = allDeals.filter((d) => !usedIds.has(d.id));
+
+  const setLink = async (dealId: string, stage: DealBlockingStage | null) => {
+    setBusy(true);
+    try {
+      await fetch(`/api/planning/initiatives/${initiativeId}/deal-links`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deal_id: dealId, blocks_stage: stage }),
+      });
+      await onChanged();
+    } finally { setBusy(false); }
+  };
+
+  const removeLink = async (dealId: string) => {
+    setBusy(true);
+    try {
+      await fetch(`/api/planning/initiatives/${initiativeId}/deal-links?deal_id=${encodeURIComponent(dealId)}`, {
+        method: "DELETE",
+      });
+      await onChanged();
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <section className="rounded-lg border border-rose-200 bg-rose-50/30 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-rose-700">Заблокированные сделки</h3>
+        <button
+          type="button"
+          onClick={() => setPicker((v) => !v)}
+          disabled={available.length === 0 || busy}
+          className="rounded-md border border-rose-300 bg-white px-2 py-0.5 text-[10px] uppercase text-rose-700 hover:bg-rose-50 disabled:opacity-40"
+        >
+          {picker ? "закрыть" : "+ добавить"}
+        </button>
+      </div>
+
+      {links.length === 0 ? (
+        <p className="text-xs text-slate-500">
+          Привяжите сделки, которые ждут эту инициативу. RICE-reach автоматически считает их.
+        </p>
+      ) : (
+        <ul className="grid gap-1.5">
+          {links.map((l) => {
+            const d = dealsById.get(l.deal_id);
+            return (
+              <li key={l.deal_id} className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm">
+                <span className="flex-1 truncate">
+                  {d?.title ?? l.deal_id} <span className="text-[11px] text-slate-400">· {d?.stage ?? "?"}</span>
+                </span>
+                <select
+                  value={l.blocks_stage ?? ""}
+                  onChange={(e) => setLink(l.deal_id, (e.target.value || null) as DealBlockingStage | null)}
+                  disabled={busy}
+                  className="rounded-md border border-slate-300 px-1.5 py-0.5 text-xs"
+                  title="На какой стадии сделка заблокирована этой инициативой"
+                >
+                  <option value="">блокирует —</option>
+                  <option value="pilot">pilot</option>
+                  <option value="production">production</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => removeLink(l.deal_id)}
+                  disabled={busy}
+                  className="rounded-md p-1 text-slate-400 hover:bg-rose-100 hover:text-rose-700"
+                  title="Убрать связь"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {picker && (
+        <div className="mt-2 max-h-44 overflow-y-auto rounded-md border border-slate-200 bg-white">
+          {available.length === 0 ? (
+            <p className="px-2 py-2 text-xs text-slate-400">Все сделки уже привязаны.</p>
+          ) : (
+            available.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => { setLink(d.id, null); setPicker(false); }}
+                disabled={busy}
+                className="flex w-full items-center justify-between border-b border-slate-100 px-2 py-1.5 text-left text-sm last:border-b-0 hover:bg-slate-50"
+              >
+                <span className="truncate">{d.title}</span>
+                <span className="text-[11px] text-slate-400">{d.stage}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </section>
+  );
+}

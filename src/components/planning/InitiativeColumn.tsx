@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Plus, ChevronsLeft } from "lucide-react";
 import { usePlanningStore } from "@/lib/planning-store";
 import { InitiativeCard } from "./InitiativeCard";
-import { CreateInitiativeDrawer } from "./CreateInitiativeDrawer";
+import { CreateInitiativeWizard } from "./CreateInitiativeWizard";
 import { CollapsedColumn } from "./CollapsedColumn";
 import type { PlanningInitiative } from "@/types/planning";
 
@@ -170,7 +170,7 @@ export function InitiativeColumn() {
           </div>
         )}
       </div>
-      <CreateInitiativeDrawer open={open} onClose={() => setOpen(false)} />
+      <CreateInitiativeWizard open={open} onClose={() => setOpen(false)} />
     </div>
   );
 }

@@ -20,6 +20,8 @@ const baseShape = {
   description: z.string().nullable().optional(),
   jtbd: z.string().nullable().optional(),
   due_period_id: z.string().uuid().nullable().optional(),
+  start_period_id: z.string().uuid().nullable().optional(),
+  end_period_id: z.string().uuid().nullable().optional(),
   estimate_hours: z.number().nonnegative().nullable().optional(),
   rice_reach: z.number().nonnegative().nullable().optional(),
   rice_impact: z.union([z.literal(0.25), z.literal(0.5), z.literal(1), z.literal(2), z.literal(3)]).nullable().optional(),
@@ -55,16 +57,17 @@ export const initiativeFormSchema = z.object(baseShape).superRefine((val, ctx) =
 
 export type InitiativeFormValues = z.infer<typeof initiativeFormSchema>;
 
+// EN labels по PLAN_PLANNING_REWORK §0: «RICE-лейблы — UI на английском».
 export const RICE_IMPACT_OPTIONS = [
-  { value: 0.25, label: "Минимальный" },
-  { value: 0.5,  label: "Малый" },
-  { value: 1,    label: "Средний" },
-  { value: 2,    label: "Большой" },
-  { value: 3,    label: "Массивный" },
+  { value: 0.25, label: "Minimal" },
+  { value: 0.5,  label: "Small" },
+  { value: 1,    label: "Medium" },
+  { value: 2,    label: "Large" },
+  { value: 3,    label: "Massive" },
 ] as const;
 
 export const RICE_CONFIDENCE_OPTIONS = [
-  { value: 0.5, label: "Низкая",  percent: "50%" },
-  { value: 0.8, label: "Средняя", percent: "80%" },
-  { value: 1.0, label: "Высокая", percent: "100%" },
+  { value: 0.5, label: "Low",    percent: "50%" },
+  { value: 0.8, label: "Medium", percent: "80%" },
+  { value: 1.0, label: "High",   percent: "100%" },
 ] as const;

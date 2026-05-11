@@ -1807,7 +1807,8 @@ const PLANNING_METRIC_UPDATE_FIELDS = [
   "is_cumulative", "is_emergent", "position",
 ] as const;
 const PLANNING_INITIATIVE_UPDATE_FIELDS = [
-  "title", "type", "description", "jtbd", "due_period_id", "estimate_hours",
+  "title", "type", "description", "jtbd", "due_period_id",
+  "start_period_id", "end_period_id", "estimate_hours",
   "rice_reach", "rice_impact", "rice_confidence", "key_assumptions", "kill_criteria",
   "parent_initiative_id", "hypothesis", "success_criteria", "sample_size_or_duration",
   "experiment_result", "experiment_decision", "status", "done_at", "position",
@@ -2071,19 +2072,25 @@ export async function getInitiative(id: string): Promise<PlanningInitiative | un
 }
 
 export async function createInitiative(input: CreateInitiativeInput): Promise<PlanningInitiative> {
+  // end_period_id — основной источник правды дедлайна; due_period_id зеркалит его
+  // через trigger sync_due_period (migration 0028) при UPDATE, при INSERT —
+  // подставляем явно, чтобы карточка показывала дедлайн сразу после создания.
+  const endId = input.end_period_id ?? input.due_period_id ?? null;
+  const startId = input.start_period_id ?? endId;
   const row = await prepare<PlanningInitiative>(`
     INSERT INTO planning_initiatives (
-      direction_id, title, type, description, jtbd, due_period_id, estimate_hours,
+      direction_id, title, type, description, jtbd,
+      due_period_id, start_period_id, end_period_id, estimate_hours,
       rice_reach, rice_impact, rice_confidence, key_assumptions, kill_criteria,
       parent_initiative_id, created_from_task_id,
       hypothesis, success_criteria, sample_size_or_duration
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING *
   `).get(
     input.direction_id ?? null,
     input.title, input.type,
     input.description ?? null, input.jtbd ?? null,
-    input.due_period_id ?? null, input.estimate_hours ?? null,
+    endId, startId, endId, input.estimate_hours ?? null,
     input.rice_reach ?? null, input.rice_impact ?? null, input.rice_confidence ?? null,
     input.key_assumptions ?? null, input.kill_criteria ?? null,
     input.parent_initiative_id ?? null, input.created_from_task_id ?? null,

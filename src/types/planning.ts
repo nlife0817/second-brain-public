@@ -122,7 +122,11 @@ export interface PlanningInitiative {
   type: InitiativeType;
   description: string | null;
   jtbd: string | null;
+  // due_period_id — legacy back-compat зеркало end_period_id, поддерживается триггером
+  // sync_due_period (migration 0028). UI пишет в start/end, читает откуда удобно.
   due_period_id: string | null;
+  start_period_id: string | null;
+  end_period_id: string | null;
   estimate_hours: number | null;
   rice_reach: number | null;
   rice_impact: number | null;
@@ -335,6 +339,8 @@ export interface CreateInitiativeInput {
   description?: string | null;
   jtbd?: string | null;
   due_period_id?: string | null;
+  start_period_id?: string | null;
+  end_period_id?: string | null;
   estimate_hours?: number | null;
   rice_reach?: number | null;
   rice_impact?: number | null;
@@ -354,6 +360,8 @@ export interface UpdateInitiativeInput {
   description?: string | null;
   jtbd?: string | null;
   due_period_id?: string | null;
+  start_period_id?: string | null;
+  end_period_id?: string | null;
   estimate_hours?: number | null;
   rice_reach?: number | null;
   rice_impact?: number | null;
