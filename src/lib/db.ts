@@ -2186,6 +2186,61 @@ export async function listInitiativeDependencies(initiativeId: string): Promise<
   ).all(initiativeId);
 }
 
+// ---------------- Initiative ↔ Item (M:N, P3) ----------------
+// Источник правды для «задач инициативы» — planning_item_initiative_link.
+// Триггер 0030 синхронизирует legacy-колонку items.initiative_id ⇒ M:N.
+
+export async function linkItemToInitiative(itemId: string, initiativeId: string): Promise<void> {
+  await prepare(
+    "INSERT INTO planning_item_initiative_link (item_id, initiative_id) VALUES (?, ?) ON CONFLICT DO NOTHING"
+  ).run(itemId, initiativeId);
+}
+
+export async function unlinkItemFromInitiative(itemId: string, initiativeId: string): Promise<void> {
+  // Если legacy items.initiative_id указывает на эту инициативу — сбрасываем,
+  // иначе триггер re-insert вернёт связь обратно при следующем UPDATE.
+  await prepare(
+    "UPDATE items SET initiative_id = NULL WHERE id = ? AND initiative_id = ?"
+  ).run(itemId, initiativeId);
+  await prepare(
+    "DELETE FROM planning_item_initiative_link WHERE item_id = ? AND initiative_id = ?"
+  ).run(itemId, initiativeId);
+}
+
+export async function listItemInitiativeLinks(itemId: string): Promise<{ item_id: string; initiative_id: string }[]> {
+  return await prepare<{ item_id: string; initiative_id: string }>(
+    "SELECT item_id, initiative_id FROM planning_item_initiative_link WHERE item_id = ?"
+  ).all(itemId);
+}
+
+/**
+ * Items привязанные к инициативе (через M:N) + их подзадачи.
+ * Concept §P3: «Подзадачи (items.parent_id != null) показываются автоматически
+ * если parent в инициативе».
+ */
+export async function listInitiativeItems(initiativeId: string): Promise<Item[]> {
+  const linked = await prepare<Item>(`
+    SELECT i.* FROM items i
+    JOIN planning_item_initiative_link l ON l.item_id = i.id
+    WHERE l.initiative_id = ?
+    ORDER BY i.position ASC, i.created_at DESC
+  `).all(initiativeId);
+  if (linked.length === 0) return [];
+  // Тянем подзадачи параллельно для всех parent'ов.
+  const parentIds = linked.map((i) => i.id);
+  const placeholders = parentIds.map(() => "?").join(",");
+  const subtasks = await prepare<Item>(
+    `SELECT * FROM items WHERE parent_id IN (${placeholders}) ORDER BY position ASC`
+  ).all(...parentIds);
+  // Дедуп: если subtask сам привязан к этой же инициативе, не дублируем.
+  const seen = new Set(linked.map((i) => i.id));
+  const merged = [...linked];
+  for (const sub of subtasks) {
+    if (!seen.has(sub.id)) { merged.push(sub); seen.add(sub.id); }
+  }
+  return merged;
+}
+
 // ---------------- Deals ----------------
 
 export async function listDeals(filter?: { stage?: DealStage; clientId?: string }): Promise<PlanningDeal[]> {

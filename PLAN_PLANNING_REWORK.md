@@ -55,17 +55,15 @@
 - [x] Badge «Просрочена» (красный фон карточки + явный inline-бейдж) для инициатив где `end_period.end_date < now()` и `status != done/killed`. `initiativeDeadlineTone` теперь читает `end_period_id` с fallback на `due_period_id`.
 - [x] `WeekGridPicker` — компактный grid 4 quarter × 13 week, подсветка текущей недели (amber ring) и диапазона (синяя заливка). Подключён в `InitiativeDetailSheet` (на замену пары `<select>`) и в `CreateInitiativeWizard` Step 2.
 
-### P3 — Колонка задач (КРИТИЧНО)
+### P3 — Колонка задач — ✅ закрыта
 
-- [ ] Удалить «создание задачи с нуля» из TaskColumn
-- [ ] Заменить на:
-   1. По умолчанию — items, привязанные к выбранной инициативе (через M:N link table)
-   2. Колонки items как в /m/tasks: title, status, est, why, ...
-   3. Filter/group/sort расширенные
-   4. Кнопка «Привязать задачи» открывает picker с тем же UI + чекбоксы
-   5. Подзадачи (items.parent_id != null) показываются автоматически если parent в инициативе
-- [ ] Open задачу в модалке (TaskDetail), без inline-редактирования в таблице
-- [ ] Добавить «привязать к инициативе» из drawer'а самой задачи
+- [x] `0030_sync_item_initiative_link.sql` — trigger items.initiative_id ↔ M:N. Источник правды для UI — M:N, legacy-колонка зеркалится автоматически (для autoLinkOrphanTaskToSupport, /api/items PUT, Kaiten sync).
+- [x] db helpers: `linkItemToInitiative` / `unlinkItemFromInitiative` / `listInitiativeItems` (с подзадачами parent'а автоматически).
+- [x] API `/api/planning/initiatives/[id]/items` — GET (список с подзадачами) / POST (bulk attach) / DELETE (?item_id=).
+- [x] `TaskColumn` переписан: «создание с нуля» убрано → кнопка «Привязать» открывает picker; колонки `title/why · status · est`; фильтры (all/open/done), сортировка (по статусу/новые/по оценке), группировка (нет/статус/категория); подзадачи показываются вложенно под parent.
+- [x] `TaskDetailDrawer` — клик по строке открывает drawer: title (inline), status, category, why, estimate, planned_date, **multi-select «Привязана к инициативам»** (M:N picker).
+- [x] `TaskLinkPicker` — модалка с поиском по title/why + чекбоксы для bulk-привязки.
+- [x] Store: `initiativeItemIds[ini]` индекс + `fetchInitiativeItems` / `linkItemsToInitiative` / `unlinkItemFromInitiative` с optimistic UI.
 
 ### P4 — Метрика (источник факта и редактирование)
 
@@ -106,8 +104,9 @@
 | Pre-rework: dev-bypass + dates cleanup | ✅ | `5ede756` |
 | P0 | ✅ | `acea9cf` |
 | P1 | ✅ | `566e577` |
-| P2 | ✅ | — (этой сессией) |
-| P3..P6 | ⏳ pending | — |
+| P2 | ✅ | — |
+| P3 | ✅ | — (этой сессией) |
+| P4..P6 | ⏳ pending | — |
 
 ---
 

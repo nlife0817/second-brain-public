@@ -49,6 +49,10 @@ interface PlanningStore {
   metricSparklines: Record<string, number[]>;
   metricLatest: Record<string, number | null>;
   metricTargets: Record<string, PlanningMetricTarget[]>;
+  // P3: items привязанные к инициативе через M:N (planning_item_initiative_link).
+  // Ключ — initiative_id, значение — массив item_id. Подзадачи (parent_id != null)
+  // приходят в этом же массиве, если parent привязан (backend listInitiativeItems).
+  initiativeItemIds: Record<string, string[]>;
 
   // Selection state for Miller columns
   selectedDirectionId: string | null;
@@ -72,6 +76,9 @@ interface PlanningStore {
   fetchAll: () => Promise<void>;
   fetchSparkline: (metricId: string) => Promise<void>;
   fetchMetricTargets: (metricId: string) => Promise<void>;
+  fetchInitiativeItems: (initiativeId: string) => Promise<void>;
+  linkItemsToInitiative: (initiativeId: string, itemIds: string[]) => Promise<void>;
+  unlinkItemFromInitiative: (initiativeId: string, itemId: string) => Promise<void>;
 
   setSelectedDirection: (id: string | null) => void;
   setSelectedMetric: (id: string | null) => void;
@@ -112,6 +119,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   metricSparklines: {},
   metricLatest: {},
   metricTargets: {},
+  initiativeItemIds: {},
   selectedDirectionId: null,
   selectedMetricId: null,
   selectedInitiativeId: null,
@@ -184,6 +192,64 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
       const rows = (await res.json()) as PlanningMetricTarget[];
       set((s) => ({ metricTargets: { ...s.metricTargets, [metricId]: rows } }));
     } catch { /* ignore */ }
+  },
+
+  // P3: задачи инициативы через M:N. Backend возвращает уже с подзадачами
+  // (parent.subtasks включены автоматически если parent привязан).
+  // Мы кладём такие items в общий tasks-кэш + индекс initiativeItemIds[ini].
+  fetchInitiativeItems: async (initiativeId: string) => {
+    try {
+      const res = await fetch(`/api/planning/initiatives/${initiativeId}/items`);
+      if (!res.ok) return;
+      const items = (await res.json()) as Item[];
+      set((s) => {
+        // Merge into tasks (upsert by id).
+        const byId = new Map(s.tasks.map((t) => [t.id, t]));
+        for (const it of items) byId.set(it.id, { ...byId.get(it.id), ...it } as Item);
+        return {
+          tasks: Array.from(byId.values()),
+          initiativeItemIds: { ...s.initiativeItemIds, [initiativeId]: items.map((i) => i.id) },
+        };
+      });
+    } catch { /* ignore */ }
+  },
+
+  linkItemsToInitiative: async (initiativeId, itemIds) => {
+    if (itemIds.length === 0) return;
+    // Optimistic — extend index.
+    const before = get().initiativeItemIds[initiativeId] ?? [];
+    const next = Array.from(new Set([...before, ...itemIds]));
+    set((s) => ({ initiativeItemIds: { ...s.initiativeItemIds, [initiativeId]: next } }));
+    const res = await fetch(`/api/planning/initiatives/${initiativeId}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item_ids: itemIds }),
+    });
+    if (!res.ok) {
+      set((s) => ({ initiativeItemIds: { ...s.initiativeItemIds, [initiativeId]: before } }));
+      toast.error("Не удалось привязать задачи");
+      return;
+    }
+    // Re-fetch для подтягивания подзадач (parent → subtasks).
+    await get().fetchInitiativeItems(initiativeId);
+  },
+
+  unlinkItemFromInitiative: async (initiativeId, itemId) => {
+    const before = get().initiativeItemIds[initiativeId] ?? [];
+    set((s) => ({
+      initiativeItemIds: {
+        ...s.initiativeItemIds,
+        [initiativeId]: before.filter((id) => id !== itemId),
+      },
+    }));
+    const res = await fetch(
+      `/api/planning/initiatives/${initiativeId}/items?item_id=${encodeURIComponent(itemId)}`,
+      { method: "DELETE" }
+    );
+    if (!res.ok) {
+      set((s) => ({ initiativeItemIds: { ...s.initiativeItemIds, [initiativeId]: before } }));
+      toast.error("Не удалось отвязать задачу");
+    }
   },
 
   setSelectedDirection: (id) => set({ selectedDirectionId: id, selectedMetricId: null, selectedInitiativeId: null }),
