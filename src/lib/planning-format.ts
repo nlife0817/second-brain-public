@@ -14,6 +14,27 @@ export function formatPeriodShort(period: PlanningPeriod): string {
   }
 }
 
+// Full human label for tables: "Q1 (янв–мар)", "май", "W23 · 1–7 июн", "2026".
+export function formatPeriodFull(period: PlanningPeriod): string {
+  const startD = new Date(period.start_date);
+  const endD = new Date(period.end_date);
+  const dStart = startD.getUTCDate();
+  const dEnd = endD.getUTCDate();
+  const mStart = MONTH_SHORT[startD.getUTCMonth()] ?? "";
+  const mEnd = MONTH_SHORT[endD.getUTCMonth()] ?? "";
+  switch (period.type) {
+    case "year":
+      return String(period.year);
+    case "quarter":
+      return `Q${period.quarter_n} (${mStart}–${mEnd})`;
+    case "month":
+      return mStart;
+    case "week":
+      if (mStart === mEnd) return `W${period.week_n} · ${dStart}–${dEnd} ${mStart}`;
+      return `W${period.week_n} · ${dStart} ${mStart} – ${dEnd} ${mEnd}`;
+  }
+}
+
 // End-date label, e.g. "до 31 мая".
 export function formatPeriodEnd(period: PlanningPeriod): string {
   try {
