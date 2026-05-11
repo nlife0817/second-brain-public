@@ -10,7 +10,7 @@ import {
   memo,
 } from "react";
 import { createPortal } from "react-dom";
-import { useFilteredItems, useBrainStore, useCategoryConfig } from "@/lib/store";
+import { useFilteredItems, useBrainStore, useCategoryConfig, matchCondition } from "@/lib/store";
 import {
   KaitenDevelopmentStageSelect,
   KaitenParticipantsSelect,
@@ -31,6 +31,7 @@ import {
   KaitenStageOption,
   ListGroupByField,
   ListGroupByConfig,
+  FilterGroup,
 } from "@/types";
 import { format, isPast, isToday, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -1525,15 +1526,44 @@ export function ListView({ itemFilter, excludeIds, selectionMode }: ListViewProp
 
   const filteredFromStore = useFilteredItems();
   const allItemsFromStore = useBrainStore((s) => s.items);
+
+  // Локальный «изолированный» фильтр (advanced groups) — действует только в
+  // isolated режиме и НЕ влияет на основной раздел «Задачи».
+  const [localAdvGroups, setLocalAdvGroups] = useState<FilterGroup[]>([]);
+  const [localAdvUseAdvanced, setLocalAdvUseAdvanced] = useState<boolean>(false);
+
   const rawItems = useMemo<ItemWithSubtasks[]>(() => {
     if (!isolated) return filteredFromStore;
     let arr: ItemWithSubtasks[] = allItemsFromStore;
+    // Исключаем archived/parent_id-сабтаски как в основном useFilteredItems.
+    arr = arr.filter((i) => i.status !== "archived");
     if (excludeIds && excludeIds.size > 0) {
       arr = arr.filter((i) => !excludeIds.has(i.id));
     }
     if (itemFilter) arr = arr.filter(itemFilter);
+    // Локальные advanced-фильтры (если включены и есть группы).
+    if (localAdvUseAdvanced && localAdvGroups.length > 0) {
+      arr = arr.filter((item) => {
+        const groupResults = localAdvGroups.map((group) => {
+          if (group.conditions.length === 0) return true;
+          if (group.logic === "and") {
+            return group.conditions.every((c) => matchCondition(item, c));
+          }
+          return group.conditions.some((c) => matchCondition(item, c));
+        });
+        return groupResults.some(Boolean);
+      });
+    }
     return arr;
-  }, [isolated, filteredFromStore, allItemsFromStore, excludeIds, itemFilter]);
+  }, [
+    isolated,
+    filteredFromStore,
+    allItemsFromStore,
+    excludeIds,
+    itemFilter,
+    localAdvUseAdvanced,
+    localAdvGroups,
+  ]);
 
   const { catalog } = useKaitenCatalog();
   const createItem = useBrainStore((s) => s.createItem);
@@ -2871,6 +2901,16 @@ export function ListView({ itemFilter, excludeIds, selectionMode }: ListViewProp
       isolatedColumnOrder={isolated ? localColumnOrder : null}
       isolatedSetColumnOrder={isolated ? setLocalColumnOrder : null}
       isolatedSetColumnWidths={isolated ? setLocalColumnWidths : null}
+      isolatedFilter={
+        isolated
+          ? {
+              groups: localAdvGroups,
+              setGroups: setLocalAdvGroups,
+              useAdvanced: localAdvUseAdvanced,
+              setUseAdvanced: setLocalAdvUseAdvanced,
+            }
+          : null
+      }
     />
   );
 
@@ -4370,11 +4410,22 @@ function EmptyState({ search }: { search?: string }) {
 /*  ListView toolbar                                                          */
 /* -------------------------------------------------------------------------- */
 
-function FilterButton() {
+function FilterButton({
+  isolated,
+}: {
+  isolated?: {
+    groups: FilterGroup[];
+    setGroups: (groups: FilterGroup[]) => void;
+    useAdvanced: boolean;
+    setUseAdvanced: (on: boolean) => void;
+  };
+} = {}) {
   const [open, setOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const groups = useBrainStore((s) => s.filters.advancedGroups);
-  const useAdvanced = useBrainStore((s) => s.filters.useAdvanced);
+  const storeGroups = useBrainStore((s) => s.filters.advancedGroups);
+  const storeUseAdvanced = useBrainStore((s) => s.filters.useAdvanced);
+  const groups = isolated ? isolated.groups : storeGroups;
+  const useAdvanced = isolated ? isolated.useAdvanced : storeUseAdvanced;
 
   const activeCount = useMemo(() => {
     if (!useAdvanced) return 0;
@@ -4415,7 +4466,7 @@ function FilterButton() {
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-1 z-50 w-[560px] max-w-[90vw] max-h-[70vh] overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl">
-          <AdvancedFilterBuilder />
+          <AdvancedFilterBuilder isolated={isolated} />
         </div>
       )}
     </div>
@@ -4469,6 +4520,7 @@ function ListViewToolbar({
   isolatedColumnOrder,
   isolatedSetColumnOrder,
   isolatedSetColumnWidths,
+  isolatedFilter,
 }: {
   search: string;
   onSearchChange: (value: string) => void;
@@ -4484,6 +4536,12 @@ function ListViewToolbar({
   isolatedColumnOrder?: string[] | null;
   isolatedSetColumnOrder?: ((next: string[]) => void) | null;
   isolatedSetColumnWidths?: ((next: Record<string, number>) => void) | null;
+  isolatedFilter?: {
+    groups: FilterGroup[];
+    setGroups: (groups: FilterGroup[]) => void;
+    useAdvanced: boolean;
+    setUseAdvanced: (on: boolean) => void;
+  } | null;
 }) {
   return (
     <div className="flex items-center gap-2 px-2 py-1.5 border-b border-slate-200 bg-white">
@@ -4518,10 +4576,14 @@ function ListViewToolbar({
 
       <div className="flex-1" />
 
-      {/* Filter — глобальные фильтры основного раздела «Задачи». В isolated
-          (модалка привязки, правая колонка) скрыт, чтобы локальный UI не
-          мог менять глобальные правила фильтрации. */}
-      {!isolated && <FilterButton />}
+      {/* Filter — в isolated режиме используется локальный filter-state
+          (передаётся через isolatedFilter), чтобы изменения не утекали в
+          глобальный раздел «Задачи». */}
+      {isolated && isolatedFilter ? (
+        <FilterButton isolated={isolatedFilter} />
+      ) : !isolated ? (
+        <FilterButton />
+      ) : null}
 
       {/* Undo / Redo — глобальная история; в isolated скрыт. */}
       {!isolated && <UndoRedoButtons />}

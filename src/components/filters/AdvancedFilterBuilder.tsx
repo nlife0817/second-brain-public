@@ -129,11 +129,28 @@ function defaultValueForField(field: FilterField): string {
 /*  AdvancedFilterBuilder                                                      */
 /* -------------------------------------------------------------------------- */
 
-export function AdvancedFilterBuilder() {
-  const groups = useBrainStore((s) => s.filters.advancedGroups);
-  const useAdvanced = useBrainStore((s) => s.filters.useAdvanced);
-  const setAdvancedFilters = useBrainStore((s) => s.setAdvancedFilters);
-  const toggleAdvancedFilters = useBrainStore((s) => s.toggleAdvancedFilters);
+export interface AdvancedFilterBuilderIsolated {
+  groups: FilterGroup[];
+  setGroups: (groups: FilterGroup[]) => void;
+  useAdvanced: boolean;
+  setUseAdvanced: (on: boolean) => void;
+}
+
+export function AdvancedFilterBuilder({ isolated }: { isolated?: AdvancedFilterBuilderIsolated } = {}) {
+  // Глобальные селекторы — нужны даже в isolated, чтобы динамические опции
+  // (категории/теги/участники) брались из общего стора. Сами фильтры в
+  // isolated режиме читаются/пишутся через переданные коллбэки.
+  const storeGroups = useBrainStore((s) => s.filters.advancedGroups);
+  const storeUseAdvanced = useBrainStore((s) => s.filters.useAdvanced);
+  const storeSetAdvancedFilters = useBrainStore((s) => s.setAdvancedFilters);
+  const storeToggleAdvancedFilters = useBrainStore((s) => s.toggleAdvancedFilters);
+
+  const groups = isolated ? isolated.groups : storeGroups;
+  const useAdvanced = isolated ? isolated.useAdvanced : storeUseAdvanced;
+  const setAdvancedFilters = isolated ? isolated.setGroups : storeSetAdvancedFilters;
+  const toggleAdvancedFilters = isolated
+    ? (on?: boolean) => isolated.setUseAdvanced(on ?? !isolated.useAdvanced)
+    : storeToggleAdvancedFilters;
   const storeCategories = useBrainStore((s) => s.categories);
   const storeTags = useBrainStore((s) => s.tags);
   const storeItems = useBrainStore((s) => s.items);
@@ -359,7 +376,8 @@ export function AdvancedFilterBuilder() {
         </Button>
       </div>
 
-      {/* ---- Presets section ------------------------------------------------ */}
+      {/* ---- Presets section — скрываем в isolated режиме (привязка задач). --- */}
+      {!isolated && (
       <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
         <div className="mb-2 flex items-center gap-1.5">
           <Bookmark className="size-3.5 text-slate-400" />
@@ -462,6 +480,7 @@ export function AdvancedFilterBuilder() {
           </div>
         )}
       </div>
+      )}
 
       {/* Empty state */}
       {groups.length === 0 && (

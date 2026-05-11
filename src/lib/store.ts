@@ -1649,7 +1649,7 @@ export const useBrainStore = create<BrainStore>()(
   }
 ));
 
-function matchCondition(item: ItemWithSubtasks, cond: FilterCondition): boolean {
+export function matchCondition(item: ItemWithSubtasks, cond: FilterCondition): boolean {
   // Tags are multi-value: "is" means "has this tag", "is_not" means "doesn't have this tag"
   if (cond.field === "tags") {
     const tagIds = item.tags?.map((t) => t.id) ?? [];
