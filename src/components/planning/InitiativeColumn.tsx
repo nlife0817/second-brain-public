@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { Plus, ChevronsLeft } from "lucide-react";
 import { usePlanningStore } from "@/lib/planning-store";
 import { InitiativeCard } from "./InitiativeCard";
@@ -21,30 +21,24 @@ export function InitiativeColumn() {
   const periodFilter = usePlanningStore((s) => s.initiativePeriodFilter);
   const setPeriodFilter = usePlanningStore((s) => s.setInitiativePeriodFilter);
   const all = usePlanningStore((s) => s.initiatives);
+  const initiativeMetricLinks = usePlanningStore((s) => s.initiativeMetricLinks);
   const selectedId = usePlanningStore((s) => s.selectedInitiativeId);
   const setSelected = usePlanningStore((s) => s.setSelectedInitiative);
   const collapsed = usePlanningStore((s) => s.collapsedColumns.includes("initiatives"));
   const toggleCollapse = usePlanningStore((s) => s.toggleColumnCollapsed);
   const [open, setOpen] = useState(false);
-  const [linkedIds, setLinkedIds] = useState<Set<string> | null>(null);
 
-  // Load metric links when a metric is selected
-  useEffect(() => {
-    if (!metricId) return;
-    let cancelled = false;
-    Promise.all(all.map((i) => fetch(`/api/planning/initiatives/${i.id}`).then((r) => r.ok ? r.json() : null)))
-      .then((rows) => {
-        if (cancelled) return;
-        const ids = new Set<string>();
-        for (const row of rows) {
-          if (row?.linked_metrics?.some((l: { metric_id: string }) => l.metric_id === metricId)) {
-            ids.add(row.id);
-          }
-        }
-        setLinkedIds(ids);
-      });
-    return () => { cancelled = true; setLinkedIds(null); };
-  }, [metricId, all]);
+  // Раньше: при выборе метрики дёргали N fetch-ов /api/planning/initiatives/[id]
+  // (плюс каждый раз заново при апдейте `all` — а realtime гонит fetchAll часто).
+  // Стало: links уже загружены в store одним батчем, фильтрация локальная.
+  const linkedIds = useMemo<Set<string> | null>(() => {
+    if (!metricId) return null;
+    const s = new Set<string>();
+    for (const l of initiativeMetricLinks) {
+      if (l.metric_id === metricId) s.add(l.initiative_id);
+    }
+    return s;
+  }, [metricId, initiativeMetricLinks]);
 
   // Per concept §3 — Initiatives live UNDER a Metric. Without a selected metric,
   // there's nothing meaningful to show — render a guided empty state.

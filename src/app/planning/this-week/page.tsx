@@ -6,8 +6,10 @@ import { toast } from "sonner";
 import Link from "next/link";
 import {
   ChevronLeft, Repeat, Target as TargetIcon, Inbox, History,
-  ArrowDownAZ, ArrowDownUp, Layers,
+  ArrowDownAZ, ArrowDownUp, Layers, Maximize2,
 } from "lucide-react";
+import { TaskDetailModal } from "@/components/task/TaskDetailSheet";
+import { useBrainStore } from "@/lib/store";
 import {
   DndContext, DragEndEvent, useDroppable, useDraggable,
   PointerSensor, TouchSensor, useSensor, useSensors,
@@ -87,8 +89,9 @@ function addDays(date: string, days: number): string {
 }
 
 // --- Backlog filter / sort / group (P5) ---
-type SortMode = "priority" | "created" | "estimate" | "updated";
-type GroupMode = "none" | "category" | "initiative" | "assignee";
+type SortMode = "priority" | "created" | "estimate" | "updated" | "deadline";
+type GroupMode = "none" | "category" | "initiative" | "assignee" | "priority" | "deadline";
+type DeadlineBucket = "any" | "overdue" | "this_week" | "next_week" | "later" | "none";
 
 const PRIORITY_ORDER: Record<string, number> = {
   urgent: 5, high: 4, medium: 3, low: 2, none: 1,
@@ -99,14 +102,39 @@ interface BacklogControls {
   category: string;            // "" = all
   initiativeId: string;        // "" = all
   assigneeId: string;          // "" = all
+  priority: string;            // "" = all
   hasEstimate: "any" | "yes" | "no";
+  deadline: DeadlineBucket;
   sort: SortMode;
   group: GroupMode;
 }
 
 const DEFAULT_CONTROLS: BacklogControls = {
-  q: "", category: "", initiativeId: "", assigneeId: "",
-  hasEstimate: "any", sort: "priority", group: "none",
+  q: "", category: "", initiativeId: "", assigneeId: "", priority: "",
+  hasEstimate: "any", deadline: "any", sort: "priority", group: "none",
+};
+
+// effective дедлайн задачи: planned_end_date перекрывает due_date (см. F3).
+function taskDeadline(t: Item): string | null {
+  return t.planned_end_date ?? t.due_date ?? null;
+}
+
+function deadlineBucket(t: Item, weekStart: string, weekEnd: string, nextWeekEnd: string, today: string): DeadlineBucket {
+  const d = taskDeadline(t);
+  if (!d) return "none";
+  if (d < today) return "overdue";
+  if (d >= weekStart && d <= weekEnd) return "this_week";
+  if (d > weekEnd && d <= nextWeekEnd) return "next_week";
+  return "later";
+}
+
+const DEADLINE_LABEL: Record<DeadlineBucket, string> = {
+  any: "любой",
+  overdue: "Просрочено",
+  this_week: "Эта неделя",
+  next_week: "Следующая",
+  later: "Позже",
+  none: "Без дедлайна",
 };
 
 const STORAGE_BACKLOG = "planning:this-week:backlogControls";
@@ -141,6 +169,9 @@ function ThisWeekPageInner() {
   const setSelectedDirection = usePlanningStore((s) => s.setSelectedDirection);
   const fetchAllStore = usePlanningStore((s) => s.fetchAll);
   const storeLoaded = usePlanningStore((s) => s.loaded);
+  const openTaskDetail = useBrainStore((s) => s.openDetail);
+  const brainFetchInit = useBrainStore((s) => s.fetchInit);
+  const brainLoaded = useBrainStore((s) => s.items.length > 0);
 
   const weekParam = searchParams.get("week");
   const directionParam = searchParams.get("direction");
@@ -164,6 +195,10 @@ function ThisWeekPageInner() {
   useEffect(() => {
     if (!storeLoaded) fetchAllStore();
   }, [storeLoaded, fetchAllStore]);
+
+  useEffect(() => {
+    if (!brainLoaded) brainFetchInit();
+  }, [brainLoaded, brainFetchInit]);
 
   useEffect(() => {
     if (directionParam && directionParam !== selectedDirectionId) {
@@ -351,16 +386,29 @@ function ThisWeekPageInner() {
   const effCapById = new Map(data.effective_capacities.map((c) => [c.participant_id, c]));
   const initiativeById = new Map(data.initiatives.map((i) => [i.id, i]));
 
+  // Pre-group items by participant once вместо filter() × P секций × рендеров.
+  // Также pre-build dateToIdx — ParticipantRow раньше пересобирал его на каждый рендер каждой строки.
+  const itemsByPid = new Map<string, Item[]>();
+  const dateToIdx = new Map(dayDates.map((d, i) => [d, i]));
+  for (const it of data.items) {
+    if (!it.assignee_participant_id) continue;
+    let arr = itemsByPid.get(it.assignee_participant_id);
+    if (!arr) { arr = []; itemsByPid.set(it.assignee_participant_id, arr); }
+    arr.push(it);
+  }
+  const getItemsFor = (pid: string): Item[] => itemsByPid.get(pid) ?? [];
+
   const owner = data.participants.find((p) => p.role === "owner") ?? null;
-  const devsWithTasks = new Set(
-    data.items.map((t) => t.assignee_participant_id).filter((id): id is string => !!id && participantById.get(id)?.role === "developer"),
-  );
+  const devsWithTasks = new Set<string>();
+  const othersWithTasks = new Set<string>();
+  for (const [pid] of itemsByPid) {
+    const role = participantById.get(pid)?.role;
+    if (role === "developer") devsWithTasks.add(pid);
+    else if (role === "other") othersWithTasks.add(pid);
+  }
   const developers = data.participants
     .filter((p) => p.role === "developer" && (p.is_active || devsWithTasks.has(p.id)))
     .sort((a, b) => a.position - b.position);
-  const othersWithTasks = new Set(
-    data.items.map((t) => t.assignee_participant_id).filter((id): id is string => !!id && participantById.get(id)?.role === "other"),
-  );
   const others = data.participants
     .filter((p) => p.role === "other" && othersWithTasks.has(p.id))
     .sort((a, b) => a.position - b.position);
@@ -403,6 +451,12 @@ function ThisWeekPageInner() {
     });
   };
 
+  // F5: расчёт буферов дедлайна — текущая неделя из data.period; следующая
+  // неделя — +7 дней. today сравниваем по YYYY-MM-DD.
+  const weekStartStr = data.period.start_date;
+  const weekEndStr = data.period.end_date;
+  const nextWeekEndStr = addDays(weekEndStr, 7);
+
   let backlogFiltered = data.backlog;
   if (controls.q.trim()) {
     const q = controls.q.toLowerCase();
@@ -412,9 +466,14 @@ function ThisWeekPageInner() {
   }
   if (controls.category) backlogFiltered = backlogFiltered.filter((t) => t.category === controls.category);
   if (controls.assigneeId) backlogFiltered = backlogFiltered.filter((t) => t.assignee_participant_id === controls.assigneeId);
+  if (controls.priority) backlogFiltered = backlogFiltered.filter((t) => t.priority === controls.priority);
   if (controls.hasEstimate === "yes") backlogFiltered = backlogFiltered.filter((t) => (t.estimated_minutes ?? 0) > 0);
   if (controls.hasEstimate === "no") backlogFiltered = backlogFiltered.filter((t) => !t.estimated_minutes);
-  // initiativeId фильтр здесь нет на стороне без backend; на странице у нас нет полей item.initiative_id напрямую (M:N через link). Опустим.
+  if (controls.deadline !== "any") {
+    backlogFiltered = backlogFiltered.filter(
+      (t) => deadlineBucket(t, weekStartStr, weekEndStr, nextWeekEndStr, today) === controls.deadline,
+    );
+  }
 
   backlogFiltered = [...backlogFiltered].sort((a, b) => {
     switch (controls.sort) {
@@ -427,10 +486,16 @@ function ThisWeekPageInner() {
         return b.updated_at.localeCompare(a.updated_at);
       case "estimate":
         return (b.estimated_minutes ?? 0) - (a.estimated_minutes ?? 0);
+      case "deadline": {
+        const ad = taskDeadline(a) ?? "9999-12-31";
+        const bd = taskDeadline(b) ?? "9999-12-31";
+        return ad.localeCompare(bd);
+      }
     }
   });
 
   // Группировка для отображения (без useMemo — Rules of Hooks: код после early-return).
+  const DEADLINE_GROUP_ORDER: DeadlineBucket[] = ["overdue", "this_week", "next_week", "later", "none"];
   let groupedBacklog: Array<{ key: string; title: string; items: Item[] }>;
   if (controls.group === "none") {
     groupedBacklog = [{ key: "_", title: "", items: backlogFiltered }];
@@ -444,15 +509,29 @@ function ThisWeekPageInner() {
       } else if (controls.group === "assignee") {
         key = t.assignee_participant_id ?? "_";
         title = participantById.get(key)?.name ?? "Не назначено";
+      } else if (controls.group === "priority") {
+        key = t.priority; title = t.priority;
+      } else if (controls.group === "deadline") {
+        const b = deadlineBucket(t, weekStartStr, weekEndStr, nextWeekEndStr, today);
+        key = b; title = DEADLINE_LABEL[b];
       } else if (controls.group === "initiative") {
-        // M:N через linked_item_initiative_link — здесь не подгружено; группа фиктивная.
         key = "_"; title = "Бэклог";
       }
       const g = map.get(key) ?? { title, items: [] as Item[] };
       g.items.push(t);
       map.set(key, g);
     }
-    groupedBacklog = Array.from(map.entries()).map(([key, g]) => ({ key, title: g.title, items: g.items }));
+    let arr = Array.from(map.entries()).map(([key, g]) => ({ key, title: g.title, items: g.items }));
+    if (controls.group === "deadline") {
+      const orderIdx = (k: string) =>
+        DEADLINE_GROUP_ORDER.indexOf(k as DeadlineBucket);
+      arr = arr.sort((a, b) => orderIdx(a.key) - orderIdx(b.key));
+    } else if (controls.group === "priority") {
+      arr = arr.sort((a, b) =>
+        (PRIORITY_ORDER[b.key] ?? 0) - (PRIORITY_ORDER[a.key] ?? 0),
+      );
+    }
+    groupedBacklog = arr;
   }
 
   const pendingTask = pendingMove && data.items.find((t) => t.id === pendingMove.taskId);
@@ -544,6 +623,30 @@ function ThisWeekPageInner() {
                 <option value="yes">с оценкой</option>
                 <option value="no">без оценки</option>
               </select>
+              <select
+                value={controls.priority}
+                onChange={(e) => updateControls({ priority: e.target.value })}
+                className="rounded border border-slate-200 px-1 py-0.5 text-[11px]"
+              >
+                <option value="">любой приоритет</option>
+                <option value="urgent">срочно</option>
+                <option value="high">высокий</option>
+                <option value="medium">средний</option>
+                <option value="low">низкий</option>
+                <option value="none">без</option>
+              </select>
+              <select
+                value={controls.deadline}
+                onChange={(e) => updateControls({ deadline: e.target.value as DeadlineBucket })}
+                className="rounded border border-slate-200 px-1 py-0.5 text-[11px]"
+              >
+                <option value="any">любой дедлайн</option>
+                <option value="overdue">просрочено</option>
+                <option value="this_week">эта неделя</option>
+                <option value="next_week">следующая</option>
+                <option value="later">позже</option>
+                <option value="none">без дедлайна</option>
+              </select>
               <label className="inline-flex items-center gap-1 rounded border border-slate-200 px-1 py-0.5 text-[11px]">
                 <ArrowDownUp className="size-3 text-slate-500" />
                 <select
@@ -555,6 +658,7 @@ function ThisWeekPageInner() {
                   <option value="created">создание</option>
                   <option value="updated">обновление</option>
                   <option value="estimate">оценка</option>
+                  <option value="deadline">дедлайн</option>
                 </select>
               </label>
               <label className="inline-flex items-center gap-1 rounded border border-slate-200 px-1 py-0.5 text-[11px]">
@@ -567,6 +671,8 @@ function ThisWeekPageInner() {
                   <option value="none">без групп</option>
                   <option value="category">категория</option>
                   <option value="assignee">исполнитель</option>
+                  <option value="priority">приоритет</option>
+                  <option value="deadline">дедлайн</option>
                   <option value="initiative">инициатива</option>
                 </select>
               </label>
@@ -601,6 +707,7 @@ function ThisWeekPageInner() {
                           task={t}
                           participant={t.assignee_participant_id ? participantById.get(t.assignee_participant_id) : undefined}
                           onShowHistory={() => setHistoryForTask(t.id)}
+                          onOpen={() => openTaskDetail(t.id)}
                           compact
                         />
                       ))}
@@ -626,12 +733,14 @@ function ThisWeekPageInner() {
                   days={days}
                   dayDates={dayDates}
                   today={today}
-                  items={data.items.filter((t) => t.assignee_participant_id === owner.id)}
+                  items={getItemsFor(owner.id)}
                   dailyCap={Number(data.settings.daily_capacity_hours)}
                   participantById={participantById}
                   showAvatar={false}
                   onShowHistory={setHistoryForTask}
+                  onOpenTask={openTaskDetail}
                   hoursByDate={hoursByPidDate[owner.id] ?? {}}
+                  dateToIdx={dateToIdx}
                 />
               </SectionBlock>
             )}
@@ -646,13 +755,15 @@ function ThisWeekPageInner() {
                   days={days}
                   dayDates={dayDates}
                   today={today}
-                  items={data.items.filter((t) => t.assignee_participant_id === p.id)}
+                  items={getItemsFor(p.id)}
                   dailyCap={Number(data.settings.daily_capacity_hours)}
                   effectiveCapHours={effCapById.get(p.id)?.hours ?? 0}
                   participantById={participantById}
                   showAvatar
                   onShowHistory={setHistoryForTask}
+                  onOpenTask={openTaskDetail}
                   hoursByDate={hoursByPidDate[p.id] ?? {}}
+                  dateToIdx={dateToIdx}
                 />
               ))}
             </SectionBlock>
@@ -666,13 +777,15 @@ function ThisWeekPageInner() {
                     days={days}
                     dayDates={dayDates}
                     today={today}
-                    items={data.items.filter((t) => t.assignee_participant_id === p.id)}
+                    items={getItemsFor(p.id)}
                     dailyCap={Number(data.settings.daily_capacity_hours)}
                     effectiveCapHours={effCapById.get(p.id)?.hours ?? 0}
                     participantById={participantById}
                     showAvatar
                     onShowHistory={setHistoryForTask}
+                    onOpenTask={openTaskDetail}
                     hoursByDate={hoursByPidDate[p.id] ?? {}}
+                    dateToIdx={dateToIdx}
                   />
                 ))}
               </SectionBlock>
@@ -720,6 +833,9 @@ function ThisWeekPageInner() {
         participantById={participantById}
         initiativeById={initiativeById}
       />
+
+      {/* Полная карточка задачи: открывается по иконке Maximize2 */}
+      <TaskDetailModal forceModal />
     </DndContext>
   );
 }
@@ -782,7 +898,7 @@ function SectionBlock({
 
 function ParticipantRow({
   participant, days, dayDates, today, items, dailyCap, effectiveCapHours, participantById,
-  showAvatar, onShowHistory, hoursByDate,
+  showAvatar, onShowHistory, onOpenTask, hoursByDate, dateToIdx,
 }: {
   participant: DevelopmentParticipant;
   days: string[];
@@ -794,14 +910,13 @@ function ParticipantRow({
   participantById: Map<string, DevelopmentParticipant>;
   showAvatar: boolean;
   onShowHistory: (id: string) => void;
+  onOpenTask: (id: string) => void;
   hoursByDate: Record<string, number>;
+  dateToIdx: Map<string, number>;
 }) {
   const total = items.reduce((s, t) => s + (t.estimated_minutes ?? 0) / 60, 0);
   const inactive = participant.is_active === false;
-  const dateToIdx = new Map(dayDates.map((d, i) => [d, i]));
 
-  // Карточки задач рендерим в общем grid'е через col-start/end. Multi-day задачи
-  // занимают span; single-day — span 1. Grid с auto-rows укладывает их в строки.
   type Placed = { id: string; colStart: number; colEnd: number; task: Item };
   const placed: Placed[] = [];
   for (const t of items) {
@@ -819,7 +934,7 @@ function ParticipantRow({
   }
 
   return (
-    <div className="mb-2 grid grid-cols-[140px_1fr] gap-2">
+    <div className="mb-2 grid grid-cols-[140px_1fr] gap-2 items-start">
       <div className="flex flex-col gap-0.5 px-2 py-1">
         <div className="flex items-center gap-1.5">
           {showAvatar && <ParticipantAvatar participant={participant} size="sm" />}
@@ -832,10 +947,14 @@ function ParticipantRow({
         </span>
         {inactive && <span className="text-[10px] text-amber-600">inactive</span>}
       </div>
+      {/*
+       * Высоту строки задают задачи (DOM-поток grid'а), а фон-ячейки дней
+       * растягиваются `absolute inset-0` под этим потоком. Так строка
+       * расширяется под количество задач, ничего не «уезжает» вниз.
+       */}
       <div className="relative">
-        {/* День-ячейки (drop targets, фон) */}
         <div
-          className="grid gap-1"
+          className="pointer-events-none absolute inset-0 grid gap-1"
           style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0,1fr))` }}
         >
           {dayDates.map((date) => (
@@ -849,21 +968,25 @@ function ParticipantRow({
             />
           ))}
         </div>
-        {/* Полосы задач — overlay grid */}
         <div
-          className="pointer-events-none absolute inset-0 grid gap-1 p-1"
-          style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0,1fr))`, gridAutoRows: "min-content" }}
+          className="relative grid gap-1 p-1"
+          style={{
+            gridTemplateColumns: `repeat(${days.length}, minmax(0,1fr))`,
+            gridAutoRows: "min-content",
+            minHeight: 90,
+          }}
         >
           {placed.map((p) => (
             <div
               key={p.id}
-              className="pointer-events-auto min-w-0"
+              className="min-w-0"
               style={{ gridColumnStart: p.colStart, gridColumnEnd: p.colEnd }}
             >
               <DraggableTask
                 task={p.task}
                 participant={participantById.get(participant.id)}
                 onShowHistory={() => onShowHistory(p.id)}
+                onOpen={() => onOpenTask(p.task.id)}
                 spanDays={p.colEnd - p.colStart}
               />
             </div>
@@ -888,7 +1011,7 @@ function DayCell({
   return (
     <div
       ref={setNodeRef}
-      className={`min-h-[90px] rounded-md border ${
+      className={`pointer-events-auto rounded-md border ${
         overload ? "border-red-300 bg-red-50/50" : "border-slate-200 bg-white"
       } ${isOver ? "ring-2 ring-blue-400" : ""} ${isToday ? "ring-1 ring-blue-200" : ""}`}
     >
@@ -902,18 +1025,17 @@ function DayCell({
 }
 
 function DraggableTask({
-  task, participant, onShowHistory, spanDays, compact,
+  task, participant, onShowHistory, onOpen, spanDays, compact,
 }: {
   task: Item;
   participant: DevelopmentParticipant | undefined;
   onShowHistory: () => void;
+  onOpen: () => void;
   spanDays?: number;
   compact?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: task.id });
   const isDone = task.status === "done";
-  // Грубый счётчик переносов: если original_planned_start_date отличается от текущего start —
-  // как минимум 1 перенос. Точный счётчик пришёл бы из /plan-history; для иконки достаточно.
   const movedAtLeastOnce =
     !!task.original_planned_start_date
     && !!task.planned_start_date
@@ -928,7 +1050,7 @@ function DraggableTask({
         touchAction: "none",
         ...(transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : {}),
       }}
-      className={`cursor-grab rounded-md border bg-white p-1.5 text-[11px] hover:bg-slate-50 ${
+      className={`group cursor-grab rounded-md border bg-white p-1.5 text-[11px] hover:bg-slate-50 ${
         isDone ? "border-slate-100 opacity-60" : "border-slate-200"
       } ${spanDays && spanDays > 1 ? "border-blue-300 bg-blue-50/30" : ""}`}
       title={spanDays && spanDays > 1 ? `Длится ${spanDays} дн.` : undefined}
@@ -947,6 +1069,15 @@ function DraggableTask({
             <History className="size-2.5" />
           </button>
         )}
+        <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          className="rounded p-0.5 text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100"
+          title="Открыть"
+        >
+          <Maximize2 className="size-2.5" />
+        </button>
       </div>
       <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-500">
         {task.is_carryover && (

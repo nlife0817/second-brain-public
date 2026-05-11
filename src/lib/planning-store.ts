@@ -138,29 +138,66 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   loaded: false,
 
   fetchAll: async () => {
-    const [dirRes, metRes, iniRes, setRes, taskRes, perRes] = await Promise.all([
+    // Все базовые ресурсы — параллельно. + initiative_metric_links (раньше
+    // InitiativeColumn дёргал N запросов /api/planning/initiatives/[id] на
+    // каждую инициативу ради linked_metrics — fix: один батч-эндпоинт).
+    // + summary (sparkline + ytd для всех метрик в одном запросе вместо 2N).
+    const [dirRes, metRes, iniRes, setRes, taskRes, perRes, linkRes, sumRes] = await Promise.all([
       fetch("/api/planning/directions"),
       fetch("/api/planning/metrics"),
       fetch(`/api/planning/initiatives?include_archived=${get().showArchived ? "1" : "0"}`),
       fetch("/api/planning/settings"),
       fetch("/api/items"),
       fetch("/api/planning/periods"),
+      fetch("/api/planning/initiative-metric-links"),
+      fetch("/api/planning/metrics/summary"),
     ]);
-    const directions = (await jsonOrNull<PlanningDirection[]>(dirRes)) ?? [];
-    const metrics = (await jsonOrNull<PlanningMetric[]>(metRes)) ?? [];
-    const initiatives = (await jsonOrNull<PlanningInitiative[]>(iniRes)) ?? [];
-    const settings = await jsonOrNull<PlanningSettings>(setRes);
-    const tasks = ((await jsonOrNull<Item[]>(taskRes)) ?? []).filter((i) => i.type === "task");
-    const periods = (await jsonOrNull<PlanningPeriod[]>(perRes)) ?? [];
+    const [directions, metrics, initiatives, settings, tasksRaw, periods, links, summary] = await Promise.all([
+      jsonOrNull<PlanningDirection[]>(dirRes),
+      jsonOrNull<PlanningMetric[]>(metRes),
+      jsonOrNull<PlanningInitiative[]>(iniRes),
+      jsonOrNull<PlanningSettings>(setRes),
+      jsonOrNull<Item[]>(taskRes),
+      jsonOrNull<PlanningPeriod[]>(perRes),
+      jsonOrNull<PlanningInitiativeMetricLink[]>(linkRes),
+      jsonOrNull<Array<{
+        id: string;
+        sparkline: number[];
+        latest: number | null;
+        ytd: { annual_target: number | null; target_ytd: number; actual_ytd: number; variance: number };
+      }>>(sumRes),
+    ]);
 
-    set({ directions, metrics, initiatives, tasks, settings, periods, loaded: true });
-    if (!get().selectedDirectionId && directions[0]) {
+    const tasks = (tasksRaw ?? []).filter((i) => i.type === "task");
+    const metricSparklines: Record<string, number[]> = {};
+    const metricLatest: Record<string, number | null> = {};
+    const metricYtd: Record<string, { annual_target: number | null; target_ytd: number; actual_ytd: number; variance: number }> = {};
+    for (const s of summary ?? []) {
+      metricSparklines[s.id] = s.sparkline;
+      metricLatest[s.id] = s.latest;
+      metricYtd[s.id] = s.ytd;
+    }
+
+    set({
+      directions: directions ?? [],
+      metrics: metrics ?? [],
+      initiatives: initiatives ?? [],
+      initiativeMetricLinks: links ?? [],
+      tasks,
+      settings,
+      periods: periods ?? [],
+      metricSparklines,
+      metricLatest,
+      metricYtd,
+      loaded: true,
+    });
+    if (!get().selectedDirectionId && directions?.[0]) {
       set({ selectedDirectionId: directions[0].id });
     }
     // P2: фильтр инициатив по периоду — дефолт «текущая неделя», если ещё не инициализирован.
     if (get().initiativePeriodFilter === undefined) {
       const now = Date.now();
-      const currentWeek = periods.find((p) => {
+      const currentWeek = (periods ?? []).find((p) => {
         if (p.type !== "week") return false;
         const s = new Date(p.start_date).getTime();
         const e = new Date(p.end_date).getTime() + 86_399_000;
@@ -168,13 +205,6 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
       });
       set({ initiativePeriodFilter: currentWeek?.id ?? null });
     }
-
-    // Batch-fetch sparkline data (latest 20 ticks) + YTD-агрегат per metric.
-    // Concept §20.2.1: «На карточке метрики — sparkline + key numbers».
-    await Promise.all(metrics.flatMap((m) => [
-      get().fetchSparkline(m.id),
-      get().fetchMetricYtd(m.id),
-    ]));
   },
 
   fetchSparkline: async (metricId: string) => {
