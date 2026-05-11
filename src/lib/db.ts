@@ -2172,6 +2172,7 @@ export async function listEffectiveMetricTicks(
     value: Number(r.amount),
     measured_at: r.paid_at,
     source: `deal_payment:${r.status}`,
+    created_at: r.paid_at,
   }));
 }
 
