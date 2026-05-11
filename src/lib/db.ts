@@ -2398,6 +2398,15 @@ export async function addMetricTick(input: CreateMetricTickInput): Promise<Plann
   return row!;
 }
 
+// F6: ручное удаление tick'а (для cumulative-метрик нет другого способа
+// убрать ошибочный факт — non-cumulative переписывается «last wins»).
+export async function deleteMetricTick(metricId: string, tickId: string): Promise<boolean> {
+  const row = await prepare<{ id: string }>(
+    "DELETE FROM planning_metric_ticks WHERE id = ? AND metric_id = ? RETURNING id",
+  ).get(tickId, metricId);
+  return !!row;
+}
+
 // ---------------- Initiatives ----------------
 
 export async function listInitiatives(filter?: {

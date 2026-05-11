@@ -243,34 +243,103 @@ function MetricCard({
       ? variance <= 0
       : variance >= 0;
 
+  // P-fix F4: delivery-метрика — это «выполнение задач инициатив», у неё
+  // нет цифрового факта. Прогресс считаем из tasks_done/tasks_total
+  // привязанных инициатив (denormalized в listInitiatives).
+  const isDelivery = metric.type === "delivery";
+  const deliveryTotal = isDelivery
+    ? initiatives.reduce((s, i) => s + (i.tasks_total ?? 0), 0)
+    : 0;
+  const deliveryDone = isDelivery
+    ? initiatives.reduce((s, i) => s + (i.tasks_done ?? 0), 0)
+    : 0;
+  const deliveryPct = deliveryTotal > 0 ? Math.round((deliveryDone / deliveryTotal) * 100) : 0;
+
   return (
     <div className="mb-2 rounded-md border border-slate-200 bg-white p-2 text-xs">
-      <p className="font-medium text-slate-800">{metric.title}</p>
-      <div className="mt-1 flex items-center justify-between gap-2 text-[11px]">
-        <span className="text-slate-500">
-          Цель: <span className="font-medium text-slate-700">{target !== undefined ? formatMetricValue(target, metric.unit) : "—"}</span>
-        </span>
-        {onTrack !== null && (
-          <span className={`rounded px-1.5 py-0.5 text-[10px] ${onTrack ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
-            {onTrack ? "в плане" : "отстаёт"}
-          </span>
-        )}
-      </div>
-      <div className="mt-1.5 flex items-center gap-2">
-        <span className="text-[10px] text-slate-500">Факт:</span>
-        <input
-          type="number"
-          step="any"
-          value={actualInput}
-          onChange={(e) => setActualInput(e.target.value)}
-          onBlur={(e) => onSaveActual(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-          disabled={saving}
-          placeholder="—"
-          className="w-24 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs tabular-nums"
-        />
-        <span className="text-[10px] text-slate-400">{metric.unit ?? ""}</span>
-      </div>
+      <p className="font-medium text-slate-800">
+        {metric.title}
+        {isDelivery && <span className="ml-1 text-[9px] uppercase text-slate-400">delivery</span>}
+      </p>
+      {!isDelivery && (
+        <>
+          <div className="mt-1 flex items-center justify-between gap-2 text-[11px]">
+            <span className="text-slate-500">
+              Цель: <span className="font-medium text-slate-700">{target !== undefined ? formatMetricValue(target, metric.unit) : "—"}</span>
+            </span>
+            {onTrack !== null && (
+              <span className={`rounded px-1.5 py-0.5 text-[10px] ${onTrack ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                {onTrack ? "в плане" : "отстаёт"}
+              </span>
+            )}
+          </div>
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="text-[10px] text-slate-500">Факт:</span>
+            <input
+              type="number"
+              step="any"
+              value={actualInput}
+              onChange={(e) => setActualInput(e.target.value)}
+              onBlur={(e) => onSaveActual(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              disabled={saving}
+              placeholder="—"
+              className="w-24 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs tabular-nums"
+            />
+            <span className="text-[10px] text-slate-400">{metric.unit ?? ""}</span>
+          </div>
+        </>
+      )}
+
+      {isDelivery && (
+        <div className="mt-1.5">
+          <div className="flex items-center justify-between text-[10px] text-slate-500">
+            <span>Задачи инициатив</span>
+            <span className="tabular-nums font-medium text-slate-700">
+              {deliveryDone} / {deliveryTotal}
+            </span>
+          </div>
+          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div
+              className={`h-full ${deliveryPct >= 100 ? "bg-emerald-500" : "bg-sky-500"}`}
+              style={{ width: `${Math.min(100, deliveryPct)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* F6: для cumulative — показываем введённые ticks со ссылкой на удаление. */}
+      {!isDelivery && metric.is_cumulative && actual && actual.ticks.length > 0 && (
+        <div className="mt-1.5 border-t border-slate-100 pt-1.5">
+          <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+            Записи
+          </p>
+          <ul className="flex flex-col gap-0.5">
+            {actual.ticks.map((t) => (
+              <li key={t.id} className="flex items-center justify-between text-[10px] text-slate-600">
+                <span className="tabular-nums">
+                  {formatMetricValue(t.value, metric.unit)}
+                </span>
+                <span className="text-slate-400">{t.measured_at.slice(5)}</span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const res = await fetch(`/api/planning/metrics/${metric.id}/ticks/${t.id}`, {
+                      method: "DELETE",
+                    });
+                    if (!res.ok) toast.error("Не удалось удалить");
+                    else onActualSaved();
+                  }}
+                  className="rounded px-1 text-rose-500 hover:bg-rose-50"
+                  title="Удалить"
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {initiatives.length > 0 && (
         <div className="mt-1.5 border-t border-slate-100 pt-1.5">

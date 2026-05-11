@@ -320,6 +320,9 @@ function FieldSelectors({
   onCategoryChange,
   onTypeChange,
   onDueChange,
+  onStartChange,
+  onEndChange,
+  onAssigneeChange,
 }: {
   item: ItemWithSubtasks;
   layout: "modal" | "panel";
@@ -328,9 +331,22 @@ function FieldSelectors({
   onCategoryChange: (v: ItemCategory | null) => void;
   onTypeChange: (v: ItemType | null) => void;
   onDueChange: (next: { date: string | null; time: string | null }) => void;
+  onStartChange: (next: { date: string | null; time: string | null }) => void;
+  onEndChange: (next: { date: string | null; time: string | null }) => void;
+  onAssigneeChange: (id: string | null) => void;
 }) {
   const categoryConfig = useCategoryConfig();
   const categories = useBrainStore((s) => s.categories);
+  const allParticipants = useBrainStore((s) => s.allParticipants);
+  const fetchAllParticipants = useBrainStore((s) => s.fetchAllParticipants);
+  useEffect(() => {
+    if (allParticipants.length === 0) fetchAllParticipants();
+  }, [allParticipants.length, fetchAllParticipants]);
+  const activeParticipants = allParticipants.filter((p) => p.is_active !== false);
+  // due_date больше не редактируется напрямую — оставляем сигнатуру для
+  // совместимости (handleDueChange ниже всё ещё прокидывается), но в UI
+  // показываем «Старт» и «Конец», где «Конец» дублирует значение в due_date.
+  void onDueChange;
 
   const isPanel = layout === "panel";
   const labelCls = isPanel ? "text-xs text-slate-500" : "text-sm text-slate-500";
@@ -465,16 +481,51 @@ function FieldSelectors({
           </div>
         </div>
 
-        {/* Row 3: Due date + time (full width) */}
+        {/* Row 3: Start + End (заменили «Срок») */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <span className={labelCls}>Старт</span>
+            <DateTimePicker
+              size="sm"
+              placeholder="Без даты"
+              className="w-full"
+              value={{ date: item.planned_start_date ?? null, time: null }}
+              onChange={onStartChange}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className={labelCls}>Конец</span>
+            <DateTimePicker
+              size="sm"
+              placeholder="Без даты"
+              className="w-full"
+              value={{ date: item.planned_end_date ?? item.due_date ?? null, time: null }}
+              onChange={onEndChange}
+            />
+          </div>
+        </div>
+
+        {/* Row 4: Assignee */}
         <div className="flex flex-col gap-1">
-          <span className={labelCls}>Срок</span>
-          <DateTimePicker
-            size="sm"
-            placeholder="Без срока"
-            className="w-full"
-            value={{ date: item.due_date ?? null, time: item.due_time ?? null }}
-            onChange={onDueChange}
-          />
+          <span className={labelCls}>Исполнитель</span>
+          <Select
+            value={item.assignee_participant_id ?? "__none__"}
+            onValueChange={(v) => onAssigneeChange(v === "__none__" ? null : v)}
+          >
+            <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white text-xs")}>
+              <SelectValue>
+                {item.assignee_participant_id
+                  ? activeParticipants.find((p) => p.id === item.assignee_participant_id)?.name ?? "—"
+                  : "Не назначен"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent className="border-slate-200 bg-white">
+              <SelectItem value="__none__">Не назначен</SelectItem>
+              {activeParticipants.map((p) => (
+                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
     );
@@ -600,15 +651,46 @@ function FieldSelectors({
         </SelectContent>
       </Select>
 
-      {/* Due date + time */}
-      <span className={labelCls}>Срок</span>
+      {/* Start (planned_start_date) */}
+      <span className={labelCls}>Старт</span>
       <DateTimePicker
         size="md"
-        placeholder="Без срока"
+        placeholder="Без даты"
         className="w-full"
-        value={{ date: item.due_date ?? null, time: item.due_time ?? null }}
-        onChange={onDueChange}
+        value={{ date: item.planned_start_date ?? null, time: null }}
+        onChange={onStartChange}
       />
+
+      {/* End (planned_end_date) — заменяет «Дедлайн» */}
+      <span className={labelCls}>Конец</span>
+      <DateTimePicker
+        size="md"
+        placeholder="Без даты"
+        className="w-full"
+        value={{ date: item.planned_end_date ?? item.due_date ?? null, time: null }}
+        onChange={onEndChange}
+      />
+
+      {/* Assignee (planning-роль исполнителя) */}
+      <span className={labelCls}>Исполнитель</span>
+      <Select
+        value={item.assignee_participant_id ?? "__none__"}
+        onValueChange={(v) => onAssigneeChange(v === "__none__" ? null : v)}
+      >
+        <SelectTrigger className={cn(triggerH, "w-full border-slate-200 bg-white")}>
+          <SelectValue>
+            {item.assignee_participant_id
+              ? activeParticipants.find((p) => p.id === item.assignee_participant_id)?.name ?? "—"
+              : "Не назначен"}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent className="border-slate-200 bg-white">
+          <SelectItem value="__none__">Не назначен</SelectItem>
+          {activeParticipants.map((p) => (
+            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }
@@ -796,6 +878,33 @@ function useTaskDetailLogic(item: ItemWithSubtasks | null) {
     [item, updateItem]
   );
 
+  const handleStartChange = useCallback(
+    ({ date }: { date: string | null; time: string | null }) => {
+      if (!item) return;
+      updateItem(item.id, { planned_start_date: date });
+    },
+    [item, updateItem]
+  );
+
+  // Конец = новый дедлайн. Пишем и planned_end_date, и due_date для
+  // обратной совместимости (RecurringSeries, legacy-карточки) — UI всегда
+  // должен трактовать end как «срок».
+  const handleEndChange = useCallback(
+    ({ date }: { date: string | null; time: string | null }) => {
+      if (!item) return;
+      updateItem(item.id, { planned_end_date: date, due_date: date });
+    },
+    [item, updateItem]
+  );
+
+  const handleAssigneeChange = useCallback(
+    (value: string | null) => {
+      if (!item) return;
+      updateItem(item.id, { assignee_participant_id: value });
+    },
+    [item, updateItem]
+  );
+
   const handleDelete = useCallback(async () => {
     if (item) {
       await deleteItem(item.id);
@@ -820,6 +929,9 @@ function useTaskDetailLogic(item: ItemWithSubtasks | null) {
     handleDevelopmentStageChange,
     handleParticipantsChange,
     handleDueChange,
+    handleStartChange,
+    handleEndChange,
+    handleAssigneeChange,
     handleDelete,
   };
 }
@@ -1000,6 +1112,9 @@ function TaskDetailContent({
     handleDevelopmentStageChange,
     handleParticipantsChange,
     handleDueChange,
+    handleStartChange,
+    handleEndChange,
+    handleAssigneeChange,
     handleDelete,
   } = useTaskDetailLogic(item);
 
@@ -1090,6 +1205,9 @@ function TaskDetailContent({
       onCategoryChange={handleCategoryChange}
       onTypeChange={handleTypeChange}
       onDueChange={handleDueChange}
+      onStartChange={handleStartChange}
+      onEndChange={handleEndChange}
+      onAssigneeChange={handleAssigneeChange}
     />
   );
 
