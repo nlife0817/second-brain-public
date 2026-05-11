@@ -1,9 +1,8 @@
 "use client";
 
 import { memo } from "react";
-import { CalendarClock, AlertTriangle } from "lucide-react";
+import { CalendarClock, AlertTriangle, Maximize2 } from "lucide-react";
 import type { PlanningInitiative } from "@/types/planning";
-import { InlineTextField } from "./InlineTextField";
 import { usePlanningStore } from "@/lib/planning-store";
 import { initiativeDeadlineTone, initiativeIsFailed, SEMANTIC_CLASS, INITIATIVE_STATUS_LABEL } from "@/lib/planning-colors";
 import { formatPeriodShort } from "@/lib/planning-format";
@@ -27,7 +26,6 @@ const TYPE_TONE: Record<PlanningInitiative["type"], string> = {
 };
 
 function InitiativeCardBase({ initiative, selected, onSelect }: Props) {
-  const updateInitiative = usePlanningStore((s) => s.updateInitiative);
   const openDetail = usePlanningStore((s) => s.openInitiativeDetail);
   const periods = usePlanningStore((s) => s.periods);
   const settings = usePlanningStore((s) => s.settings);
@@ -53,7 +51,7 @@ function InitiativeCardBase({ initiative, selected, onSelect }: Props) {
 
   return (
     <div
-      onClick={() => { onSelect(); openDetail(initiative.id); }}
+      onClick={onSelect}
       className={`group cursor-pointer rounded-lg border p-3 transition-colors ${
         selected
           ? "border-blue-500 bg-blue-50"
@@ -63,19 +61,15 @@ function InitiativeCardBase({ initiative, selected, onSelect }: Props) {
       }`}
       title={INITIATIVE_STATUS_LABEL[initiative.status]}
     >
-      {/* Row 1: status-dot + title + RICE */}
+      {/* Row 1: status-dot + title + RICE + open */}
       <div className="flex items-center gap-2">
         <span
           className={`size-2 shrink-0 rounded-full ${toneCls.dot} ${isAtRisk ? "animate-pulse" : ""}`}
           title={INITIATIVE_STATUS_LABEL[initiative.status]}
         />
-        <div className="min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
-          <InlineTextField
-            value={initiative.title}
-            onSave={(t) => updateInitiative(initiative.id, { title: t })}
-            className="text-sm font-medium"
-          />
-        </div>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">
+          {initiative.title}
+        </span>
         {initiative.rice_score > 0 && (
           <span
             className="shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-slate-700"
@@ -84,6 +78,14 @@ function InitiativeCardBase({ initiative, selected, onSelect }: Props) {
             {Number(initiative.rice_score).toFixed(1)}
           </span>
         )}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); openDetail(initiative.id); }}
+          className="shrink-0 rounded-md p-1 text-slate-400 opacity-0 transition-opacity hover:bg-white hover:text-blue-600 group-hover:opacity-100"
+          title="Открыть инициативу"
+        >
+          <Maximize2 className="size-3.5" />
+        </button>
       </div>
 
       {/* Row 2: type-badge + deadline + status-text (progressive disclosure §20.1.3) */}

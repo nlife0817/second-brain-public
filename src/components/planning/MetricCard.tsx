@@ -3,10 +3,8 @@
 import { memo } from "react";
 import Link from "next/link";
 import { LineChart, Line, ResponsiveContainer } from "recharts";
-import { Pencil, ExternalLink } from "lucide-react";
+import { Maximize2, ExternalLink } from "lucide-react";
 import type { PlanningMetric } from "@/types/planning";
-import { InlineTextField } from "./InlineTextField";
-import { usePlanningStore } from "@/lib/planning-store";
 import { formatMetricValue } from "@/lib/planning-format";
 
 interface Props {
@@ -33,7 +31,6 @@ const TYPE_TONE: Record<PlanningMetric["type"], string> = {
 };
 
 function MetricCardBase({ metric, selected, onSelect, onOpenDetail, sparkline, latestValue, ytd }: Props) {
-  const updateMetric = usePlanningStore((s) => s.updateMetric);
   const series = (sparkline ?? []).map((v, i) => ({ i, v }));
 
   // Variance vs план YTD: positive = «лучше плана» (с учётом direction_value).
@@ -64,13 +61,11 @@ function MetricCardBase({ metric, selected, onSelect, onOpenDetail, sparkline, l
       }`}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
-          <InlineTextField
-            value={metric.title}
-            onSave={(t) => updateMetric(metric.id, { title: t })}
-            className="text-sm font-medium"
-          />
-          <div className="flex flex-wrap items-center gap-1 px-2 pt-0.5">
+        <div className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-slate-900">
+            {metric.title}
+          </span>
+          <div className="flex flex-wrap items-center gap-1 pt-0.5">
             <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${TYPE_TONE[metric.type]}`}>
               {TYPE_LABEL[metric.type]}
             </span>
@@ -90,9 +85,9 @@ function MetricCardBase({ metric, selected, onSelect, onOpenDetail, sparkline, l
             <button
               onClick={onOpenDetail}
               className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-blue-600"
-              title="Редактировать метрику (drawer)"
+              title="Открыть метрику"
             >
-              <Pencil className="size-3.5" />
+              <Maximize2 className="size-3.5" />
             </button>
           )}
           <Link

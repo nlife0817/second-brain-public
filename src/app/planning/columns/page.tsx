@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { usePlanningStore } from "@/lib/planning-store";
+import { useBrainStore } from "@/lib/store";
 import { subscribePlanningRealtime } from "@/lib/planning-realtime";
 import { MetricColumn } from "@/components/planning/MetricColumn";
 import { InitiativeColumn } from "@/components/planning/InitiativeColumn";
@@ -10,6 +11,7 @@ import { TaskColumn } from "@/components/planning/TaskColumn";
 import { InlineTextField } from "@/components/planning/InlineTextField";
 import { InitiativeDetailSheet } from "@/components/planning/InitiativeDetailSheet";
 import { MetricDetailSheet } from "@/components/planning/MetricDetailSheet";
+import { TaskDetailModal } from "@/components/task/TaskDetailSheet";
 
 export default function PlanningColumnsPage() {
   const fetchAll = usePlanningStore((s) => s.fetchAll);
@@ -27,6 +29,10 @@ export default function PlanningColumnsPage() {
 
   useEffect(() => {
     fetchAll();
+    // Подключаем общий items-кэш: TaskDetailModal читает из useBrainStore.
+    // Без этого открытие задачи из planning не найдёт её в selectedItem.
+    const brain = useBrainStore.getState();
+    if (brain.items.length === 0) void brain.fetchItems();
     const unsub = subscribePlanningRealtime();
     return unsub;
   }, [fetchAll]);
@@ -113,6 +119,8 @@ export default function PlanningColumnsPage() {
         metricId={detailMetricId}
         onClose={closeMetricDetail}
       />
+      {/* Открытие задачи из planning теперь использует общую модалку из «Задачи». */}
+      <TaskDetailModal forceModal />
     </div>
   );
 }
