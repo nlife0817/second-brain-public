@@ -1,16 +1,27 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import Link from "next/link";
 import { ChevronLeft, Repeat, Target as TargetIcon, Lightbulb, Inbox } from "lucide-react";
 import {
   DndContext, DragEndEvent, useDroppable, useDraggable,
+  PointerSensor, TouchSensor, useSensor, useSensors,
 } from "@dnd-kit/core";
 import type { Item } from "@/types";
-import type { PlanningPeriod, PlanningSettings, PlanningInitiative, PlanningMetric } from "@/types/planning";
+import type {
+  PlanningPeriod,
+  PlanningSettings,
+  PlanningInitiative,
+  PlanningMetric,
+  PlanningInitiativeMetricLink,
+} from "@/types/planning";
 import { INITIATIVE_STATUS_LABEL, SEMANTIC_CLASS, initiativeStatusTone } from "@/lib/planning-colors";
 import { formatMetricValue } from "@/lib/planning-format";
+import { WeekCascadePicker } from "@/components/planning/WeekCascadePicker";
+import { isoWeek, parseWeekKey, weekKey, weekStartDate } from "@/lib/iso-week";
+import { usePlanningStore } from "@/lib/planning-store";
 
 interface ThisWeekData {
   period: PlanningPeriod;
@@ -20,6 +31,8 @@ interface ThisWeekData {
   metrics: PlanningMetric[];
   targets_by_metric: Record<string, number>;
   initiatives: PlanningInitiative[];
+  initiative_metric_links: PlanningInitiativeMetricLink[];
+  direction_id: string | null;
 }
 
 const DAY_LABELS_5 = ["Пн", "Вт", "Ср", "Чт", "Пт"];
@@ -31,16 +44,56 @@ function formatDayDate(date: string): string {
   return `${d.getUTCDate()} ${MONTH_SHORT[d.getUTCMonth()] ?? ""}`;
 }
 
+function currentWeekKey(): string {
+  const w = isoWeek(new Date());
+  return weekKey(w.year, w.week);
+}
+
 export default function ThisWeekPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const directions = usePlanningStore((s) => s.directions);
+  const selectedDirectionId = usePlanningStore((s) => s.selectedDirectionId);
+  const setSelectedDirection = usePlanningStore((s) => s.setSelectedDirection);
+  const fetchAllStore = usePlanningStore((s) => s.fetchAll);
+  const storeLoaded = usePlanningStore((s) => s.loaded);
+
+  const weekParam = searchParams.get("week");
+  const directionParam = searchParams.get("direction");
+
+  // Эффективные значения week / direction.
+  const effectiveWeek = useMemo(() => {
+    if (weekParam && parseWeekKey(weekParam)) return weekParam;
+    return currentWeekKey();
+  }, [weekParam]);
+
+  // direction: URL > store > null
+  const effectiveDirection = directionParam ?? selectedDirectionId ?? null;
+
   const [data, setData] = useState<ThisWeekData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchAll = useCallback(async () => {
+  // Подгружаем стор (нужны directions) — но только если ещё не загружен.
+  useEffect(() => {
+    if (!storeLoaded) fetchAllStore();
+  }, [storeLoaded, fetchAllStore]);
+
+  // Если URL пришёл с direction — синхронизируем стор (чтобы /planning/columns увидел тот же выбор).
+  useEffect(() => {
+    if (directionParam && directionParam !== selectedDirectionId) {
+      setSelectedDirection(directionParam);
+    }
+  }, [directionParam, selectedDirectionId, setSelectedDirection]);
+
+  const fetchData = useCallback(async (week: string, dir: string | null) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/planning/this-week");
+      const params = new URLSearchParams();
+      params.set("week", week);
+      if (dir) params.set("direction_id", dir);
+      const res = await fetch(`/api/planning/this-week?${params.toString()}`);
       if (!res.ok) {
         setError("Не удалось загрузить данные недели");
         return;
@@ -51,13 +104,36 @@ export default function ThisWeekPage() {
     }
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchData(effectiveWeek, effectiveDirection);
+  }, [fetchData, effectiveWeek, effectiveDirection]);
+
+  const updateUrl = useCallback((next: { week?: string; direction?: string | null }) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next.week !== undefined) params.set("week", next.week);
+    if (next.direction !== undefined) {
+      if (next.direction === null) params.delete("direction");
+      else params.set("direction", next.direction);
+    }
+    router.replace(`/planning/this-week?${params.toString()}`);
+  }, [router, searchParams]);
+
+  const onWeekChange = (key: string) => updateUrl({ week: key });
+  const onDirectionChange = (id: string | null) => {
+    setSelectedDirection(id);
+    updateUrl({ direction: id });
+  };
+
+  // DnD: фикс из P1.4 — sensors с activationConstraint, чтобы скролл не съедал drag.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+  );
 
   const moveTask = async (taskId: string, plannedDate: string | null) => {
     if (!data) return;
     const update: { planned_date: string | null; planned_period_id?: string } = { planned_date: plannedDate };
     if (plannedDate) update.planned_period_id = data.period.id;
-    // optimistic
     setData({
       ...data,
       items: data.items.map((t) => t.id === taskId
@@ -69,7 +145,7 @@ export default function ThisWeekPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(update),
     });
-    if (!res.ok) { toast.error("Не удалось переместить"); fetchAll(); }
+    if (!res.ok) { toast.error("Не удалось переместить"); fetchData(effectiveWeek, effectiveDirection); }
   };
 
   const onDragEnd = (e: DragEndEvent) => {
@@ -80,12 +156,12 @@ export default function ThisWeekPage() {
     else moveTask(taskId, dest);
   };
 
-  if (loading) return <div className="p-6 text-sm text-slate-500">Загрузка…</div>;
+  if (loading && !data) return <div className="p-6 text-sm text-slate-500">Загрузка…</div>;
   if (error || !data) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8 text-center">
         <p className="text-sm text-slate-600">{error ?? "Нет данных"}</p>
-        <button onClick={fetchAll} className="mt-3 rounded-md bg-slate-900 px-3 py-1.5 text-xs text-white hover:bg-slate-700">
+        <button onClick={() => fetchData(effectiveWeek, effectiveDirection)} className="mt-3 rounded-md bg-slate-900 px-3 py-1.5 text-xs text-white hover:bg-slate-700">
           Попробовать ещё раз
         </button>
       </div>
@@ -101,7 +177,6 @@ export default function ThisWeekPage() {
   });
   const today = new Date().toISOString().slice(0, 10);
 
-  // Aggregate hours by day
   const hoursByDate: Record<string, number> = {};
   for (const t of data.items) {
     if (!t.planned_date) continue;
@@ -110,28 +185,45 @@ export default function ThisWeekPage() {
   const totalHours = Object.values(hoursByDate).reduce((s, h) => s + h, 0);
   const weeklyCap = Number(data.settings.weekly_capacity_hours ?? 40);
 
-  // Carryover count: задачи помеченные is_carryover (перенесены автоматически)
   const carryoverCount = data.items.filter((t) => t.is_carryover && t.status !== "done").length;
 
-  const weekStartLabel = `${weekStart.getUTCDate()} ${MONTH_SHORT[weekStart.getUTCMonth()] ?? ""}`;
-  const weekEnd = new Date(data.period.end_date);
-  const weekEndLabel = `${weekEnd.getUTCDate()} ${MONTH_SHORT[weekEnd.getUTCMonth()] ?? ""}`;
+  // Дефолт-проверка: вычисляем понедельник недели из выбранного key (для пикера, не из ответа).
+  const parsedWeek = parseWeekKey(effectiveWeek);
+  const pickerWeekKey = parsedWeek
+    ? weekKey(parsedWeek.year, parsedWeek.week)
+    : currentWeekKey();
+  // start/end label из самой выбранной недели (а не из ответа, чтобы исключить рассинхрон):
+  const pickerStart = parsedWeek ? weekStartDate(parsedWeek.year, parsedWeek.week) : new Date(data.period.start_date);
+  const pickerEnd = new Date(pickerStart); pickerEnd.setUTCDate(pickerStart.getUTCDate() + 6);
+  void pickerEnd;
 
   return (
-    <DndContext onDragEnd={onDragEnd}>
+    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
       <div className="flex h-[calc(100vh-3rem)] flex-col">
         {/* Top bar */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2">
           <div className="flex items-center gap-3">
             <Link href="/planning/columns" className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700">
               <ChevronLeft className="size-3.5" />
               Колонки
             </Link>
-            <h1 className="text-base font-semibold">
-              Неделя {data.period.week_n} · {weekStartLabel} – {weekEndLabel}
-            </h1>
+            <WeekCascadePicker value={pickerWeekKey} onChange={onWeekChange} />
+            <span className="text-xs text-slate-500">
+              Неделя {data.period.week_n}
+            </span>
           </div>
           <div className="flex items-center gap-3 text-xs text-slate-500">
+            <select
+              value={effectiveDirection ?? ""}
+              onChange={(e) => onDirectionChange(e.target.value || null)}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+              title="Фильтр по направлению"
+            >
+              <option value="">Все направления</option>
+              {directions.map((d) => (
+                <option key={d.id} value={d.id}>{d.title}</option>
+              ))}
+            </select>
             {carryoverCount > 0 && (
               <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-amber-700">
                 <Repeat className="size-3" />
@@ -267,7 +359,10 @@ function DraggableTask({ task }: { task: Item }) {
       ref={setNodeRef}
       {...listeners}
       {...attributes}
-      style={transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined}
+      style={{
+        touchAction: "none",
+        ...(transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : {}),
+      }}
       className={`cursor-grab rounded-md border bg-white p-2 text-xs hover:bg-slate-50 ${
         isDone ? "border-slate-100 opacity-60" : "border-slate-200"
       }`}
