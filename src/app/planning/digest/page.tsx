@@ -14,7 +14,17 @@ interface DigestData {
   at_risk: PlanningInitiative[];
   early_warning: PlanningInitiative[];
   recent_changes: PlanningChangeLogEntry[];
-  blocked_deals: Array<{ id: string; title: string; stage: string; min_monthly_amount: number | null }>;
+  // P8: blocked_deals → blocked_clients (см. /api/planning/digest).
+  blocked_clients: Array<{
+    client_id: string;
+    client_name: string;
+    deal_id: string | null;
+    deal_title: string | null;
+    blocks_stage: "pilot" | "production" | null;
+    initiative_id: string;
+    initiative_title: string;
+    end_date: string | null;
+  }>;
   strategy_support: {
     strategy_hours: number;
     support_hours: number;
@@ -134,18 +144,22 @@ export default function DigestPage() {
         <Block title="Просроченные пилоты">
           <p className="text-3xl font-bold text-red-600">{data.overdue_pilots.length}</p>
           {data.overdue_pilots.slice(0, 3).map((p) => (
-            <Link href={`/planning/deals/${p.id}`} key={p.id} className="block text-xs text-blue-600 hover:underline truncate">
+            // P8: сделка теперь дочерняя клиенту; ссылка ведёт в карточку клиента
+            // не делается тут — id сделки не привязан к id клиента в этой выборке,
+            // показываем только title (UI пользователю достаточно).
+            <p key={p.id} className="text-xs text-slate-600 truncate">
               {p.title} <span className="text-slate-400">· до {p.pilot_planned_end_at.slice(0, 10)}</span>
-            </Link>
+            </p>
           ))}
         </Block>
 
-        <Block title="Заблокированные сделки">
-          <p className="text-3xl font-bold">{data.blocked_deals.length}</p>
-          {data.blocked_deals.slice(0, 3).map((d) => (
-            <Link href={`/planning/deals/${d.id}`} key={d.id} className="block text-xs text-blue-600 hover:underline truncate">
-              {d.title} <span className="text-slate-500">({d.stage})</span>
-            </Link>
+        <Block title="Заблокированные клиенты">
+          <p className="text-3xl font-bold">{data.blocked_clients.length}</p>
+          {data.blocked_clients.slice(0, 3).map((c) => (
+            <p key={`${c.initiative_id}:${c.client_id}:${c.deal_id ?? "*"}`} className="text-xs text-slate-600 truncate">
+              {c.client_name}{c.deal_title ? ` — ${c.deal_title}` : ""}
+              {c.blocks_stage ? <span className="text-slate-400"> ({c.blocks_stage})</span> : null}
+            </p>
           ))}
         </Block>
 

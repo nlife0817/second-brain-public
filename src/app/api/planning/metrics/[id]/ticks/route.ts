@@ -3,8 +3,8 @@ import { withAuth } from "@/lib/api-auth";
 import { listEffectiveMetricTicks, addMetricTick, getMetric } from "@/lib/db";
 
 // GET /api/planning/metrics/[id]/ticks
-// P5: для business-метрики с source='second_brain' возвращает синтезированные
-// ticks из planning_deal_payments. Для остальных — реальные строки из
+// P5+P8: для business-метрики с source='second_brain' возвращает синтезированные
+// ticks из client_deal_payments. Для остальных — реальные строки из
 // planning_metric_ticks.
 export const GET = withAuth(async (req: NextRequest, ctx) => {
   const { id } = await ctx.params;

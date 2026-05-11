@@ -5,13 +5,13 @@ import {
   updateInitiative,
   deleteInitiative,
   listInitiativeMetricLinks,
-  listInitiativeDealLinks,
+  listInitiativeClientBlocks,
   listInitiativeClientLinks,
   listInitiativeDependencies,
   linkInitiativeToMetric,
   unlinkInitiativeFromMetric,
-  linkInitiativeToDeal,
-  unlinkInitiativeFromDeal,
+  linkInitiativeToClientBlock,
+  unlinkInitiativeFromClientBlock,
   linkInitiativeToClient,
   unlinkInitiativeFromClient,
 } from "@/lib/db";
@@ -21,13 +21,20 @@ export const GET = withAuth(async (_req, ctx) => {
   const { id } = await ctx.params;
   const row = await getInitiative(id);
   if (!row) return NextResponse.json({ error: "not found" }, { status: 404 });
-  const [metrics, deals, clients, deps] = await Promise.all([
+  const [metrics, blocks, clients, deps] = await Promise.all([
     listInitiativeMetricLinks(id),
-    listInitiativeDealLinks(id),
+    listInitiativeClientBlocks(id),
     listInitiativeClientLinks(id),
     listInitiativeDependencies(id),
   ]);
-  return NextResponse.json({ ...row, linked_metrics: metrics, linked_deals: deals, linked_clients: clients, dependencies: deps });
+  // P8: linked_deals переименовано в client_blocks (см. миграцию 0035).
+  return NextResponse.json({
+    ...row,
+    linked_metrics: metrics,
+    client_blocks: blocks,
+    linked_clients: clients,
+    dependencies: deps,
+  });
 });
 
 export const PATCH = withAuth(async (req: NextRequest, ctx, user) => {
@@ -44,13 +51,18 @@ export const PATCH = withAuth(async (req: NextRequest, ctx, user) => {
     for (const mid of current.filter((m) => !next.includes(m))) await unlinkInitiativeFromMetric(id, mid);
     delete body.linked_metric_ids;
   }
-  if (Array.isArray(body.linked_deal_ids)) {
-    const current = (await listInitiativeDealLinks(id)).map((l) => l.deal_id);
-    const next = body.linked_deal_ids as string[];
-    for (const did of next.filter((d) => !current.includes(d))) await linkInitiativeToDeal(id, did, body.blocks_stage ?? null);
-    for (const did of current.filter((d) => !next.includes(d))) await unlinkInitiativeFromDeal(id, did);
-    delete body.linked_deal_ids;
-    delete body.blocks_stage;
+  // P8: client_blocks = массив {client_id, deal_id?, blocks_stage?}. Replace strategy
+  // (упрощает синхронизацию композитного ключа).
+  if (Array.isArray(body.client_blocks)) {
+    const current = await listInitiativeClientBlocks(id);
+    for (const cur of current) {
+      await unlinkInitiativeFromClientBlock(id, cur.client_id, cur.deal_id);
+    }
+    for (const b of body.client_blocks as Array<{ client_id: string; deal_id?: string | null; blocks_stage?: "pilot"|"production"|null }>) {
+      if (!b?.client_id) continue;
+      await linkInitiativeToClientBlock(id, b.client_id, b.deal_id ?? null, b.blocks_stage ?? null);
+    }
+    delete body.client_blocks;
   }
   if (Array.isArray(body.linked_client_ids)) {
     const current = (await listInitiativeClientLinks(id)).map((l) => l.client_id);

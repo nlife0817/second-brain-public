@@ -55,10 +55,11 @@ export const POST = withAuth(async (_req, ctx) => {
     }));
     const planSum = matched.reduce((s, v) => s + v, 0);
 
-    // Confirmed payments in window.
+    // P8: confirmed + expected payments в окне периода. Источник —
+    // client_deal_payments (бывш. planning_deal_payments).
     const fact = await prepare<{ total: number }>(`
       SELECT COALESCE(SUM(amount), 0) AS total
-      FROM planning_deal_payments
+      FROM client_deal_payments
       WHERE status IN ('confirmed', 'expected')
         AND paid_at >= ?::date AND paid_at <= ?::date
     `).get(period.start_date, period.end_date);

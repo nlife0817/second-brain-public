@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/api-auth";
-import { listInitiatives, createInitiative, linkInitiativeToMetric, linkInitiativeToDeal, linkInitiativeToClient } from "@/lib/db";
+import { listInitiatives, createInitiative, linkInitiativeToMetric, linkInitiativeToClientBlock, linkInitiativeToClient } from "@/lib/db";
 import { logChange } from "@/lib/planning-changelog";
 import type { InitiativeStatus, PlanningInitiative } from "@/types/planning";
 
@@ -29,8 +29,12 @@ export const POST = withAuth(async (req: NextRequest, _ctx, user) => {
   if (Array.isArray(body.linked_metric_ids)) {
     for (const mid of body.linked_metric_ids) await linkInitiativeToMetric(row.id, mid);
   }
-  if (Array.isArray(body.linked_deal_ids)) {
-    for (const did of body.linked_deal_ids) await linkInitiativeToDeal(row.id, did, body.blocks_stage ?? null);
+  // P8: client_blocks = массив {client_id, deal_id?, blocks_stage?}.
+  if (Array.isArray(body.client_blocks)) {
+    for (const b of body.client_blocks as Array<{ client_id: string; deal_id?: string | null; blocks_stage?: "pilot"|"production"|null }>) {
+      if (!b?.client_id) continue;
+      await linkInitiativeToClientBlock(row.id, b.client_id, b.deal_id ?? null, b.blocks_stage ?? null);
+    }
   }
   if (Array.isArray(body.linked_client_ids)) {
     for (const cid of body.linked_client_ids) await linkInitiativeToClient(row.id, cid);

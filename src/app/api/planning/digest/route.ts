@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api-auth";
 import { prepare } from "@/lib/sql";
-import { listMetrics, listMetricTargets, listInitiatives, listChangeLog, getPlanningSettings, listDeals, listMetricTicks } from "@/lib/db";
+import { listMetrics, listMetricTargets, listInitiatives, listChangeLog, getPlanningSettings, listMetricTicks, listBlockedClients } from "@/lib/db";
 import type { Item } from "@/types";
 
 export const GET = withAuth(async () => {
@@ -25,7 +25,8 @@ export const GET = withAuth(async () => {
   const earlyWarning = initiatives.filter((i) => i.status !== "done");
 
   const recentChanges = await listChangeLog({}, 20, 0);
-  const blockedDeals = (await listDeals({ stage: "pilot" })).concat(await listDeals({ stage: "lead" }));
+  // P8: blocked deals → blocked clients (заблокированные инициативами).
+  const blockedClients = await listBlockedClients();
 
   // Strategy / Support ratio (concept §6.6)
   // Strategy hours = SUM(estimate_hours) for non-support active initiatives
@@ -42,13 +43,15 @@ export const GET = withAuth(async () => {
   const targetRatio = Number(settings.strategy_support_ratio ?? 0.7);
   const ratioWarning = totalHours > 0 && (strategyRatio < 0.6 || strategyRatio > 0.8);
 
-  // Overdue pilots (concept §6.7.5)
-  const overduePilots = await prepare<{ id: string; title: string; pilot_planned_end_at: string }>(`
-    SELECT id, title, pilot_planned_end_at FROM planning_deals
-    WHERE stage = 'pilot' AND pilot_ended_at IS NULL
-      AND pilot_planned_end_at IS NOT NULL AND pilot_planned_end_at < now()
-    ORDER BY pilot_planned_end_at ASC LIMIT 10
-  `).all();
+  // P8: overdue pilots — теперь из client_deals по pilot_status_id (concept §6.7.5).
+  const overduePilots = settings.pilot_status_id
+    ? await prepare<{ id: string; title: string; pilot_planned_end_at: string }>(
+        `SELECT id, title, pilot_planned_end_at FROM client_deals
+         WHERE status_id = ? AND pilot_ended_at IS NULL
+           AND pilot_planned_end_at IS NOT NULL AND pilot_planned_end_at < now()
+         ORDER BY pilot_planned_end_at ASC LIMIT 10`
+      ).all(settings.pilot_status_id)
+    : [];
 
   // Kill criteria triggers — count of initiatives with non-empty kill_criteria
   // currently flagged via notifications_log within the last 7 days.
@@ -66,7 +69,7 @@ export const GET = withAuth(async () => {
     at_risk: atRisk,
     early_warning: earlyWarning,
     recent_changes: recentChanges,
-    blocked_deals: blockedDeals.slice(0, 10),
+    blocked_clients: blockedClients.slice(0, 10),
     strategy_support: {
       strategy_hours: strategyHours,
       support_hours: supportHours,

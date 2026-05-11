@@ -34,12 +34,11 @@ export function subscribePlanningRealtime(): () => void {
     "planning_metric_ticks",
     "planning_initiatives",
     "planning_initiative_metric_link",
-    "planning_initiative_deal_link",
+    "planning_initiative_client_block", // P8 (бывш. planning_initiative_deal_link)
     "planning_initiative_client_link",
-    "planning_initiative_dependency",
     "planning_period_initiative_link",
-    "planning_deals",
-    "planning_deal_payments",
+    "client_deals",                      // P8 (бывш. planning_deals)
+    "client_deal_payments",              // P8 (бывш. planning_deal_payments)
     "planning_change_log",
     "planning_settings",
     "planning_icp_segments",

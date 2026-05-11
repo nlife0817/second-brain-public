@@ -37,14 +37,15 @@ export const GET = withAuth(async (req: NextRequest, ctx) => {
   const target_ytd = tRow ? Number(tRow.s) : 0;
 
   // actual_ytd
-  // P5: для business + source='second_brain' источник — planning_deal_payments
-  // (SUM amount per год). Для остальных — planning_metric_ticks.
+  // P5+P8: для business + source='second_brain' источник — client_deal_payments
+  // (SUM amount per год, expected + confirmed, включая виртуальную выручку от
+  // pilot_started — пользователь подтвердил включение в метрику).
   const useDealPayments = metric.type === "business" && metric.source === "second_brain";
   let actual_ytd = 0;
   if (useDealPayments) {
     const aRow = await prepare<{ s: string }>(`
       SELECT COALESCE(SUM(amount), 0)::text AS s
-      FROM planning_deal_payments
+      FROM client_deal_payments
       WHERE paid_at <= ?
         AND EXTRACT(YEAR FROM paid_at) = ?
     `).get(today, year);

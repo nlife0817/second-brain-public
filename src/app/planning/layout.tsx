@@ -13,8 +13,8 @@ const NAV: Array<{ href: string; label: string }> = [
   { href: "/planning/this-quarter",  label: "Этот квартал" },
   { href: "/planning/roadmap",       label: "Roadmap" },
   { href: "/planning/digest",        label: "Сводка" },
-  { href: "/planning/deals",         label: "Сделки" },
-  { href: "/planning/blocked-deals", label: "Заблокированные" },
+  // P8: «Сделки» переехали в раздел Клиенты, а «Заблокированные сделки» —
+  // в Сводку (показ blocked_clients оттуда).
   { href: "/planning/changelog",     label: "Журнал" },
   { href: "/planning/settings",      label: "Настройки" },
 ];

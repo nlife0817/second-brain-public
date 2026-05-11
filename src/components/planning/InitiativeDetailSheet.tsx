@@ -7,10 +7,9 @@ import type {
   PlanningInitiative,
   PlanningInitiativeDependency,
   PlanningInitiativeMetricLink,
-  PlanningInitiativeDealLink,
+  PlanningInitiativeClientBlock,
   PlanningInitiativeClientLink,
   PlanningPeriod,
-  PlanningDeal,
   DealBlockingStage,
   InitiativeStatus,
   InitiativeType,
@@ -27,9 +26,19 @@ import { WeekGridPicker } from "./WeekGridPicker";
 
 interface DetailData extends PlanningInitiative {
   linked_metrics: PlanningInitiativeMetricLink[];
-  linked_deals: PlanningInitiativeDealLink[];
+  // P8: переименовано из linked_deals.
+  client_blocks: PlanningInitiativeClientBlock[];
   linked_clients: PlanningInitiativeClientLink[];
   dependencies: PlanningInitiativeDependency[];
+}
+
+// P8: shape для глобального селектора сделок (см. /api/clients/deals).
+interface DealWithContext {
+  id: string;
+  client_id: string;
+  client_name: string;
+  title: string;
+  status_name: string | null;
 }
 
 interface Props { initiativeId: string | null; onClose: () => void; }
@@ -52,7 +61,7 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
 
   const [data, setData] = useState<DetailData | null>(null);
   const [periods, setPeriods] = useState<PlanningPeriod[]>([]);
-  const [allDeals, setAllDeals] = useState<PlanningDeal[]>([]);
+  const [allDeals, setAllDeals] = useState<DealWithContext[]>([]);
   const [replanPending, setReplanPending] = useState<null | { patch: Partial<DetailData>; reasonHint?: string }>(null);
   const [loading, setLoading] = useState(false);
 
@@ -61,10 +70,12 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
   const load = useCallback(async () => {
     if (!initiativeId) return;
     setLoading(true);
+    // P8: тянем сделки из глобального /api/clients/deals — сделки теперь
+    // живут внутри клиентов, отдельной /api/planning/deals больше нет.
     const [iniRes, perRes, dealRes] = await Promise.all([
       fetch(`/api/planning/initiatives/${initiativeId}`),
       fetch(`/api/planning/periods`),
-      fetch(`/api/planning/deals`),
+      fetch(`/api/clients/deals`),
     ]);
     if (iniRes.ok) setData(await iniRes.json());
     if (perRes.ok) setPeriods(await perRes.json());
@@ -171,8 +182,8 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
     }, 100);
   };
 
-  // Auto reach = linked_deals + linked_clients.
-  const autoReach = (data?.linked_deals.length ?? 0) + (data?.linked_clients.length ?? 0);
+  // P8: Auto reach = client_blocks + linked_clients.
+  const autoReach = (data?.client_blocks.length ?? 0) + (data?.linked_clients.length ?? 0);
 
   // Spawn B' condition: status=killed OR last replan was scope_(under|over)estimated.
   const canSpawn = useMemo(() => {
@@ -381,28 +392,15 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                 }}
               />
 
-              {/* Linked deals — для client_blocker полный editor с blocks_stage,
-                  для остальных типов — multi-select без stage. */}
-              {data.type === "client_blocker" ? (
-                <DealLinksEditor
-                  links={data.linked_deals}
+              {/* P8: Blocked clients — для client_blocker таблица «клиент / сделка / stage».
+                  Для других типов инициатив блокировки клиентов обычно не нужны (RICE reach
+                  по-прежнему учитывает linked_clients). */}
+              {data.type === "client_blocker" && (
+                <ClientBlocksEditor
+                  blocks={data.client_blocks}
                   allDeals={allDeals}
                   initiativeId={data.id}
                   onChanged={load}
-                />
-              ) : (
-                <LinkedMulti
-                  title="Linked deals"
-                  allItems={allDeals.map((d) => ({ id: d.id, label: `${d.title} · ${d.stage}` }))}
-                  selectedIds={data.linked_deals.map((l) => l.deal_id)}
-                  onChange={async (next) => {
-                    await fetch(`/api/planning/initiatives/${data.id}`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ linked_deal_ids: next }),
-                    });
-                    load();
-                  }}
                 />
               )}
 
@@ -574,39 +572,42 @@ function LinkedMulti({ title, allItems, selectedIds, onChange }: {
 // Re-export the ExperimentDecision type usage to keep prop typing clean.
 export type { ExperimentDecision };
 
-// DealLinksEditor — таблица сделка/blocks_stage для client_blocker.
-// Replaces the generic LinkedMulti, чтобы пользователь видел и менял stage
-// (pilot / production) рядом с конкретной сделкой.
-function DealLinksEditor({
-  links, allDeals, initiativeId, onChanged,
+// P8: ClientBlocksEditor — заменяет DealLinksEditor. Связь привязана к
+// клиенту, с опциональной привязкой к конкретной сделке клиента и blocks_stage.
+function ClientBlocksEditor({
+  blocks, allDeals, initiativeId, onChanged,
 }: {
-  links: PlanningInitiativeDealLink[];
-  allDeals: PlanningDeal[];
+  blocks: PlanningInitiativeClientBlock[];
+  allDeals: DealWithContext[];
   initiativeId: string;
   onChanged: () => void | Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [picker, setPicker] = useState(false);
   const dealsById = useMemo(() => new Map(allDeals.map((d) => [d.id, d])), [allDeals]);
-  const usedIds = new Set(links.map((l) => l.deal_id));
-  const available = allDeals.filter((d) => !usedIds.has(d.id));
+  // Уже выбранные пары (client_id + deal_id|null) для исключения дублей.
+  const usedKey = (clientId: string, dealId: string | null) => `${clientId}::${dealId ?? "*"}`;
+  const used = new Set(blocks.map((b) => usedKey(b.client_id, b.deal_id)));
+  const available = allDeals.filter((d) => !used.has(usedKey(d.client_id, d.id)));
 
-  const setLink = async (dealId: string, stage: DealBlockingStage | null) => {
+  const setBlock = async (clientId: string, dealId: string | null, stage: DealBlockingStage | null) => {
     setBusy(true);
     try {
-      await fetch(`/api/planning/initiatives/${initiativeId}/deal-links`, {
+      await fetch(`/api/planning/initiatives/${initiativeId}/client-blocks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deal_id: dealId, blocks_stage: stage }),
+        body: JSON.stringify({ client_id: clientId, deal_id: dealId, blocks_stage: stage }),
       });
       await onChanged();
     } finally { setBusy(false); }
   };
 
-  const removeLink = async (dealId: string) => {
+  const removeBlock = async (clientId: string, dealId: string | null) => {
     setBusy(true);
     try {
-      await fetch(`/api/planning/initiatives/${initiativeId}/deal-links?deal_id=${encodeURIComponent(dealId)}`, {
+      const qs = new URLSearchParams({ client_id: clientId });
+      if (dealId) qs.set("deal_id", dealId);
+      await fetch(`/api/planning/initiatives/${initiativeId}/client-blocks?${qs}`, {
         method: "DELETE",
       });
       await onChanged();
@@ -616,7 +617,7 @@ function DealLinksEditor({
   return (
     <section className="rounded-lg border border-rose-200 bg-rose-50/30 p-3">
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-rose-700">Blocked deals</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-rose-700">Blocked clients</h3>
         <button
           type="button"
           onClick={() => setPicker((v) => !v)}
@@ -627,25 +628,27 @@ function DealLinksEditor({
         </button>
       </div>
 
-      {links.length === 0 ? (
+      {blocks.length === 0 ? (
         <p className="text-xs text-slate-500">
-          Link deals that are waiting for this initiative. RICE Reach counts them automatically.
+          Link clients (and optionally their specific deals) that are waiting for this
+          initiative. RICE Reach counts them automatically.
         </p>
       ) : (
         <ul className="grid gap-1.5">
-          {links.map((l) => {
-            const d = dealsById.get(l.deal_id);
+          {blocks.map((b) => {
+            const deal = b.deal_id ? dealsById.get(b.deal_id) : null;
+            const label = deal
+              ? `${deal.client_name} — ${deal.title || "сделка"}${deal.status_name ? ` · ${deal.status_name}` : ""}`
+              : `${b.client_id} (все сделки)`;
             return (
-              <li key={l.deal_id} className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm">
-                <span className="flex-1 truncate">
-                  {d?.title ?? l.deal_id} <span className="text-[11px] text-slate-400">· {d?.stage ?? "?"}</span>
-                </span>
+              <li key={`${b.client_id}::${b.deal_id ?? "*"}`} className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm">
+                <span className="flex-1 truncate" title={label}>{label}</span>
                 <select
-                  value={l.blocks_stage ?? ""}
-                  onChange={(e) => setLink(l.deal_id, (e.target.value || null) as DealBlockingStage | null)}
+                  value={b.blocks_stage ?? ""}
+                  onChange={(e) => setBlock(b.client_id, b.deal_id, (e.target.value || null) as DealBlockingStage | null)}
                   disabled={busy}
                   className="rounded-md border border-slate-300 px-1.5 py-0.5 text-xs"
-                  title="At which stage the deal is blocked by this initiative"
+                  title="At which stage the client is blocked by this initiative"
                 >
                   <option value="">blocks —</option>
                   <option value="pilot">pilot</option>
@@ -653,10 +656,10 @@ function DealLinksEditor({
                 </select>
                 <button
                   type="button"
-                  onClick={() => removeLink(l.deal_id)}
+                  onClick={() => removeBlock(b.client_id, b.deal_id)}
                   disabled={busy}
                   className="rounded-md p-1 text-slate-400 hover:bg-rose-100 hover:text-rose-700"
-                  title="Remove link"
+                  title="Remove block"
                 >
                   <X className="size-3.5" />
                 </button>
@@ -675,12 +678,15 @@ function DealLinksEditor({
               <button
                 key={d.id}
                 type="button"
-                onClick={() => { setLink(d.id, null); setPicker(false); }}
+                onClick={() => { setBlock(d.client_id, d.id, null); setPicker(false); }}
                 disabled={busy}
                 className="flex w-full items-center justify-between border-b border-slate-100 px-2 py-1.5 text-left text-sm last:border-b-0 hover:bg-slate-50"
               >
-                <span className="truncate">{d.title}</span>
-                <span className="text-[11px] text-slate-400">{d.stage}</span>
+                <span className="truncate">
+                  {d.client_name}
+                  {d.title ? ` — ${d.title}` : ""}
+                </span>
+                <span className="text-[11px] text-slate-400">{d.status_name ?? "—"}</span>
               </button>
             ))
           )}

@@ -32,6 +32,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { RelationsList } from "@/components/relations/RelationsList";
 import { CommentsList } from "@/components/comments/CommentsList";
+import { ClientDealsTab } from "./ClientDealsTab";
+import { ClientPaymentsTab } from "./ClientPaymentsTab";
+import { ClientLifecycleSummary } from "./ClientLifecycleSummary";
 
 import {
   Trash2,
@@ -296,6 +299,8 @@ function ClientDetailContent() {
   const [editingName, setEditingName] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [saving, setSaving] = useState(false);
+  // P8: табы внутри карточки клиента.
+  const [tab, setTab] = useState<"main" | "deals" | "payments">("main");
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   // Reset local state when client data changes (modal opens with new client)
@@ -626,6 +631,41 @@ function ClientDetailContent() {
 
       <Separator className="bg-slate-100" />
 
+      {/* P8: lifecycle summary — MRR + ближайший pilot end. */}
+      {client && <ClientLifecycleSummary clientId={client.id} />}
+
+      {/* P8: табы — Основное / Сделки / Платежи. */}
+      <div className="flex items-center gap-1 pt-2">
+        {(["main", "deals", "payments"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+              tab === t
+                ? "bg-slate-900 text-white"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            {t === "main" ? "Основное" : t === "deals" ? "Сделки" : "Платежи"}
+          </button>
+        ))}
+      </div>
+
+      {tab === "deals" && client && (
+        <div className="-mx-5 sm:-mx-6">
+          <ClientDealsTab clientId={client.id} />
+        </div>
+      )}
+
+      {tab === "payments" && client && (
+        <div className="-mx-5 sm:-mx-6">
+          <ClientPaymentsTab clientId={client.id} />
+        </div>
+      )}
+
+      {tab === "main" && <>
+
       {/* ====== PARAMS ====== */}
       <div className="pt-2">
         <div className="flex items-center gap-2 py-2">
@@ -790,6 +830,7 @@ function ClientDetailContent() {
           {saving ? "Сохранение..." : "Сохранить"}
         </Button>
       </div>
+      </>}
     </div>
   );
 
