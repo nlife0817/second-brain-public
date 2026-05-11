@@ -65,13 +65,17 @@
 - [x] `TaskLinkPicker` — модалка с поиском по title/why + чекбоксы для bulk-привязки.
 - [x] Store: `initiativeItemIds[ini]` индекс + `fetchInitiativeItems` / `linkItemsToInitiative` / `unlinkItemFromInitiative` с optimistic UI.
 
-### P4 — Метрика (источник факта и редактирование)
+### P4 — Метрика (источник факта и редактирование) — ✅ закрыта
 
-- [ ] Auto-distribute → только по неделям (52). Quarter/Month = SUM view
-- [ ] `MetricActualsTable` для metric.source=`manual` — editable «факт по периоду» с теми же горизонтами
-- [ ] Для `source=second_brain` для бизнес-метрик «Выручка» — server-side агрегатор на основе `planning_deal_payments` (status IN ('expected','confirmed'))
-- [ ] Variance indicator в drawer'е и на metric card: `Δ vs план YTD`
-- [ ] Кнопка «Перераспределить недобор» (manual, без автомата): открывает distribute dialog с pre-filled gap
+- [x] **Migration 0031 `metric_targets_weekly_only`** применена. Колонка `planning_metrics.annual_target` добавлена (годовая цель — input, не target-row). Не-week target-row удалены. Триггер `planning_metric_targets_week_only_trg` блокирует записи в quarter/month/year.
+- [x] **API targets — агрегация на лету**: `GET /api/planning/metrics/[id]/targets?period_type=quarter|month|week&year=YYYY`. Quarter/Month — SUM weeks внутри диапазона. Helper `listMetricTargetsForPeriodType` в `src/lib/db.ts`.
+- [x] **API targets PATCH — pro-rate**: при PATCH non-week period_id значение разносится пропорционально на week-children (`patchAggregatedTarget`). Edit квартала ⇒ автоматически разнесёт на его 13 недель.
+- [x] **API distribute — всегда weeks**: server-side всегда раскладывает на 52 недели независимо от `period_type` в body. Поддержка `skip_weeks_before` (ISO date) — пропустить ранние недели (для «Перераспределить недобор»).
+- [x] **MetricActualsTable**: 4-колоночная таблица «Период / План / Факт / Δ». Колонка «Факт» editable для `source='manual'`. Для cumulative — SUM ticks периода; для non-cumulative — LAST tick. Заменила `MetricTargetsTable` в drawer'е и на странице метрики.
+- [x] **API `/api/planning/metrics/[id]/actuals` PATCH** — items=[{period_id, value}]. Удаляет существующие ticks в диапазоне периода и вставляет один tick с `measured_at=end_date`, `source='manual'`.
+- [x] **Variance indicator на MetricCard**: `±Δ vs план YTD` под цифрой факта, цвет зависит от `direction_value` (up: green=positive, down: green=negative).
+- [x] **API `/api/planning/metrics/[id]/ytd`** — возвращает `{annual_target, target_ytd, actual_ytd, variance}`. Загружается в store `metricYtd` параллельно со sparklines.
+- [x] **«Перераспределить недобор»**: кнопка в drawer'е рядом с «Распределить». Открывает тот же AutoDistributeDialog, но с `skipWeeksBefore=today` и `initialYearTarget=annual − actual_ytd`. Никакого автомата — explicit user action.
 
 ### P5 — Сделки (entity внутри Clients)
 

@@ -49,6 +49,9 @@ interface PlanningStore {
   metricSparklines: Record<string, number[]>;
   metricLatest: Record<string, number | null>;
   metricTargets: Record<string, PlanningMetricTarget[]>;
+  // P4.5: YTD-агрегат per metric для variance indicator. Загружается через
+  // GET /api/planning/metrics/[id]/ytd одновременно со sparkline.
+  metricYtd: Record<string, { annual_target: number | null; target_ytd: number; actual_ytd: number; variance: number }>;
   // P3: items привязанные к инициативе через M:N (planning_item_initiative_link).
   // Ключ — initiative_id, значение — массив item_id. Подзадачи (parent_id != null)
   // приходят в этом же массиве, если parent привязан (backend listInitiativeItems).
@@ -75,6 +78,7 @@ interface PlanningStore {
   // Actions
   fetchAll: () => Promise<void>;
   fetchSparkline: (metricId: string) => Promise<void>;
+  fetchMetricYtd: (metricId: string) => Promise<void>;
   fetchMetricTargets: (metricId: string) => Promise<void>;
   fetchInitiativeItems: (initiativeId: string) => Promise<void>;
   linkItemsToInitiative: (initiativeId: string, itemIds: string[]) => Promise<void>;
@@ -118,6 +122,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   periods: [],
   metricSparklines: {},
   metricLatest: {},
+  metricYtd: {},
   metricTargets: {},
   initiativeItemIds: {},
   selectedDirectionId: null,
@@ -164,9 +169,12 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
       set({ initiativePeriodFilter: currentWeek?.id ?? null });
     }
 
-    // Batch-fetch sparkline data (latest 20 ticks) for every metric — used in MetricCard.
-    // Concept §20.2.1: «На карточке метрики — sparkline (Recharts mini LineChart 50×20)».
-    await Promise.all(metrics.map((m) => get().fetchSparkline(m.id)));
+    // Batch-fetch sparkline data (latest 20 ticks) + YTD-агрегат per metric.
+    // Concept §20.2.1: «На карточке метрики — sparkline + key numbers».
+    await Promise.all(metrics.flatMap((m) => [
+      get().fetchSparkline(m.id),
+      get().fetchMetricYtd(m.id),
+    ]));
   },
 
   fetchSparkline: async (metricId: string) => {
@@ -182,6 +190,15 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
         metricSparklines: { ...s.metricSparklines, [metricId]: values },
         metricLatest: { ...s.metricLatest, [metricId]: latest },
       }));
+    } catch { /* ignore */ }
+  },
+
+  fetchMetricYtd: async (metricId: string) => {
+    try {
+      const res = await fetch(`/api/planning/metrics/${metricId}/ytd`);
+      if (!res.ok) return;
+      const ytd = await res.json();
+      set((s) => ({ metricYtd: { ...s.metricYtd, [metricId]: ytd } }));
     } catch { /* ignore */ }
   },
 

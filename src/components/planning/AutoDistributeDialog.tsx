@@ -21,12 +21,23 @@ interface Props {
   /** Existing targets for these periods — used as the initial values when curve = "custom". */
   existingTargets: PlanningMetricTarget[];
   onApplied: () => void;
+  /**
+   * Режим «Перераспределить недобор»: если указан ISO-date — server раскладывает
+   * годовую цель ТОЛЬКО на недели начиная с этой даты (предыдущие пропускаются).
+   * Использовать когда часть года уже прошла и нужно разнести недобор на остаток.
+   */
+  skipWeeksBefore?: string;
+  /** Заголовок диалога — переопределяет дефолтный «Распределить годовую цель». */
+  title?: string;
+  /** Описание под заголовком — переопределяет дефолтный текст. */
+  subtitle?: React.ReactNode;
 }
 
 // Wrapper remounts Inner on open to reset internal draft state without useEffect on Inner.
 export function AutoDistributeDialog(props: Props) {
   if (!props.open) return null;
-  return <AutoDistributeDialogInner key={`${props.initialYearTarget ?? 0}-${props.periodType}-${props.periods.length}`} {...props} />;
+  const k = `${props.initialYearTarget ?? 0}-${props.periodType}-${props.periods.length}-${props.skipWeeksBefore ?? ""}`;
+  return <AutoDistributeDialogInner key={k} {...props} />;
 }
 
 const PERIOD_LABEL: Record<"quarter" | "month" | "week", string> = {
@@ -45,7 +56,8 @@ const CURVES: Array<{ value: DistributeCurve; label: string; hint: string }> = [
 ];
 
 function AutoDistributeDialogInner({
-  onClose, metricId, periodCount, periodType, year, initialYearTarget, unit, periods, existingTargets, onApplied,
+  onClose, metricId, periodCount, periodType, year, initialYearTarget, unit, periods, existingTargets,
+  onApplied, skipWeeksBefore, title, subtitle,
 }: Omit<Props, "open">) {
   const [curve, setCurve] = useState<DistributeCurve>("linear");
   const [yearTarget, setYearTarget] = useState<number>(initialYearTarget ?? 0);
@@ -103,7 +115,13 @@ function AutoDistributeDialogInner({
         const res = await fetch(`/api/planning/metrics/${metricId}/targets/distribute`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ curve, year_target: yearTarget, period_type: periodType, year }),
+          body: JSON.stringify({
+            curve,
+            year_target: yearTarget,
+            period_type: periodType,
+            year,
+            ...(skipWeeksBefore ? { skip_weeks_before: skipWeeksBefore } : {}),
+          }),
         });
         if (!res.ok) {
           const errJson = await res.json().catch(() => null);
@@ -130,10 +148,15 @@ function AutoDistributeDialogInner({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="flex max-h-[90vh] w-[760px] flex-col rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="shrink-0 border-b border-slate-200 p-5">
-          <h2 className="text-lg font-semibold">Распределить цель по {PERIOD_LABEL[periodType]}ам</h2>
+          <h2 className="text-lg font-semibold">{title ?? "Распределить годовую цель"}</h2>
           <p className="mt-1 text-xs text-slate-500">
-            {periodCount} {PERIOD_LABEL[periodType]}(а/ев) будут обновлены одной операцией.
-            После применения каждую ячейку можно поправить inline.
+            {subtitle ?? (
+              <>
+                Цель раскладывается по неделям года выбранной кривой. Кварталы и месяцы — это
+                сумма соответствующих недель. После применения видно агрегат по «{PERIOD_LABEL[periodType]}ам»;
+                каждую ячейку можно править — изменения пропорционально разносятся на недели.
+              </>
+            )}
           </p>
         </div>
 

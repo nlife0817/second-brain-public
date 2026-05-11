@@ -36,6 +36,7 @@ export function MetricColumn() {
   const createMetric = usePlanningStore((s) => s.createMetric);
   const sparklines = usePlanningStore((s) => s.metricSparklines);
   const latest = usePlanningStore((s) => s.metricLatest);
+  const ytdMap = usePlanningStore((s) => s.metricYtd);
   const collapsed = usePlanningStore((s) => s.collapsedColumns.includes("metrics"));
   const toggleCollapse = usePlanningStore((s) => s.toggleColumnCollapsed);
 
@@ -178,6 +179,7 @@ export function MetricColumn() {
                 onOpenDetail={() => openMetricDetail(m.id)}
                 sparkline={sparklines[m.id]}
                 latestValue={latest[m.id] ?? null}
+                ytd={ytdMap[m.id]}
               />
             ))}
           </div>

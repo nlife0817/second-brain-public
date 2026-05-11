@@ -88,6 +88,9 @@ export interface PlanningMetric {
   unit: string | null;
   direction_value: MetricDirection | null;
   baseline: number | null;
+  // P4: годовая цель — input, который пользователь задаёт до distribute.
+  // Хранится здесь, а не как target-row с period.type='year'.
+  annual_target: number | null;
   source: MetricSource | null;
   source_id: string | null;
   is_cumulative: boolean;
@@ -300,6 +303,7 @@ export interface CreateMetricInput {
   unit?: string | null;
   direction_value?: MetricDirection | null;
   baseline?: number | null;
+  annual_target?: number | null;
   source?: MetricSource | null;
   source_id?: string | null;
   is_cumulative?: boolean;
@@ -312,6 +316,7 @@ export interface UpdateMetricInput {
   unit?: string | null;
   direction_value?: MetricDirection | null;
   baseline?: number | null;
+  annual_target?: number | null;
   source?: MetricSource | null;
   source_id?: string | null;
   is_cumulative?: boolean;

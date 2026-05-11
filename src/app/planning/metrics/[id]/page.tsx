@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, Settings as SettingsIcon } from "lucide-react";
 import { MetricChart } from "@/components/planning/MetricChart";
-import { MetricTargetsTable } from "@/components/planning/MetricTargetsTable";
+import { MetricActualsTable } from "@/components/planning/MetricActualsTable";
 import { AutoDistributeDialog } from "@/components/planning/AutoDistributeDialog";
 import { DeliveryMetricMatrix } from "@/components/planning/DeliveryMetricMatrix";
 import { MetricSettingsPanel } from "@/components/planning/MetricSettingsPanel";
@@ -40,18 +40,20 @@ export default function MetricPage() {
   const year = new Date().getFullYear();
 
   const fetchAll = useCallback(async () => {
-    const [m, t, ti] = await Promise.all([
+    const [m, ti] = await Promise.all([
       fetch(`/api/planning/metrics/${id}`).then((r) => r.ok ? r.json() : null),
-      fetch(`/api/planning/metrics/${id}/targets`).then((r) => r.ok ? r.json() : []),
       fetch(`/api/planning/metrics/${id}/ticks?limit=200`).then((r) => r.ok ? r.json() : []),
     ]);
-    setMetric(m); setTargets(t); setTicks(ti);
+    setMetric(m); setTicks(ti);
     if (m) {
       const dirParam = m.direction_id ?? "null";
-      const [pSel, pYear] = await Promise.all([
+      // P4: targets — с server-side агрегацией для выбранного horizon.
+      const [t, pSel, pYear] = await Promise.all([
+        fetch(`/api/planning/metrics/${id}/targets?period_type=${periodType}&year=${year}`).then((r) => r.ok ? r.json() : []),
         fetch(`/api/planning/periods?type=${periodType}&year=${year}&direction_id=${dirParam}`).then((r) => r.ok ? r.json() : []),
         fetch(`/api/planning/periods?type=year&year=${year}&direction_id=${dirParam}`).then((r) => r.ok ? r.json() : []),
       ]);
+      setTargets(t);
       setPeriods(pSel);
       setYearPeriod(pYear[0] ?? null);
     }
@@ -77,13 +79,14 @@ export default function MetricPage() {
   }, [metric, periods.length, yearPeriod, year, fetchAll]);
 
   const saveYearTarget = async (raw: string) => {
-    if (!metric || !yearPeriod) return;
+    if (!metric) return;
     const value = Number(raw);
     if (!Number.isFinite(value)) return;
-    const res = await fetch(`/api/planning/metrics/${id}/targets`, {
+    // P4: годовая цель — в metric.annual_target, не в target-row.
+    const res = await fetch(`/api/planning/metrics/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: [{ metric_id: id, period_id: yearPeriod.id, target_value: value }] }),
+      body: JSON.stringify({ annual_target: value }),
     });
     if (!res.ok) { toast.error("Не удалось сохранить годовую цель"); return; }
     fetchAll();
@@ -91,7 +94,9 @@ export default function MetricPage() {
 
   if (!metric) return <div className="p-6 text-sm text-slate-500">Загрузка…</div>;
 
-  const yearTarget = Number(targets.find((t) => yearPeriod && t.period_id === yearPeriod.id)?.target_value ?? 0);
+  // P4: годовая цель из колонки annual_target. Targets — теперь только week-level
+  // (загружаются с агрегацией для quarter/month при чтении через ?period_type=).
+  const yearTarget = Number(metric.annual_target ?? 0);
   const factSum = ticks.reduce((s, t) => s + Number(t.value), 0);
   const latestFact = ticks.length > 0
     ? Number([...ticks].sort((a, b) => b.measured_at.localeCompare(a.measured_at))[0].value)
@@ -160,7 +165,6 @@ export default function MetricPage() {
       )}
 
       {/* Periods are auto-ensured silently on mount; init-year UI removed (PLAN_PLANNING_REWORK P0). */}
-      <>
           {/* Year target — primary KPI входная точка */}
           {yearPeriod && (
             <div className="mb-4 rounded-xl border border-slate-200 p-4">
@@ -271,10 +275,9 @@ export default function MetricPage() {
                 Подгружаем периоды…
               </div>
             ) : (
-              <MetricTargetsTable metric={metric} periods={periods} targets={targets} onChanged={fetchAll} />
+              <MetricActualsTable metric={metric} periods={periods} targets={targets} ticks={ticks} onChanged={fetchAll} />
             )}
           </div>
-        </>
 
       <AutoDistributeDialog
         open={openDistribute}

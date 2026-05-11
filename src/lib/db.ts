@@ -1803,8 +1803,8 @@ const PLANNING_PERIOD_UPDATE_FIELDS = [
   "start_date", "end_date", "capacity_hours", "metric_targets_snapshot",
 ] as const;
 const PLANNING_METRIC_UPDATE_FIELDS = [
-  "title", "type", "unit", "direction_value", "baseline", "source", "source_id",
-  "is_cumulative", "is_emergent", "position",
+  "title", "type", "unit", "direction_value", "baseline", "annual_target",
+  "source", "source_id", "is_cumulative", "is_emergent", "position",
 ] as const;
 const PLANNING_INITIATIVE_UPDATE_FIELDS = [
   "title", "type", "description", "jtbd", "due_period_id",
@@ -1949,14 +1949,15 @@ export async function getMetric(id: string): Promise<PlanningMetric | undefined>
 export async function createMetric(input: CreateMetricInput): Promise<PlanningMetric> {
   const row = await prepare<PlanningMetric>(`
     INSERT INTO planning_metrics (
-      direction_id, title, type, unit, direction_value, baseline,
+      direction_id, title, type, unit, direction_value, baseline, annual_target,
       source, source_id, is_cumulative, is_emergent, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING *
   `).get(
     input.direction_id ?? null,
     input.title, input.type,
     input.unit ?? null, input.direction_value ?? null, input.baseline ?? null,
+    input.annual_target ?? null,
     input.source ?? null, input.source_id ?? null,
     input.is_cumulative ?? true, input.is_emergent ?? false,
     input.position ?? 0,
@@ -1983,6 +1984,121 @@ export async function listMetricTargets(metricId: string): Promise<PlanningMetri
   return await prepare<PlanningMetricTarget>(
     "SELECT * FROM planning_metric_targets WHERE metric_id = ? ORDER BY created_at ASC"
   ).all(metricId);
+}
+
+/**
+ * Aggregated targets view: для квартала/месяца/года синтезируем строки из
+ * суммы недель, перекрывающих диапазон периода. Для type='week' возвращаем
+ * реальные строки. Используется P4 — таргеты хранятся только на неделях.
+ *
+ * Возвращаемые «строки» для агрегированных периодов имеют формат
+ * PlanningMetricTarget, но `id` синтетический (`agg:<period_id>`), а
+ * `target_value` — сумма week-таргетов внутри [start_date, end_date]
+ * соответствующего period.
+ */
+export async function listMetricTargetsForPeriodType(
+  metricId: string,
+  periodType: "year" | "quarter" | "month" | "week",
+  year: number,
+  directionId: string | null,
+): Promise<PlanningMetricTarget[]> {
+  if (periodType === "week") {
+    // Реальные week-row из БД, отфильтрованные по году+направлению через JOIN.
+    return await prepare<PlanningMetricTarget>(`
+      SELECT t.*
+      FROM planning_metric_targets t
+      JOIN planning_periods p ON p.id = t.period_id
+      WHERE t.metric_id = ?
+        AND p.type = 'week'
+        AND p.year = ?
+        AND p.direction_id IS NOT DISTINCT FROM ?
+      ORDER BY p.start_date ASC
+    `).all(metricId, year, directionId);
+  }
+
+  // Aggregated: для каждого периода нужной агрегации находим week-targets
+  // которые попадают в его диапазон (по start_date недели).
+  type AggRow = {
+    period_id: string;
+    metric_id: string;
+    target_value: string;
+    created_at: string;
+    updated_at: string;
+  };
+  const rows = await prepare<AggRow>(`
+    SELECT
+      agg.id AS period_id,
+      ?::uuid AS metric_id,
+      COALESCE(SUM(wt.target_value), 0)::numeric AS target_value,
+      MIN(wt.created_at) AS created_at,
+      MAX(wt.updated_at) AS updated_at
+    FROM planning_periods agg
+    LEFT JOIN planning_periods wk
+      ON wk.type = 'week'
+      AND wk.direction_id IS NOT DISTINCT FROM agg.direction_id
+      AND wk.start_date >= agg.start_date
+      AND wk.end_date <= agg.end_date
+    LEFT JOIN planning_metric_targets wt
+      ON wt.period_id = wk.id
+      AND wt.metric_id = ?
+    WHERE agg.type = ?
+      AND agg.year = ?
+      AND agg.direction_id IS NOT DISTINCT FROM ?
+    GROUP BY agg.id, agg.start_date
+    ORDER BY agg.start_date ASC
+  `).all(metricId, metricId, periodType, year, directionId);
+
+  return rows.map((r) => ({
+    id: `agg:${r.period_id}`,
+    metric_id: r.metric_id,
+    period_id: r.period_id,
+    target_value: r.target_value,
+    created_at: r.created_at ?? new Date().toISOString(),
+    updated_at: r.updated_at ?? new Date().toISOString(),
+  }));
+}
+
+/**
+ * Для patch'а агрегированного period (quarter/month): пропорционально разносит
+ * `newTotal` на week-children, сохраняя их относительные доли. Если у периода
+ * ещё нет week-таргетов — раскладывает равномерно.
+ */
+export async function patchAggregatedTarget(
+  metricId: string,
+  aggregatePeriodId: string,
+  newTotal: number,
+): Promise<PlanningMetricTarget[]> {
+  // 1) Найти week-periods внутри aggregate
+  const weeks = await prepare<{ id: string }>(`
+    SELECT wk.id
+    FROM planning_periods agg
+    JOIN planning_periods wk
+      ON wk.type = 'week'
+      AND wk.direction_id IS NOT DISTINCT FROM agg.direction_id
+      AND wk.start_date >= agg.start_date
+      AND wk.end_date <= agg.end_date
+    WHERE agg.id = ?
+    ORDER BY wk.start_date ASC
+  `).all(aggregatePeriodId);
+  if (weeks.length === 0) return [];
+
+  // 2) Текущие week-targets
+  const current = await prepare<{ period_id: string; target_value: string }>(`
+    SELECT period_id, target_value
+    FROM planning_metric_targets
+    WHERE metric_id = ?
+      AND period_id = ANY(?::uuid[])
+  `).all(metricId, weeks.map((w) => w.id));
+  const byPeriod = new Map(current.map((c) => [c.period_id, Number(c.target_value)]));
+  const currentSum = weeks.reduce((s, w) => s + (byPeriod.get(w.id) ?? 0), 0);
+
+  // 3) Пропорциональное переразмещение. Если currentSum=0 — равномерно.
+  const items: UpsertMetricTargetInput[] = weeks.map((w) => {
+    const old = byPeriod.get(w.id) ?? 0;
+    const share = currentSum > 0 ? old / currentSum : 1 / weeks.length;
+    return { metric_id: metricId, period_id: w.id, target_value: newTotal * share };
+  });
+  return await bulkUpsertMetricTargets(items);
 }
 
 export async function bulkUpsertMetricTargets(

@@ -16,12 +16,17 @@ import { X, ExternalLink, Repeat } from "lucide-react";
 import { toast } from "sonner";
 import { usePlanningStore } from "@/lib/planning-store";
 import { MetricSettingsPanel } from "./MetricSettingsPanel";
-import { MetricTargetsTable } from "./MetricTargetsTable";
+import { MetricActualsTable } from "./MetricActualsTable";
 import { AutoDistributeDialog } from "./AutoDistributeDialog";
 import { DeliveryMetricMatrix } from "./DeliveryMetricMatrix";
 import { InlineTextField } from "./InlineTextField";
 import { formatMetricValue, formatPeriodFull } from "@/lib/planning-format";
-import type { PlanningMetric, PlanningMetricTarget, PlanningPeriod } from "@/types/planning";
+import type {
+  PlanningMetric,
+  PlanningMetricTarget,
+  PlanningMetricTick,
+  PlanningPeriod,
+} from "@/types/planning";
 
 interface Props {
   metricId: string | null;
@@ -67,22 +72,29 @@ function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClo
   const year = new Date().getFullYear();
 
   const [targets, setTargets] = useState<PlanningMetricTarget[]>([]);
+  const [ticks, setTicks] = useState<PlanningMetricTick[]>([]);
   const [periods, setPeriods] = useState<PlanningPeriod[]>([]);
   const [yearPeriod, setYearPeriod] = useState<PlanningPeriod | null>(null);
   const [horizon, setHorizon] = useState<"quarter" | "month" | "week">("quarter");
   const [showSettings, setShowSettings] = useState<boolean>(autoOpenSettings);
   const [openDistribute, setOpenDistribute] = useState(false);
+  // P4.6: «Перераспределить недобор» — открывает тот же диалог, но с
+  // skip_weeks_before=today + yearTarget = annual_target - actual_ytd.
+  const [openRedistribute, setOpenRedistribute] = useState(false);
   const ensureTriedRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!metric) return;
     const dirParam = metric.direction_id ?? "null";
-    const [t, pSel, pYear] = await Promise.all([
-      fetch(`/api/planning/metrics/${metric.id}/targets`).then((r) => r.ok ? r.json() : []),
+    // P4: targets — с server-side агрегацией; ticks — для колонки «Факт».
+    const [t, tk, pSel, pYear] = await Promise.all([
+      fetch(`/api/planning/metrics/${metric.id}/targets?period_type=${horizon}&year=${year}`).then((r) => r.ok ? r.json() : []),
+      fetch(`/api/planning/metrics/${metric.id}/ticks?limit=500`).then((r) => r.ok ? r.json() : []),
       fetch(`/api/planning/periods?type=${horizon}&year=${year}&direction_id=${dirParam}`).then((r) => r.ok ? r.json() : []),
       fetch(`/api/planning/periods?type=year&year=${year}&direction_id=${dirParam}`).then((r) => r.ok ? r.json() : []),
     ]);
     setTargets(t);
+    setTicks(tk);
     setPeriods(pSel);
     setYearPeriod(pYear[0] ?? null);
   }, [metric, horizon, year]);
@@ -111,20 +123,14 @@ function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClo
 
   if (!metric) return null;
 
-  const yearTarget = Number(targets.find((t) => yearPeriod && t.period_id === yearPeriod.id)?.target_value ?? 0);
+  // P4: годовая цель — input, хранится в metric.annual_target, не как target-row.
+  const yearTarget = Number(metric.annual_target ?? 0);
   const isDelivery = metric.type === "delivery";
 
   const saveYearTarget = async (raw: string) => {
-    if (!yearPeriod) return;
     const value = Number(raw);
     if (!Number.isFinite(value)) return;
-    const res = await fetch(`/api/planning/metrics/${metric.id}/targets`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: [{ metric_id: metric.id, period_id: yearPeriod.id, target_value: value }] }),
-    });
-    if (!res.ok) { toast.error("Не удалось сохранить годовую цель"); return; }
-    void load();
+    await updateMetric(metric.id, { annual_target: value });
   };
 
   return (
@@ -200,10 +206,19 @@ function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClo
                 onClick={() => setOpenDistribute(true)}
                 disabled={periods.length === 0 || yearTarget <= 0}
                 className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-30"
-                title="Разнести годовую цель по выбранному горизонту"
+                title="Разнести годовую цель по всем 52 неделям"
               >
                 <Repeat className="size-3.5" />
                 Распределить
+              </button>
+              <button
+                onClick={() => setOpenRedistribute(true)}
+                disabled={periods.length === 0 || yearTarget <= 0}
+                className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-30"
+                title="Разнести остаток годовой цели на оставшиеся недели (без автоматического catch-up по концепту E)"
+              >
+                <Repeat className="size-3.5" />
+                Перераспределить недобор
               </button>
             </div>
             {yearTarget > 0 && (
@@ -238,10 +253,16 @@ function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClo
             <div className="mt-3">
               {periods.length === 0 ? (
                 <p className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-500">
-                  Нет периодов типа «{horizon}» на {year} — инициализируйте год выше.
+                  Подгружаем периоды…
                 </p>
               ) : (
-                <MetricTargetsTable metric={metric} periods={periods} targets={targets} onChanged={load} />
+                <MetricActualsTable
+                  metric={metric}
+                  periods={periods}
+                  targets={targets}
+                  ticks={ticks}
+                  onChanged={load}
+                />
               )}
             </div>
           </div>
@@ -289,6 +310,29 @@ function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClo
           periods={periods}
           existingTargets={targets}
           onApplied={() => { void load(); }}
+        />
+        {/* P4.6: «Перераспределить недобор» — тот же диалог, но с
+            skip_weeks_before=today; initialYearTarget = annual − actual_ytd. */}
+        <AutoDistributeDialog
+          open={openRedistribute}
+          onClose={() => setOpenRedistribute(false)}
+          metricId={metric.id}
+          periodCount={periods.length}
+          periodType={horizon}
+          year={year}
+          initialYearTarget={Math.max(0, yearTarget - ticks.reduce((s, t) => s + Number(t.value), 0))}
+          unit={metric.unit}
+          periods={periods}
+          existingTargets={targets}
+          onApplied={() => { void load(); }}
+          skipWeeksBefore={new Date().toISOString().slice(0, 10)}
+          title="Перераспределить недобор"
+          subtitle={
+            <>
+              Остаток годовой цели (план минус факт YTD) раскладывается по оставшимся неделям года
+              выбранной кривой. Предыдущие недели не трогаются. Если кривая «Ручной» — заполните вручную.
+            </>
+          }
         />
       </div>
     </div>

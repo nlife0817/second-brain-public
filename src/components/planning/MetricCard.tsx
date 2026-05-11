@@ -16,6 +16,8 @@ interface Props {
   onOpenDetail?: () => void;
   sparkline?: number[];
   latestValue?: number | null;
+  /** P4.5: YTD-агрегат для variance indicator под фактом. */
+  ytd?: { annual_target: number | null; target_ytd: number; actual_ytd: number; variance: number };
 }
 
 const TYPE_LABEL: Record<PlanningMetric["type"], string> = {
@@ -30,9 +32,19 @@ const TYPE_TONE: Record<PlanningMetric["type"], string> = {
   delivery: "bg-violet-50 text-violet-700",
 };
 
-function MetricCardBase({ metric, selected, onSelect, onOpenDetail, sparkline, latestValue }: Props) {
+function MetricCardBase({ metric, selected, onSelect, onOpenDetail, sparkline, latestValue, ytd }: Props) {
   const updateMetric = usePlanningStore((s) => s.updateMetric);
   const series = (sparkline ?? []).map((v, i) => ({ i, v }));
+
+  // Variance vs план YTD: positive = «лучше плана» (с учётом direction_value).
+  const variance = ytd?.variance ?? null;
+  const targetYtd = ytd?.target_ytd ?? null;
+  const hasVariance = variance !== null && targetYtd !== null && targetYtd > 0;
+  const isImproving = variance === null
+    ? null
+    : metric.direction_value === "down" ? variance <= 0 : variance >= 0;
+  const varianceColor = isImproving === null ? "text-slate-400"
+    : isImproving ? "text-emerald-600" : "text-red-600";
 
   // Тренд для цвета линии: вверх или вниз относительно baseline (если есть)
   // и относительно direction_value (up/down — что считать «хорошо»).
@@ -100,6 +112,14 @@ function MetricCardBase({ metric, selected, onSelect, onOpenDetail, sparkline, l
           <span className="text-sm font-semibold tabular-nums text-slate-800">
             {formatMetricValue(latestValue ?? metric.baseline, metric.unit)}
           </span>
+          {hasVariance && (
+            <span
+              className={`text-[10px] tabular-nums ${varianceColor}`}
+              title={`План YTD: ${formatMetricValue(targetYtd!, metric.unit)} · Факт YTD: ${formatMetricValue(ytd!.actual_ytd, metric.unit)}`}
+            >
+              {variance! > 0 ? "+" : ""}{formatMetricValue(variance!, metric.unit)} vs план YTD
+            </span>
+          )}
         </div>
         {series.length > 1 ? (
           <div className="h-5" style={{ width: 50 }}>
