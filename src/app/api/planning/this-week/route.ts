@@ -8,10 +8,16 @@ import {
   listInitiatives,
   getPlanningSettings,
   listPeriods,
+  getAllDevelopmentParticipants,
+  listEffectiveCapacities,
 } from "@/lib/db";
 import { isoWeek, parseWeekKey, weekStartDate } from "@/lib/iso-week";
-import type { Item } from "@/types";
-import type { PlanningPeriod, PlanningInitiativeMetricLink } from "@/types/planning";
+import type { Item, DevelopmentParticipant } from "@/types";
+import type {
+  PlanningPeriod,
+  PlanningInitiativeMetricLink,
+  EffectiveCapacity,
+} from "@/types/planning";
 
 function fmtDate(d: Date): string { return d.toISOString().slice(0, 10); }
 
@@ -133,6 +139,10 @@ export const GET = withAuth(async (req) => {
     ).all();
   }
 
+  // P3: участники + их effective capacity на эту неделю.
+  const participants: DevelopmentParticipant[] = await getAllDevelopmentParticipants();
+  const effectiveCapacities: EffectiveCapacity[] = await listEffectiveCapacities(targetPeriod.id);
+
   return NextResponse.json({
     period: targetPeriod,
     settings,
@@ -143,5 +153,7 @@ export const GET = withAuth(async (req) => {
     initiatives,
     initiative_metric_links: initiativeMetricLinks,
     direction_id: directionId,
+    participants,
+    effective_capacities: effectiveCapacities,
   });
 });

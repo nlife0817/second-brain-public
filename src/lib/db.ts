@@ -69,6 +69,8 @@ const ITEM_UPDATE_FIELDS = [
   // Planning V3 (0023 + 0024)
   "initiative_id", "linked_deal_id", "planned_period_id", "planned_date",
   "why", "replan_reason", "is_carryover",
+  // P3 (0039)
+  "assignee_participant_id",
 ] as const;
 
 const TAG_UPDATE_FIELDS = ["name", "color", "position"] as const;
@@ -284,14 +286,16 @@ export async function createItem(
   ).get(item.status, item.parent_id ?? null);
 
   await prepare(`
-    INSERT INTO items (id, title, description, type, status, priority, category, source, development_stage, due_date, due_time, estimated_minutes, position, parent_id, recurring_series_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO items (id, title, description, type, status, priority, category, source, development_stage, due_date, due_time, estimated_minutes, position, parent_id, recurring_series_id, assignee_participant_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     item.id, item.title, item.description, item.type, item.status,
     item.priority, item.category, item.source ?? "system", item.development_stage ?? null,
     item.due_date ?? null, item.due_time ?? null, item.estimated_minutes ?? null,
     item.position ?? maxPos?.next_pos ?? 0, item.parent_id ?? null,
-    item.recurring_series_id ?? null, now, now
+    item.recurring_series_id ?? null,
+    item.assignee_participant_id ?? null,
+    now, now
   );
   return (await getItemById(item.id))!;
 }

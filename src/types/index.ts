@@ -94,6 +94,9 @@ export interface Item {
   why?: string | null;
   replan_reason?: import("./planning").ReplanReason | null;
   is_carryover?: boolean;
+  // P3: исполнитель задачи. Триггер set_default_assignee проставляет owner-id
+  // при INSERT, если null. Может быть null после удаления участника (ON DELETE SET NULL).
+  assignee_participant_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -183,6 +186,7 @@ export interface CreateItemPayload {
   planned_period_id?: string | null;
   planned_date?: string | null;
   why?: string | null;
+  assignee_participant_id?: string | null;
 }
 
 export interface UpdateItemPayload {
@@ -209,6 +213,7 @@ export interface UpdateItemPayload {
   why?: string | null;
   replan_reason?: import("./planning").ReplanReason | null;
   is_carryover?: boolean;
+  assignee_participant_id?: string | null;
 }
 
 export interface Filters {
