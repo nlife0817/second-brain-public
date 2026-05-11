@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -126,6 +126,14 @@ function saveControls(c: BacklogControls): void {
 }
 
 export default function ThisWeekPage() {
+  return (
+    <Suspense fallback={null}>
+      <ThisWeekPageInner />
+    </Suspense>
+  );
+}
+
+function ThisWeekPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const directions = usePlanningStore((s) => s.directions);
