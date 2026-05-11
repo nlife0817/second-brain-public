@@ -30,8 +30,8 @@ export function WeekCascadePicker({ value, onChange, yearsAround = 5, className 
   const [open, setOpen] = useState(false);
 
   const parsed = parseWeekKey(value) ?? isoWeek(new Date());
-  const selectedYear = "year" in parsed ? parsed.year : parsed.year;
-  const selectedWeek = "week" in parsed ? parsed.week : parsed.week;
+  const selectedYear = parsed.year;
+  const selectedWeek = parsed.week;
   const selectedQuarter = quarterOfWeek(selectedYear, selectedWeek);
   const selectedMonth = monthOfWeek(selectedYear, selectedWeek);
 
