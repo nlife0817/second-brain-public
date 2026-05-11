@@ -47,6 +47,35 @@ export default function DealDetailPage() {
     fetchAll();
   };
 
+  const togglePaymentStatus = async (paymentId: string, current: "expected" | "confirmed") => {
+    const next = current === "expected" ? "confirmed" : "expected";
+    const res = await fetch(`/api/planning/deals/${id}/payments`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: paymentId, status: next }),
+    });
+    if (!res.ok) { toast.error("Не удалось"); return; }
+    fetchAll();
+  };
+
+  const updatePaymentAmount = async (paymentId: string, amount: number) => {
+    const res = await fetch(`/api/planning/deals/${id}/payments`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: paymentId, amount }),
+    });
+    if (!res.ok) { toast.error("Не удалось"); return; }
+    fetchAll();
+  };
+
+  const deletePayment = async (paymentId: string) => {
+    if (!confirm("Удалить платёж?")) return;
+    const res = await fetch(`/api/planning/deals/${id}/payments`, {
+      method: "DELETE", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: paymentId }),
+    });
+    if (!res.ok) { toast.error("Не удалось"); return; }
+    fetchAll();
+  };
+
   if (!deal) return <div className="p-6 text-sm text-slate-500">Загрузка…</div>;
 
   return (
@@ -83,18 +112,49 @@ export default function DealDetailPage() {
               <th className="px-3 py-2">Дата</th>
               <th className="px-3 py-2 text-right">Сумма</th>
               <th className="px-3 py-2">Статус</th>
+              <th className="px-3 py-2 text-right">Действия</th>
             </tr>
           </thead>
           <tbody>
-            {payments.length === 0 && <tr><td colSpan={3} className="px-3 py-4 text-center text-slate-400">Платежей нет</td></tr>}
+            {payments.length === 0 && <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">Платежей нет</td></tr>}
             {payments.map((p) => (
               <tr key={p.id} className="border-t border-slate-100">
                 <td className="px-3 py-2">{p.paid_at}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{Number(p.amount).toLocaleString("ru-RU")}</td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  <input
+                    type="number"
+                    defaultValue={Number(p.amount)}
+                    onBlur={(e) => {
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v) && v !== Number(p.amount)) {
+                        void updatePaymentAmount(p.id, v);
+                      }
+                    }}
+                    className="w-32 rounded-md border border-transparent px-1 py-0.5 text-right hover:border-slate-300 focus:border-slate-300"
+                  />
+                </td>
                 <td className="px-3 py-2">
-                  <span className={`rounded-md px-2 py-0.5 text-xs ${p.status === "confirmed" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                  <button
+                    onClick={() => togglePaymentStatus(p.id, p.status)}
+                    className={`rounded-md px-2 py-0.5 text-xs ${
+                      p.status === "confirmed"
+                        ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                        : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                    }`}
+                    title={p.status === "confirmed"
+                      ? "Кликните чтобы вернуть в «ожидается»"
+                      : "Кликните чтобы подтвердить"}
+                  >
                     {p.status === "confirmed" ? "Подтверждён" : "Ожидается"}
-                  </span>
+                  </button>
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <button
+                    onClick={() => deletePayment(p.id)}
+                    className="rounded-md px-2 py-0.5 text-xs text-red-600 hover:bg-red-50"
+                  >
+                    Удалить
+                  </button>
                 </td>
               </tr>
             ))}

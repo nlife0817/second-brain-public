@@ -77,15 +77,18 @@
 - [x] **API `/api/planning/metrics/[id]/ytd`** — возвращает `{annual_target, target_ytd, actual_ytd, variance}`. Загружается в store `metricYtd` параллельно со sparklines.
 - [x] **«Перераспределить недобор»**: кнопка в drawer'е рядом с «Распределить». Открывает тот же AutoDistributeDialog, но с `skipWeeksBefore=today` и `initialYearTarget=annual − actual_ytd`. Никакого автомата — explicit user action.
 
-### P5 — Сделки (entity внутри Clients)
+### P5 — Сделки (entity + revenue) — ✅ закрыта
 
-- [ ] Page `/clients/[id]/deals` или вкладка «Сделки» на странице клиента
-- [ ] CRUD сделок: title, stage, dates, amounts, description
-- [ ] Auto-fill stage timestamps при смене stage (§6.7.5)
-- [ ] Auto-recurring payments cron (§6.7.2): для stage=production создаёт ежемесячные `expected` записи
-- [ ] UI редактирования платежей: edit `amount`, статус `expected→confirmed` по кнопке
-- [ ] Подсчёт metric «Выручка» — суммирование `deal_payments` по периодам
-- [ ] Initiative-linked deals: на странице сделки видна привязка к инициативам, что её блокирует
+- [x] **CRUD API сделок** + страница `/planning/deals` уже были реализованы ранее (commit `658ba50`).
+- [x] **Auto-fill stage timestamps** (concept §6.7.5) уже работает в `/api/planning/deals/[id] PATCH`: при переходе в `pilot` ставится `pilot_started_at`+`pilot_planned_end_at` (default 60 дней или из `pilot_default_duration_days`); при `production` — `production_started_at`.
+- [x] **Auto-recurring payments cron** (concept §6.7.2) уже работает: `/api/cron/planning/recurring-payments` через pg_cron daily 03:00 UTC создаёт ежемесячный `expected` платёж для каждого `stage='production'` deal с `min_monthly_amount>0`. Идемпотентно — пропускает существующие.
+- [x] **UI редактирования платежей**: inline-edit amount, toggle статус `expected ↔ confirmed` одним кликом, удаление платежа (с подтверждением). См. `src/app/planning/deals/[id]/page.tsx`.
+- [x] **Revenue aggregator (`source='second_brain'`)**:
+  - `listEffectiveMetricTicks(metric, range)` в `src/lib/db.ts` — для business + `source='second_brain'` возвращает синтезированные ticks из `planning_deal_payments` (включая `expected` + `confirmed`).
+  - `GET /api/planning/metrics/[id]/ticks` использует helper — sparkline на карточке метрики «Выручка» автоматически рисуется по фактам платежей.
+  - `GET /api/planning/metrics/[id]/ytd` для business+second_brain считает `actual_ytd = SUM(deal_payments.amount)` за текущий год.
+  - `MetricActualsTable` через `/ticks` показывает агрегацию по периодам.
+- [x] **Initiative-linked deals**: editor `DealLinksEditor` (P1) добавляет/удаляет связи `initiative_deal_link` с `blocks_stage`. На странице сделки прямой обратной отрисовки нет — но через `/planning/blocked-deals` (commit `658ba50`) видно сделки, которые блокированы.
 
 ### P6 — Полишинг и тех-долг
 

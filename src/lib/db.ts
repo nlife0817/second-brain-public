@@ -2138,6 +2138,43 @@ export async function listMetricTicks(
   ).all(...params);
 }
 
+/**
+ * P5: effective ticks for a metric. Если metric.source='second_brain' и
+ * metric.type='business' — синтезируем ticks из planning_deal_payments
+ * (expected + confirmed). Иначе — обычные planning_metric_ticks.
+ *
+ * Concept §6.7.2: «expected-платежи автоматически считаются как факт».
+ */
+export async function listEffectiveMetricTicks(
+  metric: PlanningMetric,
+  range?: { from?: string; to?: string; limit?: number },
+): Promise<PlanningMetricTick[]> {
+  if (metric.source !== "second_brain" || metric.type !== "business") {
+    return listMetricTicks(metric.id, range);
+  }
+
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (range?.from) { conds.push("paid_at >= ?"); params.push(range.from); }
+  if (range?.to)   { conds.push("paid_at <= ?"); params.push(range.to); }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const limit = range?.limit ? ` LIMIT ${Number(range.limit) | 0}` : "";
+  type Row = { id: string; amount: string; paid_at: string; status: string };
+  const rows = await prepare<Row>(
+    `SELECT id, amount::text, paid_at, status
+     FROM planning_deal_payments
+     ${where}
+     ORDER BY paid_at DESC${limit}`
+  ).all(...params);
+  return rows.map((r) => ({
+    id: `dp:${r.id}`,
+    metric_id: metric.id,
+    value: Number(r.amount),
+    measured_at: r.paid_at,
+    source: `deal_payment:${r.status}`,
+  }));
+}
+
 export async function addMetricTick(input: CreateMetricTickInput): Promise<PlanningMetricTick> {
   const row = await prepare<PlanningMetricTick>(`
     INSERT INTO planning_metric_ticks (metric_id, value, measured_at, source)
