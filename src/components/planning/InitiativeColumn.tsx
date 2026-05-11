@@ -6,7 +6,9 @@ import { usePlanningStore } from "@/lib/planning-store";
 import { InitiativeCard } from "./InitiativeCard";
 import { CreateInitiativeWizard } from "./CreateInitiativeWizard";
 import { CollapsedColumn } from "./CollapsedColumn";
+import { PeriodCascadeFilter } from "./PeriodCascadeFilter";
 import type { PlanningInitiative } from "@/types/planning";
+import { initiativeIntersectsPeriod } from "@/lib/planning-period-utils";
 
 export function InitiativeColumn() {
   const directionId = usePlanningStore((s) => s.selectedDirectionId);
@@ -15,6 +17,9 @@ export function InitiativeColumn() {
   const setShowArchived = usePlanningStore((s) => s.setShowArchived);
   const sortMode = usePlanningStore((s) => s.initiativeSort);
   const setSort = usePlanningStore((s) => s.setInitiativeSort);
+  const periods = usePlanningStore((s) => s.periods);
+  const periodFilter = usePlanningStore((s) => s.initiativePeriodFilter);
+  const setPeriodFilter = usePlanningStore((s) => s.setInitiativePeriodFilter);
   const all = usePlanningStore((s) => s.initiatives);
   const selectedId = usePlanningStore((s) => s.selectedInitiativeId);
   const setSelected = usePlanningStore((s) => s.setSelectedInitiative);
@@ -70,6 +75,19 @@ export function InitiativeColumn() {
 
   let initiatives: PlanningInitiative[] = all.filter((i) => !directionId || i.direction_id === directionId);
   if (linkedIds) initiatives = initiatives.filter((i) => linkedIds.has(i.id));
+
+  // Period cascade-фильтр (P2): пересечение start..end ∩ filter_period.
+  const periodById = new Map(periods.map((p) => [p.id, p]));
+  const activeFilterPeriod = periodFilter ? periodById.get(periodFilter) ?? null : null;
+  if (activeFilterPeriod) {
+    initiatives = initiatives.filter((i) => {
+      const s = i.start_period_id ? periodById.get(i.start_period_id) ?? null : null;
+      const e = i.end_period_id
+        ? periodById.get(i.end_period_id) ?? null
+        : (i.due_period_id ? periodById.get(i.due_period_id) ?? null : null);
+      return initiativeIntersectsPeriod(s, e, activeFilterPeriod);
+    });
+  }
 
   initiatives = [...initiatives].sort((a, b) =>
     sortMode === "rice"
@@ -144,6 +162,13 @@ export function InitiativeColumn() {
           {showArchived ? "Архив виден" : "Архив скрыт"}
         </button>
       </div>
+
+      {/* Period cascade-фильтр (P2): Q → M → W; intersection start..end ∩ filter. */}
+      <PeriodCascadeFilter
+        periods={periods}
+        selectedId={periodFilter ?? null}
+        onChange={setPeriodFilter}
+      />
 
       <div className="flex-1 overflow-y-auto p-2">
         {initiatives.length === 0 ? (

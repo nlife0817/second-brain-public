@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { ArrowLeft, ArrowRight, X, Check } from "lucide-react";
 import { toast } from "sonner";
 import { usePlanningStore } from "@/lib/planning-store";
 import type { InitiativeType, PlanningPeriod } from "@/types/planning";
 import { JTBD_HINT_BY_TYPE, INITIATIVE_TYPE_DESCRIPTION } from "@/lib/planning-initiative-meta";
+import { WeekGridPicker } from "./WeekGridPicker";
 
 interface Props { open: boolean; onClose: () => void; }
 
@@ -69,14 +70,6 @@ export function CreateInitiativeWizard({ open, onClose }: Props) {
     linked_metric_ids: selectedMetricId ? [selectedMetricId] : [],
   }));
   const [busy, setBusy] = useState(false);
-
-  const weeks: PlanningPeriod[] = useMemo(
-    () => periods
-      .filter((p) => p.type === "week")
-      .slice()
-      .sort((a, b) => a.start_date.localeCompare(b.start_date)),
-    [periods],
-  );
 
   if (!open) return null;
 
@@ -181,7 +174,7 @@ export function CreateInitiativeWizard({ open, onClose }: Props) {
         {/* Step content */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {step === 1 && <Step1 form={form} setForm={setForm} />}
-          {step === 2 && <Step2 form={form} setForm={setForm} weeks={weeks} />}
+          {step === 2 && <Step2 form={form} setForm={setForm} periods={periods} />}
           {step === 3 && (hasJtbdStep ? <Step3Jtbd form={form} setForm={setForm} />
             : hasExperimentStep ? <Step3Experiment form={form} setForm={setForm} /> : null)}
           {step === 4 && <Step4 form={form} setForm={setForm} metrics={metrics} />}
@@ -246,7 +239,7 @@ function Step1({ form, setForm }: { form: FormState; setForm: (f: FormState) => 
 
 // ─────────────────────── Step 2: Basic fields ────────────────────────────
 
-function Step2({ form, setForm, weeks }: { form: FormState; setForm: (f: FormState) => void; weeks: PlanningPeriod[] }) {
+function Step2({ form, setForm, periods }: { form: FormState; setForm: (f: FormState) => void; periods: PlanningPeriod[] }) {
   return (
     <div className="grid gap-3 text-sm">
       <p className="text-xs text-slate-500">Тип: <span className="font-medium text-slate-700">{TYPES.find((t) => t.value === form.type)?.label}</span></p>
@@ -273,36 +266,17 @@ function Step2({ form, setForm, weeks }: { form: FormState; setForm: (f: FormSta
         />
       </label>
 
-      <fieldset className="grid grid-cols-2 gap-2">
+      <fieldset>
         <legend className="mb-1 text-xs font-medium text-slate-600">Диапазон недель (опционально)</legend>
-        <label className="block">
-          <span className="mb-0.5 block text-[11px] text-slate-500">Старт</span>
-          <select
-            value={form.start_period_id ?? ""}
-            onChange={(e) => {
-              const v = e.target.value || null;
-              const patch: Partial<FormState> = { start_period_id: v };
-              // Auto-fill end if empty.
-              if (v && !form.end_period_id) patch.end_period_id = v;
-              setForm({ ...form, ...patch });
-            }}
-            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-          >
-            <option value="">—</option>
-            {weeks.map((p) => <option key={p.id} value={p.id}>{labelWeek(p)}</option>)}
-          </select>
-        </label>
-        <label className="block">
-          <span className="mb-0.5 block text-[11px] text-slate-500">Дедлайн (последняя неделя)</span>
-          <select
-            value={form.end_period_id ?? ""}
-            onChange={(e) => setForm({ ...form, end_period_id: e.target.value || null })}
-            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-          >
-            <option value="">—</option>
-            {weeks.map((p) => <option key={p.id} value={p.id}>{labelWeek(p)}</option>)}
-          </select>
-        </label>
+        <WeekGridPicker
+          periods={periods}
+          startId={form.start_period_id}
+          endId={form.end_period_id}
+          onChange={(s, e) => setForm({ ...form, start_period_id: s, end_period_id: e })}
+        />
+        <p className="mt-1 text-[11px] text-slate-500">
+          Первый клик — старт. Второй — дедлайн. Один клик = одна неделя.
+        </p>
       </fieldset>
 
       <label className="block">
@@ -449,7 +423,3 @@ function Step4({
   );
 }
 
-function labelWeek(p: PlanningPeriod): string {
-  if (p.week_n) return `W${p.week_n} ${p.year} · ${p.start_date.slice(0, 10)}`;
-  return `${p.start_date.slice(0, 10)}`;
-}

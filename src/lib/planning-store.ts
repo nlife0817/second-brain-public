@@ -59,6 +59,10 @@ interface PlanningStore {
   detailMetricAutoOpenSettings: boolean; // pop the settings tab when sheet mounts
   showArchived: boolean;
   initiativeSort: SortMode;
+  // Period cascade filter (P2): null = all initiatives. Иначе ID периода
+  // (Q/M/W); инициативы фильтруются по intersection (start..end) ∩ filter.
+  // Сброшен в `undefined` ⇒ при первом fetchAll выставится на текущую неделю.
+  initiativePeriodFilter: string | null | undefined;
   collapsedColumns: ColumnKey[];
 
   // Loading
@@ -78,6 +82,7 @@ interface PlanningStore {
   closeMetricDetail: () => void;
   setShowArchived: (v: boolean) => void;
   setInitiativeSort: (s: SortMode) => void;
+  setInitiativePeriodFilter: (id: string | null) => void;
   toggleColumnCollapsed: (key: ColumnKey) => void;
 
   createDirection: (input: { title: string; year_focus?: string }) => Promise<PlanningDirection | null>;
@@ -115,6 +120,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   detailMetricAutoOpenSettings: false,
   showArchived: false,
   initiativeSort: "deadline",
+  initiativePeriodFilter: undefined,
   collapsedColumns: loadCollapsedFromStorage(),
   loaded: false,
 
@@ -137,6 +143,17 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
     set({ directions, metrics, initiatives, tasks, settings, periods, loaded: true });
     if (!get().selectedDirectionId && directions[0]) {
       set({ selectedDirectionId: directions[0].id });
+    }
+    // P2: фильтр инициатив по периоду — дефолт «текущая неделя», если ещё не инициализирован.
+    if (get().initiativePeriodFilter === undefined) {
+      const now = Date.now();
+      const currentWeek = periods.find((p) => {
+        if (p.type !== "week") return false;
+        const s = new Date(p.start_date).getTime();
+        const e = new Date(p.end_date).getTime() + 86_399_000;
+        return now >= s && now <= e;
+      });
+      set({ initiativePeriodFilter: currentWeek?.id ?? null });
     }
 
     // Batch-fetch sparkline data (latest 20 ticks) for every metric — used in MetricCard.
@@ -179,6 +196,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   closeMetricDetail: () => set({ detailMetricId: null, detailMetricAutoOpenSettings: false }),
   setShowArchived: (v) => { set({ showArchived: v }); get().fetchAll(); },
   setInitiativeSort: (s) => set({ initiativeSort: s }),
+  setInitiativePeriodFilter: (id) => set({ initiativePeriodFilter: id }),
   toggleColumnCollapsed: (key) => {
     const current = get().collapsedColumns;
     const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];

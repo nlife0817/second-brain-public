@@ -36,10 +36,15 @@ function InitiativeCardBase({ initiative, selected, onSelect }: Props) {
   const tone = initiativeDeadlineTone(initiative, periods, earlyWarningWeeks);
   const toneCls = SEMANTIC_CLASS[tone];
 
-  const period = periods.find((p) => p.id === initiative.due_period_id);
+  // Дедлайн — последняя неделя диапазона (end_period_id). Сохраняем fallback
+  // на due_period_id для совместимости (триггер sync_due_period держит их равными).
+  const period = periods.find((p) => p.id === (initiative.end_period_id ?? initiative.due_period_id));
   const dueLabel = period ? formatPeriodShort(period) : null;
   const isAtRisk = tone === "at_risk";
   const isOffTrack = tone === "off_track";
+  // Явный badge «Просрочена» (PLAN_PLANNING_REWORK §P2): only when deadline
+  // прошёл и инициатива ещё не закрыта/убита.
+  const isOverdue = isOffTrack && initiative.status !== "done" && initiative.status !== "killed";
 
   return (
     <div
@@ -47,7 +52,9 @@ function InitiativeCardBase({ initiative, selected, onSelect }: Props) {
       className={`group cursor-pointer rounded-lg border p-3 transition-colors ${
         selected
           ? "border-blue-500 bg-blue-50"
-          : `border-slate-200 hover:bg-slate-50 ${isOffTrack ? "border-l-2 border-l-red-500" : isAtRisk ? "border-l-2 border-l-amber-500" : ""}`
+          : isOverdue
+            ? "border-red-300 bg-red-50/60 hover:bg-red-100/50"
+            : `border-slate-200 hover:bg-slate-50 ${isOffTrack ? "border-l-2 border-l-red-500" : isAtRisk ? "border-l-2 border-l-amber-500" : ""}`
       }`}
       title={INITIATIVE_STATUS_LABEL[initiative.status]}
     >
@@ -75,7 +82,7 @@ function InitiativeCardBase({ initiative, selected, onSelect }: Props) {
       </div>
 
       {/* Row 2: type-badge + deadline + status-text (progressive disclosure §20.1.3) */}
-      <div className="mt-1.5 flex items-center gap-1.5 px-2">
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 px-2">
         <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${TYPE_TONE[initiative.type]}`}>
           {TYPE_LABEL[initiative.type]}
         </span>
@@ -92,6 +99,15 @@ function InitiativeCardBase({ initiative, selected, onSelect }: Props) {
           >
             {isOffTrack || isAtRisk ? <AlertTriangle className="size-3" /> : <CalendarClock className="size-3" />}
             {dueLabel}
+          </span>
+        )}
+        {isOverdue && (
+          <span
+            className="inline-flex items-center gap-0.5 rounded-md bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
+            title={`Дедлайн прошёл: ${period?.end_date.slice(0, 10) ?? ""}`}
+          >
+            <AlertTriangle className="size-3" />
+            Просрочена
           </span>
         )}
         {initiative.parent_initiative_id && (

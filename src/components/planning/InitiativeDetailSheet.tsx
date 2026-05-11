@@ -23,6 +23,7 @@ import { INITIATIVE_TYPE_DESCRIPTION, JTBD_HINT_BY_TYPE } from "@/lib/planning-i
 import { RicePicker } from "./RicePicker";
 import { ExperimentFields } from "./ExperimentFields";
 import { ReplanReasonDialog } from "./ReplanReasonDialog";
+import { WeekGridPicker } from "./WeekGridPicker";
 
 interface DetailData extends PlanningInitiative {
   linked_metrics: PlanningInitiativeMetricLink[];
@@ -270,14 +271,29 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                 </label>
               </section>
 
-              {/* Week range — start..end (last week = deadline). */}
-              <WeekRangePicker
-                periods={periods}
-                startPeriodId={data.start_period_id}
-                endPeriodId={data.end_period_id ?? data.due_period_id}
-                onChangeStart={(v) => patch({ start_period_id: v })}
-                onChangeEnd={(v) => patch({ end_period_id: v })}
-              />
+              {/* Week range — start..end (last week = deadline). §P2: grid 4×13. */}
+              <section>
+                <span className="mb-1 block text-xs font-medium text-slate-600">
+                  Диапазон недель (старт → дедлайн)
+                </span>
+                <WeekGridPicker
+                  periods={periods}
+                  startId={data.start_period_id}
+                  endId={data.end_period_id ?? data.due_period_id}
+                  onChange={(s, e) => {
+                    // Атомарный patch: если меняем end-period (≠ старого) — это reform
+                    // и поднимется ReplanReasonDialog. Иначе один PATCH.
+                    const patchObj: Partial<DetailData> = {};
+                    if (s !== data.start_period_id) patchObj.start_period_id = s;
+                    if (e !== (data.end_period_id ?? data.due_period_id)) patchObj.end_period_id = e;
+                    if (Object.keys(patchObj).length > 0) patch(patchObj);
+                  }}
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Сдвиг дедлайна (последней недели) у уже существующего диапазона = переплан
+                  и спросит причину.
+                </p>
+              </section>
 
               {/* Description */}
               <section>
@@ -447,15 +463,6 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
   );
 }
 
-function labelForPeriod(p: PlanningPeriod): string {
-  const dt = p.type;
-  if (dt === "week" && p.week_n) return `W${p.week_n} ${p.year} (${p.start_date} → ${p.end_date})`;
-  if (dt === "month" && p.month_n) return `${String(p.month_n).padStart(2, "0")}.${p.year}`;
-  if (dt === "quarter" && p.quarter_n) return `Q${p.quarter_n} ${p.year}`;
-  if (dt === "year") return `${p.year}`;
-  return `${p.type} ${p.start_date}`;
-}
-
 function KeyAssumptions({ values, onChange }: { values: string[]; onChange: (arr: string[]) => void }) {
   return (
     <section>
@@ -530,49 +537,6 @@ function LinkedMulti({ title, allItems, selectedIds, onChange }: {
 
 // Re-export the ExperimentDecision type usage to keep prop typing clean.
 export type { ExperimentDecision };
-
-// WeekRangePicker — пара селектов (старт..конец). Концепт §3.4.1 после P0:
-// дедлайн инициативы — это диапазон недель; last week.end_date = дедлайн.
-function WeekRangePicker({
-  periods, startPeriodId, endPeriodId, onChangeStart, onChangeEnd,
-}: {
-  periods: PlanningPeriod[];
-  startPeriodId: string | null;
-  endPeriodId: string | null;
-  onChangeStart: (v: string | null) => void;
-  onChangeEnd: (v: string | null) => void;
-}) {
-  const weeks = useMemo(
-    () => periods.filter((p) => p.type === "week").slice().sort((a, b) => a.start_date.localeCompare(b.start_date)),
-    [periods],
-  );
-  return (
-    <section>
-      <span className="mb-1 block text-xs font-medium text-slate-600">Диапазон недель (старт → дедлайн)</span>
-      <div className="grid grid-cols-2 gap-2">
-        <select
-          value={startPeriodId ?? ""}
-          onChange={(e) => onChangeStart(e.target.value || null)}
-          className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-        >
-          <option value="">— старт —</option>
-          {weeks.map((p) => <option key={p.id} value={p.id}>{labelForPeriod(p)}</option>)}
-        </select>
-        <select
-          value={endPeriodId ?? ""}
-          onChange={(e) => onChangeEnd(e.target.value || null)}
-          className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-        >
-          <option value="">— дедлайн —</option>
-          {weeks.map((p) => <option key={p.id} value={p.id}>{labelForPeriod(p)}</option>)}
-        </select>
-      </div>
-      <p className="mt-1 text-[11px] text-slate-500">
-        Сдвиг дедлайна (последней недели) у уже существующего диапазона = переплан и спросит причину.
-      </p>
-    </section>
-  );
-}
 
 // DealLinksEditor — таблица сделка/blocks_stage для client_blocker.
 // Replaces the generic LinkedMulti, чтобы пользователь видел и менял stage

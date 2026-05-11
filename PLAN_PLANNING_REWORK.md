@@ -49,11 +49,11 @@
 - [x] «Зависимости» уже убраны в P0.
 - [x] Кнопка «Убить» переименована в «Закрыть без реализации», `Skull` → `XCircle`, tooltip объясняет смысл `killed`-статуса.
 
-### P2 — Колонка инициатив
+### P2 — Колонка инициатив — ✅ закрыта
 
-- [ ] Period cascade-фильтр: Q → M → W. По умолчанию — текущий период. Логика «пересечения» (initiative.start_period_id..end_period_id ∩ filter_period).
-- [ ] Badge «просрочена» для инициатив где `now() > end_period.end_date` и `status != 'done'`. Подсветка красным.
-- [ ] Кастомный недельный picker — компактный grid `4 quarter × 13 week` с подсветкой текущей недели и диапазона.
+- [x] Period cascade-фильтр `PeriodCascadeFilter`: Q → M → W. Дефолт — текущая неделя (через `findCurrentPeriod` при первом `fetchAll`). Логика «пересечения» — в [src/lib/planning-period-utils.ts](src/lib/planning-period-utils.ts) (`initiativeIntersectsPeriod`).
+- [x] Badge «Просрочена» (красный фон карточки + явный inline-бейдж) для инициатив где `end_period.end_date < now()` и `status != done/killed`. `initiativeDeadlineTone` теперь читает `end_period_id` с fallback на `due_period_id`.
+- [x] `WeekGridPicker` — компактный grid 4 quarter × 13 week, подсветка текущей недели (amber ring) и диапазона (синяя заливка). Подключён в `InitiativeDetailSheet` (на замену пары `<select>`) и в `CreateInitiativeWizard` Step 2.
 
 ### P3 — Колонка задач (КРИТИЧНО)
 
@@ -105,8 +105,9 @@
 |---|---|---|
 | Pre-rework: dev-bypass + dates cleanup | ✅ | `5ede756` |
 | P0 | ✅ | `acea9cf` |
-| P1 | ✅ | — (этой сессией) |
-| P2..P6 | ⏳ pending | — |
+| P1 | ✅ | `566e577` |
+| P2 | ✅ | — (этой сессией) |
+| P3..P6 | ⏳ pending | — |
 
 ---
 

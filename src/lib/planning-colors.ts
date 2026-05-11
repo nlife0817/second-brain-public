@@ -67,8 +67,11 @@ export function initiativeDeadlineTone(
 ): SemanticTone {
   const base = initiativeStatusTone(initiative.status);
   if (initiative.status === "done" || initiative.status === "killed") return base;
-  if (!initiative.due_period_id) return base;
-  const period = periods.find((p) => p.id === initiative.due_period_id);
+  // Дедлайн — это end_period_id (start..end range, §P2). due_period_id остаётся
+  // как legacy зеркало (sync_due_period trigger), используем как fallback.
+  const deadlinePeriodId = initiative.end_period_id ?? initiative.due_period_id;
+  if (!deadlinePeriodId) return base;
+  const period = periods.find((p) => p.id === deadlinePeriodId);
   if (!period) return base;
   const endTs = new Date(period.end_date).getTime();
   const nowTs = now.getTime();
