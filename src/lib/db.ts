@@ -71,6 +71,8 @@ const ITEM_UPDATE_FIELDS = [
   "why", "replan_reason", "is_carryover",
   // P3 (0039)
   "assignee_participant_id",
+  // P6 (0040)
+  "planned_start_date", "planned_end_date",
 ] as const;
 
 const TAG_UPDATE_FIELDS = ["name", "color", "position"] as const;
@@ -286,8 +288,8 @@ export async function createItem(
   ).get(item.status, item.parent_id ?? null);
 
   await prepare(`
-    INSERT INTO items (id, title, description, type, status, priority, category, source, development_stage, due_date, due_time, estimated_minutes, position, parent_id, recurring_series_id, assignee_participant_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO items (id, title, description, type, status, priority, category, source, development_stage, due_date, due_time, estimated_minutes, position, parent_id, recurring_series_id, assignee_participant_id, planned_start_date, planned_end_date, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     item.id, item.title, item.description, item.type, item.status,
     item.priority, item.category, item.source ?? "system", item.development_stage ?? null,
@@ -295,12 +297,18 @@ export async function createItem(
     item.position ?? maxPos?.next_pos ?? 0, item.parent_id ?? null,
     item.recurring_series_id ?? null,
     item.assignee_participant_id ?? null,
+    item.planned_start_date ?? null,
+    item.planned_end_date ?? null,
     now, now
   );
   return (await getItemById(item.id))!;
 }
 
-export async function updateItem(id: string, updates: Partial<Item>): Promise<Item | undefined> {
+export async function updateItem(
+  id: string,
+  updates: Partial<Item>,
+  replanCtx?: { reason_code?: string | null; reason_text?: string | null; user_email?: string | null },
+): Promise<Item | undefined> {
   const existing = await getItemById(id);
   if (!existing) return undefined;
 
@@ -308,9 +316,64 @@ export async function updateItem(id: string, updates: Partial<Item>): Promise<It
   if (!built) return existing;
 
   const now = new Date().toISOString();
-  await prepare(`UPDATE items SET ${built.sql}, updated_at = ? WHERE id = ?`)
-    .run(...built.values, now, id);
+
+  // P7: если меняются планировочные поля и задача уже была запланирована —
+  // прокидываем причину в триггер log_item_plan_change через SET LOCAL.
+  // Должно быть в той же транзакции, что и UPDATE.
+  const touchesPlan =
+    "planned_start_date" in (updates as object) ||
+    "planned_end_date" in (updates as object) ||
+    "planned_date" in (updates as object) ||
+    "planned_period_id" in (updates as object) ||
+    "assignee_participant_id" in (updates as object);
+  const wasPlanned = existing.planned_start_date || existing.planned_date;
+  const needsReplanCtx = touchesPlan && wasPlanned && replanCtx;
+
+  if (needsReplanCtx) {
+    await transaction(async (tx) => {
+      // set_config возвращает значение и принимает is_local; идемпотентный SET LOCAL.
+      if (replanCtx.reason_code) {
+        await tx.prepare("SELECT set_config('app.replan_reason_code', ?, true)").all(replanCtx.reason_code);
+      }
+      if (replanCtx.reason_text) {
+        await tx.prepare("SELECT set_config('app.replan_reason_text', ?, true)").all(replanCtx.reason_text);
+      }
+      if (replanCtx.user_email) {
+        await tx.prepare("SELECT set_config('app.user_email', ?, true)").all(replanCtx.user_email);
+      }
+      await tx.prepare(`UPDATE items SET ${built.sql}, updated_at = ? WHERE id = ?`)
+        .run(...built.values, now, id);
+    });
+  } else {
+    await prepare(`UPDATE items SET ${built.sql}, updated_at = ? WHERE id = ?`)
+      .run(...built.values, now, id);
+  }
   return await getItemById(id);
+}
+
+// ---------------- Plan history (P7) ----------------
+
+export interface PlanningItemPlanHistoryRow {
+  id: string;
+  item_id: string;
+  changed_at: string;
+  changed_by: string | null;
+  planned_start_before: string | null;
+  planned_end_before: string | null;
+  planned_period_id_before: string | null;
+  assignee_before: string | null;
+  planned_start_after: string | null;
+  planned_end_after: string | null;
+  planned_period_id_after: string | null;
+  assignee_after: string | null;
+  reason_code: string | null;
+  reason_text: string | null;
+}
+
+export async function listItemPlanHistory(itemId: string): Promise<PlanningItemPlanHistoryRow[]> {
+  return await prepare<PlanningItemPlanHistoryRow>(
+    "SELECT * FROM planning_item_plan_history WHERE item_id = ? ORDER BY changed_at DESC"
+  ).all(itemId);
 }
 
 export async function deleteItem(id: string): Promise<boolean> {

@@ -34,7 +34,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       body.description = sanitizeRichText(body.description);
     }
 
-    const updated = await updateItem(id, body);
+    // P7: извлекаем причину переноса для прокидывания в триггер log_item_plan_change.
+    const replanCtx = {
+      reason_code: body.replan_reason_code ?? null,
+      reason_text: body.replan_reason_text ?? null,
+      user_email: user.email ?? null,
+    };
+    delete body.replan_reason_code;
+    delete body.replan_reason_text;
+
+    const updated = await updateItem(id, body, replanCtx);
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
     if (hadParticipants || Object.keys(body).length > 0) {
       await queueKaitenItemSync(id);

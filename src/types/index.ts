@@ -97,6 +97,11 @@ export interface Item {
   // P3: исполнитель задачи. Триггер set_default_assignee проставляет owner-id
   // при INSERT, если null. Может быть null после удаления участника (ON DELETE SET NULL).
   assignee_participant_id?: string | null;
+  // P6: gantt-like диапазон. start/end синхронизируются с planned_date триггером.
+  planned_start_date?: string | null;
+  planned_end_date?: string | null;
+  // P7: первая когда-либо проставленная start-дата. Не меняется после.
+  original_planned_start_date?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -187,6 +192,8 @@ export interface CreateItemPayload {
   planned_date?: string | null;
   why?: string | null;
   assignee_participant_id?: string | null;
+  planned_start_date?: string | null;
+  planned_end_date?: string | null;
 }
 
 export interface UpdateItemPayload {
@@ -214,6 +221,11 @@ export interface UpdateItemPayload {
   replan_reason?: import("./planning").ReplanReason | null;
   is_carryover?: boolean;
   assignee_participant_id?: string | null;
+  planned_start_date?: string | null;
+  planned_end_date?: string | null;
+  // P7: причина переноса. Прокидывается в SET LOCAL → триггер log_item_plan_change.
+  replan_reason_code?: string | null;
+  replan_reason_text?: string | null;
 }
 
 export interface Filters {

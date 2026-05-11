@@ -4,7 +4,10 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import Link from "next/link";
-import { ChevronLeft, Repeat, Target as TargetIcon, Lightbulb, Inbox } from "lucide-react";
+import {
+  ChevronLeft, Repeat, Target as TargetIcon, Inbox, History,
+  ArrowDownAZ, ArrowDownUp, Layers,
+} from "lucide-react";
 import {
   DndContext, DragEndEvent, useDroppable, useDraggable,
   PointerSensor, TouchSensor, useSensor, useSensors,
@@ -17,13 +20,19 @@ import type {
   PlanningMetric,
   PlanningInitiativeMetricLink,
   EffectiveCapacity,
+  ReplanReason,
 } from "@/types/planning";
-import { INITIATIVE_STATUS_LABEL, SEMANTIC_CLASS, initiativeStatusTone } from "@/lib/planning-colors";
-import { formatMetricValue } from "@/lib/planning-format";
+import { ReplanReasonDialog } from "@/components/planning/ReplanReasonDialog";
 import { WeekCascadePicker } from "@/components/planning/WeekCascadePicker";
 import { ParticipantAvatar } from "@/components/planning/ParticipantAvatar";
+import { MetricSidebar } from "@/components/planning/MetricSidebar";
 import { isoWeek, parseWeekKey, weekKey, weekStartDate } from "@/lib/iso-week";
 import { usePlanningStore } from "@/lib/planning-store";
+
+interface MetricActual {
+  ticks: Array<{ id: string; value: number; measured_at: string; source: string | null }>;
+  aggregated: number | null;
+}
 
 interface ThisWeekData {
   period: PlanningPeriod;
@@ -37,6 +46,7 @@ interface ThisWeekData {
   direction_id: string | null;
   participants: DevelopmentParticipant[];
   effective_capacities: EffectiveCapacity[];
+  metric_actuals_for_week: Record<string, MetricActual>;
 }
 
 const DAY_LABELS_5 = ["Пн", "Вт", "Ср", "Чт", "Пт"];
@@ -53,7 +63,6 @@ function currentWeekKey(): string {
   return weekKey(w.year, w.week);
 }
 
-/** Парсинг droppable id: "backlog" | `${participantId}|${date}` */
 function parseDropTarget(id: string): { backlog: boolean; participantId?: string; date?: string } {
   if (id === "backlog") return { backlog: true };
   const pipe = id.indexOf("|");
@@ -63,6 +72,57 @@ function parseDropTarget(id: string): { backlog: boolean; participantId?: string
 
 function dropId(participantId: string, date: string): string {
   return `${participantId}|${date}`;
+}
+
+function daysBetween(a: string, b: string): number {
+  const da = new Date(a + "T00:00:00Z").getTime();
+  const db = new Date(b + "T00:00:00Z").getTime();
+  return Math.round((db - da) / 86_400_000);
+}
+
+function addDays(date: string, days: number): string {
+  const d = new Date(date + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// --- Backlog filter / sort / group (P5) ---
+type SortMode = "priority" | "created" | "estimate" | "updated";
+type GroupMode = "none" | "category" | "initiative" | "assignee";
+
+const PRIORITY_ORDER: Record<string, number> = {
+  urgent: 5, high: 4, medium: 3, low: 2, none: 1,
+};
+
+interface BacklogControls {
+  q: string;
+  category: string;            // "" = all
+  initiativeId: string;        // "" = all
+  assigneeId: string;          // "" = all
+  hasEstimate: "any" | "yes" | "no";
+  sort: SortMode;
+  group: GroupMode;
+}
+
+const DEFAULT_CONTROLS: BacklogControls = {
+  q: "", category: "", initiativeId: "", assigneeId: "",
+  hasEstimate: "any", sort: "priority", group: "none",
+};
+
+const STORAGE_BACKLOG = "planning:this-week:backlogControls";
+
+function loadControls(): BacklogControls {
+  if (typeof window === "undefined") return DEFAULT_CONTROLS;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_BACKLOG);
+    if (!raw) return DEFAULT_CONTROLS;
+    return { ...DEFAULT_CONTROLS, ...(JSON.parse(raw) as Partial<BacklogControls>) };
+  } catch { return DEFAULT_CONTROLS; }
+}
+
+function saveControls(c: BacklogControls): void {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(STORAGE_BACKLOG, JSON.stringify(c)); } catch { /* ignore */ }
 }
 
 export default function ThisWeekPage() {
@@ -87,7 +147,11 @@ export default function ThisWeekPage() {
   const [data, setData] = useState<ThisWeekData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [backlogAssigneeFilter, setBacklogAssigneeFilter] = useState<Set<string>>(new Set());
+  const [controls, setControls] = useState<BacklogControls>(DEFAULT_CONTROLS);
+  const [pendingMove, setPendingMove] = useState<null | { taskId: string; planned_date: string; assignee_participant_id?: string }>(null);
+  const [historyForTask, setHistoryForTask] = useState<string | null>(null);
+
+  useEffect(() => { setControls(loadControls()); }, []);
 
   useEffect(() => {
     if (!storeLoaded) fetchAllStore();
@@ -142,43 +206,66 @@ export default function ThisWeekPage() {
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
   );
 
-  // Универсальный апдейт задачи (planned_date + assignee).
-  const moveTask = async (
+  // P6: при drop сохраняется длительность задачи (end - start). Если задача
+  // была в бэклоге и нет диапазона — start = end = newDate.
+  const performMove = useCallback(async (
     taskId: string,
-    next: { planned_date: string | null; assignee_participant_id?: string },
+    payload: { planned_date: string | null; assignee_participant_id?: string; replan?: ReplanReason | null },
   ) => {
     if (!data) return;
+    const task = data.items.find((t) => t.id === taskId) ?? data.backlog.find((t) => t.id === taskId);
+    if (!task) return;
+
+    let newStart: string | null = payload.planned_date;
+    let newEnd: string | null = payload.planned_date;
+    if (payload.planned_date && task.planned_start_date && task.planned_end_date) {
+      const span = Math.max(0, daysBetween(task.planned_start_date, task.planned_end_date));
+      newEnd = addDays(payload.planned_date, span);
+    }
+
     const update: {
       planned_date: string | null;
-      planned_period_id?: string;
+      planned_period_id?: string | null;
+      planned_start_date?: string | null;
+      planned_end_date?: string | null;
       assignee_participant_id?: string;
-    } = { planned_date: next.planned_date };
-    if (next.planned_date) update.planned_period_id = data.period.id;
-    if (next.assignee_participant_id) update.assignee_participant_id = next.assignee_participant_id;
+      replan_reason_code?: string;
+      replan_reason_text?: string;
+    } = {
+      planned_date: newStart,
+      planned_start_date: newStart,
+      planned_end_date: newEnd,
+    };
+    if (payload.planned_date) update.planned_period_id = data.period.id;
+    else update.planned_period_id = null;
+    if (payload.assignee_participant_id) update.assignee_participant_id = payload.assignee_participant_id;
+    if (payload.replan?.code) {
+      update.replan_reason_code = payload.replan.code;
+      if (payload.replan.text) update.replan_reason_text = payload.replan.text;
+    }
 
-    // Optimistic — изменим items и/или backlog.
+    // Optimistic
     setData((prev) => {
       if (!prev) return prev;
-      // Перенос из бэклога в день: удалить из backlog, добавить в items с новыми полями.
       const fromBacklog = prev.backlog.find((t) => t.id === taskId);
       const fromItems = prev.items.find((t) => t.id === taskId);
-      if (next.planned_date === null) {
-        // Вернули в бэклог
-        if (!fromItems) return prev;
-        return {
-          ...prev,
-          items: prev.items.filter((t) => t.id !== taskId),
-          backlog: [{ ...fromItems, planned_date: null, planned_period_id: null }, ...prev.backlog],
-        };
-      }
       const target = fromItems ?? fromBacklog;
       if (!target) return prev;
       const merged: Item = {
         ...target,
-        planned_date: next.planned_date,
-        planned_period_id: prev.period.id,
-        ...(next.assignee_participant_id ? { assignee_participant_id: next.assignee_participant_id } : {}),
+        planned_date: newStart,
+        planned_start_date: newStart,
+        planned_end_date: newEnd,
+        planned_period_id: newStart ? prev.period.id : null,
+        ...(payload.assignee_participant_id ? { assignee_participant_id: payload.assignee_participant_id } : {}),
       };
+      if (newStart === null) {
+        return {
+          ...prev,
+          items: prev.items.filter((t) => t.id !== taskId),
+          backlog: fromBacklog ? prev.backlog : [merged, ...prev.backlog],
+        };
+      }
       return {
         ...prev,
         items: fromItems
@@ -193,20 +280,41 @@ export default function ThisWeekPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(update),
     });
-    if (!res.ok) { toast.error("Не удалось переместить"); fetchData(effectiveWeek, effectiveDirection); }
-  };
+    if (!res.ok) {
+      toast.error("Не удалось переместить");
+      fetchData(effectiveWeek, effectiveDirection);
+    }
+  }, [data, fetchData, effectiveWeek, effectiveDirection]);
 
+  // P7: если задача УЖЕ была запланирована (planned_start_date был не null) —
+  // открываем диалог причины перед сохранением.
   const onDragEnd = (e: DragEndEvent) => {
     const taskId = String(e.active.id);
     const overId = e.over?.id ? String(e.over.id) : null;
-    if (!overId) return;
+    if (!overId || !data) return;
     const t = parseDropTarget(overId);
+    const task = data.items.find((x) => x.id === taskId) ?? data.backlog.find((x) => x.id === taskId);
+    const wasPlanned = !!task?.planned_start_date;
+
     if (t.backlog) {
-      moveTask(taskId, { planned_date: null });
+      if (wasPlanned) {
+        setPendingMove({ taskId, planned_date: "" }); // "" сигналит бэклог-возврат
+      } else {
+        performMove(taskId, { planned_date: null });
+      }
       return;
     }
     if (t.date && t.participantId) {
-      moveTask(taskId, { planned_date: t.date, assignee_participant_id: t.participantId });
+      // Если ничего не меняется — игнорируем
+      if (
+        task && task.planned_start_date === t.date
+        && (task.assignee_participant_id ?? null) === t.participantId
+      ) return;
+      if (wasPlanned) {
+        setPendingMove({ taskId, planned_date: t.date, assignee_participant_id: t.participantId });
+      } else {
+        performMove(taskId, { planned_date: t.date, assignee_participant_id: t.participantId });
+      }
     }
   };
 
@@ -231,61 +339,115 @@ export default function ThisWeekPage() {
   });
   const today = new Date().toISOString().slice(0, 10);
 
-  // Indexes
   const participantById = new Map(data.participants.map((p) => [p.id, p]));
   const effCapById = new Map(data.effective_capacities.map((c) => [c.participant_id, c]));
+  const initiativeById = new Map(data.initiatives.map((i) => [i.id, i]));
 
   const owner = data.participants.find((p) => p.role === "owner") ?? null;
-  // Активные developer-участники + те developer-ы, у кого есть задачи в этой неделе
   const devsWithTasks = new Set(
-    data.items
-      .map((t) => t.assignee_participant_id)
-      .filter((id): id is string => !!id && participantById.get(id)?.role === "developer"),
+    data.items.map((t) => t.assignee_participant_id).filter((id): id is string => !!id && participantById.get(id)?.role === "developer"),
   );
   const developers = data.participants
     .filter((p) => p.role === "developer" && (p.is_active || devsWithTasks.has(p.id)))
     .sort((a, b) => a.position - b.position);
-
   const othersWithTasks = new Set(
-    data.items
-      .map((t) => t.assignee_participant_id)
-      .filter((id): id is string => !!id && participantById.get(id)?.role === "other"),
+    data.items.map((t) => t.assignee_participant_id).filter((id): id is string => !!id && participantById.get(id)?.role === "other"),
   );
   const others = data.participants
-    .filter((p) => p.role === "other" && (othersWithTasks.has(p.id)))
+    .filter((p) => p.role === "other" && othersWithTasks.has(p.id))
     .sort((a, b) => a.position - b.position);
 
-  // Сводка часов: hoursByParticipantDate[pid][date]
+  // P6 equal-split hours per day для overload-сводки.
   const hoursByPidDate: Record<string, Record<string, number>> = {};
   for (const t of data.items) {
-    if (!t.planned_date || !t.assignee_participant_id) continue;
+    if (!t.assignee_participant_id) continue;
     const pid = t.assignee_participant_id;
-    const date = t.planned_date;
-    hoursByPidDate[pid] ??= {};
-    hoursByPidDate[pid][date] = (hoursByPidDate[pid][date] ?? 0) + (t.estimated_minutes ?? 0) / 60;
+    const start = t.planned_start_date ?? t.planned_date;
+    const end = t.planned_end_date ?? start;
+    if (!start || !end) continue;
+    const span = Math.max(0, daysBetween(start, end)) + 1;
+    const perDay = (t.estimated_minutes ?? 0) / 60 / span;
+    for (let i = 0; i < span; i++) {
+      const date = addDays(start, i);
+      hoursByPidDate[pid] ??= {};
+      hoursByPidDate[pid][date] = (hoursByPidDate[pid][date] ?? 0) + perDay;
+    }
   }
   const totalHoursOf = (pid: string) =>
     Object.values(hoursByPidDate[pid] ?? {}).reduce((s, h) => s + h, 0);
-
-  // capacity для секции «Разработка» — сумма активных developer
   const devCap = developers.reduce((s, p) => s + (effCapById.get(p.id)?.hours ?? 0), 0);
   const devUsed = developers.reduce((s, p) => s + totalHoursOf(p.id), 0);
-
   const totalHoursWeek = data.items.reduce((s, t) => s + (t.estimated_minutes ?? 0) / 60, 0);
   const weeklyCap = Number(data.settings.weekly_capacity_hours ?? 40);
   const carryoverCount = data.items.filter((t) => t.is_carryover && t.status !== "done").length;
 
   const parsedWeek = parseWeekKey(effectiveWeek);
-  const pickerWeekKey = parsedWeek
-    ? weekKey(parsedWeek.year, parsedWeek.week)
-    : currentWeekKey();
+  const pickerWeekKey = parsedWeek ? weekKey(parsedWeek.year, parsedWeek.week) : currentWeekKey();
   const pickerStart = parsedWeek ? weekStartDate(parsedWeek.year, parsedWeek.week) : new Date(data.period.start_date);
   void pickerStart;
 
-  // Filtered backlog
-  const filteredBacklog = backlogAssigneeFilter.size === 0
-    ? data.backlog
-    : data.backlog.filter((t) => t.assignee_participant_id && backlogAssigneeFilter.has(t.assignee_participant_id));
+  // P5: бэклог фильтр / сорт / групп.
+  const updateControls = (patch: Partial<BacklogControls>) => {
+    setControls((prev) => {
+      const next = { ...prev, ...patch };
+      saveControls(next);
+      return next;
+    });
+  };
+
+  let backlogFiltered = data.backlog;
+  if (controls.q.trim()) {
+    const q = controls.q.toLowerCase();
+    backlogFiltered = backlogFiltered.filter((t) =>
+      t.title.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q),
+    );
+  }
+  if (controls.category) backlogFiltered = backlogFiltered.filter((t) => t.category === controls.category);
+  if (controls.assigneeId) backlogFiltered = backlogFiltered.filter((t) => t.assignee_participant_id === controls.assigneeId);
+  if (controls.hasEstimate === "yes") backlogFiltered = backlogFiltered.filter((t) => (t.estimated_minutes ?? 0) > 0);
+  if (controls.hasEstimate === "no") backlogFiltered = backlogFiltered.filter((t) => !t.estimated_minutes);
+  // initiativeId фильтр здесь нет на стороне без backend; на странице у нас нет полей item.initiative_id напрямую (M:N через link). Опустим.
+
+  backlogFiltered = [...backlogFiltered].sort((a, b) => {
+    switch (controls.sort) {
+      case "priority":
+        return (PRIORITY_ORDER[b.priority] ?? 0) - (PRIORITY_ORDER[a.priority] ?? 0)
+          || (b.created_at < a.created_at ? -1 : 1);
+      case "created":
+        return b.created_at.localeCompare(a.created_at);
+      case "updated":
+        return b.updated_at.localeCompare(a.updated_at);
+      case "estimate":
+        return (b.estimated_minutes ?? 0) - (a.estimated_minutes ?? 0);
+    }
+  });
+
+  // Группировка для отображения (без useMemo — Rules of Hooks: код после early-return).
+  let groupedBacklog: Array<{ key: string; title: string; items: Item[] }>;
+  if (controls.group === "none") {
+    groupedBacklog = [{ key: "_", title: "", items: backlogFiltered }];
+  } else {
+    const map = new Map<string, { title: string; items: Item[] }>();
+    for (const t of backlogFiltered) {
+      let key = "_";
+      let title = "Без группы";
+      if (controls.group === "category") {
+        key = t.category; title = t.category;
+      } else if (controls.group === "assignee") {
+        key = t.assignee_participant_id ?? "_";
+        title = participantById.get(key)?.name ?? "Не назначено";
+      } else if (controls.group === "initiative") {
+        // M:N через linked_item_initiative_link — здесь не подгружено; группа фиктивная.
+        key = "_"; title = "Бэклог";
+      }
+      const g = map.get(key) ?? { title, items: [] as Item[] };
+      g.items.push(t);
+      map.set(key, g);
+    }
+    groupedBacklog = Array.from(map.entries()).map(([key, g]) => ({ key, title: g.title, items: g.items }));
+  }
+
+  const pendingTask = pendingMove && data.items.find((t) => t.id === pendingMove.taskId);
 
   return (
     <DndContext sensors={sensors} onDragEnd={onDragEnd}>
@@ -326,90 +488,125 @@ export default function ThisWeekPage() {
         </div>
 
         <div className="flex flex-1 overflow-hidden">
-          {/* Sidebar */}
-          <aside className="w-[320px] shrink-0 overflow-y-auto border-r border-slate-200 bg-slate-50 p-3">
-            <Section title="Метрики недели" icon={<TargetIcon className="size-3" />}>
-              {data.metrics.length === 0 ? (
-                <Empty>Нет привязанных метрик</Empty>
-              ) : data.metrics.map((m) => {
-                const target = data.targets_by_metric[m.id] ?? 0;
-                return (
-                  <div key={m.id} className="rounded-md border border-slate-200 bg-white p-2 text-xs">
-                    <p className="font-medium text-slate-800">{m.title}</p>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
-                      Цель: <span className="font-medium text-slate-700">{formatMetricValue(target, m.unit)}</span>
-                    </p>
-                  </div>
-                );
-              })}
-            </Section>
+          {/* Left sidebar — бэклог + фильтр */}
+          <aside className="flex w-[340px] shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-slate-50">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2">
+              <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <Inbox className="size-3" />
+                Бэклог
+              </h3>
+              <span className="text-[11px] tabular-nums text-slate-500">{backlogFiltered.length}/{data.backlog.length}</span>
+            </div>
 
-            <Section title="Инициативы в работе" icon={<Lightbulb className="size-3" />}>
-              {data.initiatives.length === 0 ? (
-                <Empty>Активных инициатив нет</Empty>
-              ) : data.initiatives.slice(0, 10).map((i) => {
-                const tone = initiativeStatusTone(i.status);
-                const dot = SEMANTIC_CLASS[tone].dot;
-                return (
-                  <div key={i.id} className="rounded-md border border-slate-200 bg-white p-2 text-xs">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`size-1.5 shrink-0 rounded-full ${dot}`} />
-                      <p className="flex-1 font-medium text-slate-800 line-clamp-1">{i.title}</p>
-                    </div>
-                    <p className="ml-3 mt-0.5 text-[10px] text-slate-500">{INITIATIVE_STATUS_LABEL[i.status]}</p>
-                  </div>
-                );
-              })}
-            </Section>
+            {/* Filter controls */}
+            <div className="grid grid-cols-2 gap-1 border-b border-slate-200 bg-white p-2 text-[11px]">
+              <input
+                value={controls.q}
+                onChange={(e) => updateControls({ q: e.target.value })}
+                placeholder="Поиск…"
+                className="col-span-2 rounded border border-slate-200 px-2 py-1 text-xs"
+              />
+              <select
+                value={controls.category}
+                onChange={(e) => updateControls({ category: e.target.value })}
+                className="rounded border border-slate-200 px-1 py-0.5 text-[11px]"
+              >
+                <option value="">Все категории</option>
+                <option value="development">development</option>
+                <option value="management">management</option>
+                <option value="meeting">meeting</option>
+                <option value="other">other</option>
+              </select>
+              <select
+                value={controls.assigneeId}
+                onChange={(e) => updateControls({ assigneeId: e.target.value })}
+                className="rounded border border-slate-200 px-1 py-0.5 text-[11px]"
+              >
+                <option value="">Любой исполнитель</option>
+                {data.participants.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              <select
+                value={controls.hasEstimate}
+                onChange={(e) => updateControls({ hasEstimate: e.target.value as BacklogControls["hasEstimate"] })}
+                className="rounded border border-slate-200 px-1 py-0.5 text-[11px]"
+              >
+                <option value="any">любые часы</option>
+                <option value="yes">с оценкой</option>
+                <option value="no">без оценки</option>
+              </select>
+              <label className="inline-flex items-center gap-1 rounded border border-slate-200 px-1 py-0.5 text-[11px]">
+                <ArrowDownUp className="size-3 text-slate-500" />
+                <select
+                  value={controls.sort}
+                  onChange={(e) => updateControls({ sort: e.target.value as SortMode })}
+                  className="bg-transparent text-[11px] outline-none"
+                >
+                  <option value="priority">приоритет</option>
+                  <option value="created">создание</option>
+                  <option value="updated">обновление</option>
+                  <option value="estimate">оценка</option>
+                </select>
+              </label>
+              <label className="inline-flex items-center gap-1 rounded border border-slate-200 px-1 py-0.5 text-[11px]">
+                <Layers className="size-3 text-slate-500" />
+                <select
+                  value={controls.group}
+                  onChange={(e) => updateControls({ group: e.target.value as GroupMode })}
+                  className="bg-transparent text-[11px] outline-none"
+                >
+                  <option value="none">без групп</option>
+                  <option value="category">категория</option>
+                  <option value="assignee">исполнитель</option>
+                  <option value="initiative">инициатива</option>
+                </select>
+              </label>
+              <button
+                onClick={() => updateControls(DEFAULT_CONTROLS)}
+                className="col-span-2 rounded border border-slate-200 px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-50"
+              >
+                сбросить фильтры
+              </button>
+            </div>
 
-            <Section title="Бэклог задач" icon={<Inbox className="size-3" />}>
-              {/* Assignee filter chips */}
-              {data.participants.length > 1 && (
-                <div className="mb-1.5 flex flex-wrap gap-1">
-                  {data.participants.filter((p) => p.is_active || backlogAssigneeFilter.has(p.id)).map((p) => {
-                    const on = backlogAssigneeFilter.has(p.id);
-                    return (
-                      <button
-                        key={p.id}
-                        onClick={() => {
-                          setBacklogAssigneeFilter((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
-                            return next;
-                          });
-                        }}
-                        className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] transition-colors ${
-                          on ? "border-blue-400 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                        }`}
-                        title={`Показывать только ${p.name}`}
-                      >
-                        <ParticipantAvatar participant={p} size="xs" />
-                        <span>{p.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-              <BacklogDroppable />
-              {filteredBacklog.length === 0 ? (
-                <Empty>{data.backlog.length === 0 ? "Бэклог пуст" : "По фильтру ничего"}</Empty>
+            <BacklogDroppable />
+            <div className="flex-1 overflow-y-auto p-2">
+              {backlogFiltered.length === 0 ? (
+                <p className="rounded-md bg-white px-2 py-1.5 text-xs text-slate-400">
+                  {data.backlog.length === 0 ? "Бэклог пуст" : "По фильтру ничего"}
+                </p>
               ) : (
-                <>
-                  <p className="mb-1 text-[10px] text-slate-400">Перетащите в день →</p>
-                  {filteredBacklog.map((t) => (
-                    <DraggableTask key={t.id} task={t} participant={t.assignee_participant_id ? participantById.get(t.assignee_participant_id) : undefined} />
-                  ))}
-                </>
+                groupedBacklog.map((g) => (
+                  <div key={g.key} className="mb-2">
+                    {g.title && (
+                      <h4 className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                        <ArrowDownAZ className="size-3" />
+                        {g.title}
+                        <span className="text-slate-400">·{g.items.length}</span>
+                      </h4>
+                    )}
+                    <div className="flex flex-col gap-1">
+                      {g.items.map((t) => (
+                        <DraggableTask
+                          key={t.id}
+                          task={t}
+                          participant={t.assignee_participant_id ? participantById.get(t.assignee_participant_id) : undefined}
+                          onShowHistory={() => setHistoryForTask(t.id)}
+                          compact
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))
               )}
-            </Section>
+            </div>
           </aside>
 
           {/* Day grid — две секции */}
-          <main className="flex-1 overflow-auto p-4">
-            {/* Header дней — единый */}
+          <main className="flex flex-1 flex-col overflow-auto p-3">
             <DayHeader days={days} dayDates={dayDates} today={today} dailyCap={Number(data.settings.daily_capacity_hours)} />
 
-            {/* Секция «Моя» */}
             {owner && (
               <SectionBlock
                 title="Моя"
@@ -423,17 +620,17 @@ export default function ThisWeekPage() {
                   today={today}
                   items={data.items.filter((t) => t.assignee_participant_id === owner.id)}
                   dailyCap={Number(data.settings.daily_capacity_hours)}
-                  participants={data.participants}
                   participantById={participantById}
                   showAvatar={false}
+                  onShowHistory={setHistoryForTask}
+                  hoursByDate={hoursByPidDate[owner.id] ?? {}}
                 />
               </SectionBlock>
             )}
 
-            {/* Секция «Разработка» */}
             <SectionBlock title="Разработка" used={devUsed} cap={devCap}>
               {developers.length === 0 ? (
-                <p className="rounded-md bg-slate-50 px-2 py-2 text-xs text-slate-400">Нет активных разработчиков. Добавьте их в Настройках.</p>
+                <p className="rounded-md bg-slate-50 px-2 py-2 text-xs text-slate-400">Нет активных разработчиков.</p>
               ) : developers.map((p) => (
                 <ParticipantRow
                   key={p.id}
@@ -444,14 +641,14 @@ export default function ThisWeekPage() {
                   items={data.items.filter((t) => t.assignee_participant_id === p.id)}
                   dailyCap={Number(data.settings.daily_capacity_hours)}
                   effectiveCapHours={effCapById.get(p.id)?.hours ?? 0}
-                  participants={data.participants}
                   participantById={participantById}
                   showAvatar
+                  onShowHistory={setHistoryForTask}
+                  hoursByDate={hoursByPidDate[p.id] ?? {}}
                 />
               ))}
             </SectionBlock>
 
-            {/* Секция «Прочее» */}
             {others.length > 0 && (
               <SectionBlock title="Прочее" muted>
                 {others.map((p) => (
@@ -464,55 +661,74 @@ export default function ThisWeekPage() {
                     items={data.items.filter((t) => t.assignee_participant_id === p.id)}
                     dailyCap={Number(data.settings.daily_capacity_hours)}
                     effectiveCapHours={effCapById.get(p.id)?.hours ?? 0}
-                    participants={data.participants}
                     participantById={participantById}
                     showAvatar
+                    onShowHistory={setHistoryForTask}
+                    hoursByDate={hoursByPidDate[p.id] ?? {}}
                   />
                 ))}
               </SectionBlock>
             )}
-
-            {data.items.length === 0 && (
-              <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-4 text-center text-xs text-slate-500">
-                На неделе пока нет задач. Перетащите из бэклога.
-              </div>
-            )}
           </main>
+
+          {/* Right sidebar — metrics (P4) */}
+          <MetricSidebar
+            period={data.period}
+            directionId={data.direction_id}
+            metrics={data.metrics}
+            initiatives={data.initiatives}
+            initiativeMetricLinks={data.initiative_metric_links}
+            targetsByMetric={data.targets_by_metric}
+            metricActuals={data.metric_actuals_for_week}
+            onActualSaved={() => fetchData(effectiveWeek, effectiveDirection)}
+          />
         </div>
       </div>
+
+      {/* P7: Replan reason dialog */}
+      <ReplanReasonDialog
+        open={!!pendingMove}
+        onClose={() => {
+          setPendingMove(null);
+          // отмена — откатываем состояние
+          fetchData(effectiveWeek, effectiveDirection);
+        }}
+        onConfirm={async (reason) => {
+          if (!pendingMove) return;
+          await performMove(pendingMove.taskId, {
+            planned_date: pendingMove.planned_date === "" ? null : pendingMove.planned_date,
+            assignee_participant_id: pendingMove.assignee_participant_id,
+            replan: reason,
+          });
+          setPendingMove(null);
+        }}
+        title={`Перенос задачи «${pendingTask?.title ?? ""}»`}
+      />
+
+      {/* P7: history popover-as-modal */}
+      <PlanHistoryModal
+        itemId={historyForTask}
+        onClose={() => setHistoryForTask(null)}
+        participantById={participantById}
+        initiativeById={initiativeById}
+      />
     </DndContext>
   );
 }
 
-function Section({ title, icon, children }: { title: string; icon?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="mb-4">
-      <h3 className="mb-1.5 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-        {icon}
-        {title}
-      </h3>
-      <div className="flex flex-col gap-1.5">{children}</div>
-    </div>
-  );
-}
-
-function Empty({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-md bg-white px-2 py-1.5 text-xs text-slate-400">{children}</p>;
-}
-
 function BacklogDroppable() {
   const { isOver, setNodeRef } = useDroppable({ id: "backlog" });
-  return <div ref={setNodeRef} className={`mb-1 h-1.5 rounded transition-colors ${isOver ? "bg-blue-300" : ""}`} />;
+  return <div ref={setNodeRef} className={`h-1.5 transition-colors ${isOver ? "bg-blue-300" : "bg-transparent"}`} />;
 }
 
 function DayHeader({
   days, dayDates, today, dailyCap,
 }: { days: string[]; dayDates: string[]; today: string; dailyCap: number }) {
   return (
-    <div className="sticky top-0 z-10 mb-2 grid grid-cols-[120px_1fr] gap-2 bg-white/95 backdrop-blur">
+    <div className="sticky top-0 z-10 mb-2 grid grid-cols-[140px_1fr] gap-2 bg-white/95 backdrop-blur">
       <div />
       <div
-        className="grid gap-2"
+        className="grid gap-1"
         style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0,1fr))` }}
       >
         {days.map((label, i) => {
@@ -542,7 +758,7 @@ function SectionBlock({
 }) {
   const overload = used !== undefined && cap !== undefined && cap > 0 && used > cap;
   return (
-    <div className={`mb-4 rounded-lg border ${muted ? "border-slate-100" : "border-slate-200"} ${muted ? "bg-slate-50/40" : "bg-white"}`}>
+    <div className={`mb-3 rounded-lg border ${muted ? "border-slate-100" : "border-slate-200"} ${muted ? "bg-slate-50/40" : "bg-white"}`}>
       <div className="flex items-center justify-between border-b border-inherit px-3 py-1.5">
         <h3 className={`text-xs font-semibold ${muted ? "text-slate-500" : "text-slate-700"}`}>{title}</h3>
         {used !== undefined && cap !== undefined && (
@@ -557,8 +773,8 @@ function SectionBlock({
 }
 
 function ParticipantRow({
-  participant, days, dayDates, today, items, dailyCap,
-  effectiveCapHours, participants, participantById, showAvatar,
+  participant, days, dayDates, today, items, dailyCap, effectiveCapHours, participantById,
+  showAvatar, onShowHistory, hoursByDate,
 }: {
   participant: DevelopmentParticipant;
   days: string[];
@@ -567,14 +783,35 @@ function ParticipantRow({
   items: Item[];
   dailyCap: number;
   effectiveCapHours?: number;
-  participants: DevelopmentParticipant[];
   participantById: Map<string, DevelopmentParticipant>;
   showAvatar: boolean;
+  onShowHistory: (id: string) => void;
+  hoursByDate: Record<string, number>;
 }) {
   const total = items.reduce((s, t) => s + (t.estimated_minutes ?? 0) / 60, 0);
   const inactive = participant.is_active === false;
+  const dateToIdx = new Map(dayDates.map((d, i) => [d, i]));
+
+  // Карточки задач рендерим в общем grid'е через col-start/end. Multi-day задачи
+  // занимают span; single-day — span 1. Grid с auto-rows укладывает их в строки.
+  type Placed = { id: string; colStart: number; colEnd: number; task: Item };
+  const placed: Placed[] = [];
+  for (const t of items) {
+    const start = t.planned_start_date ?? t.planned_date;
+    const end = t.planned_end_date ?? start;
+    if (!start || !end) continue;
+    const sIdxRaw = dateToIdx.get(start);
+    const eIdxRaw = dateToIdx.get(end);
+    if (sIdxRaw === undefined && eIdxRaw === undefined) continue;
+    const sIdx = sIdxRaw ?? 0;
+    const eIdx = eIdxRaw ?? dayDates.length - 1;
+    const colStart = Math.max(0, sIdx) + 1;
+    const colEnd = Math.min(dayDates.length - 1, eIdx) + 2;
+    placed.push({ id: t.id, colStart, colEnd, task: t });
+  }
+
   return (
-    <div className="mb-2 grid grid-cols-[120px_1fr] gap-2">
+    <div className="mb-2 grid grid-cols-[140px_1fr] gap-2">
       <div className="flex flex-col gap-0.5 px-2 py-1">
         <div className="flex items-center gap-1.5">
           {showAvatar && <ParticipantAvatar participant={participant} size="sm" />}
@@ -587,52 +824,63 @@ function ParticipantRow({
         </span>
         {inactive && <span className="text-[10px] text-amber-600">inactive</span>}
       </div>
-      <div
-        className="grid gap-2"
-        style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0,1fr))` }}
-      >
-        {dayDates.map((date) => {
-          const hours = items
-            .filter((t) => t.planned_date === date)
-            .reduce((s, t) => s + (t.estimated_minutes ?? 0) / 60, 0);
-          const dayItems = items.filter((t) => t.planned_date === date);
-          return (
+      <div className="relative">
+        {/* День-ячейки (drop targets, фон) */}
+        <div
+          className="grid gap-1"
+          style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0,1fr))` }}
+        >
+          {dayDates.map((date) => (
             <DayCell
               key={date}
               participantId={participant.id}
               date={date}
               isToday={date === today}
-              hours={hours}
+              hours={hoursByDate[date] ?? 0}
               dailyCap={dailyCap}
-              tasks={dayItems}
-              participantById={participantById}
-              participants={participants}
             />
-          );
-        })}
+          ))}
+        </div>
+        {/* Полосы задач — overlay grid */}
+        <div
+          className="pointer-events-none absolute inset-0 grid gap-1 p-1"
+          style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0,1fr))`, gridAutoRows: "min-content" }}
+        >
+          {placed.map((p) => (
+            <div
+              key={p.id}
+              className="pointer-events-auto min-w-0"
+              style={{ gridColumnStart: p.colStart, gridColumnEnd: p.colEnd }}
+            >
+              <DraggableTask
+                task={p.task}
+                participant={participantById.get(participant.id)}
+                onShowHistory={() => onShowHistory(p.id)}
+                spanDays={p.colEnd - p.colStart}
+              />
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
 function DayCell({
-  participantId, date, isToday, hours, dailyCap, tasks, participantById,
+  participantId, date, isToday, hours, dailyCap,
 }: {
   participantId: string;
   date: string;
   isToday: boolean;
   hours: number;
   dailyCap: number;
-  tasks: Item[];
-  participantById: Map<string, DevelopmentParticipant>;
-  participants: DevelopmentParticipant[];
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: dropId(participantId, date) });
   const overload = hours > dailyCap;
   return (
     <div
       ref={setNodeRef}
-      className={`flex min-h-[80px] flex-col rounded-md border ${
+      className={`min-h-[90px] rounded-md border ${
         overload ? "border-red-300 bg-red-50/50" : "border-slate-200 bg-white"
       } ${isOver ? "ring-2 ring-blue-400" : ""} ${isToday ? "ring-1 ring-blue-200" : ""}`}
     >
@@ -641,22 +889,28 @@ function DayCell({
           {hours.toFixed(1)}ч
         </div>
       )}
-      <div className="flex flex-1 flex-col gap-1 p-1">
-        {tasks.map((t) => (
-          <DraggableTask
-            key={t.id}
-            task={t}
-            participant={t.assignee_participant_id ? participantById.get(t.assignee_participant_id) : undefined}
-          />
-        ))}
-      </div>
     </div>
   );
 }
 
-function DraggableTask({ task, participant }: { task: Item; participant: DevelopmentParticipant | undefined }) {
+function DraggableTask({
+  task, participant, onShowHistory, spanDays, compact,
+}: {
+  task: Item;
+  participant: DevelopmentParticipant | undefined;
+  onShowHistory: () => void;
+  spanDays?: number;
+  compact?: boolean;
+}) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: task.id });
   const isDone = task.status === "done";
+  // Грубый счётчик переносов: если original_planned_start_date отличается от текущего start —
+  // как минимум 1 перенос. Точный счётчик пришёл бы из /plan-history; для иконки достаточно.
+  const movedAtLeastOnce =
+    !!task.original_planned_start_date
+    && !!task.planned_start_date
+    && task.original_planned_start_date !== task.planned_start_date;
+
   return (
     <div
       ref={setNodeRef}
@@ -668,11 +922,23 @@ function DraggableTask({ task, participant }: { task: Item; participant: Develop
       }}
       className={`cursor-grab rounded-md border bg-white p-1.5 text-[11px] hover:bg-slate-50 ${
         isDone ? "border-slate-100 opacity-60" : "border-slate-200"
-      }`}
+      } ${spanDays && spanDays > 1 ? "border-blue-300 bg-blue-50/30" : ""}`}
+      title={spanDays && spanDays > 1 ? `Длится ${spanDays} дн.` : undefined}
     >
       <div className="flex items-start gap-1">
         <ParticipantAvatar participant={participant} size="xs" />
         <div className={`flex-1 font-medium leading-tight ${isDone ? "line-through" : ""}`}>{task.title}</div>
+        {movedAtLeastOnce && (
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onShowHistory(); }}
+            className="inline-flex items-center gap-0.5 rounded bg-amber-50 px-1 text-[9px] text-amber-700 hover:bg-amber-100"
+            title="История переносов"
+          >
+            <History className="size-2.5" />
+          </button>
+        )}
       </div>
       <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-500">
         {task.is_carryover && (
@@ -683,6 +949,80 @@ function DraggableTask({ task, participant }: { task: Item; participant: Develop
         {task.estimated_minutes ? (
           <span className="tabular-nums">{(task.estimated_minutes / 60).toFixed(1)}ч</span>
         ) : null}
+        {!compact && spanDays && spanDays > 1 && (
+          <span className="tabular-nums text-blue-600">{spanDays} дн.</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PlanHistoryModal({
+  itemId, onClose, participantById, initiativeById,
+}: {
+  itemId: string | null;
+  onClose: () => void;
+  participantById: Map<string, DevelopmentParticipant>;
+  initiativeById: Map<string, PlanningInitiative>;
+}) {
+  void initiativeById;
+  const [rows, setRows] = useState<Array<{
+    id: string; changed_at: string; changed_by: string | null;
+    planned_start_before: string | null; planned_end_before: string | null;
+    planned_start_after: string | null; planned_end_after: string | null;
+    assignee_before: string | null; assignee_after: string | null;
+    reason_code: string | null; reason_text: string | null;
+  }>>([]);
+
+  useEffect(() => {
+    if (!itemId) return;
+    let active = true;
+    fetch(`/api/items/${itemId}/plan-history`).then(async (r) => {
+      if (!r.ok || !active) return;
+      setRows(await r.json());
+    });
+    return () => { active = false; };
+  }, [itemId]);
+
+  if (!itemId) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onClose}>
+      <div className="max-h-[80vh] w-[480px] overflow-auto rounded-lg bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold">История переносов</h3>
+          <button onClick={onClose} className="text-xs text-slate-500 hover:text-slate-700">Закрыть</button>
+        </div>
+        {rows.length === 0 ? (
+          <p className="text-xs text-slate-500">Переносов нет.</p>
+        ) : (
+          <ol className="space-y-2">
+            {rows.map((r) => {
+              const fromAss = r.assignee_before ? participantById.get(r.assignee_before)?.name ?? r.assignee_before : "—";
+              const toAss = r.assignee_after ? participantById.get(r.assignee_after)?.name ?? r.assignee_after : "—";
+              return (
+                <li key={r.id} className="rounded border border-slate-100 p-2 text-[11px]">
+                  <div className="mb-1 flex items-center justify-between text-slate-500">
+                    <span>{new Date(r.changed_at).toLocaleString("ru-RU")}</span>
+                    {r.changed_by && <span>{r.changed_by}</span>}
+                  </div>
+                  <div className="text-slate-700">
+                    {r.planned_start_before} – {r.planned_end_before} → <strong>{r.planned_start_after} – {r.planned_end_after}</strong>
+                  </div>
+                  {fromAss !== toAss && (
+                    <div className="text-slate-700">{fromAss} → <strong>{toAss}</strong></div>
+                  )}
+                  {r.reason_code && (
+                    <div className="mt-1 text-amber-700">
+                      <span className="font-medium">{r.reason_code}</span>
+                      {r.reason_text && <span>: {r.reason_text}</span>}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        )}
       </div>
     </div>
   );

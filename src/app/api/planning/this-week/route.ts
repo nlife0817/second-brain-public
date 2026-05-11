@@ -143,6 +143,36 @@ export const GET = withAuth(async (req) => {
   const participants: DevelopmentParticipant[] = await getAllDevelopmentParticipants();
   const effectiveCapacities: EffectiveCapacity[] = await listEffectiveCapacities(targetPeriod.id);
 
+  // P4: факты по метрикам на эту неделю. Для cumulative — сумма всех ticks
+  // за неделю; для non-cumulative — последний tick по measured_at в пределах недели.
+  // Для week-targets агрегация ticks делает только UI, мы отдаём «сырые» ticks
+  // и последний/сумма. Источник measured_at — period.end_date для удобства ввода.
+  const metricActuals: Record<string, { ticks: Array<{ id: string; value: number; measured_at: string; source: string | null }>; aggregated: number | null }> = {};
+  if (metrics.length > 0) {
+    const mIds = metrics.map((m) => m.id);
+    const placeholders = mIds.map(() => "?").join(",");
+    const ticks = await prepare<{ id: string; metric_id: string; value: string | number; measured_at: string; source: string | null }>(
+      `SELECT id, metric_id, value, measured_at, source
+       FROM planning_metric_ticks
+       WHERE metric_id IN (${placeholders})
+         AND measured_at >= ?
+         AND measured_at <= ?
+       ORDER BY measured_at ASC`,
+    ).all(...mIds, targetPeriod.start_date, targetPeriod.end_date);
+    for (const m of metrics) {
+      const mt = ticks
+        .filter((t) => t.metric_id === m.id)
+        .map((t) => ({ id: t.id, value: Number(t.value), measured_at: t.measured_at, source: t.source }));
+      let aggregated: number | null = null;
+      if (mt.length > 0) {
+        aggregated = m.is_cumulative
+          ? mt.reduce((s, t) => s + t.value, 0)
+          : mt[mt.length - 1].value;
+      }
+      metricActuals[m.id] = { ticks: mt, aggregated };
+    }
+  }
+
   return NextResponse.json({
     period: targetPeriod,
     settings,
@@ -155,5 +185,6 @@ export const GET = withAuth(async (req) => {
     direction_id: directionId,
     participants,
     effective_capacities: effectiveCapacities,
+    metric_actuals_for_week: metricActuals,
   });
 });
