@@ -14,9 +14,9 @@ const DIRECTION_OPTIONS: Array<{ value: MetricDirection; label: string }> = [
   { value: "down", label: "Вниз (снижение = хорошо)" },
 ];
 
+// Kaiten как источник факта снят (см. PLAN_PLANNING_REWORK §0 / миграция 0029).
 const SOURCE_OPTIONS: Array<{ value: MetricSource; label: string }> = [
   { value: "manual",            label: "Ручной ввод" },
-  { value: "kaiten",            label: "Kaiten" },
   { value: "grafana",           label: "Grafana" },
   { value: "second_brain",      label: "Second Brain (сделки/задачи)" },
   { value: "product_analytics", label: "Product Analytics" },
@@ -172,7 +172,7 @@ export function MetricSettingsPanel({ metric, onChanged }: Props) {
         </div>
       </Field>
 
-      {(metric.source === "kaiten" || metric.source === "grafana" || metric.source === "product_analytics") && (
+      {(metric.source === "grafana" || metric.source === "product_analytics") && (
         <Field label="ID источника" hint={metric.source === "grafana" ? "Имя метрики в Grafana" : "ID в источнике"}>
           <input
             type="text"

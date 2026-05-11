@@ -10,9 +10,9 @@
 //   4. Distribute action + horizons (quarter / month / week) with editable table.
 //   5. Link to full metric page for graphs / sources block.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { X, ExternalLink, Sparkles, Repeat } from "lucide-react";
+import { X, ExternalLink, Repeat } from "lucide-react";
 import { toast } from "sonner";
 import { usePlanningStore } from "@/lib/planning-store";
 import { MetricSettingsPanel } from "./MetricSettingsPanel";
@@ -72,7 +72,7 @@ function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClo
   const [horizon, setHorizon] = useState<"quarter" | "month" | "week">("quarter");
   const [showSettings, setShowSettings] = useState<boolean>(autoOpenSettings);
   const [openDistribute, setOpenDistribute] = useState(false);
-  const [initBusy, setInitBusy] = useState(false);
+  const ensureTriedRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!metric) return;
@@ -89,26 +89,30 @@ function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClo
 
   useEffect(() => { void load(); }, [load]);
 
+  // Silent auto-ensure: если у метрики ещё нет периодов (старые данные до P0),
+  // молча инициализируем год — один раз на drawer. UI-кнопка убрана.
+  useEffect(() => {
+    if (!metric || ensureTriedRef.current) return;
+    if (periods.length > 0 || yearPeriod) return;
+    if (metric.type === "delivery") return;
+    ensureTriedRef.current = true;
+    void (async () => {
+      const res = await fetch("/api/planning/periods/init-year", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year, direction_id: metric.direction_id }),
+      });
+      if (res.ok) {
+        await load();
+        await refreshAll();
+      }
+    })();
+  }, [metric, periods.length, yearPeriod, year, load, refreshAll]);
+
   if (!metric) return null;
 
   const yearTarget = Number(targets.find((t) => yearPeriod && t.period_id === yearPeriod.id)?.target_value ?? 0);
-  const noPeriodsYet = periods.length === 0 && yearPeriod === null;
   const isDelivery = metric.type === "delivery";
-
-  const initYear = async () => {
-    setInitBusy(true);
-    const res = await fetch("/api/planning/periods/init-year", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ year, direction_id: metric.direction_id }),
-    });
-    setInitBusy(false);
-    if (!res.ok) { toast.error("Не удалось инициализировать год"); return; }
-    const result = await res.json();
-    toast.success(`Год ${year} готов: ${result.created.length} создано, ${result.skipped} уже было`);
-    await load();
-    await refreshAll();
-  };
 
   const saveYearTarget = async (raw: string) => {
     if (!yearPeriod) return;
@@ -177,26 +181,8 @@ function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClo
           </div>
         </details>
 
-        {/* Empty state — no periods yet */}
-        {noPeriodsYet && !isDelivery && (
-          <div className="m-4 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/40 p-5 text-center">
-            <Sparkles className="mx-auto mb-2 size-7 text-blue-400" />
-            <h3 className="text-sm font-semibold text-slate-800">Сначала инициализируйте год</h3>
-            <p className="mx-auto mt-1 max-w-[320px] text-xs text-slate-600">
-              Создадим календарь {year}: 4 квартала + 12 месяцев + ~52 недели. Это нужно один раз.
-            </p>
-            <button
-              onClick={initYear}
-              disabled={initBusy}
-              className="mx-auto mt-3 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {initBusy ? "Создаём…" : `Инициализировать год ${year}`}
-            </button>
-          </div>
-        )}
-
-        {/* Year target + distribute (only for numeric / business) */}
-        {!noPeriodsYet && !isDelivery && yearPeriod && (
+        {/* Year target + distribute (only for numeric / business). Periods are auto-ensured silently on mount. */}
+        {!isDelivery && yearPeriod && (
           <div className="border-b border-slate-200 p-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               Годовая цель {year}
@@ -229,7 +215,7 @@ function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClo
         )}
 
         {/* Horizon picker — card style (per user feedback: no more dry tabs) */}
-        {!noPeriodsYet && !isDelivery && (
+        {!isDelivery && (
           <div className="border-b border-slate-200 p-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Горизонт</p>
             <div className="mt-2 grid grid-cols-3 gap-1.5">

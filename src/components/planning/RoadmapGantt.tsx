@@ -7,7 +7,7 @@ import { usePlanningStore } from "@/lib/planning-store";
 
 const TYPE_LANE: Record<PlanningInitiative["type"], string> = {
   client_blocker: "Блокер клиента",
-  product_maturity: "Зрелость",
+  product_maturity: "Развитие",
   tech_debt: "Тех. долг",
   experiment: "Эксперимент",
   support: "Поддержка",

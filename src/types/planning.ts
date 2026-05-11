@@ -6,8 +6,8 @@ export type PeriodType = "year" | "quarter" | "month" | "week";
 
 export type MetricType = "numeric" | "business" | "delivery";
 export type MetricDirection = "up" | "down";
+// "kaiten" removed in P0 (PLAN_PLANNING_REWORK §0). Existing rows migrated to "manual".
 export type MetricSource =
-  | "kaiten"
   | "grafana"
   | "second_brain"
   | "product_analytics"

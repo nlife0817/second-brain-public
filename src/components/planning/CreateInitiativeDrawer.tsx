@@ -8,7 +8,7 @@ interface Props { open: boolean; onClose: () => void; }
 
 const TYPES: Array<{ value: InitiativeType; label: string }> = [
   { value: "client_blocker", label: "Блокер клиента" },
-  { value: "product_maturity", label: "Зрелость продукта" },
+  { value: "product_maturity", label: "Развитие продукта" },
   { value: "tech_debt", label: "Тех. долг" },
   { value: "experiment", label: "Эксперимент" },
   { value: "support", label: "Поддержка" },

@@ -12,7 +12,7 @@ interface Props { initiative: PlanningInitiative; selected: boolean; onSelect: (
 
 const TYPE_LABEL: Record<PlanningInitiative["type"], string> = {
   client_blocker: "Блокер",
-  product_maturity: "Зрелость",
+  product_maturity: "Развитие",
   tech_debt: "Тех. долг",
   experiment: "Эксп.",
   support: "Поддержка",

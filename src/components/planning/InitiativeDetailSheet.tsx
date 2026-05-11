@@ -20,7 +20,6 @@ import { usePlanningStore } from "@/lib/planning-store";
 import { INITIATIVE_STATUS_LABEL, SEMANTIC_CLASS, initiativeStatusTone } from "@/lib/planning-colors";
 import { RicePicker } from "./RicePicker";
 import { ExperimentFields } from "./ExperimentFields";
-import { InitiativeDependenciesEditor } from "./InitiativeDependenciesEditor";
 import { ReplanReasonDialog } from "./ReplanReasonDialog";
 
 interface DetailData extends PlanningInitiative {
@@ -34,7 +33,7 @@ interface Props { initiativeId: string | null; onClose: () => void; }
 
 const TYPE_LABEL: Record<InitiativeType, string> = {
   client_blocker: "Блокер клиента",
-  product_maturity: "Зрелость продукта",
+  product_maturity: "Развитие продукта",
   tech_debt: "Тех. долг",
   experiment: "Эксперимент",
   support: "Поддержка",
@@ -377,13 +376,8 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                 }}
               />
 
-              {/* Dependencies */}
-              <InitiativeDependenciesEditor
-                initiativeId={data.id}
-                dependencies={data.dependencies}
-                allInitiatives={initiatives}
-                onChange={load}
-              />
+              {/* Dependencies section removed (PLAN_PLANNING_REWORK §0). DB table planning_initiative_dependency
+                  оставлена пустой для совместимости; UI editor выпилен. */}
 
               {/* Actions */}
               <section className="flex items-center justify-between gap-2 border-t border-slate-200 pt-3">

@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { toast } from "sonner";
-import { ChevronLeft, Sparkles, Settings as SettingsIcon } from "lucide-react";
+import { ChevronLeft, Settings as SettingsIcon } from "lucide-react";
 import { MetricChart } from "@/components/planning/MetricChart";
 import { MetricTargetsTable } from "@/components/planning/MetricTargetsTable";
 import { AutoDistributeDialog } from "@/components/planning/AutoDistributeDialog";
@@ -37,7 +36,7 @@ export default function MetricPage() {
   const [periodType, setPeriodType] = useState<"quarter" | "month" | "week">("quarter");
   const [openDistribute, setOpenDistribute] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [initBusy, setInitBusy] = useState(false);
+  const ensureTriedRef = useRef(false);
   const year = new Date().getFullYear();
 
   const fetchAll = useCallback(async () => {
@@ -61,20 +60,21 @@ export default function MetricPage() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void fetchAll(); }, [fetchAll]);
 
-  const initYear = async () => {
-    if (!metric) return;
-    setInitBusy(true);
-    const res = await fetch("/api/planning/periods/init-year", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ year, direction_id: metric.direction_id }),
-    });
-    setInitBusy(false);
-    if (!res.ok) { toast.error("Не удалось инициализировать год"); return; }
-    const result = await res.json();
-    toast.success(`Год ${year} готов: ${result.created.length} периодов создано, ${result.skipped} уже было`);
-    await fetchAll();
-  };
+  // Silent auto-ensure периодов (старые метрики без P0). UI-кнопка убрана.
+  useEffect(() => {
+    if (!metric || ensureTriedRef.current) return;
+    if (periods.length > 0 || yearPeriod) return;
+    if (metric.type === "delivery") return;
+    ensureTriedRef.current = true;
+    void (async () => {
+      const res = await fetch("/api/planning/periods/init-year", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year, direction_id: metric.direction_id }),
+      });
+      if (res.ok) await fetchAll();
+    })();
+  }, [metric, periods.length, yearPeriod, year, fetchAll]);
 
   const saveYearTarget = async (raw: string) => {
     if (!metric || !yearPeriod) return;
@@ -120,8 +120,6 @@ export default function MetricPage() {
     return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
   })();
 
-  const noPeriodsYet = periods.length === 0 && yearPeriod === null;
-
   return (
     <div className="p-6">
       {/* Header */}
@@ -161,25 +159,8 @@ export default function MetricPage() {
         </div>
       )}
 
-      {/* Empty state: no periods yet */}
-      {noPeriodsYet ? (
-        <div className="rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/40 p-8 text-center">
-          <Sparkles className="mx-auto mb-2 size-8 text-blue-400" />
-          <h2 className="text-base font-semibold text-slate-800">Сначала инициализируйте год</h2>
-          <p className="mx-auto mt-1 max-w-md text-sm text-slate-600">
-            Создадим календарь {year} для этого направления: 4 квартала + 12 месяцев + ~52 недели.
-            Это нужно один раз. После — задайте годовую цель и распределите её одним кликом.
-          </p>
-          <button
-            onClick={initYear}
-            disabled={initBusy}
-            className="mx-auto mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {initBusy ? "Создаём…" : `Инициализировать год ${year}`}
-          </button>
-        </div>
-      ) : (
-        <>
+      {/* Periods are auto-ensured silently on mount; init-year UI removed (PLAN_PLANNING_REWORK P0). */}
+      <>
           {/* Year target — primary KPI входная точка */}
           {yearPeriod && (
             <div className="mb-4 rounded-xl border border-slate-200 p-4">
@@ -287,17 +268,13 @@ export default function MetricPage() {
             </div>
             {periods.length === 0 ? (
               <div className="py-6 text-center text-sm text-slate-500">
-                <p>Нет периодов типа «{PERIOD_LABEL[periodType].toLowerCase()}» на {year}.</p>
-                <button onClick={initYear} disabled={initBusy} className="mt-2 text-xs text-blue-600 hover:underline disabled:opacity-50">
-                  Инициализировать год {year}
-                </button>
+                Подгружаем периоды…
               </div>
             ) : (
               <MetricTargetsTable metric={metric} periods={periods} targets={targets} onChanged={fetchAll} />
             )}
           </div>
         </>
-      )}
 
       <AutoDistributeDialog
         open={openDistribute}
