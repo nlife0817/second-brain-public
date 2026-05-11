@@ -86,7 +86,7 @@ export function WeekCascadePicker({ value, onChange, yearsAround = 5, className 
   };
 
   return (
-    <Popover open={open} onOpenChange={(s) => setOpen(s.open)}>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={(p) => (
           <button
