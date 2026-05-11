@@ -15,6 +15,7 @@ import Link from "next/link";
 import { X, ExternalLink, Repeat } from "lucide-react";
 import { toast } from "sonner";
 import { usePlanningStore } from "@/lib/planning-store";
+import { markLocalMutation } from "@/lib/planning-realtime";
 import { MetricSettingsPanel } from "./MetricSettingsPanel";
 import { MetricActualsTable } from "./MetricActualsTable";
 import { AutoDistributeDialog } from "./AutoDistributeDialog";
@@ -64,7 +65,6 @@ export function MetricDetailSheet({ metricId, onClose }: Props) {
 
 function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClose: () => void }) {
   const metrics = usePlanningStore((s) => s.metrics);
-  const refreshAll = usePlanningStore((s) => s.fetchAll);
   const autoOpenSettings = usePlanningStore((s) => s.detailMetricAutoOpenSettings);
   const updateMetric = usePlanningStore((s) => s.updateMetric);
 
@@ -109,17 +109,20 @@ function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClo
     if (metric.type === "delivery") return;
     ensureTriedRef.current = true;
     void (async () => {
+      markLocalMutation();
       const res = await fetch("/api/planning/periods/init-year", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ year, direction_id: metric.direction_id }),
       });
       if (res.ok) {
+        // Перезагружаем только локальный state шторки. Realtime сам подтянет
+        // периоды в общий store через debounce-гейт, не запуская fetchAll прямо
+        // сейчас (раньше тут крутился await refreshAll() — лишний refetch).
         await load();
-        await refreshAll();
       }
     })();
-  }, [metric, periods.length, yearPeriod, year, load, refreshAll]);
+  }, [metric, periods.length, yearPeriod, year, load]);
 
   if (!metric) return null;
 
@@ -183,7 +186,10 @@ function MetricDetailSheetInner({ metricId, onClose }: { metricId: string; onClo
             Параметры метрики
           </summary>
           <div className="mt-3">
-            <MetricSettingsPanel metric={metric} onChanged={refreshAll} />
+            {/* Раньше onChanged триггерил полный fetchAll на каждое сохранение
+                поля. Теперь — только локальный re-load шторки; в основной
+                store изменения донесёт realtime по гейтированному debounce. */}
+            <MetricSettingsPanel metric={metric} onChanged={load} />
           </div>
         </details>
 

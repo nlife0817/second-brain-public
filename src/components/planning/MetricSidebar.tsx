@@ -13,6 +13,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { formatMetricValue } from "@/lib/planning-format";
 import { INITIATIVE_STATUS_LABEL, SEMANTIC_CLASS, initiativeStatusTone } from "@/lib/planning-colors";
 import { usePlanningStore } from "@/lib/planning-store";
+import { markLocalMutation } from "@/lib/planning-realtime";
 
 const STORAGE_KEY = "planning:this-week:metricFilter";
 
@@ -216,6 +217,7 @@ function MetricCard({
     setSaving(true);
     try {
       const measured_at = period.end_date;
+      markLocalMutation();
       // Для не-cumulative последний tick за неделю «побеждает» в агрегате,
       // поэтому новый POST просто перепишет факт. Для cumulative — суммируется.
       const res = await fetch(`/api/planning/metrics/${metric.id}/ticks`, {
@@ -324,6 +326,7 @@ function MetricCard({
                 <button
                   type="button"
                   onClick={async () => {
+                    markLocalMutation();
                     const res = await fetch(`/api/planning/metrics/${metric.id}/ticks/${t.id}`, {
                       method: "DELETE",
                     });

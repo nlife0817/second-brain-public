@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
+import { markLocalMutation } from "@/lib/planning-realtime";
+import { usePlanningStore } from "@/lib/planning-store";
 import type { PlanningMetric, MetricDirection, MetricSource } from "@/types/planning";
 
 interface Props {
@@ -37,6 +39,11 @@ export function MetricSettingsPanel({ metric, onChanged }: Props) {
 
   const patch = async (updates: Partial<PlanningMetric>, label: string) => {
     setBusy(label);
+    // Оптимистично — в store, чтобы карточка в колонке поменялась сразу.
+    usePlanningStore.setState((s) => ({
+      metrics: s.metrics.map((m) => (m.id === metric.id ? { ...m, ...updates } : m)),
+    }));
+    markLocalMutation();
     const res = await fetch(`/api/planning/metrics/${metric.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

@@ -6,6 +6,27 @@ import { usePlanningStore } from "./planning-store";
 
 let channel: RealtimeChannel | null = null;
 
+// Время последней локальной мутации (любой PATCH/POST/DELETE из UI планирования).
+// Используется как гейт для realtime: пока пользователь активно редактирует —
+// откладываем массовый fetchAll, иначе на каждый keystroke (через debounce
+// InlineTextField) прилетал бы полный refetch и UI лагал.
+let lastLocalMutation = 0;
+
+/**
+ * Зафиксировать, что мы только что сделали локальную мутацию planning-* данных.
+ * Подавляет realtime echo на короткое окно, чтобы избежать двойного refetch
+ * (свой PATCH → supabase echo → fetchAll → optimistic state перетирается).
+ */
+export function markLocalMutation(): void {
+  lastLocalMutation = Date.now();
+}
+
+// Базовый debounce — даём время на batch-edit'ы (typing flurries).
+const BASE_DEBOUNCE_MS = 600;
+// Окно подавления: если локальная мутация случилась < этого назад,
+// откладываем refetch до конца окна + небольшой запас.
+const LOCAL_SUPPRESS_MS = 1500;
+
 /**
  * Subscribe to planning_* changes and refetch the store on any event (debounced).
  * Returns an unsubscribe function. Idempotent — repeat calls reuse the channel.
@@ -21,9 +42,14 @@ export function subscribePlanningRealtime(): () => void {
   let refetchTimer: ReturnType<typeof setTimeout> | null = null;
   const schedule = () => {
     if (refetchTimer) clearTimeout(refetchTimer);
+    const sinceLocal = Date.now() - lastLocalMutation;
+    // Если только что сами писали — ждём больше; иначе базовый debounce.
+    const delay = sinceLocal < LOCAL_SUPPRESS_MS
+      ? LOCAL_SUPPRESS_MS - sinceLocal + 200
+      : BASE_DEBOUNCE_MS;
     refetchTimer = setTimeout(() => {
       void usePlanningStore.getState().fetchAll();
-    }, 250);
+    }, delay);
   };
 
   const tables = [

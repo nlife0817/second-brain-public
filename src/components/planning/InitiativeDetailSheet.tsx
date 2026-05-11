@@ -17,6 +17,7 @@ import type {
   ReplanReason,
 } from "@/types/planning";
 import { usePlanningStore } from "@/lib/planning-store";
+import { markLocalMutation } from "@/lib/planning-realtime";
 import { INITIATIVE_STATUS_LABEL, SEMANTIC_CLASS, initiativeStatusTone } from "@/lib/planning-colors";
 import { INITIATIVE_TYPE_DESCRIPTION, JTBD_HINT_BY_TYPE } from "@/lib/planning-initiative-meta";
 import { RicePicker } from "./RicePicker";
@@ -57,7 +58,6 @@ const STATUSES: InitiativeStatus[] = ["planned", "in_progress", "done", "killed"
 export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
   const initiatives = usePlanningStore((s) => s.initiatives);
   const metrics = usePlanningStore((s) => s.metrics);
-  const refresh = usePlanningStore((s) => s.fetchAll);
 
   const [data, setData] = useState<DetailData | null>(null);
   const [periods, setPeriods] = useState<PlanningPeriod[]>([]);
@@ -113,6 +113,7 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
     if (replanReason) body.replan_reason = replanReason;
     if (updates.status === "killed") body.replan_reason = { code: "kill_criteria_triggered" };
 
+    markLocalMutation();
     const res = await fetch(`/api/planning/initiatives/${data.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -121,7 +122,12 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
     if (!res.ok) { toast.error("Не сохранено"); return; }
     const next = await res.json();
     setData((d) => d ? { ...d, ...next } : d);
-    refresh();
+    // Синхронизируем store оптимистично — раньше тут крутился полный fetchAll
+    // на каждый PATCH (а realtime тоже его триггерил). Колонка мгновенно ловит
+    // изменение через store, а realtime подтянет остальное по debounce.
+    usePlanningStore.setState((s) => ({
+      initiatives: s.initiatives.map((i) => (i.id === data.id ? { ...i, ...next } : i)),
+    }));
   };
 
   const onConfirmReplan = async (reason: ReplanReason | null) => {
@@ -140,9 +146,13 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
   const onDelete = async () => {
     if (!data) return;
     if (!confirm(`Удалить инициативу «${data.title}»? Это действие необратимо.`)) return;
+    markLocalMutation();
     const res = await fetch(`/api/planning/initiatives/${data.id}`, { method: "DELETE" });
     if (!res.ok) { toast.error("Не удалось"); return; }
-    refresh();
+    // Удаляем из store сразу, не дожидаясь fetchAll.
+    usePlanningStore.setState((s) => ({
+      initiatives: s.initiatives.filter((i) => i.id !== data.id),
+    }));
     onClose();
   };
 
@@ -173,13 +183,14 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
     if (!res.ok) { toast.error("Не удалось создать продолжение"); return; }
     const created = await res.json();
     toast.success("Продолжение создано");
-    refresh();
-    // Switch sheet to the new initiative.
+    markLocalMutation();
+    // Добавляем созданную инициативу в store + переключаемся на неё; realtime
+    // подтянет связанные строки (links) в фоне.
+    usePlanningStore.setState((s) => ({
+      initiatives: [...s.initiatives, created],
+      selectedInitiativeId: created.id,
+    }));
     onClose();
-    setTimeout(() => {
-      // Allow store to repopulate first; consumer reopens.
-      usePlanningStore.setState({ selectedInitiativeId: created.id });
-    }, 100);
   };
 
   // P8: Auto reach = client_blocks + linked_clients.
@@ -383,6 +394,7 @@ export function InitiativeDetailSheet({ initiativeId, onClose }: Props) {
                 allItems={metrics.map((m) => ({ id: m.id, label: m.title }))}
                 selectedIds={data.linked_metrics.map((l) => l.metric_id)}
                 onChange={async (next) => {
+                  markLocalMutation();
                   await fetch(`/api/planning/initiatives/${data.id}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },

@@ -6,6 +6,7 @@
 
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
+import { markLocalMutation } from "@/lib/planning-realtime";
 import type {
   PlanningMetric,
   PlanningMetricTarget,
@@ -58,6 +59,7 @@ export function MetricActualsTable({ metric, periods, targets, ticks, onChanged 
   const [edit, setEdit] = useState<{ id: string; v: string } | null>(null);
 
   const save = async (periodId: string, value: number) => {
+    markLocalMutation();
     const res = await fetch(`/api/planning/metrics/${metric.id}/actuals`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

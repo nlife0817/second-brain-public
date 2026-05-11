@@ -30,6 +30,7 @@ import { ParticipantAvatar } from "@/components/planning/ParticipantAvatar";
 import { MetricSidebar } from "@/components/planning/MetricSidebar";
 import { isoWeek, parseWeekKey, weekKey, weekStartDate } from "@/lib/iso-week";
 import { usePlanningStore } from "@/lib/planning-store";
+import { markLocalMutation } from "@/lib/planning-realtime";
 
 interface MetricActual {
   ticks: Array<{ id: string; value: number; measured_at: string; source: string | null }>;
@@ -318,6 +319,7 @@ function ThisWeekPageInner() {
       };
     });
 
+    markLocalMutation();
     const res = await fetch(`/api/items/${taskId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

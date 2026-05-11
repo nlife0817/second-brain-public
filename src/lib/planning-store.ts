@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { toast } from "sonner";
+import { markLocalMutation } from "./planning-realtime";
 import type {
   PlanningDirection,
   PlanningMetric,
@@ -267,6 +268,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
     const before = get().initiativeItemIds[initiativeId] ?? [];
     const next = Array.from(new Set([...before, ...itemIds]));
     set((s) => ({ initiativeItemIds: { ...s.initiativeItemIds, [initiativeId]: next } }));
+    markLocalMutation();
     const res = await fetch(`/api/planning/initiatives/${initiativeId}/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -289,6 +291,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
         [initiativeId]: before.filter((id) => id !== itemId),
       },
     }));
+    markLocalMutation();
     const res = await fetch(
       `/api/planning/initiatives/${initiativeId}/items?item_id=${encodeURIComponent(itemId)}`,
       { method: "DELETE" }
@@ -318,6 +321,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   },
 
   createDirection: async (input) => {
+    markLocalMutation();
     const res = await fetch("/api/planning/directions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -330,6 +334,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   },
 
   createMetric: async (input) => {
+    markLocalMutation();
     const res = await fetch("/api/planning/metrics", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -353,6 +358,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   },
 
   createInitiative: async (input) => {
+    markLocalMutation();
     const res = await fetch("/api/planning/initiatives", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -369,6 +375,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   },
 
   createTask: async (input) => {
+    markLocalMutation();
     const id = crypto.randomUUID();
     const res = await fetch("/api/items", {
       method: "POST",
@@ -396,6 +403,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
     const before = get().directions.find((d) => d.id === id);
     if (!before) return;
     set((s) => ({ directions: s.directions.map((d) => d.id === id ? { ...d, ...updates } : d) }));
+    markLocalMutation();
     const res = await fetch(`/api/planning/directions/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -411,6 +419,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
     const before = get().metrics.find((m) => m.id === id);
     if (!before) return;
     set((s) => ({ metrics: s.metrics.map((m) => m.id === id ? { ...m, ...updates } : m) }));
+    markLocalMutation();
     const res = await fetch(`/api/planning/metrics/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -426,6 +435,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
     const before = get().initiatives.find((i) => i.id === id);
     if (!before) return;
     set((s) => ({ initiatives: s.initiatives.map((i) => i.id === id ? { ...i, ...updates } : i) }));
+    markLocalMutation();
     const res = await fetch(`/api/planning/initiatives/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -441,6 +451,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
     const before = get().tasks.find((t) => t.id === id);
     if (!before) return;
     set((s) => ({ tasks: s.tasks.map((t) => t.id === id ? { ...t, ...updates } : t) }));
+    markLocalMutation();
     const res = await fetch(`/api/items/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
