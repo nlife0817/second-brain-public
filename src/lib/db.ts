@@ -74,7 +74,10 @@ const ITEM_UPDATE_FIELDS = [
 const TAG_UPDATE_FIELDS = ["name", "color", "position"] as const;
 const DEV_STAGE_UPDATE_FIELDS = ["name", "position"] as const;
 const ITEM_STATUS_UPDATE_FIELDS = ["name", "color", "position", "kind"] as const;
-const DEV_PARTICIPANT_UPDATE_FIELDS = ["name", "position"] as const;
+const DEV_PARTICIPANT_UPDATE_FIELDS = [
+  "name", "position",
+  "role", "is_active", "deactivated_at", "weekly_hours_default",
+] as const;
 const CATEGORY_UPDATE_FIELDS = ["name", "color", "icon", "position"] as const;
 const CLIENT_STATUS_UPDATE_FIELDS = ["name", "color", "position"] as const;
 const CLIENT_UPDATE_FIELDS = [
@@ -700,28 +703,165 @@ export async function getAllDevelopmentParticipants(): Promise<DevelopmentPartic
   return await prepare<DevelopmentParticipant>("SELECT * FROM development_participants ORDER BY position ASC, LOWER(name) ASC").all();
 }
 
-export async function updateDevelopmentParticipant(id: string, updates: Partial<Pick<DevelopmentParticipant, "name" | "position">>): Promise<DevelopmentParticipant | undefined> {
-  const built = buildUpdateClause(updates as Record<string, unknown>, DEV_PARTICIPANT_UPDATE_FIELDS);
-  if (!built) return await prepare<DevelopmentParticipant>("SELECT * FROM development_participants WHERE id = ?").get(id);
+export async function updateDevelopmentParticipant(
+  id: string,
+  updates: Partial<Pick<DevelopmentParticipant,
+    "name" | "position" | "role" | "is_active" | "deactivated_at" | "weekly_hours_default"
+  >>,
+): Promise<DevelopmentParticipant | undefined> {
+  // P2: автоматически проставляем deactivated_at при is_active=false.
+  // owner-роль защищаем: нельзя менять роль/активность owner-участника (UI прячет,
+  // но защита нужна на бэкенде на случай прямого запроса).
+  const current = await prepare<DevelopmentParticipant>(
+    "SELECT * FROM development_participants WHERE id = ?"
+  ).get(id);
+  if (!current) return undefined;
+
+  const u: Record<string, unknown> = { ...updates };
+  if (current.role === "owner") {
+    delete u.role;
+    delete u.is_active;
+    delete u.deactivated_at;
+  }
+  if ("is_active" in u) {
+    if (u.is_active === false && current.is_active !== false) {
+      u.deactivated_at = new Date().toISOString();
+    } else if (u.is_active === true && current.is_active === false) {
+      u.deactivated_at = null;
+    }
+  }
+  if ("role" in u && u.role === "owner" && current.role !== "owner") {
+    // Нельзя присвоить роль owner — только сидируется миграцией.
+    delete u.role;
+  }
+
+  const built = buildUpdateClause(u, DEV_PARTICIPANT_UPDATE_FIELDS);
+  if (!built) return current;
   const now = new Date().toISOString();
   await prepare(`UPDATE development_participants SET ${built.sql}, updated_at = ? WHERE id = ?`)
     .run(...built.values, now, id);
   return await prepare<DevelopmentParticipant>("SELECT * FROM development_participants WHERE id = ?").get(id);
 }
 
-export async function deleteDevelopmentParticipant(id: string): Promise<boolean> {
+export async function deleteDevelopmentParticipant(id: string): Promise<boolean | "owner_protected"> {
+  // owner — защищён от удаления.
+  const cur = await prepare<DevelopmentParticipant>(
+    "SELECT * FROM development_participants WHERE id = ?"
+  ).get(id);
+  if (!cur) return false;
+  if (cur.role === "owner") return "owner_protected";
   await prepare("DELETE FROM item_development_participants WHERE participant_id = ?").run(id);
   const result = await prepare("DELETE FROM development_participants WHERE id = ?").run(id);
   return result.changes > 0;
 }
 
-export async function createDevelopmentParticipant(name: string): Promise<DevelopmentParticipant> {
+export async function createDevelopmentParticipant(
+  name: string,
+  opts?: { role?: "developer" | "other"; weekly_hours_default?: number },
+): Promise<DevelopmentParticipant> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const maxPos = await prepare<{ p: number }>("SELECT COALESCE(MAX(position), -1) + 1 as p FROM development_participants").get();
-  await prepare("INSERT INTO development_participants (id, provider, remote_id, name, position, created_at, updated_at) VALUES (?, NULL, NULL, ?, ?, ?, ?)")
-    .run(id, name, maxPos?.p ?? 0, now, now);
+  await prepare(`
+    INSERT INTO development_participants
+      (id, provider, remote_id, name, position, role, weekly_hours_default, created_at, updated_at)
+    VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, name, maxPos?.p ?? 0,
+    opts?.role ?? "developer",
+    opts?.weekly_hours_default ?? 40,
+    now, now,
+  );
   return (await prepare<DevelopmentParticipant>("SELECT * FROM development_participants WHERE id = ?").get(id))!;
+}
+
+// ---------------- Participant Capacity (per-week) ----------------
+
+export async function listParticipantCapacities(periodId: string): Promise<PlanningParticipantCapacity[]> {
+  return await prepare<PlanningParticipantCapacity>(
+    "SELECT * FROM planning_participant_capacity WHERE period_id = ?"
+  ).all(periodId);
+}
+
+export async function upsertParticipantCapacity(
+  input: UpsertParticipantCapacityInput,
+): Promise<PlanningParticipantCapacity> {
+  await prepare(`
+    INSERT INTO planning_participant_capacity
+      (participant_id, period_id, hours_override, is_active_override, note)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (participant_id, period_id) DO UPDATE SET
+      hours_override = EXCLUDED.hours_override,
+      is_active_override = EXCLUDED.is_active_override,
+      note = EXCLUDED.note,
+      updated_at = now()
+  `).run(
+    input.participant_id, input.period_id,
+    input.hours_override ?? null,
+    input.is_active_override ?? null,
+    input.note ?? null,
+  );
+  return (await prepare<PlanningParticipantCapacity>(
+    "SELECT * FROM planning_participant_capacity WHERE participant_id = ? AND period_id = ?"
+  ).get(input.participant_id, input.period_id))!;
+}
+
+export async function deleteParticipantCapacity(id: string): Promise<boolean> {
+  const r = await prepare("DELETE FROM planning_participant_capacity WHERE id = ?").run(id);
+  return r.changes > 0;
+}
+
+export async function getEffectiveCapacity(
+  participantId: string, periodId: string,
+): Promise<EffectiveCapacity> {
+  const p = await prepare<DevelopmentParticipant>(
+    "SELECT * FROM development_participants WHERE id = ?"
+  ).get(participantId);
+  if (!p) throw new Error(`Participant ${participantId} not found`);
+  const ov = await prepare<PlanningParticipantCapacity>(
+    "SELECT * FROM planning_participant_capacity WHERE participant_id = ? AND period_id = ?"
+  ).get(participantId, periodId);
+  const activeFromOv = ov?.is_active_override;
+  const isActive = (activeFromOv === null || activeFromOv === undefined) ? p.is_active : activeFromOv;
+  const hoursFromOv = ov?.hours_override;
+  const hoursRaw = (hoursFromOv === null || hoursFromOv === undefined)
+    ? Number(p.weekly_hours_default)
+    : Number(hoursFromOv);
+  return {
+    participant_id: participantId,
+    hours: isActive ? hoursRaw : 0,
+    is_active: isActive,
+    source: {
+      hours: (hoursFromOv === null || hoursFromOv === undefined) ? "default" : "override",
+      active: (activeFromOv === null || activeFromOv === undefined) ? "default" : "override",
+    },
+  };
+}
+
+export async function listEffectiveCapacities(periodId: string): Promise<EffectiveCapacity[]> {
+  const participants = await prepare<DevelopmentParticipant>(
+    "SELECT * FROM development_participants"
+  ).all();
+  const overrides = await listParticipantCapacities(periodId);
+  const ovById = new Map(overrides.map((o) => [o.participant_id, o]));
+  return participants.map((p) => {
+    const ov = ovById.get(p.id);
+    const activeFromOv = ov?.is_active_override;
+    const isActive = (activeFromOv === null || activeFromOv === undefined) ? p.is_active : activeFromOv;
+    const hoursFromOv = ov?.hours_override;
+    const hoursRaw = (hoursFromOv === null || hoursFromOv === undefined)
+      ? Number(p.weekly_hours_default)
+      : Number(hoursFromOv);
+    return {
+      participant_id: p.id,
+      hours: isActive ? hoursRaw : 0,
+      is_active: isActive,
+      source: {
+        hours: (hoursFromOv === null || hoursFromOv === undefined) ? "default" as const : "override" as const,
+        active: (activeFromOv === null || activeFromOv === undefined) ? "default" as const : "override" as const,
+      },
+    };
+  });
 }
 
 // ---------------- Categories ----------------
@@ -1765,18 +1905,21 @@ import type {
   PlanningInitiative,
   PlanningInitiativeDependency,
   PlanningInitiativeMetricLink,
-  PlanningInitiativeDealLink,
+  PlanningInitiativeClientBlock,
   PlanningInitiativeClientLink,
-  PlanningDeal,
-  PlanningDealPayment,
+  ClientDeal,
+  ClientDealPayment,
+  ClientDealLifecycleStage,
   PlanningChangeLogEntry,
   PlanningSettings,
   PlanningIcpSegment,
   PlanningReplanReasonDict,
   PlanningMetricUnit,
   PlanningKaitenBoardMapping,
+  PlanningParticipantCapacity,
+  UpsertParticipantCapacityInput,
+  EffectiveCapacity,
   PeriodType,
-  DealStage,
   CreateDirectionInput,
   UpdateDirectionInput,
   UpsertPeriodInput,
@@ -1786,10 +1929,10 @@ import type {
   CreateMetricTickInput,
   CreateInitiativeInput,
   UpdateInitiativeInput,
-  CreateDealInput,
-  UpdateDealInput,
-  CreateDealPaymentInput,
-  UpdateDealPaymentInput,
+  CreateClientDealInput,
+  UpdateClientDealInput,
+  CreateClientDealPaymentInput,
+  UpdateClientDealPaymentInput,
   ChangeLogInsertInput,
   UpdatePlanningSettingsInput,
   PlanningPeriodRetrospective,
@@ -1813,17 +1956,20 @@ const PLANNING_INITIATIVE_UPDATE_FIELDS = [
   "parent_initiative_id", "hypothesis", "success_criteria", "sample_size_or_duration",
   "experiment_result", "experiment_decision", "status", "done_at", "position",
 ] as const;
-const PLANNING_DEAL_UPDATE_FIELDS = [
-  "title", "client_id", "icp_segment_id", "stage", "stage_changed_at",
+// P8: client_deals заменили planning_deals.
+const CLIENT_DEAL_UPDATE_FIELDS = [
+  "title", "status_id", "status_changed_at",
   "pilot_started_at", "pilot_default_duration_days", "pilot_planned_end_at",
   "pilot_ended_at", "production_started_at", "min_monthly_amount",
   "expected_actual_amount", "description", "position",
 ] as const;
-const PLANNING_DEAL_PAYMENT_UPDATE_FIELDS = ["paid_at", "amount", "note", "status"] as const;
+const CLIENT_DEAL_PAYMENT_UPDATE_FIELDS = ["paid_at", "amount", "note", "status"] as const;
 const PLANNING_SETTINGS_UPDATE_FIELDS = [
   "pilot_default_duration_days", "early_warning_weeks", "strategy_support_ratio",
   "minor_adjustment_threshold", "daily_capacity_hours", "weekly_capacity_hours",
   "accent_color", "weekend_days_visible",
+  // P8: мэппинг lifecycle stage на статусы клиента.
+  "pilot_status_id", "production_status_id", "churned_status_ids",
 ] as const;
 
 // ---------------- Directions ----------------
@@ -2139,11 +2285,13 @@ export async function listMetricTicks(
 }
 
 /**
- * P5: effective ticks for a metric. Если metric.source='second_brain' и
- * metric.type='business' — синтезируем ticks из planning_deal_payments
- * (expected + confirmed). Иначе — обычные planning_metric_ticks.
+ * P5+P8: effective ticks for a metric. Если metric.source='second_brain' и
+ * metric.type='business' — синтезируем ticks из client_deal_payments.
+ * Иначе — обычные planning_metric_ticks.
  *
- * Concept §6.7.2: «expected-платежи автоматически считаются как факт».
+ * Concept §6.7.2 + P8: «expected-платежи автоматически считаются как факт».
+ * P8: виртуальная выручка от пилота включается в метрику Выручка (пользователь
+ * подтвердил §8 ответом «Да, с начала пилота, в метрику выручка включаем»).
  */
 export async function listEffectiveMetricTicks(
   metric: PlanningMetric,
@@ -2155,23 +2303,24 @@ export async function listEffectiveMetricTicks(
 
   const conds: string[] = [];
   const params: unknown[] = [];
-  if (range?.from) { conds.push("paid_at >= ?"); params.push(range.from); }
-  if (range?.to)   { conds.push("paid_at <= ?"); params.push(range.to); }
+  if (range?.from) { conds.push("p.paid_at >= ?"); params.push(range.from); }
+  if (range?.to)   { conds.push("p.paid_at <= ?"); params.push(range.to); }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const limit = range?.limit ? ` LIMIT ${Number(range.limit) | 0}` : "";
   type Row = { id: string; amount: string; paid_at: string; status: string };
   const rows = await prepare<Row>(
-    `SELECT id, amount::text, paid_at, status
-     FROM planning_deal_payments
+    `SELECT p.id, p.amount::text, p.paid_at, p.status
+     FROM client_deal_payments p
+     JOIN client_deals d ON d.id = p.deal_id
      ${where}
-     ORDER BY paid_at DESC${limit}`
+     ORDER BY p.paid_at DESC${limit}`
   ).all(...params);
   return rows.map((r) => ({
-    id: `dp:${r.id}`,
+    id: `cdp:${r.id}`,
     metric_id: metric.id,
     value: Number(r.amount),
     measured_at: r.paid_at,
-    source: `deal_payment:${r.status}`,
+    source: `client_deal_payment:${r.status}`,
     created_at: r.paid_at,
   }));
 }
@@ -2308,21 +2457,41 @@ export async function listMetricInitiativeLinks(metricId: string): Promise<Plann
   ).all(metricId);
 }
 
-export async function linkInitiativeToDeal(initiativeId: string, dealId: string, blocksStage?: DealBlockingStage | null): Promise<void> {
+// P8: «инициатива блокирует клиента (опц. конкретную его сделку)»
+// заменяет linkInitiativeToDeal. UNIQUE INDEX uniq_initiative_client_block
+// с NULLS NOT DISTINCT (см. migration 0035) — поэтому ON CONFLICT работает
+// корректно когда deal_id=null.
+export async function linkInitiativeToClientBlock(
+  initiativeId: string,
+  clientId: string,
+  dealId: string | null,
+  blocksStage?: DealBlockingStage | null,
+): Promise<void> {
   await prepare(`
-    INSERT INTO planning_initiative_deal_link (initiative_id, deal_id, blocks_stage)
-    VALUES (?, ?, ?)
-    ON CONFLICT (initiative_id, deal_id) DO UPDATE SET blocks_stage = EXCLUDED.blocks_stage
-  `).run(initiativeId, dealId, blocksStage ?? null);
+    INSERT INTO planning_initiative_client_block (initiative_id, client_id, deal_id, blocks_stage)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT (initiative_id, client_id, deal_id)
+      DO UPDATE SET blocks_stage = EXCLUDED.blocks_stage
+  `).run(initiativeId, clientId, dealId, blocksStage ?? null);
 }
-export async function unlinkInitiativeFromDeal(initiativeId: string, dealId: string): Promise<void> {
-  await prepare(
-    "DELETE FROM planning_initiative_deal_link WHERE initiative_id = ? AND deal_id = ?"
-  ).run(initiativeId, dealId);
+
+export async function unlinkInitiativeFromClientBlock(
+  initiativeId: string,
+  clientId: string,
+  dealId: string | null,
+): Promise<void> {
+  // NULL не сравнивается через '=', поэтому используем IS NOT DISTINCT FROM.
+  await prepare(`
+    DELETE FROM planning_initiative_client_block
+    WHERE initiative_id = ?
+      AND client_id = ?
+      AND deal_id IS NOT DISTINCT FROM ?
+  `).run(initiativeId, clientId, dealId);
 }
-export async function listInitiativeDealLinks(initiativeId: string): Promise<PlanningInitiativeDealLink[]> {
-  return await prepare<PlanningInitiativeDealLink>(
-    "SELECT * FROM planning_initiative_deal_link WHERE initiative_id = ?"
+
+export async function listInitiativeClientBlocks(initiativeId: string): Promise<PlanningInitiativeClientBlock[]> {
+  return await prepare<PlanningInitiativeClientBlock>(
+    "SELECT * FROM planning_initiative_client_block WHERE initiative_id = ?"
   ).all(initiativeId);
 }
 
@@ -2410,73 +2579,147 @@ export async function listInitiativeItems(initiativeId: string): Promise<Item[]>
   return merged;
 }
 
-// ---------------- Deals ----------------
+// ---------------- Client deals (P8) ----------------
+// «Сделка» — это запись на клиенте. У клиента может быть N сделок.
+// Стадия = status_id (FK на client_statuses, те же что используются для самого клиента).
+// Lifecycle (pilot/production/churned) определяется через мэппинг в planning_settings.
 
-export async function listDeals(filter?: { stage?: DealStage; clientId?: string }): Promise<PlanningDeal[]> {
+export async function listClientDeals(filter?: {
+  clientId?: string;
+  statusId?: string;
+}): Promise<ClientDeal[]> {
   const conditions: string[] = [];
   const params: unknown[] = [];
-  if (filter?.stage) { conditions.push("stage = ?"); params.push(filter.stage); }
   if (filter?.clientId) { conditions.push("client_id = ?"); params.push(filter.clientId); }
+  if (filter?.statusId) { conditions.push("status_id = ?"); params.push(filter.statusId); }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  return await prepare<PlanningDeal>(
-    `SELECT * FROM planning_deals ${where} ORDER BY position ASC, created_at ASC`
+  return await prepare<ClientDeal>(
+    `SELECT * FROM client_deals ${where} ORDER BY position ASC, created_at ASC`
   ).all(...params);
 }
 
-export async function getDeal(id: string): Promise<PlanningDeal | undefined> {
-  return await prepare<PlanningDeal>("SELECT * FROM planning_deals WHERE id = ?").get(id);
+export async function getClientDeal(id: string): Promise<ClientDeal | undefined> {
+  return await prepare<ClientDeal>("SELECT * FROM client_deals WHERE id = ?").get(id);
 }
 
-export async function createDeal(input: CreateDealInput): Promise<PlanningDeal> {
-  const row = await prepare<PlanningDeal>(`
-    INSERT INTO planning_deals (
-      title, client_id, icp_segment_id, stage, pilot_default_duration_days,
+export async function createClientDeal(input: CreateClientDealInput): Promise<ClientDeal> {
+  const settings = await getPlanningSettings();
+  const defaultDur = input.pilot_default_duration_days ?? settings.pilot_default_duration_days ?? 30;
+  const row = await prepare<ClientDeal>(`
+    INSERT INTO client_deals (
+      client_id, title, status_id, pilot_default_duration_days,
       min_monthly_amount, expected_actual_amount, description, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING *
   `).get(
-    input.title,
-    input.client_id ?? null, input.icp_segment_id ?? null,
-    input.stage ?? "lead",
-    input.pilot_default_duration_days ?? null,
-    input.min_monthly_amount ?? null, input.expected_actual_amount ?? null,
-    input.description ?? null, input.position ?? 0,
+    input.client_id,
+    input.title ?? "",
+    input.status_id ?? null,
+    defaultDur,
+    input.min_monthly_amount ?? null,
+    input.expected_actual_amount ?? null,
+    input.description ?? null,
+    input.position ?? 0,
   );
   return row!;
 }
 
-export async function updateDeal(id: string, updates: UpdateDealInput): Promise<PlanningDeal | undefined> {
-  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_DEAL_UPDATE_FIELDS);
-  if (!built) return await getDeal(id);
-  await prepare(`UPDATE planning_deals SET ${built.sql}, updated_at = now() WHERE id = ?`)
-    .run(...built.values, id);
-  return await getDeal(id);
+/**
+ * P8: смена status_id запускает авто-fill timestamps lifecycle:
+ *   - status_id переходит на pilot_status_id (из planning_settings):
+ *       pilot_started_at = now() (если null)
+ *       pilot_planned_end_at = pilot_started_at + pilot_default_duration_days
+ *       status_changed_at = now()
+ *   - status_id переходит на production_status_id:
+ *       production_started_at = now() (если null)
+ *       pilot_ended_at = now() (если был пилот и null)
+ *       status_changed_at = now()
+ *   - status_id переходит в churned_status_ids:
+ *       просто status_changed_at = now()
+ *
+ * Логика на уровне application, не trigger — так проще тестировать и видеть в коде.
+ */
+export async function updateClientDeal(id: string, updates: UpdateClientDealInput): Promise<ClientDeal | undefined> {
+  const before = await getClientDeal(id);
+  if (!before) return undefined;
+
+  const effective: Record<string, unknown> = { ...updates };
+  if (updates.status_id !== undefined && updates.status_id !== before.status_id) {
+    const settings = await getPlanningSettings();
+    const now = new Date().toISOString();
+    effective.status_changed_at = now;
+    if (updates.status_id === settings.pilot_status_id) {
+      if (!before.pilot_started_at) effective.pilot_started_at = now;
+      const startedTs = before.pilot_started_at ? new Date(before.pilot_started_at).getTime() : Date.now();
+      const days = updates.pilot_default_duration_days ?? before.pilot_default_duration_days;
+      if (!before.pilot_planned_end_at) {
+        effective.pilot_planned_end_at = new Date(startedTs + days * 86400000).toISOString();
+      }
+    } else if (updates.status_id === settings.production_status_id) {
+      if (!before.production_started_at) effective.production_started_at = now;
+      if (before.pilot_started_at && !before.pilot_ended_at) effective.pilot_ended_at = now;
+    }
+  }
+
+  const built = buildUpdateClause(effective, CLIENT_DEAL_UPDATE_FIELDS);
+  if (!built) return before;
+  await prepare(`UPDATE client_deals SET ${built.sql} WHERE id = ?`).run(...built.values, id);
+  return await getClientDeal(id);
 }
 
-export async function deleteDeal(id: string): Promise<boolean> {
-  const r = await prepare("DELETE FROM planning_deals WHERE id = ?").run(id);
+export async function deleteClientDeal(id: string): Promise<boolean> {
+  const r = await prepare("DELETE FROM client_deals WHERE id = ?").run(id);
   return r.changes > 0;
 }
 
-// ---------------- Deal payments ----------------
+/**
+ * P8: lifecycle stage сделки на основе её status_id и мэппинга в planning_settings.
+ *   - status_id == pilot_status_id  → 'pilot'
+ *   - status_id == production_status_id → 'production'
+ *   - status_id ∈ churned_status_ids → 'churned'
+ *   - иначе (null или прочие статусы) → 'pre_pilot'
+ */
+export function getClientDealLifecycleStage(deal: Pick<ClientDeal, "status_id">, settings: PlanningSettings): ClientDealLifecycleStage {
+  if (!deal.status_id) return "pre_pilot";
+  if (deal.status_id === settings.pilot_status_id) return "pilot";
+  if (deal.status_id === settings.production_status_id) return "production";
+  if (settings.churned_status_ids?.includes(deal.status_id)) return "churned";
+  return "pre_pilot";
+}
 
-export async function listDealPayments(
+// ---------------- Client deal payments ----------------
+
+export async function listClientDealPayments(
   dealId: string,
-  filter?: { from?: string; to?: string; status?: PlanningDealPayment["status"] },
-): Promise<PlanningDealPayment[]> {
+  filter?: { from?: string; to?: string; status?: ClientDealPayment["status"] },
+): Promise<ClientDealPayment[]> {
   const conditions: string[] = ["deal_id = ?"];
   const params: unknown[] = [dealId];
   if (filter?.from) { conditions.push("paid_at >= ?"); params.push(filter.from); }
   if (filter?.to) { conditions.push("paid_at <= ?"); params.push(filter.to); }
   if (filter?.status) { conditions.push("status = ?"); params.push(filter.status); }
-  return await prepare<PlanningDealPayment>(
-    `SELECT * FROM planning_deal_payments WHERE ${conditions.join(" AND ")} ORDER BY paid_at DESC`
+  return await prepare<ClientDealPayment>(
+    `SELECT * FROM client_deal_payments WHERE ${conditions.join(" AND ")} ORDER BY paid_at DESC`
   ).all(...params);
 }
 
-export async function addDealPayment(input: CreateDealPaymentInput): Promise<PlanningDealPayment> {
-  const row = await prepare<PlanningDealPayment>(`
-    INSERT INTO planning_deal_payments (deal_id, paid_at, amount, note, status)
+/**
+ * P8: все платежи клиента — джойн всех сделок клиента + их платежей.
+ * Используется для таба «Платежи» в карточке клиента и для расчёта MRR.
+ */
+export async function listAllClientPayments(clientId: string): Promise<Array<ClientDealPayment & { deal_title: string }>> {
+  return await prepare<ClientDealPayment & { deal_title: string }>(`
+    SELECT p.*, d.title AS deal_title
+    FROM client_deal_payments p
+    JOIN client_deals d ON d.id = p.deal_id
+    WHERE d.client_id = ?
+    ORDER BY p.paid_at DESC
+  `).all(clientId);
+}
+
+export async function addClientDealPayment(input: CreateClientDealPaymentInput): Promise<ClientDealPayment> {
+  const row = await prepare<ClientDealPayment>(`
+    INSERT INTO client_deal_payments (deal_id, paid_at, amount, note, status)
     VALUES (?, ?, ?, ?, ?)
     RETURNING *
   `).get(
@@ -2486,17 +2729,56 @@ export async function addDealPayment(input: CreateDealPaymentInput): Promise<Pla
   return row!;
 }
 
-export async function updateDealPayment(id: string, updates: UpdateDealPaymentInput): Promise<PlanningDealPayment | undefined> {
-  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_DEAL_PAYMENT_UPDATE_FIELDS);
-  if (!built) return await prepare<PlanningDealPayment>("SELECT * FROM planning_deal_payments WHERE id = ?").get(id);
-  await prepare(`UPDATE planning_deal_payments SET ${built.sql}, updated_at = now() WHERE id = ?`)
-    .run(...built.values, id);
-  return await prepare<PlanningDealPayment>("SELECT * FROM planning_deal_payments WHERE id = ?").get(id);
+export async function updateClientDealPayment(id: string, updates: UpdateClientDealPaymentInput): Promise<ClientDealPayment | undefined> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, CLIENT_DEAL_PAYMENT_UPDATE_FIELDS);
+  if (!built) return await prepare<ClientDealPayment>("SELECT * FROM client_deal_payments WHERE id = ?").get(id);
+  await prepare(`UPDATE client_deal_payments SET ${built.sql} WHERE id = ?`).run(...built.values, id);
+  return await prepare<ClientDealPayment>("SELECT * FROM client_deal_payments WHERE id = ?").get(id);
 }
 
-export async function deleteDealPayment(id: string): Promise<boolean> {
-  const r = await prepare("DELETE FROM planning_deal_payments WHERE id = ?").run(id);
+export async function deleteClientDealPayment(id: string): Promise<boolean> {
+  const r = await prepare("DELETE FROM client_deal_payments WHERE id = ?").run(id);
   return r.changes > 0;
+}
+
+/**
+ * P8: список заблокированных клиентов — заменяет listBlockedDeals.
+ * Возвращает клиентов, у которых есть активная связь к незакрытой инициативе.
+ */
+export async function listBlockedClients(): Promise<Array<{
+  client_id: string;
+  client_name: string;
+  deal_id: string | null;
+  deal_title: string | null;
+  blocks_stage: DealBlockingStage | null;
+  initiative_id: string;
+  initiative_title: string;
+  initiative_status: InitiativeStatus;
+  end_date: string | null;
+}>> {
+  return await prepare<{
+    client_id: string;
+    client_name: string;
+    deal_id: string | null;
+    deal_title: string | null;
+    blocks_stage: DealBlockingStage | null;
+    initiative_id: string;
+    initiative_title: string;
+    initiative_status: InitiativeStatus;
+    end_date: string | null;
+  }>(`
+    SELECT b.client_id, c.name AS client_name,
+           b.deal_id, d.title AS deal_title, b.blocks_stage,
+           i.id AS initiative_id, i.title AS initiative_title,
+           i.status AS initiative_status, p.end_date
+    FROM planning_initiative_client_block b
+    JOIN clients c ON c.id = b.client_id
+    LEFT JOIN client_deals d ON d.id = b.deal_id
+    JOIN planning_initiatives i ON i.id = b.initiative_id
+    LEFT JOIN planning_periods p ON p.id = i.end_period_id
+    WHERE i.status NOT IN ('done', 'killed')
+    ORDER BY p.end_date ASC NULLS LAST, c.name ASC
+  `).all();
 }
 
 // ---------------- Change log ----------------

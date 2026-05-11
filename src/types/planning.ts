@@ -160,10 +160,15 @@ export interface PlanningInitiativeMetricLink {
   metric_id: string;
 }
 
-export interface PlanningInitiativeDealLink {
+// P8: переименовано из PlanningInitiativeDealLink. Связь привязана к клиенту
+// (deal_id опционален — null означает «блокирует все pilot/prod сделки клиента»).
+export interface PlanningInitiativeClientBlock {
+  id: string;
   initiative_id: string;
-  deal_id: string;
+  client_id: string;
+  deal_id: string | null;
   blocks_stage: DealBlockingStage | null;
+  created_at: string;
 }
 
 export interface PlanningInitiativeClientLink {
@@ -181,27 +186,29 @@ export interface PlanningPeriodInitiativeLink {
   initiative_id: string;
 }
 
-export interface PlanningDeal {
+// P8: сделка — это дочерняя сущность клиента. У одного клиента может быть N сделок.
+// Стадия определяется через status_id (FK на client_statuses); мэппинг
+// status_id → lifecycle (pilot/production/churned) хранится в planning_settings.
+export interface ClientDeal {
   id: string;
+  client_id: string;
   title: string;
-  client_id: string | null;
-  icp_segment_id: string | null;
-  stage: DealStage;
-  stage_changed_at: string;
+  status_id: string | null;
   pilot_started_at: string | null;
-  pilot_default_duration_days: number | null;
+  pilot_default_duration_days: number;
   pilot_planned_end_at: string | null;
   pilot_ended_at: string | null;
   production_started_at: string | null;
   min_monthly_amount: number | null;
   expected_actual_amount: number | null;
   description: string | null;
+  status_changed_at: string | null;
   position: number;
   created_at: string;
   updated_at: string;
 }
 
-export interface PlanningDealPayment {
+export interface ClientDealPayment {
   id: string;
   deal_id: string;
   paid_at: string;
@@ -211,6 +218,10 @@ export interface PlanningDealPayment {
   created_at: string;
   updated_at: string;
 }
+
+// Lifecycle stage инициализируется на стороне backend через сравнение status_id с
+// planning_settings.{pilot,production,churned}_status_id(s).
+export type ClientDealLifecycleStage = "pre_pilot" | "pilot" | "production" | "churned";
 
 export interface PlanningChangeLogEntry {
   id: string;
@@ -234,6 +245,11 @@ export interface PlanningSettings {
   weekly_capacity_hours: number;
   accent_color: string;
   weekend_days_visible: boolean;
+  // P8: мэппинг lifecycle stage → client_statuses.id. Заполняется по name
+  // в миграции 0036; пользователь может переопределить через UI.
+  pilot_status_id: string | null;
+  production_status_id: string | null;
+  churned_status_ids: string[];
   created_at: string;
   updated_at: string;
 }
@@ -262,6 +278,36 @@ export interface PlanningKaitenBoardMapping {
   kaiten_board_id: string;
   initiative_id: string;
   created_at: string;
+}
+
+// P2: per-week override capacity участника.
+export interface PlanningParticipantCapacity {
+  id: string;
+  participant_id: string;
+  period_id: string;
+  hours_override: number | null;
+  is_active_override: boolean | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpsertParticipantCapacityInput {
+  participant_id: string;
+  period_id: string;
+  hours_override?: number | null;
+  is_active_override?: boolean | null;
+  note?: string | null;
+}
+
+export interface EffectiveCapacity {
+  participant_id: string;
+  hours: number;
+  is_active: boolean;
+  source: {
+    hours: "override" | "default";
+    active: "override" | "default";
+  };
 }
 
 // --- Auto-distribute ---
@@ -388,26 +434,23 @@ export interface UpdateInitiativeInput {
   position?: number;
 }
 
-export interface CreateDealInput {
-  title: string;
-  client_id?: string | null;
-  icp_segment_id?: string | null;
-  stage?: DealStage;
-  pilot_default_duration_days?: number | null;
+export interface CreateClientDealInput {
+  client_id: string;
+  title?: string;
+  status_id?: string | null;
+  pilot_default_duration_days?: number;
   min_monthly_amount?: number | null;
   expected_actual_amount?: number | null;
   description?: string | null;
   position?: number;
 }
 
-export interface UpdateDealInput {
+export interface UpdateClientDealInput {
   title?: string;
-  client_id?: string | null;
-  icp_segment_id?: string | null;
-  stage?: DealStage;
-  stage_changed_at?: string;
+  status_id?: string | null;
+  status_changed_at?: string | null;
   pilot_started_at?: string | null;
-  pilot_default_duration_days?: number | null;
+  pilot_default_duration_days?: number;
   pilot_planned_end_at?: string | null;
   pilot_ended_at?: string | null;
   production_started_at?: string | null;
@@ -417,7 +460,7 @@ export interface UpdateDealInput {
   position?: number;
 }
 
-export interface CreateDealPaymentInput {
+export interface CreateClientDealPaymentInput {
   deal_id: string;
   paid_at: string;
   amount: number;
@@ -425,7 +468,7 @@ export interface CreateDealPaymentInput {
   status?: DealPaymentStatus;
 }
 
-export interface UpdateDealPaymentInput {
+export interface UpdateClientDealPaymentInput {
   paid_at?: string;
   amount?: number;
   note?: string | null;
@@ -451,4 +494,8 @@ export interface UpdatePlanningSettingsInput {
   weekly_capacity_hours?: number;
   accent_color?: string;
   weekend_days_visible?: boolean;
+  // P8: мэппинг lifecycle stage → client_statuses.id.
+  pilot_status_id?: string | null;
+  production_status_id?: string | null;
+  churned_status_ids?: string[];
 }

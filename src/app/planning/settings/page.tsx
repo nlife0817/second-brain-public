@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 import type { PlanningSettings, PlanningIcpSegment, PlanningKaitenBoardMapping, PlanningInitiative, PlanningMetricUnit } from "@/types/planning";
+import type { DevelopmentParticipant, ParticipantRole } from "@/types";
 
 export default function PlanningSettingsPage() {
   const [settings, setSettings] = useState<PlanningSettings | null>(null);
@@ -11,21 +12,25 @@ export default function PlanningSettingsPage() {
   const [mappings, setMappings] = useState<PlanningKaitenBoardMapping[]>([]);
   const [initiatives, setInitiatives] = useState<PlanningInitiative[]>([]);
   const [units, setUnits] = useState<PlanningMetricUnit[]>([]);
+  const [participants, setParticipants] = useState<DevelopmentParticipant[]>([]);
   const [newSegment, setNewSegment] = useState("");
   const [newUnitCode, setNewUnitCode] = useState("");
   const [newUnitTitle, setNewUnitTitle] = useState("");
   const [boardId, setBoardId] = useState("");
   const [boardInit, setBoardInit] = useState("");
+  const [newParticipantName, setNewParticipantName] = useState("");
+  const [newParticipantRole, setNewParticipantRole] = useState<Exclude<ParticipantRole, "owner">>("developer");
 
   const fetchAll = async () => {
-    const [s, seg, m, i, u] = await Promise.all([
+    const [s, seg, m, i, u, p] = await Promise.all([
       fetch("/api/planning/settings").then((r) => r.ok ? r.json() : null),
       fetch("/api/planning/icp-segments").then((r) => r.ok ? r.json() : []),
       fetch("/api/planning/kaiten-mapping").then((r) => r.ok ? r.json() : []),
       fetch("/api/planning/initiatives").then((r) => r.ok ? r.json() : []),
       fetch("/api/planning/metric-units").then((r) => r.ok ? r.json() : []),
+      fetch("/api/development-participants").then((r) => r.ok ? r.json() : []),
     ]);
-    setSettings(s); setSegments(seg); setMappings(m); setInitiatives(i); setUnits(u);
+    setSettings(s); setSegments(seg); setMappings(m); setInitiatives(i); setUnits(u); setParticipants(p);
   };
   useEffect(() => { fetchAll(); }, []);
 
@@ -69,6 +74,38 @@ export default function PlanningSettingsPage() {
     if (!confirm(`Удалить единицу ${code}?`)) return;
     const res = await fetch(`/api/planning/metric-units/${code}`, { method: "DELETE" });
     if (!res.ok) { toast.error("Не удалось"); return; }
+    fetchAll();
+  };
+
+  const addParticipant = async () => {
+    if (!newParticipantName.trim()) return;
+    const res = await fetch("/api/development-participants", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newParticipantName.trim(), role: newParticipantRole }),
+    });
+    if (!res.ok) { toast.error("Не удалось добавить участника"); return; }
+    setNewParticipantName(""); setNewParticipantRole("developer"); fetchAll();
+  };
+
+  const updateParticipant = async (id: string, patch: Partial<DevelopmentParticipant>) => {
+    // Оптимистично
+    setParticipants((prev) => prev.map((p) => p.id === id ? { ...p, ...patch } : p));
+    const res = await fetch(`/api/development-participants/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) { toast.error("Не удалось обновить"); fetchAll(); }
+    else {
+      const fresh = await res.json();
+      setParticipants((prev) => prev.map((p) => p.id === id ? fresh : p));
+    }
+  };
+
+  const deleteParticipant = async (id: string) => {
+    if (!confirm("Удалить участника? Если у него есть задачи — назначение слетит на дефолт.")) return;
+    const res = await fetch(`/api/development-participants/${id}`, { method: "DELETE" });
+    if (res.status === 409) { toast.error("Системный участник «Я» не удаляется"); return; }
+    if (!res.ok) { toast.error("Не удалось удалить"); return; }
     fetchAll();
   };
 
@@ -116,6 +153,117 @@ export default function PlanningSettingsPage() {
             Показывать СБ/ВС в недельной сетке
           </label>
         </div>
+      </section>
+
+      {/* Participants */}
+      <section className="mt-4 rounded-xl border border-slate-200 p-4">
+        <h2 className="mb-3 text-sm font-semibold">Участники</h2>
+        <div className="mb-3 grid grid-cols-[1fr_140px_120px_auto] items-end gap-2">
+          <label className="text-xs text-slate-600">
+            Имя
+            <input
+              value={newParticipantName}
+              onChange={(e) => setNewParticipantName(e.target.value)}
+              placeholder="Иван Петров"
+              onKeyDown={(e) => { if (e.key === "Enter") addParticipant(); }}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </label>
+          <label className="text-xs text-slate-600">
+            Роль
+            <select
+              value={newParticipantRole}
+              onChange={(e) => setNewParticipantRole(e.target.value as Exclude<ParticipantRole, "owner">)}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            >
+              <option value="developer">developer</option>
+              <option value="other">other</option>
+            </select>
+          </label>
+          <span className="text-[11px] text-slate-400">часы по умолч. — 40</span>
+          <button
+            onClick={addParticipant}
+            disabled={!newParticipantName.trim()}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            Добавить
+          </button>
+        </div>
+        <div className="grid grid-cols-[1fr_120px_100px_120px_auto] gap-2 border-b border-slate-200 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+          <span>Имя</span>
+          <span>Роль</span>
+          <span>Активен</span>
+          <span>Часы/нед</span>
+          <span></span>
+        </div>
+        <ul className="text-sm">
+          {participants.length === 0 && (
+            <li className="py-2 text-xs text-slate-400">Участников нет</li>
+          )}
+          {participants.map((p) => {
+            const isOwner = p.role === "owner";
+            return (
+              <li key={p.id} className="grid grid-cols-[1fr_120px_100px_120px_auto] items-center gap-2 border-b border-slate-100 py-1.5">
+                <input
+                  defaultValue={p.name}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v && v !== p.name) updateParticipant(p.id, { name: v });
+                  }}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm"
+                />
+                <select
+                  value={p.role}
+                  disabled={isOwner}
+                  onChange={(e) => updateParticipant(p.id, { role: e.target.value as ParticipantRole })}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+                  title={isOwner ? "Роль владельца не меняется" : ""}
+                >
+                  <option value="developer">developer</option>
+                  <option value="owner" disabled>owner</option>
+                  <option value="other">other</option>
+                </select>
+                <label className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={p.is_active}
+                    disabled={isOwner}
+                    onChange={(e) => updateParticipant(p.id, { is_active: e.target.checked })}
+                    title={isOwner ? "Владельца нельзя деактивировать" : ""}
+                  />
+                  {p.is_active ? "да" : "нет"}
+                  {!p.is_active && p.deactivated_at && (
+                    <span className="text-[10px] text-slate-400">с {p.deactivated_at.slice(0, 10)}</span>
+                  )}
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  defaultValue={Number(p.weekly_hours_default)}
+                  onBlur={(e) => {
+                    const v = Number(e.target.value);
+                    if (Number.isFinite(v) && v >= 0 && v !== Number(p.weekly_hours_default)) {
+                      updateParticipant(p.id, { weekly_hours_default: v });
+                    }
+                  }}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm tabular-nums"
+                />
+                <button
+                  onClick={() => deleteParticipant(p.id)}
+                  disabled={isOwner}
+                  className="text-xs text-red-600 hover:text-red-700 disabled:cursor-not-allowed disabled:text-slate-300"
+                  title={isOwner ? "Владельца нельзя удалить" : "Удалить"}
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="mt-2 text-[10px] text-slate-400">
+          «Я» (owner) — системный участник, дефолтный исполнитель новой задачи. Не удаляется и не деактивируется.
+        </p>
       </section>
 
       {/* Kaiten mapping */}

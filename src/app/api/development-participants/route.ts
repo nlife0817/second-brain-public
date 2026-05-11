@@ -13,9 +13,15 @@ export async function POST(req: NextRequest) {
   }
   try {
     const body = await req.json();
-    const { name } = body;
+    const { name, role, weekly_hours_default } = body;
     if (!name) return NextResponse.json({ error: "Name required" }, { status: 400 });
-    const participant = await createDevelopmentParticipant(name);
+    if (role && !["developer", "other"].includes(role)) {
+      return NextResponse.json({ error: "Invalid role (only developer/other allowed at creation)" }, { status: 400 });
+    }
+    const participant = await createDevelopmentParticipant(name, {
+      role: role as "developer" | "other" | undefined,
+      weekly_hours_default,
+    });
     return NextResponse.json(participant, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Failed to create" }, { status: 500 });

@@ -35,12 +35,18 @@ export type FilterOperator = "is" | "is_not" | "contains" | "not_contains" | "be
 export type FilterField = "status" | "priority" | "category" | "type" | "tags" | "title" | "description" | "due_date" | "has_parent" | "development_stage" | "participants";
 export type FilterLogic = "and" | "or";
 
+export type ParticipantRole = "developer" | "owner" | "other";
+
 export interface DevelopmentParticipant {
   id: string;
   provider: "kaiten" | null;
   remote_id: string | null;
   name: string;
   position: number;
+  role: ParticipantRole;
+  is_active: boolean;
+  deactivated_at: string | null;
+  weekly_hours_default: number;
   created_at: string;
   updated_at: string;
 }
