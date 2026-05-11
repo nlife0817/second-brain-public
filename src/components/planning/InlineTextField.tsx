@@ -10,17 +10,31 @@ interface Props {
   multiline?: boolean;
 }
 
+// Concept §20.4: debounce 300ms before persisting inline edits.
+const DEBOUNCE_MS = 300;
+
 export function InlineTextField({ value, onSave, placeholder, className, multiline }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { setDraft(value); }, [value]);
   useEffect(() => { if (editing && inputRef.current) inputRef.current.focus(); }, [editing]);
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
   const commit = async () => {
     setEditing(false);
+    if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
     if (draft !== value) await onSave(draft);
+  };
+
+  const handleChange = (next: string) => {
+    setDraft(next);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      if (next !== value) void onSave(next);
+    }, DEBOUNCE_MS);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -32,7 +46,7 @@ export function InlineTextField({ value, onSave, placeholder, className, multili
     const sharedProps = {
       ref: inputRef as React.RefObject<HTMLInputElement & HTMLTextAreaElement>,
       value: draft,
-      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setDraft(e.target.value),
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange(e.target.value),
       onBlur: commit,
       onKeyDown,
       placeholder,

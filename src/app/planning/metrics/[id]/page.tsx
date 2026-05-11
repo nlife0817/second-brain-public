@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { MetricChart } from "@/components/planning/MetricChart";
 import { MetricTargetsTable } from "@/components/planning/MetricTargetsTable";
 import { AutoDistributeDialog } from "@/components/planning/AutoDistributeDialog";
+import { DeliveryMetricMatrix } from "@/components/planning/DeliveryMetricMatrix";
 import type { PlanningMetric, PlanningMetricTarget, PlanningMetricTick, PlanningPeriod } from "@/types/planning";
 
 export default function MetricPage() {
@@ -70,8 +71,14 @@ export default function MetricPage() {
 
       <div className="mt-6 grid grid-cols-3 gap-6">
         <div className="col-span-2 rounded-xl border border-slate-200 p-4">
-          <h2 className="mb-2 text-sm font-semibold">График</h2>
-          <MetricChart data={chartData} />
+          <h2 className="mb-2 text-sm font-semibold">
+            {metric.type === "delivery" ? "Матрица инициатива × дедлайн" : "График"}
+          </h2>
+          {metric.type === "delivery" ? (
+            <DeliveryMetricMatrix metricId={metric.id} periods={periods} />
+          ) : (
+            <MetricChart data={chartData} />
+          )}
         </div>
         <div className="space-y-3 rounded-xl border border-slate-200 p-4">
           <h2 className="text-sm font-semibold">Ключевые цифры</h2>

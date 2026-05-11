@@ -22,24 +22,20 @@ export function InitiativeColumn() {
 
   // Load metric links when a metric is selected
   useEffect(() => {
-    if (!metricId) { setLinkedIds(null); return; }
+    if (!metricId) return;
     let cancelled = false;
-    fetch(`/api/planning/metrics/${metricId}`).then(() => {
-      // Fetch initiatives links via initiatives endpoint per-id is too chatty —
-      // for now read all initiatives and filter by linked_metric_ids on each.
-      Promise.all(all.map((i) => fetch(`/api/planning/initiatives/${i.id}`).then((r) => r.ok ? r.json() : null)))
-        .then((rows) => {
-          if (cancelled) return;
-          const ids = new Set<string>();
-          for (const row of rows) {
-            if (row?.linked_metrics?.some((l: { metric_id: string }) => l.metric_id === metricId)) {
-              ids.add(row.id);
-            }
+    Promise.all(all.map((i) => fetch(`/api/planning/initiatives/${i.id}`).then((r) => r.ok ? r.json() : null)))
+      .then((rows) => {
+        if (cancelled) return;
+        const ids = new Set<string>();
+        for (const row of rows) {
+          if (row?.linked_metrics?.some((l: { metric_id: string }) => l.metric_id === metricId)) {
+            ids.add(row.id);
           }
-          setLinkedIds(ids);
-        });
-    });
-    return () => { cancelled = true; };
+        }
+        setLinkedIds(ids);
+      });
+    return () => { cancelled = true; setLinkedIds(null); };
   }, [metricId, all]);
 
   let initiatives: PlanningInitiative[] = all.filter((i) => !directionId || i.direction_id === directionId);

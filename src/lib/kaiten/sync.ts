@@ -375,6 +375,13 @@ async function applyRemoteCardToItem(cardId: number, profile: SyncProfile, local
   await updateItem(localItemId, updates);
   await setItemParticipants(localItemId, participants);
 
+  // Planning §6.3: fallback to "Поддержка Qx" if neither user nor mapping set initiative.
+  const afterLocal = await getItemById(localItemId);
+  if (afterLocal && !afterLocal.initiative_id) {
+    const { autoLinkOrphanTaskToSupport } = await import("@/lib/db");
+    await autoLinkOrphanTaskToSupport(localItemId).catch(() => undefined);
+  }
+
   await upsertExternalEntityLink({
     provider: "kaiten",
     profile_id: profile.id,

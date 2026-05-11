@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { usePlanningStore } from "@/lib/planning-store";
+import { subscribePlanningRealtime } from "@/lib/planning-realtime";
 import { MetricColumn } from "@/components/planning/MetricColumn";
 import { InitiativeColumn } from "@/components/planning/InitiativeColumn";
 import { TaskColumn } from "@/components/planning/TaskColumn";
 import { InlineTextField } from "@/components/planning/InlineTextField";
+import { InitiativeDetailSheet } from "@/components/planning/InitiativeDetailSheet";
 
 export default function PlanningColumnsPage() {
   const fetchAll = usePlanningStore((s) => s.fetchAll);
@@ -16,9 +18,15 @@ export default function PlanningColumnsPage() {
   const createDirection = usePlanningStore((s) => s.createDirection);
   const updateDirection = usePlanningStore((s) => s.updateDirection);
   const loaded = usePlanningStore((s) => s.loaded);
+  const detailInitiativeId = usePlanningStore((s) => s.detailInitiativeId);
+  const closeInitiativeDetail = usePlanningStore((s) => s.closeInitiativeDetail);
   const [newName, setNewName] = useState("");
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchAll();
+    const unsub = subscribePlanningRealtime();
+    return unsub;
+  }, [fetchAll]);
 
   const currentDir = directions.find((d) => d.id === selectedDirectionId);
 
@@ -92,6 +100,11 @@ export default function PlanningColumnsPage() {
           <TaskColumn />
         </div>
       </div>
+
+      <InitiativeDetailSheet
+        initiativeId={detailInitiativeId}
+        onClose={closeInitiativeDetail}
+      />
     </div>
   );
 }

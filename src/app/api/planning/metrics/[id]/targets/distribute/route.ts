@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/api-auth";
-import { getMetric, listPeriods, bulkUpsertMetricTargets } from "@/lib/db";
+import { getMetric, listPeriods, listMetricTargets, bulkUpsertMetricTargets } from "@/lib/db";
 import { logChange } from "@/lib/planning-changelog";
 import { distributeTarget } from "@/lib/planning-distribute";
 import type { DistributeCurve, PeriodType } from "@/types/planning";
@@ -26,7 +26,23 @@ export const POST = withAuth(async (req: NextRequest, ctx, user) => {
     return NextResponse.json({ error: "no periods to distribute over", details: { periodType, year } }, { status: 400 });
   }
 
-  const values = distributeTarget(curve, yearTarget, periods.length);
+  // History curve: load last year's targets for the same periodType and use their shape.
+  let historyShares: number[] | undefined;
+  if (curve === "history") {
+    const lastYearPeriods = (await listPeriods({ directionId: metric.direction_id, type: periodType, year: year - 1 }))
+      .sort((a, b) => a.start_date.localeCompare(b.start_date));
+    if (lastYearPeriods.length === periods.length) {
+      const allTargets = await listMetricTargets(id);
+      const byPeriod = new Map(allTargets.map((t) => [t.period_id, Number(t.target_value)]));
+      historyShares = lastYearPeriods.map((p) => byPeriod.get(p.id) ?? 0);
+      if (historyShares.every((v) => v === 0)) historyShares = undefined;
+    }
+    if (!historyShares) {
+      return NextResponse.json({ error: "no history data for previous year", details: { year: year - 1 } }, { status: 400 });
+    }
+  }
+
+  const values = distributeTarget(curve, yearTarget, periods.length, historyShares);
   const upserts = periods.map((p, i) => ({ metric_id: id, period_id: p.id, target_value: values[i] }));
   const rows = await bulkUpsertMetricTargets(upserts);
 

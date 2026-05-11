@@ -26,6 +26,7 @@ interface PlanningStore {
   selectedDirectionId: string | null;
   selectedMetricId: string | null;
   selectedInitiativeId: string | null;
+  detailInitiativeId: string | null; // ← opens InitiativeDetailSheet
   showArchived: boolean;
   initiativeSort: SortMode;
 
@@ -38,6 +39,8 @@ interface PlanningStore {
   setSelectedDirection: (id: string | null) => void;
   setSelectedMetric: (id: string | null) => void;
   setSelectedInitiative: (id: string | null) => void;
+  openInitiativeDetail: (id: string) => void;
+  closeInitiativeDetail: () => void;
   setShowArchived: (v: boolean) => void;
   setInitiativeSort: (s: SortMode) => void;
 
@@ -67,6 +70,7 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   selectedDirectionId: null,
   selectedMetricId: null,
   selectedInitiativeId: null,
+  detailInitiativeId: null,
   showArchived: false,
   initiativeSort: "deadline",
   loaded: false,
@@ -95,6 +99,8 @@ export const usePlanningStore = create<PlanningStore>((set, get) => ({
   setSelectedDirection: (id) => set({ selectedDirectionId: id, selectedMetricId: null, selectedInitiativeId: null }),
   setSelectedMetric: (id) => set({ selectedMetricId: id, selectedInitiativeId: null }),
   setSelectedInitiative: (id) => set({ selectedInitiativeId: id }),
+  openInitiativeDetail: (id) => set({ detailInitiativeId: id, selectedInitiativeId: id }),
+  closeInitiativeDetail: () => set({ detailInitiativeId: null }),
   setShowArchived: (v) => { set({ showArchived: v }); get().fetchAll(); },
   setInitiativeSort: (s) => set({ initiativeSort: s }),
 

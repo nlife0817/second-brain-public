@@ -47,6 +47,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Separator } from "@/components/ui/separator";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import { SubtaskList } from "./SubtaskList";
+import { TaskPlanningSection } from "./TaskPlanningSection";
 import { RelationsList } from "@/components/relations/RelationsList";
 import { CommentsList } from "@/components/comments/CommentsList";
 import { TimerSection } from "@/components/timing/TimerSection";
@@ -1177,6 +1178,11 @@ function TaskDetailContent({
     ? <RecurrenceSection item={item} layout={layout} />
     : null;
 
+  /* ---- Planning block (tasks only, planning V3 §3.6) ---- */
+  const planningBlock = (item.type === "task" && !isSubtask)
+    ? <TaskPlanningSection item={item} layout={layout} />
+    : null;
+
   /* ---- Relations block ---- */
   const relationsBlock = (
     <RelationsList entityType="item" entityId={item.id} />
@@ -1221,6 +1227,7 @@ function TaskDetailContent({
           {fieldsBlock}
           {recurrenceBlock && <Separator className="bg-slate-200" />}
           {recurrenceBlock}
+          {planningBlock}
           {developmentFieldsBlock}
           {tagsBlock}
           {timerBlock && <Separator className="bg-slate-200" />}
@@ -1242,6 +1249,7 @@ function TaskDetailContent({
       {fieldsBlock}
       {recurrenceBlock && <Separator className="bg-slate-200" />}
       {recurrenceBlock}
+      {planningBlock}
       {developmentFieldsBlock}
       {tagsBlock}
       {timerBlock && <Separator className="bg-slate-200" />}

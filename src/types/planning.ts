@@ -260,6 +260,7 @@ export type DistributeCurve =
   | "s_curve"
   | "front_loaded"
   | "back_loaded"
+  | "history"
   | "custom";
 
 // --- Inputs ---

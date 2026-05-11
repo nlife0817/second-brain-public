@@ -2393,3 +2393,58 @@ export async function getInitiativeIdByKaitenBoard(boardId: string | number | nu
   ).get(String(boardId));
   return row?.initiative_id;
 }
+
+// ============================================================================
+// Auto-create Support initiative for a quarter (concept §6.3).
+// Returns existing or freshly created. Direction can be null for non-direction-scoped.
+// ============================================================================
+export async function findOrCreateSupportInitiative(
+  directionId: string | null,
+  refDate: Date = new Date(),
+): Promise<PlanningInitiative | null> {
+  const year = refDate.getUTCFullYear();
+  const month = refDate.getUTCMonth(); // 0..11
+  const quarter = Math.floor(month / 3) + 1;
+
+  // Find quarterly period for current quarter.
+  const periods = await listPeriods({ type: "quarter", year, directionId });
+  const quarterPeriod = periods.find((p) => p.quarter_n === quarter);
+  if (!quarterPeriod) return null; // No quarter period — can't anchor
+
+  const title = `Поддержка Q${quarter} ${year}`;
+
+  // Find existing.
+  const conditions: string[] = ["type = 'support'", "title = ?", "due_period_id = ?"];
+  const params: unknown[] = [title, quarterPeriod.id];
+  if (directionId === null) {
+    conditions.push("direction_id IS NULL");
+  } else {
+    conditions.push("direction_id = ?");
+    params.push(directionId);
+  }
+  const existing = await prepare<PlanningInitiative>(
+    `SELECT * FROM planning_initiatives WHERE ${conditions.join(" AND ")} LIMIT 1`
+  ).get(...params);
+  if (existing) return existing;
+
+  // Create.
+  return await createInitiative({
+    direction_id: directionId,
+    title,
+    type: "support",
+    due_period_id: quarterPeriod.id,
+  });
+}
+
+/** Auto-link a task (items.id) without initiative_id to current Support Qx. */
+export async function autoLinkOrphanTaskToSupport(itemId: string): Promise<string | null> {
+  const item = await prepare<{ initiative_id: string | null; category: string | null }>(
+    "SELECT initiative_id, category FROM items WHERE id = ?"
+  ).get(itemId);
+  if (!item || item.initiative_id) return null;
+  // Use a global (direction_id = null) Support initiative — single inbox bucket.
+  const support = await findOrCreateSupportInitiative(null);
+  if (!support) return null;
+  await prepare("UPDATE items SET initiative_id = ? WHERE id = ? AND initiative_id IS NULL").run(support.id, itemId);
+  return support.id;
+}

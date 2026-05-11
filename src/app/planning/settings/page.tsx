@@ -2,26 +2,30 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { PlanningSettings, PlanningIcpSegment, PlanningKaitenBoardMapping, PlanningInitiative } from "@/types/planning";
+import { Trash2 } from "lucide-react";
+import type { PlanningSettings, PlanningIcpSegment, PlanningKaitenBoardMapping, PlanningInitiative, PlanningMetricUnit } from "@/types/planning";
 
 export default function PlanningSettingsPage() {
   const [settings, setSettings] = useState<PlanningSettings | null>(null);
   const [segments, setSegments] = useState<PlanningIcpSegment[]>([]);
   const [mappings, setMappings] = useState<PlanningKaitenBoardMapping[]>([]);
   const [initiatives, setInitiatives] = useState<PlanningInitiative[]>([]);
+  const [units, setUnits] = useState<PlanningMetricUnit[]>([]);
   const [newSegment, setNewSegment] = useState("");
+  const [newUnitCode, setNewUnitCode] = useState("");
+  const [newUnitTitle, setNewUnitTitle] = useState("");
   const [boardId, setBoardId] = useState("");
   const [boardInit, setBoardInit] = useState("");
 
   const fetchAll = async () => {
-    const [s, m, i] = await Promise.all([
+    const [s, seg, m, i, u] = await Promise.all([
       fetch("/api/planning/settings").then((r) => r.ok ? r.json() : null),
+      fetch("/api/planning/icp-segments").then((r) => r.ok ? r.json() : []),
       fetch("/api/planning/kaiten-mapping").then((r) => r.ok ? r.json() : []),
       fetch("/api/planning/initiatives").then((r) => r.ok ? r.json() : []),
+      fetch("/api/planning/metric-units").then((r) => r.ok ? r.json() : []),
     ]);
-    setSettings(s); setMappings(m); setInitiatives(i);
-    // segments are not exposed via a dedicated endpoint yet — placeholder
-    setSegments([]);
+    setSettings(s); setSegments(seg); setMappings(m); setInitiatives(i); setUnits(u);
   };
   useEffect(() => { fetchAll(); }, []);
 
@@ -31,8 +35,41 @@ export default function PlanningSettingsPage() {
       body: JSON.stringify({ [k]: v }),
     });
     if (!res.ok) { toast.error("Не удалось"); return; }
-    const next = await res.json();
-    setSettings(next);
+    setSettings(await res.json());
+  };
+
+  const addSegment = async () => {
+    if (!newSegment.trim()) return;
+    const res = await fetch("/api/planning/icp-segments", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: newSegment.trim() }),
+    });
+    if (!res.ok) { toast.error("Не удалось"); return; }
+    setNewSegment(""); fetchAll();
+  };
+
+  const deleteSegment = async (id: string) => {
+    if (!confirm("Удалить сегмент?")) return;
+    const res = await fetch(`/api/planning/icp-segments/${id}`, { method: "DELETE" });
+    if (!res.ok) { toast.error("Не удалось"); return; }
+    fetchAll();
+  };
+
+  const addUnit = async () => {
+    if (!newUnitCode.trim() || !newUnitTitle.trim()) return;
+    const res = await fetch("/api/planning/metric-units", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: newUnitCode.trim(), title: newUnitTitle.trim() }),
+    });
+    if (!res.ok) { toast.error("Не удалось"); return; }
+    setNewUnitCode(""); setNewUnitTitle(""); fetchAll();
+  };
+
+  const deleteUnit = async (code: string) => {
+    if (!confirm(`Удалить единицу ${code}?`)) return;
+    const res = await fetch(`/api/planning/metric-units/${code}`, { method: "DELETE" });
+    if (!res.ok) { toast.error("Не удалось"); return; }
+    fetchAll();
   };
 
   const addMapping = async () => {
@@ -60,6 +97,7 @@ export default function PlanningSettingsPage() {
     <div className="p-6">
       <h1 className="mb-4 text-2xl font-semibold">Настройки планирования</h1>
 
+      {/* Settings */}
       <section className="rounded-xl border border-slate-200 p-4">
         <h2 className="mb-3 text-sm font-semibold">Параметры</h2>
         <div className="grid grid-cols-2 gap-3 text-sm">
@@ -80,6 +118,7 @@ export default function PlanningSettingsPage() {
         </div>
       </section>
 
+      {/* Kaiten mapping */}
       <section className="mt-4 rounded-xl border border-slate-200 p-4">
         <h2 className="mb-3 text-sm font-semibold">Маппинг досок Kaiten → Инициатива</h2>
         <div className="mb-3 flex gap-2">
@@ -104,17 +143,61 @@ export default function PlanningSettingsPage() {
         </ul>
       </section>
 
-      {segments.length > 0 && (
-        <section className="mt-4 rounded-xl border border-slate-200 p-4">
-          <h2 className="mb-3 text-sm font-semibold">Сегменты клиентов</h2>
-          <ul className="text-sm">
-            {segments.map((s) => <li key={s.id}>{s.title}</li>)}
-          </ul>
-          <div className="mt-2 flex gap-2">
-            <input value={newSegment} onChange={(e) => setNewSegment(e.target.value)} placeholder="Новый сегмент" className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm" />
-          </div>
-        </section>
-      )}
+      {/* ICP segments */}
+      <section className="mt-4 rounded-xl border border-slate-200 p-4">
+        <h2 className="mb-3 text-sm font-semibold">Сегменты клиентов (ICP)</h2>
+        <div className="mb-3 flex gap-2">
+          <input
+            value={newSegment}
+            onChange={(e) => setNewSegment(e.target.value)}
+            placeholder="Новый сегмент"
+            onKeyDown={(e) => { if (e.key === "Enter") addSegment(); }}
+            className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          />
+          <button onClick={addSegment} disabled={!newSegment.trim()} className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">Добавить</button>
+        </div>
+        <ul className="text-sm">
+          {segments.length === 0 && <li className="text-xs text-slate-400">Сегментов нет</li>}
+          {segments.map((s) => (
+            <li key={s.id} className="flex items-center justify-between border-b border-slate-100 py-1">
+              <span>{s.title}</span>
+              <button onClick={() => deleteSegment(s.id)} className="text-xs text-red-600 hover:text-red-700" title="Удалить">
+                <Trash2 className="size-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {/* Metric units */}
+      <section className="mt-4 rounded-xl border border-slate-200 p-4">
+        <h2 className="mb-3 text-sm font-semibold">Единицы измерения метрик</h2>
+        <div className="mb-3 flex gap-2">
+          <input
+            value={newUnitCode}
+            onChange={(e) => setNewUnitCode(e.target.value)}
+            placeholder="Код (ms, rub, ...)"
+            className="w-32 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          />
+          <input
+            value={newUnitTitle}
+            onChange={(e) => setNewUnitTitle(e.target.value)}
+            placeholder="Название (ms, ₽, ...)"
+            className="flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          />
+          <button onClick={addUnit} disabled={!newUnitCode.trim() || !newUnitTitle.trim()} className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">Добавить</button>
+        </div>
+        <ul className="text-sm">
+          {units.map((u) => (
+            <li key={u.code} className="flex items-center justify-between border-b border-slate-100 py-1">
+              <span><code className="rounded bg-slate-100 px-1 text-[11px]">{u.code}</code> · {u.title}{u.is_default ? " · по умолчанию" : ""}</span>
+              <button onClick={() => deleteUnit(u.code)} className="text-xs text-red-600 hover:text-red-700" title="Удалить">
+                <Trash2 className="size-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }

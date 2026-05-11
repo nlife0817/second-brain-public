@@ -7,10 +7,13 @@ import type { DistributeCurve } from "@/types/planning";
  * Distribute a year-level target across N child periods (quarters/months/weeks)
  * using one of the supported curves.
  *
+ * For curve='history', pass `historyShares` — proportions from the previous
+ * year (length must equal `count`); they will be re-scaled to sum to yearTarget.
+ *
  * The output array has the same length as `count` and its sum is normalised so
  * |sum - yearTarget| <= 1 (we rely on floats; consumer rounds for display).
  */
-export function distributeTarget(curve: DistributeCurve, yearTarget: number, count: number): number[] {
+export function distributeTarget(curve: DistributeCurve, yearTarget: number, count: number, historyShares?: number[]): number[] {
   if (count <= 0) return [];
   if (count === 1) return [yearTarget];
 
@@ -33,6 +36,17 @@ export function distributeTarget(curve: DistributeCurve, yearTarget: number, cou
 
     case "back_loaded":
       return tripleSplit(count, yearTarget, [0.2, 0.3, 0.5]);
+
+    case "history": {
+      // Replay last year's proportions onto the new yearTarget.
+      // If history is absent or length mismatch, fall back to linear.
+      if (!historyShares || historyShares.length !== count) {
+        return normalise(new Array(count).fill(yearTarget / count), yearTarget);
+      }
+      const sum = historyShares.reduce((a, b) => a + b, 0);
+      if (sum === 0) return normalise(new Array(count).fill(yearTarget / count), yearTarget);
+      return normalise(historyShares.slice(), yearTarget);
+    }
 
     case "custom":
       return new Array(count).fill(0);

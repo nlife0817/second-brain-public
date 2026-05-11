@@ -1,21 +1,46 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { usePlanningStore } from "@/lib/planning-store";
 
 interface Props { open: boolean; onClose: () => void; }
+
+interface Suggestion { id: string; title: string; type: string; score: number }
 
 export function CreateTaskDrawer({ open, onClose }: Props) {
   const [title, setTitle] = useState("");
   const [why, setWhy] = useState("");
   const createTask = usePlanningStore((s) => s.createTask);
+  const updateTask = usePlanningStore((s) => s.updateTask);
 
   if (!open) return null;
 
   const submit = async () => {
     if (!title.trim()) return;
-    await createTask({ title: title.trim(), why: why || undefined });
+    const task = await createTask({ title: title.trim(), why: why || undefined });
     setTitle(""); setWhy(""); onClose();
+
+    if (!task) return;
+    // Concept §6.7.3.A: ask backend for keyword-based initiative suggestions.
+    const suggRes = await fetch(`/api/planning/initiatives/suggest-from-task`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: task.title, description: task.description ?? "" }),
+    });
+    if (!suggRes.ok) return;
+    const { suggestions } = (await suggRes.json()) as { suggestions: Suggestion[] };
+    if (!suggestions || suggestions.length === 0) return;
+
+    const top = suggestions[0];
+    toast(`Похоже, задача относится к «${top.title}». Привязать?`, {
+      duration: 12000,
+      action: {
+        label: "Да",
+        onClick: () => { void updateTask(task.id, { initiative_id: top.id }); },
+      },
+      cancel: { label: "Нет", onClick: () => undefined },
+    });
   };
 
   return (

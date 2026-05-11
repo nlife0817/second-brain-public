@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import Link from "next/link";
 import { LineChart, Line, ResponsiveContainer } from "recharts";
 import type { PlanningMetric } from "@/types/planning";
@@ -8,7 +9,7 @@ import { usePlanningStore } from "@/lib/planning-store";
 
 interface Props { metric: PlanningMetric; selected: boolean; onSelect: () => void; sparkline?: number[]; }
 
-export function MetricCard({ metric, selected, onSelect, sparkline }: Props) {
+function MetricCardBase({ metric, selected, onSelect, sparkline }: Props) {
   const updateMetric = usePlanningStore((s) => s.updateMetric);
   const series = (sparkline ?? []).map((v, i) => ({ i, v }));
   return (
@@ -42,7 +43,7 @@ export function MetricCard({ metric, selected, onSelect, sparkline }: Props) {
         <div className="h-6 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={series}>
-              <Line type="monotone" dataKey="v" stroke="#2563eb" strokeWidth={1.5} dot={false} />
+              <Line type="monotone" dataKey="v" stroke="#2563eb" strokeWidth={1.5} dot={false} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -50,3 +51,5 @@ export function MetricCard({ metric, selected, onSelect, sparkline }: Props) {
     </div>
   );
 }
+
+export const MetricCard = memo(MetricCardBase);

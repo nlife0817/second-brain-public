@@ -1,12 +1,13 @@
 "use client";
 
+import { memo } from "react";
 import type { Item } from "@/types";
 import { InlineTextField } from "./InlineTextField";
 import { usePlanningStore } from "@/lib/planning-store";
 
 interface Props { task: Item; }
 
-export function TaskCard({ task }: Props) {
+function TaskCardBase({ task }: Props) {
   const updateTask = usePlanningStore((s) => s.updateTask);
   const isDone = task.status === "done";
   return (
@@ -34,3 +35,5 @@ export function TaskCard({ task }: Props) {
     </div>
   );
 }
+
+export const TaskCard = memo(TaskCardBase);

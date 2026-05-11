@@ -1,0 +1,56 @@
+// Color tokens for planning system. See planning_system_concept.md §20.1.5.
+//
+// Semantic colors are fixed across the app (not themed):
+//   on_track / done    — green
+//   at_risk / inconclusive — amber
+//   off_track / killed / invalidated — red
+//   future / planned   — slate
+//   in_progress        — blue
+//   archived           — dark slate
+
+import type { InitiativeStatus, ExperimentDecision } from "@/types/planning";
+
+export type SemanticTone = "on_track" | "at_risk" | "off_track" | "future" | "in_progress" | "archived";
+
+export const SEMANTIC_HEX: Record<SemanticTone, string> = {
+  on_track: "#16a34a",
+  at_risk: "#eab308",
+  off_track: "#dc2626",
+  future: "#9ca3af",
+  in_progress: "#2563eb",
+  archived: "#374151",
+};
+
+export const SEMANTIC_CLASS: Record<SemanticTone, { bg: string; text: string; border: string; dot: string }> = {
+  on_track:    { bg: "bg-emerald-50",  text: "text-emerald-700", border: "border-emerald-300",  dot: "bg-emerald-500" },
+  at_risk:     { bg: "bg-amber-50",    text: "text-amber-700",   border: "border-amber-300",    dot: "bg-amber-500" },
+  off_track:   { bg: "bg-red-50",      text: "text-red-700",     border: "border-red-300",      dot: "bg-red-500" },
+  future:      { bg: "bg-slate-50",    text: "text-slate-600",   border: "border-slate-300",    dot: "bg-slate-300" },
+  in_progress: { bg: "bg-blue-50",     text: "text-blue-700",    border: "border-blue-300",     dot: "bg-blue-500" },
+  archived:    { bg: "bg-slate-100",   text: "text-slate-700",   border: "border-slate-400",    dot: "bg-slate-600" },
+};
+
+export function initiativeStatusTone(status: InitiativeStatus): SemanticTone {
+  switch (status) {
+    case "done":        return "on_track";
+    case "in_progress": return "in_progress";
+    case "killed":      return "archived";
+    case "planned":     return "future";
+  }
+}
+
+export function experimentDecisionTone(d: ExperimentDecision | null): SemanticTone {
+  switch (d) {
+    case "validated":    return "on_track";
+    case "invalidated":  return "off_track";
+    case "inconclusive": return "at_risk";
+    default:             return "future";
+  }
+}
+
+export const INITIATIVE_STATUS_LABEL: Record<InitiativeStatus, string> = {
+  planned: "Запланирована",
+  in_progress: "В работе",
+  done: "Сделана",
+  killed: "Убита",
+};

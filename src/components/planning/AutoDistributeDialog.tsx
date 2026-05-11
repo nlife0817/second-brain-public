@@ -16,11 +16,12 @@ interface Props {
   onApplied: () => void;
 }
 
-const CURVES: Array<{ value: DistributeCurve; label: string }> = [
-  { value: "linear", label: "Линейная" },
-  { value: "s_curve", label: "S-кривая" },
+const CURVES: Array<{ value: DistributeCurve; label: string; hint?: string }> = [
+  { value: "linear",       label: "Линейная" },
+  { value: "s_curve",      label: "S-кривая" },
   { value: "front_loaded", label: "Front-loaded" },
-  { value: "back_loaded", label: "Back-loaded" },
+  { value: "back_loaded",  label: "Back-loaded" },
+  { value: "history",      label: "По истории", hint: "Повторить прошлый год" },
 ];
 
 export function AutoDistributeDialog({ open, onClose, metricId, periodCount, periodType, year, onApplied }: Props) {
@@ -36,7 +37,13 @@ export function AutoDistributeDialog({ open, onClose, metricId, periodCount, per
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ curve, year_target: yearTarget, period_type: periodType, year }),
     });
-    if (!res.ok) { toast.error("Не удалось распределить"); return; }
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => null);
+      toast.error(errJson?.error === "no history data for previous year"
+        ? "Нет данных за прошлый год — выберите другую кривую"
+        : "Не удалось распределить");
+      return;
+    }
     toast.success(`${periodCount} ячеек обновлено`);
     onApplied();
     onClose();
@@ -63,6 +70,7 @@ export function AutoDistributeDialog({ open, onClose, metricId, periodCount, per
                 <button
                   key={c.value}
                   onClick={() => setCurve(c.value)}
+                  title={c.hint}
                   className={`rounded-md border px-3 py-1 text-xs ${
                     curve === c.value ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"
                   }`}
