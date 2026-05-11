@@ -96,6 +96,73 @@
 - [x] **weekly-plans API + src/components/weekly/***: уже удалены в предыдущих коммитах (§17 концепта).
 - [x] **Empty states**: уже расставлены в P0..P3 (`InitiativeColumn`, `TaskColumn`, `MetricColumn`, `MetricDetailSheet`); явных «пустых пустот» без CTA в основных flow нет.
 
+### P7 — Недостающие детали из исходного фидбэка — **этой сессией**
+
+Аудит показал, что часть пунктов исходных 18-ти осталась нереализованной/частично реализованной. Каждый gap зафиксирован с конкретной ссылкой на код, чтобы не повторилось «помечено как done, а в коде нет».
+
+#### P7.1 EN-заголовки во всём drawer'е инициативы (фидбэк #10) — `НЕ РЕАЛИЗОВАНО`
+
+Пользователь сказал: «RICE делаем по английски, **все заголовки внутри инициативы**». Реализовано только для RICE/JTBD/Kill criteria. Русские остались:
+- «Тип» ([InitiativeDetailSheet.tsx:221](src/components/planning/InitiativeDetailSheet.tsx#L221)) → `Type`
+- «Статус» (L238) → `Status`
+- «Оценка (ч)» (L259) → `Estimate (h)`
+- «Диапазон недель» (L277) → `Week range`
+- «Описание» (L300) → `Description`
+- «Ключевые допущения» (L469) → `Key assumptions`
+- «Связанные метрики» (L378) → `Linked metrics`
+- «Связанные сделки» (L402) → `Linked deals`
+- «Заблокированные сделки» (L583) → `Blocked deals`
+
+Кнопки/тосты остаются на русском (это UX-текст, не заголовки).
+
+#### P7.2 Quick-buttons для дедлайна (фидбэк #7) — `НЕ РЕАЛИЗОВАНО`
+
+«Перенесём поле с оценкой на отдельную строчку и **добавим сразу же предзаготовленные кнопки рядом с вводом кастомным**». В контексте дедлайна — это быстрые offset-кнопки. План:
+- Над/рядом с `WeekGridPicker` добавить ряд chip-кнопок: «+1 нед / +2 нед / +1 мес / +3 мес / +6 мес» (относительно `start_period_id` если задан, иначе текущей недели).
+- Клик — сразу выставляет `end_period_id` на соответствующую неделю; grid-picker остаётся для произвольного выбора.
+- Если `end_period_id` уже был задан и новый клик его меняет → срабатывает существующий `ReplanReasonDialog` (логика P1).
+
+#### P7.3 Quick-buttons для оценки (фидбэк #7) — `ЧАСТИЧНО`
+
+Поле `estimate_hours` уже отдельной строчкой ([InitiativeDetailSheet.tsx:259-271](src/components/planning/InitiativeDetailSheet.tsx#L259)), но без presets. Добавить chip-кнопки рядом с input: `4ч / 8ч / 16ч / 40ч / 80ч` (полдня / день / 2 дня / неделя / 2 недели). Клик — заполняет input + PATCH.
+
+#### P7.4 At-risk учитывает прогресс задач (фидбэк #15) — `ЧАСТИЧНО`
+
+Пользователь: «Если дедлайн достигнут, но **связанные с ней задачи не выполнены**, значит инициатива просрочена / потерпела неудачу. Требуется в таком случае подсвечивать.» Сейчас `initiativeDeadlineTone` ([src/lib/planning-colors.ts:62-82](src/lib/planning-colors.ts#L62)) смотрит только на дату + статус.
+
+План:
+- В `initiativeDeadlineTone` добавить параметр `progress: { done: number; total: number } | undefined`.
+- Если `endTs < now AND status NOT IN (done, killed) AND (total === 0 OR done/total < 0.8)` → новый тон `failed` (более яркий красный, badge «Потерпела неудачу»).
+- Если `at_risk` (в окне `early_warning_weeks`) AND `done/total < 0.5` → усиленный амбер с badge «Отстаёт».
+- `InitiativeCard` получает прогресс из store (`initiativeItemIds[ini]` + статусы items уже есть из P3) и пробрасывает.
+- Cron `early-warning` уже умеет считать `done_count / total < 0.8` — переиспользовать порог для consistency.
+
+#### P7.5 TaskColumn — расширенный фильтр как в Tasks (фидбэк #16) — `ЧАСТИЧНО`
+
+Сейчас: `status (all/open/done)`, `sort (created/status/estimate)`, `group (none/status/category)` ([TaskColumn.tsx:53-55](src/components/planning/TaskColumn.tsx#L53)). Пользователь хотел «аналогично разделу Задачи расширенным фильтром».
+
+План (без полного `AdvancedFilterBuilder` — это overkill для drawer'а; компактный pragmatic-вариант):
+- **Text search** по `title` + `why` (debounced 200ms).
+- **Multi-select category** (читаем `useStore.categories`).
+- Сортировка дополнительно: `due_date asc/desc`.
+- Группировка дополнительно: `priority`.
+- Сохранение состояния фильтра в `localStorage` (per-initiative ключ необязательно — глобально).
+
+#### P7.6 TaskColumn — управление колонками (фидбэк #16) — `НЕ РЕАЛИЗОВАНО`
+
+Пользователь хотел: «скрывать те или иные колонки можно, или менять их местами». План:
+- Над таблицей — иконка-кнопка `Columns ▾` открывающая popover с checkbox-списком колонок: `Title/Why`, `Status`, `Category`, `Est`, `Due`.
+- Внутри popover — drag-handle для reorder (используем `dnd-kit` который уже в стеке).
+- State хранится в `localStorage` ключом `planning.taskColumn.cols` (`{visible: string[], order: string[]}`).
+- Дефолт: показаны `Title/Why`, `Status`, `Est` (как сейчас) в том же порядке — текущие пользователи не заметят изменения.
+
+---
+
+## 5. Открытые вопросы для P7
+
+- Естимат `40ч`/`80ч` (неделя/2 недели) — нужны ли preset'ы такого размера, или ограничиться `4/8/16ч`? **Решение по умолчанию**: оставлю `4 / 8 / 16 / 40` — закрывает большинство кейсов.
+- При at-risk порог `done/total < 0.8` — согласован с cron'ом `early-warning`. Если хочется строже (например `< 0.95`) — менять одну константу.
+
 ---
 
 ## 2. Открытые вопросы (закрываются параллельно)
@@ -117,6 +184,8 @@
 | P4 (метрика: weekly storage, факт, variance, redistribute) | ✅ | `26c27b9` |
 | P5 (revenue agg + payment UI) | ✅ | `64977b0` |
 | P6 (cleanup) | ✅ | этой сессией |
+| Build-fix (deploy P0..P6) | ✅ | `6de7a28` + `650add1` + `9ad897f` |
+| P7 (недостающие детали фидбэка) | 🔄 | в работе |
 
 ---
 
