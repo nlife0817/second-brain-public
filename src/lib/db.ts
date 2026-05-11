@@ -2235,6 +2235,11 @@ export async function listMetricTargetsForPeriodType(
     created_at: string;
     updated_at: string;
   };
+  // ISO-week → quarter/month: неделя относится к кварталу/месяцу, в котором
+  // лежит её четверг (start_date + 3). Это сохраняет инвариант
+  // SUM(quarters)=SUM(months)=SUM(weeks)=annual_target, в т.ч. для лет с 53
+  // неделями (неделя 1 может начинаться в декабре прошлого года, неделя 53 —
+  // заканчиваться в январе следующего; «целиком внутри квартала» теряет их).
   const rows = await prepare<AggRow>(`
     SELECT
       agg.id AS period_id,
@@ -2246,8 +2251,8 @@ export async function listMetricTargetsForPeriodType(
     LEFT JOIN planning_periods wk
       ON wk.type = 'week'
       AND wk.direction_id IS NOT DISTINCT FROM agg.direction_id
-      AND wk.start_date >= agg.start_date
-      AND wk.end_date <= agg.end_date
+      AND (wk.start_date + 3) >= agg.start_date
+      AND (wk.start_date + 3) <= agg.end_date
     LEFT JOIN planning_metric_targets wt
       ON wt.period_id = wk.id
       AND wt.metric_id = ?
@@ -2278,15 +2283,16 @@ export async function patchAggregatedTarget(
   aggregatePeriodId: string,
   newTotal: number,
 ): Promise<PlanningMetricTarget[]> {
-  // 1) Найти week-periods внутри aggregate
+  // 1) Найти week-periods, относящиеся к этому aggregate по Thursday-правилу
+  //    (см. listMetricTargetsForPeriodType — тот же инвариант сохранения суммы).
   const weeks = await prepare<{ id: string }>(`
     SELECT wk.id
     FROM planning_periods agg
     JOIN planning_periods wk
       ON wk.type = 'week'
       AND wk.direction_id IS NOT DISTINCT FROM agg.direction_id
-      AND wk.start_date >= agg.start_date
-      AND wk.end_date <= agg.end_date
+      AND (wk.start_date + 3) >= agg.start_date
+      AND (wk.start_date + 3) <= agg.end_date
     WHERE agg.id = ?
     ORDER BY wk.start_date ASC
   `).all(aggregatePeriodId);
