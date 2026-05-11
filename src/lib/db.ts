@@ -207,12 +207,9 @@ export async function getAllItemsFull(includeArchived = false, includeChildren =
   `).all();
   const participantMap = new Map<string, DevelopmentParticipant[]>();
   for (const row of allItemParticipants) {
-    const p: DevelopmentParticipant = {
-      id: row.id, provider: row.provider, remote_id: row.remote_id, name: row.name,
-      position: row.position, created_at: row.created_at, updated_at: row.updated_at,
-    };
-    const list = participantMap.get(row.item_id);
-    if (list) list.push(p); else participantMap.set(row.item_id, [p]);
+    const { item_id, ...p } = row;
+    const list = participantMap.get(item_id);
+    if (list) list.push(p); else participantMap.set(item_id, [p]);
   }
 
   return items.map((item) => ({
