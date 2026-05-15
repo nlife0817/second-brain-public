@@ -28,7 +28,7 @@ function isoToLocal(iso: string): string {
 
 function localToIsoUtc(local: string): string | null {
   const d = new Date(local);
-  if (isNaN(d.getTime())) return null;
+  if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
 }
 
@@ -84,12 +84,12 @@ export function EditEntryDialog({ entry, onClose, onSaved }: Props) {
   };
 
   return (
-    <Dialog open={entry !== null} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={entry !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Редактировать сессию</DialogTitle>
           <DialogDescription>
-            Поправь время или заметку. Активную сессию редактировать нельзя — сначала останови.
+            Поправь время или заметку. Активную сессию редактировать нельзя: сначала останови таймер.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -126,8 +126,8 @@ export function EditEntryDialog({ entry, onClose, onSaved }: Props) {
           <Button variant="outline" onClick={onClose} disabled={busy}>
             Отмена
           </Button>
-          <Button onClick={handleSubmit} disabled={busy}>
-            {busy ? "Сохранение…" : "Сохранить"}
+          <Button onClick={() => void handleSubmit()} disabled={busy}>
+            {busy ? "Сохранение..." : "Сохранить"}
           </Button>
         </DialogFooter>
       </DialogContent>

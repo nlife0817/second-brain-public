@@ -14,6 +14,7 @@ import { ClientDetailModal, ClientDetailPanel } from "@/components/clients/Clien
 import { CreateClientDialog } from "@/components/clients/CreateClientDialog";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { StagingView } from "@/components/staging/StagingView";
+import { TimingView } from "@/components/timing/TimingView";
 
 export default function Home() {
   const fetchInit = useBrainStore((s) => s.fetchInit);
@@ -36,6 +37,8 @@ export default function Home() {
           <main className="flex-1 overflow-auto min-w-0">
             {appSection === "settings" ? (
               <SettingsView />
+            ) : appSection === "timing" ? (
+              <TimingView />
             ) : appSection === "staging" ? (
               <StagingView />
             ) : appSection === "clients" ? (

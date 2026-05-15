@@ -432,7 +432,7 @@ export interface UpdateClientPayload extends Partial<ClientParams> {
 export type ClientGroupByField = "none" | "status" | "budget" | "operators_per_shift" | "crm_system";
 export type ClientGroupByConfig = [ClientGroupByField, ClientGroupByField];
 
-export type AppSection = "tasks" | "clients" | "staging" | "settings";
+export type AppSection = "tasks" | "clients" | "staging" | "timing" | "settings";
 export type ClientViewMode = "list" | "kanban";
 
 // --- Relations ---

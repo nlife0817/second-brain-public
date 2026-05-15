@@ -983,7 +983,10 @@ export const useBrainStore = create<BrainStore>()(
   },
   resetActiveFilter: () => set({ activeFilterId: null, filters: { ...defaultFilters } }),
   setDetailMode: (detailMode) => set({ detailMode }),
-  setAppSection: (appSection) => set({ appSection }),
+  setAppSection: (appSection) => set({
+    appSection,
+    activeCategory: appSection === "tasks" ? "all" : get().activeCategory,
+  }),
   setListGroupBy: (listGroupBy) => {
     // If level 1 is "none", level 2 must also be "none"
     if (listGroupBy[0] === "none") {
@@ -1709,7 +1712,7 @@ export const useBrainStore = create<BrainStore>()(
 }),
   {
     name: "second-brain-settings",
-    version: 8,
+    version: 9,
     storage: createJSONStorage(() => localStorage),
     migrate: (persisted: unknown, version: number) => {
       const state = persisted as Record<string, unknown> | null;
@@ -1751,6 +1754,9 @@ export const useBrainStore = create<BrainStore>()(
           if (k.startsWith("goal") || k === "currentMetricId") delete state[k];
         }
       }
+      if (state && version < 9) {
+        state.activeCategory = "all";
+      }
       return state;
     },
     partialize: (state) => ({
@@ -1758,7 +1764,6 @@ export const useBrainStore = create<BrainStore>()(
       clientViewMode: state.clientViewMode,
       clientGroupBy: state.clientGroupBy,
       viewMode: state.viewMode,
-      activeCategory: state.activeCategory,
       subtaskDisplayMode: state.subtaskDisplayMode,
       cardVisibleFields: state.cardVisibleFields,
       listColumnOrder: state.listColumnOrder,
