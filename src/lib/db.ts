@@ -1,7 +1,7 @@
 import { prepare, transaction } from "./sql";
 import {
   User, UserRole,
-  Item, ItemWithSubtasks, Tag, Category, CrmSystem,
+  Item, ItemWithSubtasks, Tag, Category, CrmSystem, WeeklyPlan, WeeklyPlanEntry, WeeklyPlanEntryWithItem, WeeklyPlanFull, WeeklyPlanReport, EntryComment,
   Client, ClientFull, ClientStatus, ClientCompany, ClientContact, ClientContactField, ClientNote, ClientLink,
   ContactFieldType,
   RelationType, Relation, RelationWithTarget, Comment, EntityType, RelationEntityType,
@@ -66,23 +66,15 @@ const ITEM_UPDATE_FIELDS = [
   "title", "description", "type", "status", "priority", "category", "source",
   "development_stage", "due_date", "due_time", "estimated_minutes", "position", "parent_id",
   "recurring_series_id",
-  // Planning V3 (0023 + 0024)
-  "initiative_id", "linked_deal_id", "planned_period_id", "planned_date",
-  "why", "replan_reason", "is_carryover",
-  // P3 (0039)
-  "assignee_participant_id",
-  // P6 (0040)
-  "planned_start_date", "planned_end_date",
 ] as const;
 
 const TAG_UPDATE_FIELDS = ["name", "color", "position"] as const;
 const DEV_STAGE_UPDATE_FIELDS = ["name", "position"] as const;
 const ITEM_STATUS_UPDATE_FIELDS = ["name", "color", "position", "kind"] as const;
-const DEV_PARTICIPANT_UPDATE_FIELDS = [
-  "name", "position",
-  "role", "is_active", "deactivated_at", "weekly_hours_default",
-] as const;
+const DEV_PARTICIPANT_UPDATE_FIELDS = ["name", "position"] as const;
 const CATEGORY_UPDATE_FIELDS = ["name", "color", "icon", "position"] as const;
+const WEEKLY_PLAN_UPDATE_FIELDS = ["week_start", "week_end", "title", "status"] as const;
+const PLAN_ENTRY_UPDATE_FIELDS = ["result_status", "result_comment", "position"] as const;
 const CLIENT_STATUS_UPDATE_FIELDS = ["name", "color", "position"] as const;
 const CLIENT_UPDATE_FIELDS = [
   "name", "status_id", "position",
@@ -207,9 +199,12 @@ export async function getAllItemsFull(includeArchived = false, includeChildren =
   `).all();
   const participantMap = new Map<string, DevelopmentParticipant[]>();
   for (const row of allItemParticipants) {
-    const { item_id, ...p } = row;
-    const list = participantMap.get(item_id);
-    if (list) list.push(p); else participantMap.set(item_id, [p]);
+    const p: DevelopmentParticipant = {
+      id: row.id, provider: row.provider, remote_id: row.remote_id, name: row.name,
+      position: row.position, created_at: row.created_at, updated_at: row.updated_at,
+    };
+    const list = participantMap.get(row.item_id);
+    if (list) list.push(p); else participantMap.set(row.item_id, [p]);
   }
 
   return items.map((item) => ({
@@ -285,27 +280,19 @@ export async function createItem(
   ).get(item.status, item.parent_id ?? null);
 
   await prepare(`
-    INSERT INTO items (id, title, description, type, status, priority, category, source, development_stage, due_date, due_time, estimated_minutes, position, parent_id, recurring_series_id, assignee_participant_id, planned_start_date, planned_end_date, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO items (id, title, description, type, status, priority, category, source, development_stage, due_date, due_time, estimated_minutes, position, parent_id, recurring_series_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     item.id, item.title, item.description, item.type, item.status,
     item.priority, item.category, item.source ?? "system", item.development_stage ?? null,
     item.due_date ?? null, item.due_time ?? null, item.estimated_minutes ?? null,
     item.position ?? maxPos?.next_pos ?? 0, item.parent_id ?? null,
-    item.recurring_series_id ?? null,
-    item.assignee_participant_id ?? null,
-    item.planned_start_date ?? null,
-    item.planned_end_date ?? null,
-    now, now
+    item.recurring_series_id ?? null, now, now
   );
   return (await getItemById(item.id))!;
 }
 
-export async function updateItem(
-  id: string,
-  updates: Partial<Item>,
-  replanCtx?: { reason_code?: string | null; reason_text?: string | null; user_email?: string | null },
-): Promise<Item | undefined> {
+export async function updateItem(id: string, updates: Partial<Item>): Promise<Item | undefined> {
   const existing = await getItemById(id);
   if (!existing) return undefined;
 
@@ -313,64 +300,9 @@ export async function updateItem(
   if (!built) return existing;
 
   const now = new Date().toISOString();
-
-  // P7: если меняются планировочные поля и задача уже была запланирована —
-  // прокидываем причину в триггер log_item_plan_change через SET LOCAL.
-  // Должно быть в той же транзакции, что и UPDATE.
-  const touchesPlan =
-    "planned_start_date" in (updates as object) ||
-    "planned_end_date" in (updates as object) ||
-    "planned_date" in (updates as object) ||
-    "planned_period_id" in (updates as object) ||
-    "assignee_participant_id" in (updates as object);
-  const wasPlanned = existing.planned_start_date || existing.planned_date;
-  const needsReplanCtx = touchesPlan && wasPlanned && replanCtx;
-
-  if (needsReplanCtx) {
-    await transaction(async (tx) => {
-      // set_config возвращает значение и принимает is_local; идемпотентный SET LOCAL.
-      if (replanCtx.reason_code) {
-        await tx.prepare("SELECT set_config('app.replan_reason_code', ?, true)").all(replanCtx.reason_code);
-      }
-      if (replanCtx.reason_text) {
-        await tx.prepare("SELECT set_config('app.replan_reason_text', ?, true)").all(replanCtx.reason_text);
-      }
-      if (replanCtx.user_email) {
-        await tx.prepare("SELECT set_config('app.user_email', ?, true)").all(replanCtx.user_email);
-      }
-      await tx.prepare(`UPDATE items SET ${built.sql}, updated_at = ? WHERE id = ?`)
-        .run(...built.values, now, id);
-    });
-  } else {
-    await prepare(`UPDATE items SET ${built.sql}, updated_at = ? WHERE id = ?`)
-      .run(...built.values, now, id);
-  }
+  await prepare(`UPDATE items SET ${built.sql}, updated_at = ? WHERE id = ?`)
+    .run(...built.values, now, id);
   return await getItemById(id);
-}
-
-// ---------------- Plan history (P7) ----------------
-
-export interface PlanningItemPlanHistoryRow {
-  id: string;
-  item_id: string;
-  changed_at: string;
-  changed_by: string | null;
-  planned_start_before: string | null;
-  planned_end_before: string | null;
-  planned_period_id_before: string | null;
-  assignee_before: string | null;
-  planned_start_after: string | null;
-  planned_end_after: string | null;
-  planned_period_id_after: string | null;
-  assignee_after: string | null;
-  reason_code: string | null;
-  reason_text: string | null;
-}
-
-export async function listItemPlanHistory(itemId: string): Promise<PlanningItemPlanHistoryRow[]> {
-  return await prepare<PlanningItemPlanHistoryRow>(
-    "SELECT * FROM planning_item_plan_history WHERE item_id = ? ORDER BY changed_at DESC"
-  ).all(itemId);
 }
 
 export async function deleteItem(id: string): Promise<boolean> {
@@ -767,165 +699,28 @@ export async function getAllDevelopmentParticipants(): Promise<DevelopmentPartic
   return await prepare<DevelopmentParticipant>("SELECT * FROM development_participants ORDER BY position ASC, LOWER(name) ASC").all();
 }
 
-export async function updateDevelopmentParticipant(
-  id: string,
-  updates: Partial<Pick<DevelopmentParticipant,
-    "name" | "position" | "role" | "is_active" | "deactivated_at" | "weekly_hours_default"
-  >>,
-): Promise<DevelopmentParticipant | undefined> {
-  // P2: автоматически проставляем deactivated_at при is_active=false.
-  // owner-роль защищаем: нельзя менять роль/активность owner-участника (UI прячет,
-  // но защита нужна на бэкенде на случай прямого запроса).
-  const current = await prepare<DevelopmentParticipant>(
-    "SELECT * FROM development_participants WHERE id = ?"
-  ).get(id);
-  if (!current) return undefined;
-
-  const u: Record<string, unknown> = { ...updates };
-  if (current.role === "owner") {
-    delete u.role;
-    delete u.is_active;
-    delete u.deactivated_at;
-  }
-  if ("is_active" in u) {
-    if (u.is_active === false && current.is_active !== false) {
-      u.deactivated_at = new Date().toISOString();
-    } else if (u.is_active === true && current.is_active === false) {
-      u.deactivated_at = null;
-    }
-  }
-  if ("role" in u && u.role === "owner" && current.role !== "owner") {
-    // Нельзя присвоить роль owner — только сидируется миграцией.
-    delete u.role;
-  }
-
-  const built = buildUpdateClause(u, DEV_PARTICIPANT_UPDATE_FIELDS);
-  if (!built) return current;
+export async function updateDevelopmentParticipant(id: string, updates: Partial<Pick<DevelopmentParticipant, "name" | "position">>): Promise<DevelopmentParticipant | undefined> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, DEV_PARTICIPANT_UPDATE_FIELDS);
+  if (!built) return await prepare<DevelopmentParticipant>("SELECT * FROM development_participants WHERE id = ?").get(id);
   const now = new Date().toISOString();
   await prepare(`UPDATE development_participants SET ${built.sql}, updated_at = ? WHERE id = ?`)
     .run(...built.values, now, id);
   return await prepare<DevelopmentParticipant>("SELECT * FROM development_participants WHERE id = ?").get(id);
 }
 
-export async function deleteDevelopmentParticipant(id: string): Promise<boolean | "owner_protected"> {
-  // owner — защищён от удаления.
-  const cur = await prepare<DevelopmentParticipant>(
-    "SELECT * FROM development_participants WHERE id = ?"
-  ).get(id);
-  if (!cur) return false;
-  if (cur.role === "owner") return "owner_protected";
+export async function deleteDevelopmentParticipant(id: string): Promise<boolean> {
   await prepare("DELETE FROM item_development_participants WHERE participant_id = ?").run(id);
   const result = await prepare("DELETE FROM development_participants WHERE id = ?").run(id);
   return result.changes > 0;
 }
 
-export async function createDevelopmentParticipant(
-  name: string,
-  opts?: { role?: "developer" | "other"; weekly_hours_default?: number },
-): Promise<DevelopmentParticipant> {
+export async function createDevelopmentParticipant(name: string): Promise<DevelopmentParticipant> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const maxPos = await prepare<{ p: number }>("SELECT COALESCE(MAX(position), -1) + 1 as p FROM development_participants").get();
-  await prepare(`
-    INSERT INTO development_participants
-      (id, provider, remote_id, name, position, role, weekly_hours_default, created_at, updated_at)
-    VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id, name, maxPos?.p ?? 0,
-    opts?.role ?? "developer",
-    opts?.weekly_hours_default ?? 40,
-    now, now,
-  );
+  await prepare("INSERT INTO development_participants (id, provider, remote_id, name, position, created_at, updated_at) VALUES (?, NULL, NULL, ?, ?, ?, ?)")
+    .run(id, name, maxPos?.p ?? 0, now, now);
   return (await prepare<DevelopmentParticipant>("SELECT * FROM development_participants WHERE id = ?").get(id))!;
-}
-
-// ---------------- Participant Capacity (per-week) ----------------
-
-export async function listParticipantCapacities(periodId: string): Promise<PlanningParticipantCapacity[]> {
-  return await prepare<PlanningParticipantCapacity>(
-    "SELECT * FROM planning_participant_capacity WHERE period_id = ?"
-  ).all(periodId);
-}
-
-export async function upsertParticipantCapacity(
-  input: UpsertParticipantCapacityInput,
-): Promise<PlanningParticipantCapacity> {
-  await prepare(`
-    INSERT INTO planning_participant_capacity
-      (participant_id, period_id, hours_override, is_active_override, note)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT (participant_id, period_id) DO UPDATE SET
-      hours_override = EXCLUDED.hours_override,
-      is_active_override = EXCLUDED.is_active_override,
-      note = EXCLUDED.note,
-      updated_at = now()
-  `).run(
-    input.participant_id, input.period_id,
-    input.hours_override ?? null,
-    input.is_active_override ?? null,
-    input.note ?? null,
-  );
-  return (await prepare<PlanningParticipantCapacity>(
-    "SELECT * FROM planning_participant_capacity WHERE participant_id = ? AND period_id = ?"
-  ).get(input.participant_id, input.period_id))!;
-}
-
-export async function deleteParticipantCapacity(id: string): Promise<boolean> {
-  const r = await prepare("DELETE FROM planning_participant_capacity WHERE id = ?").run(id);
-  return r.changes > 0;
-}
-
-export async function getEffectiveCapacity(
-  participantId: string, periodId: string,
-): Promise<EffectiveCapacity> {
-  const p = await prepare<DevelopmentParticipant>(
-    "SELECT * FROM development_participants WHERE id = ?"
-  ).get(participantId);
-  if (!p) throw new Error(`Participant ${participantId} not found`);
-  const ov = await prepare<PlanningParticipantCapacity>(
-    "SELECT * FROM planning_participant_capacity WHERE participant_id = ? AND period_id = ?"
-  ).get(participantId, periodId);
-  const activeFromOv = ov?.is_active_override;
-  const isActive = (activeFromOv === null || activeFromOv === undefined) ? p.is_active : activeFromOv;
-  const hoursFromOv = ov?.hours_override;
-  const hoursRaw = (hoursFromOv === null || hoursFromOv === undefined)
-    ? Number(p.weekly_hours_default)
-    : Number(hoursFromOv);
-  return {
-    participant_id: participantId,
-    hours: isActive ? hoursRaw : 0,
-    is_active: isActive,
-    source: {
-      hours: (hoursFromOv === null || hoursFromOv === undefined) ? "default" : "override",
-      active: (activeFromOv === null || activeFromOv === undefined) ? "default" : "override",
-    },
-  };
-}
-
-export async function listEffectiveCapacities(periodId: string): Promise<EffectiveCapacity[]> {
-  const participants = await prepare<DevelopmentParticipant>(
-    "SELECT * FROM development_participants"
-  ).all();
-  const overrides = await listParticipantCapacities(periodId);
-  const ovById = new Map(overrides.map((o) => [o.participant_id, o]));
-  return participants.map((p) => {
-    const ov = ovById.get(p.id);
-    const activeFromOv = ov?.is_active_override;
-    const isActive = (activeFromOv === null || activeFromOv === undefined) ? p.is_active : activeFromOv;
-    const hoursFromOv = ov?.hours_override;
-    const hoursRaw = (hoursFromOv === null || hoursFromOv === undefined)
-      ? Number(p.weekly_hours_default)
-      : Number(hoursFromOv);
-    return {
-      participant_id: p.id,
-      hours: isActive ? hoursRaw : 0,
-      is_active: isActive,
-      source: {
-        hours: (hoursFromOv === null || hoursFromOv === undefined) ? "default" as const : "override" as const,
-        active: (activeFromOv === null || activeFromOv === undefined) ? "default" as const : "override" as const,
-      },
-    };
-  });
 }
 
 // ---------------- Categories ----------------
@@ -975,10 +770,275 @@ export async function reorderItems(items: { id: string; position: number; status
   });
 }
 
-// ---------------- Weekly Plans (REMOVED) ----------------
-// Replaced by planning_periods (type='week') + items.planned_period_id in migration 0024.
-// All weekly_plan_* / entry_comments functions removed; new domain functions live in
-// the planning_* section added in Phase 1.6.
+// ---------------- Weekly Plans ----------------
+
+export async function getAllWeeklyPlans(): Promise<WeeklyPlan[]> {
+  return await prepare<WeeklyPlan>("SELECT * FROM weekly_plans ORDER BY week_start DESC").all();
+}
+
+export async function getWeeklyPlanById(id: string): Promise<WeeklyPlan | undefined> {
+  return await prepare<WeeklyPlan>("SELECT * FROM weekly_plans WHERE id = ?").get(id);
+}
+
+export async function getWeeklyPlanFull(id: string): Promise<WeeklyPlanFull | undefined> {
+  const plan = await getWeeklyPlanById(id);
+  if (!plan) return undefined;
+
+  const rows = await prepare<WeeklyPlanEntry & Record<string, unknown>>(`
+    SELECT e.*, i.title as item_title, i.description as item_description,
+           i.type as item_type, i.status as item_status, i.priority as item_priority,
+           i.category as item_category, i.source as item_source, i.development_stage as item_development_stage,
+           i.due_date as item_due_date, i.due_time as item_due_time,
+           i.estimated_minutes as item_estimated_minutes,
+           i.position as item_position, i.parent_id as item_parent_id,
+           i.created_at as item_created_at, i.updated_at as item_updated_at
+    FROM weekly_plan_entries e
+    JOIN items i ON e.item_id = i.id
+    WHERE e.plan_id = ?
+    ORDER BY e.position ASC
+  `).all(id);
+
+  const entryIds = rows.map((r) => r.id as string);
+  let allComments: EntryComment[] = [];
+  if (entryIds.length > 0) {
+    const placeholders = entryIds.map(() => "?").join(",");
+    allComments = await prepare<EntryComment>(
+      `SELECT * FROM entry_comments WHERE entry_id IN (${placeholders}) ORDER BY created_at ASC`
+    ).all(...entryIds);
+  }
+  const commentsByEntry = new Map<string, EntryComment[]>();
+  for (const c of allComments) {
+    const list = commentsByEntry.get(c.entry_id);
+    if (list) list.push(c); else commentsByEntry.set(c.entry_id, [c]);
+  }
+
+  const entries: WeeklyPlanEntryWithItem[] = rows.map((row) => {
+    const entryId = row.id as string;
+    return {
+      id: entryId,
+      plan_id: row.plan_id as string,
+      item_id: row.item_id as string,
+      position: row.position as number,
+      result_status: row.result_status as WeeklyPlanEntry["result_status"],
+      result_comment: row.result_comment as string,
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+      comments: commentsByEntry.get(entryId) ?? [],
+      item: {
+        id: row.item_id as string,
+        title: row.item_title as string,
+        description: row.item_description as string,
+        type: row.item_type as Item["type"],
+        status: row.item_status as Item["status"],
+        priority: row.item_priority as Item["priority"],
+        category: row.item_category as Item["category"],
+        source: (row.item_source as Item["source"]) || "system",
+        development_stage: (row.item_development_stage as string) || null,
+        due_date: (row.item_due_date as string) || null,
+        due_time: (row.item_due_time as string) || null,
+        estimated_minutes: (row.item_estimated_minutes as number | null) ?? null,
+        position: row.item_position as number,
+        parent_id: (row.item_parent_id as string) || null,
+        created_at: row.item_created_at as string,
+        updated_at: row.item_updated_at as string,
+      },
+    };
+  });
+
+  return { ...plan, entries };
+}
+
+export async function createWeeklyPlan(plan: Pick<WeeklyPlan, "id" | "week_start" | "week_end" | "title">): Promise<WeeklyPlan> {
+  const now = new Date().toISOString();
+  await prepare(`
+    INSERT INTO weekly_plans (id, week_start, week_end, title, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'active', ?, ?)
+  `).run(plan.id, plan.week_start, plan.week_end, plan.title, now, now);
+  return (await getWeeklyPlanById(plan.id))!;
+}
+
+export async function updateWeeklyPlan(id: string, updates: Partial<WeeklyPlan>): Promise<WeeklyPlan | undefined> {
+  const existing = await getWeeklyPlanById(id);
+  if (!existing) return undefined;
+  const built = buildUpdateClause(updates as Record<string, unknown>, WEEKLY_PLAN_UPDATE_FIELDS);
+  if (!built) return existing;
+  const now = new Date().toISOString();
+  await prepare(`UPDATE weekly_plans SET ${built.sql}, updated_at = ? WHERE id = ?`)
+    .run(...built.values, now, id);
+  return await getWeeklyPlanById(id);
+}
+
+export async function deleteWeeklyPlan(id: string): Promise<boolean> {
+  const result = await prepare("DELETE FROM weekly_plans WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+
+export async function addItemToPlan(planId: string, itemId: string): Promise<WeeklyPlanEntry | null> {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const maxPos = await prepare<{ next_pos: number }>(
+    "SELECT COALESCE(MAX(position), -1) + 1 as next_pos FROM weekly_plan_entries WHERE plan_id = ?"
+  ).get(planId);
+  try {
+    await prepare(`
+      INSERT INTO weekly_plan_entries (id, plan_id, item_id, position, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, planId, itemId, maxPos?.next_pos ?? 0, now, now);
+    return (await prepare<WeeklyPlanEntry>("SELECT * FROM weekly_plan_entries WHERE id = ?").get(id)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function bulkAddItemsToPlan(planId: string, itemIds: string[]): Promise<number> {
+  const now = new Date().toISOString();
+  let added = 0;
+  const maxPos = await prepare<{ next_pos: number }>(
+    "SELECT COALESCE(MAX(position), -1) + 1 as next_pos FROM weekly_plan_entries WHERE plan_id = ?"
+  ).get(planId);
+  const base = maxPos?.next_pos ?? 0;
+  await transaction(async (tx) => {
+    for (let i = 0; i < itemIds.length; i++) {
+      const result = await tx.prepare(`
+        INSERT INTO weekly_plan_entries (id, plan_id, item_id, position, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (plan_id, item_id) DO NOTHING
+      `).run(crypto.randomUUID(), planId, itemIds[i], base + i, now, now);
+      added += result.changes;
+    }
+  });
+  return added;
+}
+
+export async function removeItemFromPlan(planId: string, itemId: string): Promise<boolean> {
+  const result = await prepare("DELETE FROM weekly_plan_entries WHERE plan_id = ? AND item_id = ?").run(planId, itemId);
+  return result.changes > 0;
+}
+
+export async function updatePlanEntry(entryId: string, updates: Partial<Pick<WeeklyPlanEntry, "result_status" | "result_comment" | "position">>): Promise<WeeklyPlanEntry | undefined> {
+  const built = buildUpdateClause(updates as Record<string, unknown>, PLAN_ENTRY_UPDATE_FIELDS);
+  if (!built) return undefined;
+  const now = new Date().toISOString();
+  await prepare(`UPDATE weekly_plan_entries SET ${built.sql}, updated_at = ? WHERE id = ?`)
+    .run(...built.values, now, entryId);
+  return await prepare<WeeklyPlanEntry>("SELECT * FROM weekly_plan_entries WHERE id = ?").get(entryId);
+}
+
+export async function getTransferableEntries(planId: string): Promise<WeeklyPlanEntryWithItem[]> {
+  const rows = await prepare<WeeklyPlanEntry & Record<string, unknown>>(`
+    SELECT e.*, i.title as item_title, i.description as item_description,
+           i.type as item_type, i.status as item_status, i.priority as item_priority,
+           i.category as item_category, i.source as item_source, i.development_stage as item_development_stage,
+           i.due_date as item_due_date, i.due_time as item_due_time,
+           i.estimated_minutes as item_estimated_minutes,
+           i.position as item_position, i.parent_id as item_parent_id,
+           i.created_at as item_created_at, i.updated_at as item_updated_at
+    FROM weekly_plan_entries e
+    JOIN items i ON e.item_id = i.id
+    WHERE e.plan_id = ? AND e.result_status = 'transferred'
+    ORDER BY e.position ASC
+  `).all(planId);
+
+  const result: WeeklyPlanEntryWithItem[] = [];
+  for (const row of rows) {
+    const entryId = row.id as string;
+    const comments = await prepare<EntryComment>(
+      "SELECT * FROM entry_comments WHERE entry_id = ? ORDER BY created_at ASC"
+    ).all(entryId);
+    result.push({
+      id: entryId,
+      plan_id: row.plan_id as string,
+      item_id: row.item_id as string,
+      position: row.position as number,
+      result_status: row.result_status as WeeklyPlanEntry["result_status"],
+      result_comment: row.result_comment as string,
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+      comments,
+      item: {
+        id: row.item_id as string,
+        title: row.item_title as string,
+        description: row.item_description as string,
+        type: row.item_type as Item["type"],
+        status: row.item_status as Item["status"],
+        priority: row.item_priority as Item["priority"],
+        category: row.item_category as Item["category"],
+        source: (row.item_source as Item["source"]) || "system",
+        development_stage: (row.item_development_stage as string) || null,
+        due_date: (row.item_due_date as string) || null,
+        due_time: (row.item_due_time as string) || null,
+        estimated_minutes: (row.item_estimated_minutes as number | null) ?? null,
+        position: row.item_position as number,
+        parent_id: (row.item_parent_id as string) || null,
+        created_at: row.item_created_at as string,
+        updated_at: row.item_updated_at as string,
+      },
+    });
+  }
+  return result;
+}
+
+export async function getUnplannedDoneItems(weekStart: string, weekEnd: string, planId: string): Promise<Item[]> {
+  return await prepare<Item>(`
+    SELECT i.* FROM items i
+    WHERE i.status = 'done'
+      AND i.updated_at >= ? AND i.updated_at < (?::date + INTERVAL '1 day')::text
+      AND i.id NOT IN (SELECT item_id FROM weekly_plan_entries WHERE plan_id = ?)
+      AND i.parent_id IS NULL
+    ORDER BY i.updated_at DESC
+  `).all(weekStart, weekEnd, planId);
+}
+
+export async function completeWeeklyPlan(planId: string): Promise<WeeklyPlanFull | undefined> {
+  const plan = await getWeeklyPlanFull(planId);
+  if (!plan) return undefined;
+  const now = new Date().toISOString();
+  await transaction(async (tx) => {
+    for (const entry of plan.entries) {
+      if (entry.result_status !== "pending") continue;
+      const newStatus = entry.item.status === "done" ? "done" : "not_done";
+      await tx.prepare("UPDATE weekly_plan_entries SET result_status = ?, updated_at = ? WHERE id = ?")
+        .run(newStatus, now, entry.id);
+    }
+    await tx.prepare("UPDATE weekly_plans SET status = 'completed', updated_at = ? WHERE id = ?")
+      .run(now, planId);
+  });
+  return await getWeeklyPlanFull(planId);
+}
+
+// ---------------- Entry Comments ----------------
+
+export async function getEntryComments(entryId: string): Promise<EntryComment[]> {
+  return await prepare<EntryComment>("SELECT * FROM entry_comments WHERE entry_id = ? ORDER BY created_at ASC").all(entryId);
+}
+
+export async function addEntryComment(entryId: string, text: string): Promise<EntryComment> {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await prepare("INSERT INTO entry_comments (id, entry_id, text, created_at) VALUES (?, ?, ?, ?)").run(id, entryId, text, now);
+  await prepare("UPDATE weekly_plan_entries SET result_comment = ?, updated_at = ? WHERE id = ?").run(text, now, entryId);
+  return { id, entry_id: entryId, text, created_at: now };
+}
+
+export async function deleteEntryComment(commentId: string): Promise<boolean> {
+  const result = await prepare("DELETE FROM entry_comments WHERE id = ?").run(commentId);
+  return result.changes > 0;
+}
+
+export async function getWeeklyPlanReport(planId: string): Promise<WeeklyPlanReport | undefined> {
+  const plan = await getWeeklyPlanFull(planId);
+  if (!plan) return undefined;
+  const done = plan.entries.filter((e) => e.result_status === "done");
+  const not_done = plan.entries.filter((e) => e.result_status === "not_done");
+  const transferred = plan.entries.filter((e) => e.result_status === "transferred");
+  const unplanned_done = await getUnplannedDoneItems(plan.week_start, plan.week_end, planId);
+  const total = plan.entries.length;
+  return {
+    plan, done, not_done, transferred, unplanned_done, total,
+    done_count: done.length,
+    completion_rate: total > 0 ? Math.round((done.length / total) * 100) : 0,
+  };
+}
 
 // ---------------- Client Statuses ----------------
 
@@ -1945,1098 +2005,4 @@ export async function deleteUser(email: string): Promise<boolean> {
 export async function getUserCount(): Promise<number> {
   const r = await prepare<{ c: number }>("SELECT COUNT(*) as c FROM users").get();
   return Number(r?.c ?? 0);
-}
-
-// ============================================================================
-// Planning system V3 (migrations 0023 + 0024)
-// ============================================================================
-//
-// Conventions:
-//   * UUID PK columns return as strings from postgres.js — typed as `string`.
-//   * JSONB columns are auto-parsed by postgres.js on read; on write we pass a
-//     JS object — postgres.js serialises automatically when the placeholder
-//     binds to a jsonb param. (We never pass `JSON.stringify(...)` here.)
-//   * `actor_email` is the single-tenant author — no `auth.uid()`.
-//   * All builder helpers reuse `buildUpdateClause()` and the per-entity
-//     allowlists below for SQL-injection-safe updates.
-
-import type {
-  PlanningDirection,
-  PlanningPeriod,
-  PlanningMetric,
-  PlanningMetricTarget,
-  PlanningMetricTick,
-  PlanningInitiative,
-  PlanningInitiativeDependency,
-  PlanningInitiativeMetricLink,
-  PlanningInitiativeClientBlock,
-  PlanningInitiativeClientLink,
-  ClientDeal,
-  ClientDealPayment,
-  ClientDealLifecycleStage,
-  PlanningChangeLogEntry,
-  PlanningSettings,
-  PlanningIcpSegment,
-  PlanningReplanReasonDict,
-  PlanningMetricUnit,
-  PlanningKaitenBoardMapping,
-  PlanningParticipantCapacity,
-  UpsertParticipantCapacityInput,
-  EffectiveCapacity,
-  PeriodType,
-  CreateDirectionInput,
-  UpdateDirectionInput,
-  UpsertPeriodInput,
-  CreateMetricInput,
-  UpdateMetricInput,
-  UpsertMetricTargetInput,
-  CreateMetricTickInput,
-  CreateInitiativeInput,
-  UpdateInitiativeInput,
-  CreateClientDealInput,
-  UpdateClientDealInput,
-  CreateClientDealPaymentInput,
-  UpdateClientDealPaymentInput,
-  ChangeLogInsertInput,
-  UpdatePlanningSettingsInput,
-  PlanningPeriodRetrospective,
-  InitiativeStatus,
-  DealBlockingStage,
-} from "@/types/planning";
-
-const PLANNING_DIRECTION_UPDATE_FIELDS = ["title", "year_focus", "position"] as const;
-const PLANNING_PERIOD_UPDATE_FIELDS = [
-  "direction_id", "type", "year", "quarter_n", "month_n", "week_n",
-  "start_date", "end_date", "capacity_hours", "metric_targets_snapshot",
-] as const;
-const PLANNING_METRIC_UPDATE_FIELDS = [
-  "title", "type", "unit", "direction_value", "baseline", "annual_target",
-  "source", "source_id", "is_cumulative", "is_emergent", "position",
-] as const;
-const PLANNING_INITIATIVE_UPDATE_FIELDS = [
-  "title", "type", "description", "jtbd", "due_period_id",
-  "start_period_id", "end_period_id", "estimate_hours",
-  "rice_reach", "rice_impact", "rice_confidence", "key_assumptions", "kill_criteria",
-  "parent_initiative_id", "hypothesis", "success_criteria", "sample_size_or_duration",
-  "experiment_result", "experiment_decision", "status", "done_at", "position",
-] as const;
-// P8: client_deals заменили planning_deals.
-const CLIENT_DEAL_UPDATE_FIELDS = [
-  "title", "status_id", "status_changed_at",
-  "pilot_started_at", "pilot_default_duration_days", "pilot_planned_end_at",
-  "pilot_ended_at", "production_started_at", "min_monthly_amount",
-  "expected_actual_amount", "description", "position",
-] as const;
-const CLIENT_DEAL_PAYMENT_UPDATE_FIELDS = ["paid_at", "amount", "note", "status"] as const;
-const PLANNING_SETTINGS_UPDATE_FIELDS = [
-  "pilot_default_duration_days", "early_warning_weeks", "strategy_support_ratio",
-  "minor_adjustment_threshold", "daily_capacity_hours", "weekly_capacity_hours",
-  "accent_color", "weekend_days_visible",
-  // P8: мэппинг lifecycle stage на статусы клиента.
-  "pilot_status_id", "production_status_id", "churned_status_ids",
-] as const;
-
-// ---------------- Directions ----------------
-
-export async function listDirections(): Promise<PlanningDirection[]> {
-  return await prepare<PlanningDirection>(
-    "SELECT * FROM planning_directions ORDER BY position ASC, created_at ASC"
-  ).all();
-}
-
-export async function getDirection(id: string): Promise<PlanningDirection | undefined> {
-  return await prepare<PlanningDirection>(
-    "SELECT * FROM planning_directions WHERE id = ?"
-  ).get(id);
-}
-
-export async function createDirection(input: CreateDirectionInput): Promise<PlanningDirection> {
-  const row = await prepare<PlanningDirection>(`
-    INSERT INTO planning_directions (title, year_focus, position)
-    VALUES (?, ?, ?)
-    RETURNING *
-  `).get(input.title, input.year_focus ?? null, input.position ?? 0);
-  return row!;
-}
-
-export async function updateDirection(id: string, updates: UpdateDirectionInput): Promise<PlanningDirection | undefined> {
-  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_DIRECTION_UPDATE_FIELDS);
-  if (!built) return await getDirection(id);
-  const now = new Date().toISOString();
-  await prepare(`UPDATE planning_directions SET ${built.sql}, updated_at = ? WHERE id = ?`)
-    .run(...built.values, now, id);
-  return await getDirection(id);
-}
-
-export async function deleteDirection(id: string): Promise<boolean> {
-  const r = await prepare("DELETE FROM planning_directions WHERE id = ?").run(id);
-  return r.changes > 0;
-}
-
-// ---------------- Periods ----------------
-
-export async function listPeriods(filter?: {
-  directionId?: string | null;
-  type?: PeriodType;
-  year?: number;
-}): Promise<PlanningPeriod[]> {
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-  if (filter?.directionId !== undefined) {
-    if (filter.directionId === null) conditions.push("direction_id IS NULL");
-    else { conditions.push("direction_id = ?"); params.push(filter.directionId); }
-  }
-  if (filter?.type) { conditions.push("type = ?"); params.push(filter.type); }
-  if (filter?.year != null) { conditions.push("year = ?"); params.push(filter.year); }
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  return await prepare<PlanningPeriod>(
-    `SELECT * FROM planning_periods ${where} ORDER BY start_date ASC`
-  ).all(...params);
-}
-
-export async function getPeriod(id: string): Promise<PlanningPeriod | undefined> {
-  return await prepare<PlanningPeriod>("SELECT * FROM planning_periods WHERE id = ?").get(id);
-}
-
-export async function upsertPeriod(input: UpsertPeriodInput): Promise<PlanningPeriod> {
-  // Slot uniqueness is enforced by uq_planning_periods_slot on
-  // (direction_id, type, year, COALESCE(quarter_n,0), COALESCE(month_n,0), COALESCE(week_n,0)).
-  const row = await prepare<PlanningPeriod>(`
-    INSERT INTO planning_periods (
-      direction_id, type, year, quarter_n, month_n, week_n,
-      start_date, end_date, capacity_hours
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (direction_id, type, year,
-      COALESCE(quarter_n, 0), COALESCE(month_n, 0), COALESCE(week_n, 0))
-    DO UPDATE SET
-      start_date = EXCLUDED.start_date,
-      end_date = EXCLUDED.end_date,
-      capacity_hours = COALESCE(EXCLUDED.capacity_hours, planning_periods.capacity_hours),
-      updated_at = now()
-    RETURNING *
-  `).get(
-    input.direction_id ?? null,
-    input.type, input.year,
-    input.quarter_n ?? null, input.month_n ?? null, input.week_n ?? null,
-    input.start_date, input.end_date,
-    input.capacity_hours ?? null,
-  );
-  return row!;
-}
-
-export async function updateRetrospective(
-  id: string,
-  retrospective: PlanningPeriodRetrospective,
-): Promise<PlanningPeriod | undefined> {
-  await prepare(
-    "UPDATE planning_periods SET retrospective = ?, updated_at = now() WHERE id = ?"
-  ).run(retrospective, id);
-  return await getPeriod(id);
-}
-
-// ---------------- Metrics ----------------
-
-export async function listMetrics(directionId?: string | null): Promise<PlanningMetric[]> {
-  if (directionId === undefined) {
-    return await prepare<PlanningMetric>(
-      "SELECT * FROM planning_metrics ORDER BY position ASC, created_at ASC"
-    ).all();
-  }
-  if (directionId === null) {
-    return await prepare<PlanningMetric>(
-      "SELECT * FROM planning_metrics WHERE direction_id IS NULL ORDER BY position ASC, created_at ASC"
-    ).all();
-  }
-  return await prepare<PlanningMetric>(
-    "SELECT * FROM planning_metrics WHERE direction_id = ? ORDER BY position ASC, created_at ASC"
-  ).all(directionId);
-}
-
-export async function getMetric(id: string): Promise<PlanningMetric | undefined> {
-  return await prepare<PlanningMetric>("SELECT * FROM planning_metrics WHERE id = ?").get(id);
-}
-
-export async function createMetric(input: CreateMetricInput): Promise<PlanningMetric> {
-  const row = await prepare<PlanningMetric>(`
-    INSERT INTO planning_metrics (
-      direction_id, title, type, unit, direction_value, baseline, annual_target,
-      source, source_id, is_cumulative, is_emergent, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    RETURNING *
-  `).get(
-    input.direction_id ?? null,
-    input.title, input.type,
-    input.unit ?? null, input.direction_value ?? null, input.baseline ?? null,
-    input.annual_target ?? null,
-    input.source ?? null, input.source_id ?? null,
-    input.is_cumulative ?? true, input.is_emergent ?? false,
-    input.position ?? 0,
-  );
-  return row!;
-}
-
-export async function updateMetric(id: string, updates: UpdateMetricInput): Promise<PlanningMetric | undefined> {
-  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_METRIC_UPDATE_FIELDS);
-  if (!built) return await getMetric(id);
-  await prepare(`UPDATE planning_metrics SET ${built.sql}, updated_at = now() WHERE id = ?`)
-    .run(...built.values, id);
-  return await getMetric(id);
-}
-
-export async function deleteMetric(id: string): Promise<boolean> {
-  const r = await prepare("DELETE FROM planning_metrics WHERE id = ?").run(id);
-  return r.changes > 0;
-}
-
-// ---------------- Metric targets ----------------
-
-export async function listMetricTargets(metricId: string): Promise<PlanningMetricTarget[]> {
-  return await prepare<PlanningMetricTarget>(
-    "SELECT * FROM planning_metric_targets WHERE metric_id = ? ORDER BY created_at ASC"
-  ).all(metricId);
-}
-
-/**
- * Aggregated targets view: для квартала/месяца/года синтезируем строки из
- * суммы недель, перекрывающих диапазон периода. Для type='week' возвращаем
- * реальные строки. Используется P4 — таргеты хранятся только на неделях.
- *
- * Возвращаемые «строки» для агрегированных периодов имеют формат
- * PlanningMetricTarget, но `id` синтетический (`agg:<period_id>`), а
- * `target_value` — сумма week-таргетов внутри [start_date, end_date]
- * соответствующего period.
- */
-export async function listMetricTargetsForPeriodType(
-  metricId: string,
-  periodType: "year" | "quarter" | "month" | "week",
-  year: number,
-  directionId: string | null,
-): Promise<PlanningMetricTarget[]> {
-  if (periodType === "week") {
-    // Реальные week-row из БД, отфильтрованные по году+направлению через JOIN.
-    return await prepare<PlanningMetricTarget>(`
-      SELECT t.*
-      FROM planning_metric_targets t
-      JOIN planning_periods p ON p.id = t.period_id
-      WHERE t.metric_id = ?
-        AND p.type = 'week'
-        AND p.year = ?
-        AND p.direction_id IS NOT DISTINCT FROM ?
-      ORDER BY p.start_date ASC
-    `).all(metricId, year, directionId);
-  }
-
-  // Aggregated: для каждого периода нужной агрегации находим week-targets
-  // которые попадают в его диапазон (по start_date недели).
-  type AggRow = {
-    period_id: string;
-    metric_id: string;
-    target_value: string;
-    created_at: string;
-    updated_at: string;
-  };
-  // ISO-week → quarter/month: неделя относится к кварталу/месяцу, в котором
-  // лежит её четверг (start_date + 3). Это сохраняет инвариант
-  // SUM(quarters)=SUM(months)=SUM(weeks)=annual_target, в т.ч. для лет с 53
-  // неделями (неделя 1 может начинаться в декабре прошлого года, неделя 53 —
-  // заканчиваться в январе следующего; «целиком внутри квартала» теряет их).
-  const rows = await prepare<AggRow>(`
-    SELECT
-      agg.id AS period_id,
-      ?::uuid AS metric_id,
-      COALESCE(SUM(wt.target_value), 0)::numeric AS target_value,
-      MIN(wt.created_at) AS created_at,
-      MAX(wt.updated_at) AS updated_at
-    FROM planning_periods agg
-    LEFT JOIN planning_periods wk
-      ON wk.type = 'week'
-      AND wk.direction_id IS NOT DISTINCT FROM agg.direction_id
-      AND (wk.start_date + 3) >= agg.start_date
-      AND (wk.start_date + 3) <= agg.end_date
-    LEFT JOIN planning_metric_targets wt
-      ON wt.period_id = wk.id
-      AND wt.metric_id = ?
-    WHERE agg.type = ?
-      AND agg.year = ?
-      AND agg.direction_id IS NOT DISTINCT FROM ?
-    GROUP BY agg.id, agg.start_date
-    ORDER BY agg.start_date ASC
-  `).all(metricId, metricId, periodType, year, directionId);
-
-  return rows.map((r) => ({
-    id: `agg:${r.period_id}`,
-    metric_id: r.metric_id,
-    period_id: r.period_id,
-    target_value: Number(r.target_value),
-    created_at: r.created_at ?? new Date().toISOString(),
-    updated_at: r.updated_at ?? new Date().toISOString(),
-  }));
-}
-
-/**
- * Для patch'а агрегированного period (quarter/month): пропорционально разносит
- * `newTotal` на week-children, сохраняя их относительные доли. Если у периода
- * ещё нет week-таргетов — раскладывает равномерно.
- */
-export async function patchAggregatedTarget(
-  metricId: string,
-  aggregatePeriodId: string,
-  newTotal: number,
-): Promise<PlanningMetricTarget[]> {
-  // 1) Найти week-periods, относящиеся к этому aggregate по Thursday-правилу
-  //    (см. listMetricTargetsForPeriodType — тот же инвариант сохранения суммы).
-  const weeks = await prepare<{ id: string }>(`
-    SELECT wk.id
-    FROM planning_periods agg
-    JOIN planning_periods wk
-      ON wk.type = 'week'
-      AND wk.direction_id IS NOT DISTINCT FROM agg.direction_id
-      AND (wk.start_date + 3) >= agg.start_date
-      AND (wk.start_date + 3) <= agg.end_date
-    WHERE agg.id = ?
-    ORDER BY wk.start_date ASC
-  `).all(aggregatePeriodId);
-  if (weeks.length === 0) return [];
-
-  // 2) Текущие week-targets
-  const current = await prepare<{ period_id: string; target_value: string }>(`
-    SELECT period_id, target_value
-    FROM planning_metric_targets
-    WHERE metric_id = ?
-      AND period_id = ANY(?::uuid[])
-  `).all(metricId, weeks.map((w) => w.id));
-  const byPeriod = new Map(current.map((c) => [c.period_id, Number(c.target_value)]));
-  const currentSum = weeks.reduce((s, w) => s + (byPeriod.get(w.id) ?? 0), 0);
-
-  // 3) Пропорциональное переразмещение. Если currentSum=0 — равномерно.
-  const items: UpsertMetricTargetInput[] = weeks.map((w) => {
-    const old = byPeriod.get(w.id) ?? 0;
-    const share = currentSum > 0 ? old / currentSum : 1 / weeks.length;
-    return { metric_id: metricId, period_id: w.id, target_value: newTotal * share };
-  });
-  return await bulkUpsertMetricTargets(items);
-}
-
-export async function bulkUpsertMetricTargets(
-  items: UpsertMetricTargetInput[],
-): Promise<PlanningMetricTarget[]> {
-  if (items.length === 0) return [];
-  const out: PlanningMetricTarget[] = [];
-  await transaction(async (tx) => {
-    for (const it of items) {
-      const row = await tx.prepare<PlanningMetricTarget>(`
-        INSERT INTO planning_metric_targets (metric_id, period_id, target_value)
-        VALUES (?, ?, ?)
-        ON CONFLICT (metric_id, period_id) DO UPDATE
-          SET target_value = EXCLUDED.target_value, updated_at = now()
-        RETURNING *
-      `).get(it.metric_id, it.period_id, it.target_value);
-      if (row) out.push(row);
-    }
-  });
-  return out;
-}
-
-// ---------------- Metric ticks ----------------
-
-export async function listMetricTicks(
-  metricId: string,
-  range?: { from?: string; to?: string; limit?: number },
-): Promise<PlanningMetricTick[]> {
-  const conditions: string[] = ["metric_id = ?"];
-  const params: unknown[] = [metricId];
-  if (range?.from) { conditions.push("measured_at >= ?"); params.push(range.from); }
-  if (range?.to) { conditions.push("measured_at <= ?"); params.push(range.to); }
-  const limit = range?.limit ? ` LIMIT ${Number(range.limit) | 0}` : "";
-  return await prepare<PlanningMetricTick>(
-    `SELECT * FROM planning_metric_ticks WHERE ${conditions.join(" AND ")}
-     ORDER BY measured_at DESC${limit}`
-  ).all(...params);
-}
-
-/**
- * P5+P8: effective ticks for a metric. Если metric.source='second_brain' и
- * metric.type='business' — синтезируем ticks из client_deal_payments.
- * Иначе — обычные planning_metric_ticks.
- *
- * Concept §6.7.2 + P8: «expected-платежи автоматически считаются как факт».
- * P8: виртуальная выручка от пилота включается в метрику Выручка (пользователь
- * подтвердил §8 ответом «Да, с начала пилота, в метрику выручка включаем»).
- */
-export async function listEffectiveMetricTicks(
-  metric: PlanningMetric,
-  range?: { from?: string; to?: string; limit?: number },
-): Promise<PlanningMetricTick[]> {
-  if (metric.source !== "second_brain" || metric.type !== "business") {
-    return listMetricTicks(metric.id, range);
-  }
-
-  const conds: string[] = [];
-  const params: unknown[] = [];
-  if (range?.from) { conds.push("p.paid_at >= ?"); params.push(range.from); }
-  if (range?.to)   { conds.push("p.paid_at <= ?"); params.push(range.to); }
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const limit = range?.limit ? ` LIMIT ${Number(range.limit) | 0}` : "";
-  type Row = { id: string; amount: string; paid_at: string; status: string };
-  const rows = await prepare<Row>(
-    `SELECT p.id, p.amount::text, p.paid_at, p.status
-     FROM client_deal_payments p
-     JOIN client_deals d ON d.id = p.deal_id
-     ${where}
-     ORDER BY p.paid_at DESC${limit}`
-  ).all(...params);
-  return rows.map((r) => ({
-    id: `cdp:${r.id}`,
-    metric_id: metric.id,
-    value: Number(r.amount),
-    measured_at: r.paid_at,
-    source: `client_deal_payment:${r.status}`,
-    created_at: r.paid_at,
-  }));
-}
-
-export async function addMetricTick(input: CreateMetricTickInput): Promise<PlanningMetricTick> {
-  const row = await prepare<PlanningMetricTick>(`
-    INSERT INTO planning_metric_ticks (metric_id, value, measured_at, source)
-    VALUES (?, ?, ?, ?)
-    RETURNING *
-  `).get(input.metric_id, input.value, input.measured_at, input.source ?? null);
-  return row!;
-}
-
-// F6: ручное удаление tick'а (для cumulative-метрик нет другого способа
-// убрать ошибочный факт — non-cumulative переписывается «last wins»).
-export async function deleteMetricTick(metricId: string, tickId: string): Promise<boolean> {
-  const row = await prepare<{ id: string }>(
-    "DELETE FROM planning_metric_ticks WHERE id = ? AND metric_id = ? RETURNING id",
-  ).get(tickId, metricId);
-  return !!row;
-}
-
-// ---------------- Initiatives ----------------
-
-export async function listInitiatives(filter?: {
-  directionId?: string | null;
-  status?: InitiativeStatus;
-  dueAfter?: string;
-  dueBefore?: string;
-  type?: PlanningInitiative["type"];
-  includeArchivedAfterDays?: number;
-}): Promise<PlanningInitiative[]> {
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-  if (filter?.directionId !== undefined) {
-    if (filter.directionId === null) conditions.push("i.direction_id IS NULL");
-    else { conditions.push("i.direction_id = ?"); params.push(filter.directionId); }
-  }
-  if (filter?.status) { conditions.push("i.status = ?"); params.push(filter.status); }
-  if (filter?.type) { conditions.push("i.type = ?"); params.push(filter.type); }
-  if (filter?.dueAfter) { conditions.push("(p.end_date IS NULL OR p.end_date >= ?)"); params.push(filter.dueAfter); }
-  if (filter?.dueBefore) { conditions.push("(p.end_date IS NULL OR p.end_date <= ?)"); params.push(filter.dueBefore); }
-  // Auto-archive: hide done > N days unless caller opts in
-  if (filter?.includeArchivedAfterDays !== undefined) {
-    const days = Math.max(0, filter.includeArchivedAfterDays | 0);
-    conditions.push(`(i.status != 'done' OR i.done_at IS NULL OR i.done_at >= now() - INTERVAL '${days} days')`);
-  }
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  // P7.4: денормализуем tasks_total / tasks_done через planning_item_initiative_link
-  // (M:N из P3). Подзадачи родителей-привязанных тоже считаются — `linkItemToInitiative`
-  // в db.ts включает их автоматически.
-  const rows = await prepare<PlanningInitiative & { tasks_total: string | number; tasks_done: string | number }>(
-    `SELECT i.*,
-            COALESCE(t.total, 0) AS tasks_total,
-            COALESCE(t.done_count, 0) AS tasks_done
-     FROM planning_initiatives i
-     LEFT JOIN planning_periods p ON p.id = i.due_period_id
-     LEFT JOIN (
-       SELECT l.initiative_id,
-              COUNT(*) AS total,
-              SUM(CASE WHEN it.status = 'done' THEN 1 ELSE 0 END) AS done_count
-       FROM planning_item_initiative_link l
-       JOIN items it ON it.id = l.item_id
-       GROUP BY l.initiative_id
-     ) t ON t.initiative_id = i.id
-     ${where}
-     ORDER BY i.position ASC, i.created_at ASC`
-  ).all(...params);
-  return rows.map((r) => ({
-    ...r,
-    tasks_total: Number(r.tasks_total),
-    tasks_done: Number(r.tasks_done),
-  }));
-}
-
-export async function getInitiative(id: string): Promise<PlanningInitiative | undefined> {
-  return await prepare<PlanningInitiative>(
-    "SELECT * FROM planning_initiatives WHERE id = ?"
-  ).get(id);
-}
-
-export async function createInitiative(input: CreateInitiativeInput): Promise<PlanningInitiative> {
-  // end_period_id — основной источник правды дедлайна; due_period_id зеркалит его
-  // через trigger sync_due_period (migration 0028) при UPDATE, при INSERT —
-  // подставляем явно, чтобы карточка показывала дедлайн сразу после создания.
-  const endId = input.end_period_id ?? input.due_period_id ?? null;
-  const startId = input.start_period_id ?? endId;
-  const row = await prepare<PlanningInitiative>(`
-    INSERT INTO planning_initiatives (
-      direction_id, title, type, description, jtbd,
-      due_period_id, start_period_id, end_period_id, estimate_hours,
-      rice_reach, rice_impact, rice_confidence, key_assumptions, kill_criteria,
-      parent_initiative_id, created_from_task_id,
-      hypothesis, success_criteria, sample_size_or_duration
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    RETURNING *
-  `).get(
-    input.direction_id ?? null,
-    input.title, input.type,
-    input.description ?? null, input.jtbd ?? null,
-    endId, startId, endId, input.estimate_hours ?? null,
-    input.rice_reach ?? null, input.rice_impact ?? null, input.rice_confidence ?? null,
-    input.key_assumptions ?? null, input.kill_criteria ?? null,
-    input.parent_initiative_id ?? null, input.created_from_task_id ?? null,
-    input.hypothesis ?? null, input.success_criteria ?? null,
-    input.sample_size_or_duration ?? null,
-  );
-  return row!;
-}
-
-export async function updateInitiative(id: string, updates: UpdateInitiativeInput): Promise<PlanningInitiative | undefined> {
-  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_INITIATIVE_UPDATE_FIELDS);
-  if (!built) return await getInitiative(id);
-  await prepare(`UPDATE planning_initiatives SET ${built.sql}, updated_at = now() WHERE id = ?`)
-    .run(...built.values, id);
-  return await getInitiative(id);
-}
-
-export async function deleteInitiative(id: string): Promise<boolean> {
-  const r = await prepare("DELETE FROM planning_initiatives WHERE id = ?").run(id);
-  return r.changes > 0;
-}
-
-// Initiative ↔ Metric / Deal / Client / Dependency links
-export async function linkInitiativeToMetric(initiativeId: string, metricId: string): Promise<void> {
-  await prepare(
-    "INSERT INTO planning_initiative_metric_link (initiative_id, metric_id) VALUES (?, ?) ON CONFLICT DO NOTHING"
-  ).run(initiativeId, metricId);
-}
-export async function unlinkInitiativeFromMetric(initiativeId: string, metricId: string): Promise<void> {
-  await prepare(
-    "DELETE FROM planning_initiative_metric_link WHERE initiative_id = ? AND metric_id = ?"
-  ).run(initiativeId, metricId);
-}
-export async function listInitiativeMetricLinks(initiativeId: string): Promise<PlanningInitiativeMetricLink[]> {
-  return await prepare<PlanningInitiativeMetricLink>(
-    "SELECT * FROM planning_initiative_metric_link WHERE initiative_id = ?"
-  ).all(initiativeId);
-}
-export async function listMetricInitiativeLinks(metricId: string): Promise<PlanningInitiativeMetricLink[]> {
-  return await prepare<PlanningInitiativeMetricLink>(
-    "SELECT * FROM planning_initiative_metric_link WHERE metric_id = ?"
-  ).all(metricId);
-}
-
-// P8: «инициатива блокирует клиента (опц. конкретную его сделку)»
-// заменяет linkInitiativeToDeal. UNIQUE INDEX uniq_initiative_client_block
-// с NULLS NOT DISTINCT (см. migration 0035) — поэтому ON CONFLICT работает
-// корректно когда deal_id=null.
-export async function linkInitiativeToClientBlock(
-  initiativeId: string,
-  clientId: string,
-  dealId: string | null,
-  blocksStage?: DealBlockingStage | null,
-): Promise<void> {
-  await prepare(`
-    INSERT INTO planning_initiative_client_block (initiative_id, client_id, deal_id, blocks_stage)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT (initiative_id, client_id, deal_id)
-      DO UPDATE SET blocks_stage = EXCLUDED.blocks_stage
-  `).run(initiativeId, clientId, dealId, blocksStage ?? null);
-}
-
-export async function unlinkInitiativeFromClientBlock(
-  initiativeId: string,
-  clientId: string,
-  dealId: string | null,
-): Promise<void> {
-  // NULL не сравнивается через '=', поэтому используем IS NOT DISTINCT FROM.
-  await prepare(`
-    DELETE FROM planning_initiative_client_block
-    WHERE initiative_id = ?
-      AND client_id = ?
-      AND deal_id IS NOT DISTINCT FROM ?
-  `).run(initiativeId, clientId, dealId);
-}
-
-export async function listInitiativeClientBlocks(initiativeId: string): Promise<PlanningInitiativeClientBlock[]> {
-  return await prepare<PlanningInitiativeClientBlock>(
-    "SELECT * FROM planning_initiative_client_block WHERE initiative_id = ?"
-  ).all(initiativeId);
-}
-
-export async function linkInitiativeToClient(initiativeId: string, clientId: string): Promise<void> {
-  await prepare(
-    "INSERT INTO planning_initiative_client_link (initiative_id, client_id) VALUES (?, ?) ON CONFLICT DO NOTHING"
-  ).run(initiativeId, clientId);
-}
-export async function unlinkInitiativeFromClient(initiativeId: string, clientId: string): Promise<void> {
-  await prepare(
-    "DELETE FROM planning_initiative_client_link WHERE initiative_id = ? AND client_id = ?"
-  ).run(initiativeId, clientId);
-}
-export async function listInitiativeClientLinks(initiativeId: string): Promise<PlanningInitiativeClientLink[]> {
-  return await prepare<PlanningInitiativeClientLink>(
-    "SELECT * FROM planning_initiative_client_link WHERE initiative_id = ?"
-  ).all(initiativeId);
-}
-
-// P6: «Зависимости инициатив» удалены из системы (PLAN_PLANNING_REWORK §0).
-// Helpers оставлены как no-op для обратной совместимости с существующими
-// импортами; таблица planning_initiative_dependency dropped миграцией 0032.
-export async function addDependency(_initiativeId: string, _dependsOnId: string): Promise<void> {
-  return;
-}
-export async function removeDependency(_initiativeId: string, _dependsOnId: string): Promise<void> {
-  return;
-}
-export async function listInitiativeDependencies(_initiativeId: string): Promise<PlanningInitiativeDependency[]> {
-  return [];
-}
-
-// ---------------- Initiative ↔ Item (M:N, P3) ----------------
-// Источник правды для «задач инициативы» — planning_item_initiative_link.
-// Триггер 0030 синхронизирует legacy-колонку items.initiative_id ⇒ M:N.
-
-export async function linkItemToInitiative(itemId: string, initiativeId: string): Promise<void> {
-  await prepare(
-    "INSERT INTO planning_item_initiative_link (item_id, initiative_id) VALUES (?, ?) ON CONFLICT DO NOTHING"
-  ).run(itemId, initiativeId);
-}
-
-export async function unlinkItemFromInitiative(itemId: string, initiativeId: string): Promise<void> {
-  // Если legacy items.initiative_id указывает на эту инициативу — сбрасываем,
-  // иначе триггер re-insert вернёт связь обратно при следующем UPDATE.
-  await prepare(
-    "UPDATE items SET initiative_id = NULL WHERE id = ? AND initiative_id = ?"
-  ).run(itemId, initiativeId);
-  await prepare(
-    "DELETE FROM planning_item_initiative_link WHERE item_id = ? AND initiative_id = ?"
-  ).run(itemId, initiativeId);
-}
-
-export async function listItemInitiativeLinks(itemId: string): Promise<{ item_id: string; initiative_id: string }[]> {
-  return await prepare<{ item_id: string; initiative_id: string }>(
-    "SELECT item_id, initiative_id FROM planning_item_initiative_link WHERE item_id = ?"
-  ).all(itemId);
-}
-
-/**
- * Items привязанные к инициативе (через M:N) + их подзадачи.
- * Concept §P3: «Подзадачи (items.parent_id != null) показываются автоматически
- * если parent в инициативе».
- */
-export async function listInitiativeItems(initiativeId: string): Promise<Item[]> {
-  const linked = await prepare<Item>(`
-    SELECT i.* FROM items i
-    JOIN planning_item_initiative_link l ON l.item_id = i.id
-    WHERE l.initiative_id = ?
-    ORDER BY i.position ASC, i.created_at DESC
-  `).all(initiativeId);
-  if (linked.length === 0) return [];
-  // Тянем подзадачи параллельно для всех parent'ов.
-  const parentIds = linked.map((i) => i.id);
-  const placeholders = parentIds.map(() => "?").join(",");
-  const subtasks = await prepare<Item>(
-    `SELECT * FROM items WHERE parent_id IN (${placeholders}) ORDER BY position ASC`
-  ).all(...parentIds);
-  // Дедуп: если subtask сам привязан к этой же инициативе, не дублируем.
-  const seen = new Set(linked.map((i) => i.id));
-  const merged = [...linked];
-  for (const sub of subtasks) {
-    if (!seen.has(sub.id)) { merged.push(sub); seen.add(sub.id); }
-  }
-  return merged;
-}
-
-// ---------------- Client deals (P8) ----------------
-// «Сделка» — это запись на клиенте. У клиента может быть N сделок.
-// Стадия = status_id (FK на client_statuses, те же что используются для самого клиента).
-// Lifecycle (pilot/production/churned) определяется через мэппинг в planning_settings.
-
-export async function listClientDeals(filter?: {
-  clientId?: string;
-  statusId?: string;
-}): Promise<ClientDeal[]> {
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-  if (filter?.clientId) { conditions.push("client_id = ?"); params.push(filter.clientId); }
-  if (filter?.statusId) { conditions.push("status_id = ?"); params.push(filter.statusId); }
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  return await prepare<ClientDeal>(
-    `SELECT * FROM client_deals ${where} ORDER BY position ASC, created_at ASC`
-  ).all(...params);
-}
-
-export async function getClientDeal(id: string): Promise<ClientDeal | undefined> {
-  return await prepare<ClientDeal>("SELECT * FROM client_deals WHERE id = ?").get(id);
-}
-
-export async function createClientDeal(input: CreateClientDealInput): Promise<ClientDeal> {
-  const settings = await getPlanningSettings();
-  const defaultDur = input.pilot_default_duration_days ?? settings.pilot_default_duration_days ?? 30;
-  const row = await prepare<ClientDeal>(`
-    INSERT INTO client_deals (
-      client_id, title, status_id, pilot_default_duration_days,
-      min_monthly_amount, expected_actual_amount, description, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    RETURNING *
-  `).get(
-    input.client_id,
-    input.title ?? "",
-    input.status_id ?? null,
-    defaultDur,
-    input.min_monthly_amount ?? null,
-    input.expected_actual_amount ?? null,
-    input.description ?? null,
-    input.position ?? 0,
-  );
-  return row!;
-}
-
-/**
- * P8: смена status_id запускает авто-fill timestamps lifecycle:
- *   - status_id переходит на pilot_status_id (из planning_settings):
- *       pilot_started_at = now() (если null)
- *       pilot_planned_end_at = pilot_started_at + pilot_default_duration_days
- *       status_changed_at = now()
- *   - status_id переходит на production_status_id:
- *       production_started_at = now() (если null)
- *       pilot_ended_at = now() (если был пилот и null)
- *       status_changed_at = now()
- *   - status_id переходит в churned_status_ids:
- *       просто status_changed_at = now()
- *
- * Логика на уровне application, не trigger — так проще тестировать и видеть в коде.
- */
-export async function updateClientDeal(id: string, updates: UpdateClientDealInput): Promise<ClientDeal | undefined> {
-  const before = await getClientDeal(id);
-  if (!before) return undefined;
-
-  const effective: Record<string, unknown> = { ...updates };
-  if (updates.status_id !== undefined && updates.status_id !== before.status_id) {
-    const settings = await getPlanningSettings();
-    const now = new Date().toISOString();
-    effective.status_changed_at = now;
-    if (updates.status_id === settings.pilot_status_id) {
-      if (!before.pilot_started_at) effective.pilot_started_at = now;
-      const startedTs = before.pilot_started_at ? new Date(before.pilot_started_at).getTime() : Date.now();
-      const days = updates.pilot_default_duration_days ?? before.pilot_default_duration_days;
-      if (!before.pilot_planned_end_at) {
-        effective.pilot_planned_end_at = new Date(startedTs + days * 86400000).toISOString();
-      }
-    } else if (updates.status_id === settings.production_status_id) {
-      if (!before.production_started_at) effective.production_started_at = now;
-      if (before.pilot_started_at && !before.pilot_ended_at) effective.pilot_ended_at = now;
-    }
-  }
-
-  const built = buildUpdateClause(effective, CLIENT_DEAL_UPDATE_FIELDS);
-  if (!built) return before;
-  await prepare(`UPDATE client_deals SET ${built.sql} WHERE id = ?`).run(...built.values, id);
-  return await getClientDeal(id);
-}
-
-export async function deleteClientDeal(id: string): Promise<boolean> {
-  const r = await prepare("DELETE FROM client_deals WHERE id = ?").run(id);
-  return r.changes > 0;
-}
-
-/**
- * P8: lifecycle stage сделки на основе её status_id и мэппинга в planning_settings.
- *   - status_id == pilot_status_id  → 'pilot'
- *   - status_id == production_status_id → 'production'
- *   - status_id ∈ churned_status_ids → 'churned'
- *   - иначе (null или прочие статусы) → 'pre_pilot'
- */
-export function getClientDealLifecycleStage(deal: Pick<ClientDeal, "status_id">, settings: PlanningSettings): ClientDealLifecycleStage {
-  if (!deal.status_id) return "pre_pilot";
-  if (deal.status_id === settings.pilot_status_id) return "pilot";
-  if (deal.status_id === settings.production_status_id) return "production";
-  if (settings.churned_status_ids?.includes(deal.status_id)) return "churned";
-  return "pre_pilot";
-}
-
-// ---------------- Client deal payments ----------------
-
-export async function listClientDealPayments(
-  dealId: string,
-  filter?: { from?: string; to?: string; status?: ClientDealPayment["status"] },
-): Promise<ClientDealPayment[]> {
-  const conditions: string[] = ["deal_id = ?"];
-  const params: unknown[] = [dealId];
-  if (filter?.from) { conditions.push("paid_at >= ?"); params.push(filter.from); }
-  if (filter?.to) { conditions.push("paid_at <= ?"); params.push(filter.to); }
-  if (filter?.status) { conditions.push("status = ?"); params.push(filter.status); }
-  return await prepare<ClientDealPayment>(
-    `SELECT * FROM client_deal_payments WHERE ${conditions.join(" AND ")} ORDER BY paid_at DESC`
-  ).all(...params);
-}
-
-/**
- * P8: все платежи клиента — джойн всех сделок клиента + их платежей.
- * Используется для таба «Платежи» в карточке клиента и для расчёта MRR.
- */
-export async function listAllClientPayments(clientId: string): Promise<Array<ClientDealPayment & { deal_title: string }>> {
-  return await prepare<ClientDealPayment & { deal_title: string }>(`
-    SELECT p.*, d.title AS deal_title
-    FROM client_deal_payments p
-    JOIN client_deals d ON d.id = p.deal_id
-    WHERE d.client_id = ?
-    ORDER BY p.paid_at DESC
-  `).all(clientId);
-}
-
-export async function addClientDealPayment(input: CreateClientDealPaymentInput): Promise<ClientDealPayment> {
-  const row = await prepare<ClientDealPayment>(`
-    INSERT INTO client_deal_payments (deal_id, paid_at, amount, note, status)
-    VALUES (?, ?, ?, ?, ?)
-    RETURNING *
-  `).get(
-    input.deal_id, input.paid_at, input.amount,
-    input.note ?? null, input.status ?? "expected",
-  );
-  return row!;
-}
-
-export async function updateClientDealPayment(id: string, updates: UpdateClientDealPaymentInput): Promise<ClientDealPayment | undefined> {
-  const built = buildUpdateClause(updates as Record<string, unknown>, CLIENT_DEAL_PAYMENT_UPDATE_FIELDS);
-  if (!built) return await prepare<ClientDealPayment>("SELECT * FROM client_deal_payments WHERE id = ?").get(id);
-  await prepare(`UPDATE client_deal_payments SET ${built.sql} WHERE id = ?`).run(...built.values, id);
-  return await prepare<ClientDealPayment>("SELECT * FROM client_deal_payments WHERE id = ?").get(id);
-}
-
-export async function deleteClientDealPayment(id: string): Promise<boolean> {
-  const r = await prepare("DELETE FROM client_deal_payments WHERE id = ?").run(id);
-  return r.changes > 0;
-}
-
-/**
- * P8: список заблокированных клиентов — заменяет listBlockedDeals.
- * Возвращает клиентов, у которых есть активная связь к незакрытой инициативе.
- */
-export async function listBlockedClients(): Promise<Array<{
-  client_id: string;
-  client_name: string;
-  deal_id: string | null;
-  deal_title: string | null;
-  blocks_stage: DealBlockingStage | null;
-  initiative_id: string;
-  initiative_title: string;
-  initiative_status: InitiativeStatus;
-  end_date: string | null;
-}>> {
-  return await prepare<{
-    client_id: string;
-    client_name: string;
-    deal_id: string | null;
-    deal_title: string | null;
-    blocks_stage: DealBlockingStage | null;
-    initiative_id: string;
-    initiative_title: string;
-    initiative_status: InitiativeStatus;
-    end_date: string | null;
-  }>(`
-    SELECT b.client_id, c.name AS client_name,
-           b.deal_id, d.title AS deal_title, b.blocks_stage,
-           i.id AS initiative_id, i.title AS initiative_title,
-           i.status AS initiative_status, p.end_date
-    FROM planning_initiative_client_block b
-    JOIN clients c ON c.id = b.client_id
-    LEFT JOIN client_deals d ON d.id = b.deal_id
-    JOIN planning_initiatives i ON i.id = b.initiative_id
-    LEFT JOIN planning_periods p ON p.id = i.end_period_id
-    WHERE i.status NOT IN ('done', 'killed')
-    ORDER BY p.end_date ASC NULLS LAST, c.name ASC
-  `).all();
-}
-
-// ---------------- Change log ----------------
-
-export async function appendChangeLog(input: ChangeLogInsertInput): Promise<PlanningChangeLogEntry> {
-  const row = await prepare<PlanningChangeLogEntry>(`
-    INSERT INTO planning_change_log (actor_email, entity_type, entity_id, action, diff, replan_reason, context)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    RETURNING *
-  `).get(
-    input.actor_email ?? null,
-    input.entity_type, input.entity_id, input.action,
-    input.diff ?? null, input.replan_reason ?? null, input.context ?? null,
-  );
-  return row!;
-}
-
-export async function listChangeLog(
-  filter?: { entityType?: string; entityId?: string; actorEmail?: string; from?: string; to?: string },
-  limit = 100,
-  offset = 0,
-): Promise<PlanningChangeLogEntry[]> {
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-  if (filter?.entityType) { conditions.push("entity_type = ?"); params.push(filter.entityType); }
-  if (filter?.entityId) { conditions.push("entity_id = ?"); params.push(filter.entityId); }
-  if (filter?.actorEmail) { conditions.push("actor_email = ?"); params.push(filter.actorEmail); }
-  if (filter?.from) { conditions.push("timestamp >= ?"); params.push(filter.from); }
-  if (filter?.to) { conditions.push("timestamp <= ?"); params.push(filter.to); }
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  params.push(Math.max(1, limit | 0), Math.max(0, offset | 0));
-  return await prepare<PlanningChangeLogEntry>(
-    `SELECT * FROM planning_change_log ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`
-  ).all(...params);
-}
-
-// ---------------- Settings ----------------
-
-export async function getPlanningSettings(): Promise<PlanningSettings> {
-  const row = await prepare<PlanningSettings>(
-    "SELECT * FROM planning_settings WHERE id = 'default'"
-  ).get();
-  if (!row) {
-    await prepare("INSERT INTO planning_settings (id) VALUES ('default') ON CONFLICT DO NOTHING").run();
-    return (await prepare<PlanningSettings>(
-      "SELECT * FROM planning_settings WHERE id = 'default'"
-    ).get())!;
-  }
-  return row;
-}
-
-export async function updatePlanningSettings(updates: UpdatePlanningSettingsInput): Promise<PlanningSettings> {
-  const built = buildUpdateClause(updates as Record<string, unknown>, PLANNING_SETTINGS_UPDATE_FIELDS);
-  if (built) {
-    await prepare(`UPDATE planning_settings SET ${built.sql}, updated_at = now() WHERE id = 'default'`)
-      .run(...built.values);
-  }
-  return await getPlanningSettings();
-}
-
-// ---------------- ICP segments ----------------
-
-export async function listIcpSegments(includeArchived = false): Promise<PlanningIcpSegment[]> {
-  const where = includeArchived ? "" : "WHERE archived = false";
-  return await prepare<PlanningIcpSegment>(
-    `SELECT * FROM planning_icp_segments ${where} ORDER BY position ASC, created_at ASC`
-  ).all();
-}
-
-export async function createIcpSegment(title: string): Promise<PlanningIcpSegment> {
-  const row = await prepare<PlanningIcpSegment>(
-    "INSERT INTO planning_icp_segments (title) VALUES (?) RETURNING *"
-  ).get(title);
-  return row!;
-}
-
-export async function updateIcpSegment(id: string, updates: { title?: string; archived?: boolean; position?: number }): Promise<PlanningIcpSegment | undefined> {
-  const built = buildUpdateClause(updates as Record<string, unknown>, ["title", "archived", "position"] as const);
-  if (!built) return await prepare<PlanningIcpSegment>("SELECT * FROM planning_icp_segments WHERE id = ?").get(id);
-  await prepare(`UPDATE planning_icp_segments SET ${built.sql} WHERE id = ?`).run(...built.values, id);
-  return await prepare<PlanningIcpSegment>("SELECT * FROM planning_icp_segments WHERE id = ?").get(id);
-}
-
-// ---------------- Replan reasons & metric units (dictionaries) ----------------
-
-export async function listReplanReasons(): Promise<PlanningReplanReasonDict[]> {
-  return await prepare<PlanningReplanReasonDict>(
-    "SELECT * FROM planning_replan_reasons ORDER BY code ASC"
-  ).all();
-}
-
-export async function listMetricUnits(): Promise<PlanningMetricUnit[]> {
-  return await prepare<PlanningMetricUnit>(
-    "SELECT * FROM planning_metric_units ORDER BY title ASC"
-  ).all();
-}
-
-// ---------------- Kaiten board mapping ----------------
-
-export async function listBoardMappings(): Promise<PlanningKaitenBoardMapping[]> {
-  return await prepare<PlanningKaitenBoardMapping>(
-    "SELECT * FROM planning_kaiten_board_mapping ORDER BY created_at ASC"
-  ).all();
-}
-
-export async function upsertBoardMapping(kaitenBoardId: string, initiativeId: string): Promise<PlanningKaitenBoardMapping> {
-  const row = await prepare<PlanningKaitenBoardMapping>(`
-    INSERT INTO planning_kaiten_board_mapping (kaiten_board_id, initiative_id)
-    VALUES (?, ?)
-    ON CONFLICT (kaiten_board_id) DO UPDATE SET initiative_id = EXCLUDED.initiative_id
-    RETURNING *
-  `).get(kaitenBoardId, initiativeId);
-  return row!;
-}
-
-export async function deleteBoardMapping(kaitenBoardId: string): Promise<boolean> {
-  const r = await prepare("DELETE FROM planning_kaiten_board_mapping WHERE kaiten_board_id = ?").run(kaitenBoardId);
-  return r.changes > 0;
-}
-
-export async function getInitiativeIdByKaitenBoard(boardId: string | number | null): Promise<string | undefined> {
-  if (boardId == null) return undefined;
-  const row = await prepare<{ initiative_id: string }>(
-    "SELECT initiative_id FROM planning_kaiten_board_mapping WHERE kaiten_board_id = ?"
-  ).get(String(boardId));
-  return row?.initiative_id;
-}
-
-// ============================================================================
-// Auto-create Support initiative for a quarter (concept §6.3).
-// Returns existing or freshly created. Direction can be null for non-direction-scoped.
-// ============================================================================
-export async function findOrCreateSupportInitiative(
-  directionId: string | null,
-  refDate: Date = new Date(),
-): Promise<PlanningInitiative | null> {
-  const year = refDate.getUTCFullYear();
-  const month = refDate.getUTCMonth(); // 0..11
-  const quarter = Math.floor(month / 3) + 1;
-
-  // Find quarterly period for current quarter.
-  const periods = await listPeriods({ type: "quarter", year, directionId });
-  const quarterPeriod = periods.find((p) => p.quarter_n === quarter);
-  if (!quarterPeriod) return null; // No quarter period — can't anchor
-
-  const title = `Поддержка Q${quarter} ${year}`;
-
-  // Find existing.
-  const conditions: string[] = ["type = 'support'", "title = ?", "due_period_id = ?"];
-  const params: unknown[] = [title, quarterPeriod.id];
-  if (directionId === null) {
-    conditions.push("direction_id IS NULL");
-  } else {
-    conditions.push("direction_id = ?");
-    params.push(directionId);
-  }
-  const existing = await prepare<PlanningInitiative>(
-    `SELECT * FROM planning_initiatives WHERE ${conditions.join(" AND ")} LIMIT 1`
-  ).get(...params);
-  if (existing) return existing;
-
-  // Create.
-  return await createInitiative({
-    direction_id: directionId,
-    title,
-    type: "support",
-    due_period_id: quarterPeriod.id,
-  });
-}
-
-/** Auto-link a task (items.id) without initiative_id to current Support Qx. */
-export async function autoLinkOrphanTaskToSupport(itemId: string): Promise<string | null> {
-  const item = await prepare<{ initiative_id: string | null; category: string | null }>(
-    "SELECT initiative_id, category FROM items WHERE id = ?"
-  ).get(itemId);
-  if (!item || item.initiative_id) return null;
-  // Use a global (direction_id = null) Support initiative — single inbox bucket.
-  const support = await findOrCreateSupportInitiative(null);
-  if (!support) return null;
-  await prepare("UPDATE items SET initiative_id = ? WHERE id = ? AND initiative_id IS NULL").run(support.id, itemId);
-  return support.id;
 }

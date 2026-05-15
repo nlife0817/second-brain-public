@@ -26,7 +26,7 @@ export interface Category {
   icon: string;
   position: number;
 }
-export type ViewMode = "kanban" | "list";
+export type ViewMode = "kanban" | "list" | "weekly";
 export type SubtaskDisplayMode = "inline" | "accordion" | "detached";
 export type ListGroupByField = "none" | "status" | "priority" | "category" | "type" | "development_stage" | "participants" | "clients" | "estimated_minutes";
 export type ListGroupByConfig = [ListGroupByField, ListGroupByField];
@@ -35,18 +35,12 @@ export type FilterOperator = "is" | "is_not" | "contains" | "not_contains" | "be
 export type FilterField = "status" | "priority" | "category" | "type" | "tags" | "title" | "description" | "due_date" | "has_parent" | "development_stage" | "participants";
 export type FilterLogic = "and" | "or";
 
-export type ParticipantRole = "developer" | "owner" | "other";
-
 export interface DevelopmentParticipant {
   id: string;
   provider: "kaiten" | null;
   remote_id: string | null;
   name: string;
   position: number;
-  role: ParticipantRole;
-  is_active: boolean;
-  deactivated_at: string | null;
-  weekly_hours_default: number;
   created_at: string;
   updated_at: string;
 }
@@ -86,22 +80,6 @@ export interface Item {
   position: number;
   parent_id: string | null;
   recurring_series_id?: string | null;
-  // Planning V3 fields (migration 0023 + 0024).
-  initiative_id?: string | null;
-  linked_deal_id?: string | null;
-  planned_period_id?: string | null;
-  planned_date?: string | null;
-  why?: string | null;
-  replan_reason?: import("./planning").ReplanReason | null;
-  is_carryover?: boolean;
-  // P3: исполнитель задачи. Триггер set_default_assignee проставляет owner-id
-  // при INSERT, если null. Может быть null после удаления участника (ON DELETE SET NULL).
-  assignee_participant_id?: string | null;
-  // P6: gantt-like диапазон. start/end синхронизируются с planned_date триггером.
-  planned_start_date?: string | null;
-  planned_end_date?: string | null;
-  // P7: первая когда-либо проставленная start-дата. Не меняется после.
-  original_planned_start_date?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -185,15 +163,6 @@ export interface CreateItemPayload {
   parent_id?: string | null;
   tags?: string[];
   participants?: DevelopmentParticipantInput[];
-  // Planning V3
-  initiative_id?: string | null;
-  linked_deal_id?: string | null;
-  planned_period_id?: string | null;
-  planned_date?: string | null;
-  why?: string | null;
-  assignee_participant_id?: string | null;
-  planned_start_date?: string | null;
-  planned_end_date?: string | null;
 }
 
 export interface UpdateItemPayload {
@@ -212,20 +181,6 @@ export interface UpdateItemPayload {
   parent_id?: string | null;
   tags?: string[];
   participants?: DevelopmentParticipantInput[];
-  // Planning V3
-  initiative_id?: string | null;
-  linked_deal_id?: string | null;
-  planned_period_id?: string | null;
-  planned_date?: string | null;
-  why?: string | null;
-  replan_reason?: import("./planning").ReplanReason | null;
-  is_carryover?: boolean;
-  assignee_participant_id?: string | null;
-  planned_start_date?: string | null;
-  planned_end_date?: string | null;
-  // P7: причина переноса. Прокидывается в SET LOCAL → триггер log_item_plan_change.
-  replan_reason_code?: string | null;
-  replan_reason_text?: string | null;
 }
 
 export interface Filters {
@@ -293,6 +248,66 @@ export interface SavedFilter {
 }
 
 export const KANBAN_COLUMNS: ItemStatus[] = ["inbox", "todo", "in_progress", "review", "done"];
+
+// --- Weekly Planning ---
+
+export type WeeklyPlanStatus = "active" | "completed" | "archived";
+export type EntryResultStatus = "pending" | "done" | "not_done" | "transferred";
+
+export interface WeeklyPlan {
+  id: string;
+  week_start: string;
+  week_end: string;
+  title: string;
+  status: WeeklyPlanStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WeeklyPlanEntry {
+  id: string;
+  plan_id: string;
+  item_id: string;
+  position: number;
+  result_status: EntryResultStatus;
+  result_comment: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EntryComment {
+  id: string;
+  entry_id: string;
+  text: string;
+  created_at: string;
+}
+
+export interface WeeklyPlanEntryWithItem extends WeeklyPlanEntry {
+  item: Item;
+  comments: EntryComment[];
+}
+
+export interface WeeklyPlanFull extends WeeklyPlan {
+  entries: WeeklyPlanEntryWithItem[];
+}
+
+export interface WeeklyPlanReport {
+  plan: WeeklyPlan;
+  done: WeeklyPlanEntryWithItem[];
+  not_done: WeeklyPlanEntryWithItem[];
+  transferred: WeeklyPlanEntryWithItem[];
+  unplanned_done: Item[];
+  total: number;
+  done_count: number;
+  completion_rate: number;
+}
+
+export const RESULT_STATUS_CONFIG: Record<EntryResultStatus, { label: string; icon: string; color: string }> = {
+  pending: { label: "Ожидает", icon: "Clock", color: "text-gray-400" },
+  done: { label: "Выполнено", icon: "CheckCircle2", color: "text-emerald-600" },
+  not_done: { label: "Не выполнено", icon: "XCircle", color: "text-red-500" },
+  transferred: { label: "Перенесено", icon: "ArrowRight", color: "text-amber-500" },
+};
 
 // --- Clients ---
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllItemsFull, createItem, getItemTags, reorderItems, setItemParticipants, setItemTags, autoLinkOrphanTaskToSupport } from "@/lib/db";
+import { getAllItemsFull, createItem, getItemTags, reorderItems, setItemParticipants, setItemTags } from "@/lib/db";
 import { v4 as uuid } from "uuid";
 import { CreateItemPayload, ItemWithSubtasks } from "@/types";
 import { queueKaitenItemSync } from "@/lib/kaiten/sync";
@@ -56,14 +56,6 @@ export async function POST(req: NextRequest) {
     if (item.category === "development" || body.parent_id) {
       void queueKaitenItemSync(item.id).catch((err) => {
         console.error("queueKaitenItemSync failed", err);
-      });
-    }
-
-    // Auto-link orphan task to current Support Qx initiative (concept §6.3).
-    // Only for top-level tasks without explicit initiative attribution.
-    if (item.type === "task" && !body.parent_id) {
-      void autoLinkOrphanTaskToSupport(item.id).catch((err) => {
-        console.error("autoLinkOrphanTaskToSupport failed", err);
       });
     }
 

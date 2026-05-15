@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import {
   LayoutGrid,
   List,
+  CalendarDays,
   Plus,
   ListTree,
   Rows3,
@@ -77,11 +78,14 @@ export function Header() {
     [setFilters]
   );
 
+  const isWeekly = viewMode === "weekly";
+
   return (
     <TooltipProvider>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-4">
-        {/* Search */}
-        <>
+        {/* Search — hidden in weekly mode */}
+        {!isWeekly && (
+          <>
             <div className="relative min-w-[180px] max-w-[280px] flex-1">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-slate-400" />
               <Input
@@ -160,7 +164,8 @@ export function Header() {
             </Tooltip>
 
             <Separator orientation="vertical" className="!h-5 bg-slate-200" />
-        </>
+          </>
+        )}
 
         {/* View mode toggle */}
         <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
@@ -176,10 +181,17 @@ export function Header() {
             </TooltipTrigger>
             <TooltipContent side="bottom">Список</TooltipContent>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger render={<Button variant="ghost" size="icon-xs" className={cn("rounded-md text-slate-400 hover:text-slate-600", viewMode === "weekly" && "bg-white text-slate-900 shadow-sm")} onClick={() => setViewMode("weekly")} />}>
+              <CalendarDays className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Недельный план</TooltipContent>
+          </Tooltip>
         </div>
 
-        {/* Subtask display mode */}
-        <>
+        {/* Subtask display mode — hidden in weekly */}
+        {!isWeekly && (
+          <>
             <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
               {subtaskModes.map(({ value, label, icon: Icon }) => (
                 <Tooltip key={value}>
@@ -193,7 +205,8 @@ export function Header() {
 
             {/* Card display settings */}
             <CardSettingsPopover />
-        </>
+          </>
+        )}
 
         <Separator orientation="vertical" className="!h-5 bg-slate-200" />
 
@@ -215,21 +228,23 @@ export function Header() {
 
         <div className="flex-1" />
 
-        {/* New task */}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon-sm"
-                className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-500/20 transition-all hover:from-violet-500 hover:to-indigo-500"
-                onClick={() => openCreate()}
-              />
-            }
-          >
-            <Plus className="size-4" />
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Новая задача</TooltipContent>
-        </Tooltip>
+        {/* New task — hidden in weekly */}
+        {!isWeekly && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-500/20 transition-all hover:from-violet-500 hover:to-indigo-500"
+                  onClick={() => openCreate()}
+                />
+              }
+            >
+              <Plus className="size-4" />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Новая задача</TooltipContent>
+          </Tooltip>
+        )}
       </header>
     </TooltipProvider>
   );

@@ -15,7 +15,6 @@ import {
   getLatestSyncImportRun,
   getStagingItemById,
   setItemParticipants,
-  getInitiativeIdByKaitenBoard,
   getSyncFieldMappings,
   getSyncProfileById,
   saveSyncImportRun,
@@ -243,7 +242,6 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
 
         const item = await getItemById(link.local_entity_id);
         if (item) {
-          const mappedInitiative = await getInitiativeIdByKaitenBoard(parsed.external_board_id ?? profile.source_board_id ?? null);
           await updateItem(item.id, {
             title,
             description,
@@ -253,7 +251,6 @@ export async function importKaitenProfile(profileId: string): Promise<KaitenImpo
             status: parsed.status ?? item.status,
             priority: parsed.priority ?? item.priority,
             due_date: parsed.due_date ?? null,
-            ...(mappedInitiative && !item.initiative_id ? { initiative_id: mappedInitiative } : {}),
           });
           await setItemParticipants(item.id, participants);
           result.updated += 1;

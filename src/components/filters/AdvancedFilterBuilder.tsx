@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { useBrainStore } from "@/lib/store";
 import {
   FilterGroup,
@@ -129,57 +129,11 @@ function defaultValueForField(field: FilterField): string {
 /*  AdvancedFilterBuilder                                                      */
 /* -------------------------------------------------------------------------- */
 
-export interface AdvancedFilterBuilderIsolated {
-  /** «Применённый» фильтр (родителем). Используется как initial draft при открытии. */
-  groups: FilterGroup[];
-  /** Коммитит draft в applied (вызывается только по «Применить»). */
-  setGroups: (groups: FilterGroup[]) => void;
-  useAdvanced: boolean;
-  setUseAdvanced: (on: boolean) => void;
-  /** Дополнительный коллбэк после Apply/Reset (например, закрыть popover). */
-  onApply?: () => void;
-}
-
-export function AdvancedFilterBuilder({ isolated }: { isolated?: AdvancedFilterBuilderIsolated } = {}) {
-  // Глобальные селекторы — нужны даже в isolated, чтобы динамические опции
-  // (категории/теги/участники) брались из общего стора. Сами фильтры в
-  // isolated режиме читаются/пишутся через переданные коллбэки.
-  const storeGroups = useBrainStore((s) => s.filters.advancedGroups);
-  const storeUseAdvanced = useBrainStore((s) => s.filters.useAdvanced);
-  const storeSetAdvancedFilters = useBrainStore((s) => s.setAdvancedFilters);
-  const storeToggleAdvancedFilters = useBrainStore((s) => s.toggleAdvancedFilters);
-
-  // В isolated режиме держим локальный draft — изменения не утекают в родителя
-  // на каждый keystroke, иначе ListView пересчитывает фильтрацию по тысячам
-  // задач при каждом изменении селекта и UI подвисает. Commit — только по
-  // «Применить». При unmount popover'а несохранённый draft теряется (это OK
-  // — соответствует UX: применил или отменил).
-  const [draftGroups, setDraftGroups] = useState<FilterGroup[]>(() => isolated ? isolated.groups : []);
-  const [draftUseAdvanced, setDraftUseAdvanced] = useState<boolean>(() => isolated ? isolated.useAdvanced : false);
-
-  const groups = isolated ? draftGroups : storeGroups;
-  const useAdvanced = isolated ? draftUseAdvanced : storeUseAdvanced;
-  const setAdvancedFilters = isolated ? setDraftGroups : storeSetAdvancedFilters;
-  const toggleAdvancedFilters = isolated
-    ? (on?: boolean) => setDraftUseAdvanced((prev) => on ?? !prev)
-    : storeToggleAdvancedFilters;
-
-  const handleApply = useCallback(() => {
-    if (!isolated) return;
-    isolated.setGroups(draftGroups);
-    isolated.setUseAdvanced(draftGroups.length > 0 && draftUseAdvanced);
-    isolated.onApply?.();
-  }, [isolated, draftGroups, draftUseAdvanced]);
-
-  const handleReset = useCallback(() => {
-    setDraftGroups([]);
-    setDraftUseAdvanced(false);
-    if (isolated) {
-      isolated.setGroups([]);
-      isolated.setUseAdvanced(false);
-      isolated.onApply?.();
-    }
-  }, [isolated]);
+export function AdvancedFilterBuilder() {
+  const groups = useBrainStore((s) => s.filters.advancedGroups);
+  const useAdvanced = useBrainStore((s) => s.filters.useAdvanced);
+  const setAdvancedFilters = useBrainStore((s) => s.setAdvancedFilters);
+  const toggleAdvancedFilters = useBrainStore((s) => s.toggleAdvancedFilters);
   const storeCategories = useBrainStore((s) => s.categories);
   const storeTags = useBrainStore((s) => s.tags);
   const storeItems = useBrainStore((s) => s.items);
@@ -405,8 +359,7 @@ export function AdvancedFilterBuilder({ isolated }: { isolated?: AdvancedFilterB
         </Button>
       </div>
 
-      {/* ---- Presets section — скрываем в isolated режиме (привязка задач). --- */}
-      {!isolated && (
+      {/* ---- Presets section ------------------------------------------------ */}
       <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
         <div className="mb-2 flex items-center gap-1.5">
           <Bookmark className="size-3.5 text-slate-400" />
@@ -509,7 +462,6 @@ export function AdvancedFilterBuilder({ isolated }: { isolated?: AdvancedFilterB
           </div>
         )}
       </div>
-      )}
 
       {/* Empty state */}
       {groups.length === 0 && (
@@ -691,31 +643,6 @@ export function AdvancedFilterBuilder({ isolated }: { isolated?: AdvancedFilterB
           </div>
         ))}
       </div>
-
-      {/* Action bar — только в isolated режиме (draft → applied). */}
-      {isolated && (
-        <div className="mt-4 flex items-center justify-between gap-2 border-t border-slate-200 pt-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleReset}
-            className="gap-1 border-slate-200 text-xs text-slate-600"
-            disabled={groups.length === 0 && !useAdvanced}
-          >
-            <RefreshCw className="size-3" />
-            Сбросить
-          </Button>
-          <Button
-            size="sm"
-            onClick={handleApply}
-            disabled={groups.length === 0}
-            className="gap-1 bg-blue-600 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            <Check className="size-3" />
-            Применить фильтр
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

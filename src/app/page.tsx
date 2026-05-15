@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { KanbanBoard } from "@/components/kanban/Board";
 import { ListView } from "@/components/list/ListView";
+import { WeeklyView } from "@/components/weekly/WeeklyView";
 import { TaskDetailModal, TaskDetailPanel } from "@/components/task/TaskDetailSheet";
 import { CreateTaskDialog } from "@/components/task/CreateTaskDialog";
 import { ClientsView } from "@/components/clients/ClientsView";
@@ -39,6 +40,8 @@ export default function Home() {
               <StagingView />
             ) : appSection === "clients" ? (
               <ClientsView />
+            ) : viewMode === "weekly" ? (
+              <WeeklyView />
             ) : viewMode === "kanban" ? (
               <KanbanBoard />
             ) : (

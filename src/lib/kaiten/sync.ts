@@ -23,7 +23,6 @@ import {
   upsertExternalEntityLink,
   upsertSyncOutboxJob,
   upsertSyncProfile,
-  getInitiativeIdByKaitenBoard,
 } from "@/lib/db";
 import {
   buildBoardStageOptions,
@@ -355,11 +354,7 @@ async function applyRemoteCardToItem(cardId: number, profile: SyncProfile, local
     ? "archived" as ItemStatus
     : mapStatus(extractCardStatus(card)) ?? "inbox";
 
-  // Planning hook: auto-attach to initiative if the source board is mapped.
-  const boardId = extractCardColumnId(card) != null ? (card as { board_id?: number | string }).board_id ?? profile.source_board_id : profile.source_board_id;
-  const mappedInitiativeId = await getInitiativeIdByKaitenBoard(boardId ?? null);
-  const currentLocal = await getItemById(localItemId);
-  const updates: Parameters<typeof updateItem>[1] = {
+  await updateItem(localItemId, {
     title: extractCardTitle(card) || `Kaiten #${cardId}`,
     description: extractCardDescription(card),
     type: "task",
@@ -368,19 +363,8 @@ async function applyRemoteCardToItem(cardId: number, profile: SyncProfile, local
     status: resolvedStatus,
     priority: mapPriority(extractCardPriority(card)) ?? "none",
     due_date: extractCardDueDate(card) ?? null,
-  };
-  if (mappedInitiativeId && !currentLocal?.initiative_id) {
-    updates.initiative_id = mappedInitiativeId;
-  }
-  await updateItem(localItemId, updates);
+  });
   await setItemParticipants(localItemId, participants);
-
-  // Planning §6.3: fallback to "Поддержка Qx" if neither user nor mapping set initiative.
-  const afterLocal = await getItemById(localItemId);
-  if (afterLocal && !afterLocal.initiative_id) {
-    const { autoLinkOrphanTaskToSupport } = await import("@/lib/db");
-    await autoLinkOrphanTaskToSupport(localItemId).catch(() => undefined);
-  }
 
   await upsertExternalEntityLink({
     provider: "kaiten",

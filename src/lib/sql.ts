@@ -12,19 +12,6 @@ function getClient(): postgres.Sql {
       prepare: false,
       idle_timeout: 20,
       max: 10,
-      types: {
-        // DATE (OID 1082) — keep as ISO string ("2026-01-01"), not JS Date.
-        // The TS types declare these columns as `string`; code does .localeCompare,
-        // .slice(0,10) etc on them. Without this override pg.js returns Date and
-        // serverside sorts/comparisons crash with TypeError.
-        date: {
-          to: 1082,
-          from: [1082],
-          serialize: (x: unknown) =>
-            x instanceof Date ? x.toISOString().slice(0, 10) : String(x),
-          parse: (x: string) => x,
-        },
-      },
     });
   }
   return client;
