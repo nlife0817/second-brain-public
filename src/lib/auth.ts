@@ -17,6 +17,17 @@ export interface AuthUser {
  * - Unknown email and not first user → null (access denied).
  */
 export async function getAuthUser(): Promise<AuthUser | null> {
+  // Local-only dev bypass — see proxy.ts for the same gate.
+  // When NODE_ENV !== "production" and DEV_USER_EMAIL is set, resolve the user
+  // directly by email from the `users` table, no Supabase session needed.
+  const devEmail = process.env.DEV_USER_EMAIL?.toLowerCase().trim();
+  if (process.env.NODE_ENV !== "production" && devEmail) {
+    const existing = await getUserByEmail(devEmail);
+    if (existing) return { email: existing.email, role: existing.role };
+    const created = await upsertUser(devEmail, "admin", "Dev User");
+    return { email: created.email, role: created.role };
+  }
+
   const supabase = await createSupabaseServerClient();
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user?.email) return null;
