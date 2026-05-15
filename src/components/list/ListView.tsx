@@ -62,6 +62,7 @@ import {
   ChevronsUpDown,
   Search,
   Building2,
+  Maximize2,
   Undo2,
   Redo2,
 } from "lucide-react";
@@ -1469,6 +1470,7 @@ export function ListView() {
   const { catalog } = useKaitenCatalog();
   const createItem = useBrainStore((s) => s.createItem);
   const openDetail = useBrainStore((s) => s.openDetail);
+  const setDetailMode = useBrainStore((s) => s.setDetailMode);
   const editingItemId = useBrainStore((s) => s.editingItemId);
   const editingField = useBrainStore((s) => s.editingField);
   const setEditingItem = useBrainStore((s) => s.setEditingItem);
@@ -2158,7 +2160,7 @@ export function ListView() {
   const relationTypes = useBrainStore((s) => s.relationTypes);
   const fetchEntityCounts = useBrainStore((s) => s.fetchEntityCounts);
 
-  const handleCommitCreate = useCallback(async () => {
+  const handleCommitCreate = useCallback(async (opts?: { openAfterCreate?: boolean }) => {
     if (isCommittingCreateRef.current) return;
     if (!newItem.title.trim()) {
       handleCancelCreate();
@@ -2196,12 +2198,16 @@ export function ListView() {
         await createRelation("item", created.id, "client", snapshot.clientId, clientType.id);
         await fetchEntityCounts("item");
       }
+      if (opts?.openAfterCreate && created) {
+        setDetailMode("modal");
+        openDetail(created.id);
+      }
     } catch {
       // silently fail — store rollback handles temp item removal
     } finally {
       isCommittingCreateRef.current = false;
     }
-  }, [newItem, createItem, createRelation, createRelationType, relationTypes, fetchEntityCounts, handleCancelCreate]);
+  }, [newItem, createItem, createRelation, createRelationType, relationTypes, fetchEntityCounts, handleCancelCreate, setDetailMode, openDetail]);
 
   /* ----- Inline subtask creation handlers -------------------------------- */
 
@@ -2889,6 +2895,18 @@ export function ListView() {
                           title="Создать"
                         >
                           <Check className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleCommitCreate({ openAfterCreate: true });
+                          }}
+                          className="inline-flex items-center justify-center size-5 rounded hover:bg-blue-100 text-blue-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          title="Создать и открыть карточку"
+                          disabled={!newItem.title.trim()}
+                        >
+                          <Maximize2 className="size-3.5" />
                         </button>
                         <button
                           type="button"
