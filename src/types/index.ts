@@ -185,6 +185,9 @@ export interface UpdateItemPayload {
   parent_id?: string | null;
   tags?: string[];
   participants?: DevelopmentParticipantInput[];
+  planned_start_date?: string | null;
+  planned_end_date?: string | null;
+  assignee_participant_id?: string | null;
 }
 
 export interface Filters {
