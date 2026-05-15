@@ -41,6 +41,7 @@ export interface DevelopmentParticipant {
   remote_id: string | null;
   name: string;
   position: number;
+  is_active?: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -80,6 +81,9 @@ export interface Item {
   position: number;
   parent_id: string | null;
   recurring_series_id?: string | null;
+  planned_start_date?: string | null;
+  planned_end_date?: string | null;
+  assignee_participant_id?: string | null;
   created_at: string;
   updated_at: string;
 }

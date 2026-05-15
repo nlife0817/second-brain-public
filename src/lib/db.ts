@@ -65,7 +65,7 @@ function buildUpdateClause(
 const ITEM_UPDATE_FIELDS = [
   "title", "description", "type", "status", "priority", "category", "source",
   "development_stage", "due_date", "due_time", "estimated_minutes", "position", "parent_id",
-  "recurring_series_id",
+  "recurring_series_id", "planned_start_date", "planned_end_date", "assignee_participant_id",
 ] as const;
 
 const TAG_UPDATE_FIELDS = ["name", "color", "position"] as const;
