@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { ColorPickerButton } from "@/components/ui/color-picker";
 import { Pencil, Trash2, Plus, Check, X, GripVertical } from "lucide-react";
 import {
   DndContext,
@@ -20,11 +21,6 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-
-const PRESET_COLORS = [
-  "#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4",
-  "#3b82f6", "#8b5cf6", "#ec4899", "#6b7280", "#14b8a6",
-];
 
 export interface OrderableItem {
   id: string;
@@ -79,11 +75,7 @@ function SortableRow({
     isDragging,
   } = useSortable({ id: item.id });
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-
+  const style = { transform: CSS.Transform.toString(transform), transition };
   const isEditing = editingId === item.id;
 
   return (
@@ -91,71 +83,80 @@ function SortableRow({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors",
+        "group flex items-center gap-2 rounded-lg px-1.5 py-1 transition-colors",
         isDragging ? "z-50 bg-slate-100 shadow-md opacity-80 ring-1 ring-slate-200" : "hover:bg-slate-50",
       )}
     >
+      {/* drag handle — always visible */}
+      <button
+        type="button"
+        className={cn(
+          "shrink-0 touch-none text-slate-300 transition-colors hover:text-slate-500",
+          isEditing ? "cursor-default opacity-30" : "cursor-grab active:cursor-grabbing",
+        )}
+        aria-label="Перетащить"
+        {...(isEditing ? {} : { ...attributes, ...listeners })}
+      >
+        <GripVertical className="size-3.5" />
+      </button>
+
       {isEditing ? (
+        /* ---------- edit mode ---------- */
         <>
           {hasColor && (
-            <div className="flex gap-0.5 shrink-0 flex-wrap max-w-[120px]">
-              {PRESET_COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => onEditColorChange(c)}
-                  className={cn(
-                    "size-4 rounded-full border transition-all",
-                    editColor === c ? "border-slate-800 scale-110" : "border-transparent",
-                  )}
-                  style={{ backgroundColor: c }}
-                />
-              ))}
-            </div>
+            <ColorPickerButton value={editColor} onChange={onEditColorChange} size="sm" />
           )}
           <Input
             value={editName}
             onChange={(e) => onEditNameChange(e.target.value)}
-            className="h-7 flex-1 text-sm"
+            className="h-7 flex-1 border-slate-200 text-sm focus:border-slate-400"
             autoFocus
             onKeyDown={(e) => {
               if (e.key === "Enter") onEditSave(item.id);
               if (e.key === "Escape") onEditCancel();
             }}
           />
-          <Button size="icon-xs" variant="ghost" onClick={() => onEditSave(item.id)} className="text-green-600 shrink-0">
-            <Check className="size-3.5" />
-          </Button>
-          <Button size="icon-xs" variant="ghost" onClick={onEditCancel} className="shrink-0">
-            <X className="size-3.5 text-slate-400" />
-          </Button>
-        </>
-      ) : (
-        <>
           <button
             type="button"
-            className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 shrink-0 touch-none"
-            aria-label="Перетащить"
-            {...attributes}
-            {...listeners}
+            onClick={() => onEditSave(item.id)}
+            className="shrink-0 rounded p-1 text-emerald-600 hover:bg-emerald-50"
+            aria-label="Сохранить"
           >
-            <GripVertical className="size-4" />
+            <Check className="size-3.5" />
           </button>
+          <button
+            type="button"
+            onClick={onEditCancel}
+            className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100"
+            aria-label="Отмена"
+          >
+            <X className="size-3.5" />
+          </button>
+        </>
+      ) : (
+        /* ---------- view mode ---------- */
+        <>
           {hasColor && item.color && (
-            <span className="size-3 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+            <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
           )}
-          <span className="flex-1 text-sm text-slate-700 truncate">{item.name}</span>
-          <div className="flex items-center gap-0 opacity-0 group-hover:opacity-100 transition-opacity">
-            <Button
-              size="icon-xs"
-              variant="ghost"
+          <span className="flex-1 truncate text-sm text-slate-700">{item.name}</span>
+          <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+            <button
+              type="button"
               onClick={() => onStartEdit(item)}
+              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              aria-label="Редактировать"
             >
-              <Pencil className="size-3.5 text-slate-400" />
-            </Button>
-            <Button size="icon-xs" variant="ghost" onClick={() => onDelete(item.id)}>
-              <Trash2 className="size-3.5 text-slate-400 hover:text-red-500" />
-            </Button>
+              <Pencil className="size-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(item.id)}
+              className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
+              aria-label="Удалить"
+            >
+              <Trash2 className="size-3" />
+            </button>
           </div>
         </>
       )}
@@ -176,7 +177,7 @@ export function OrderableListSection<T extends OrderableItem>({
   const [newColor, setNewColor] = useState("#3b82f6");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
-  const [editColor, setEditColor] = useState("");
+  const [editColor, setEditColor] = useState("#3b82f6");
 
   const sorted = [...items].sort((a, b) => a.position - b.position);
 
@@ -206,11 +207,9 @@ export function OrderableListSection<T extends OrderableItem>({
   const handleDragEnd = useCallback(async (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-
     const oldIndex = sorted.findIndex((item) => item.id === active.id);
     const newIndex = sorted.findIndex((item) => item.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
-
     const reordered = arrayMove(sorted, oldIndex, newIndex);
     await Promise.all(
       reordered
@@ -221,7 +220,8 @@ export function OrderableListSection<T extends OrderableItem>({
   }, [sorted, onUpdate]);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1">
+      {/* list */}
       {sorted.length > 0 ? (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={sorted.map((item) => item.id)} strategy={verticalListSortingStrategy}>
@@ -234,7 +234,11 @@ export function OrderableListSection<T extends OrderableItem>({
                   editingId={editingId}
                   editName={editName}
                   editColor={editColor}
-                  onStartEdit={(i) => { setEditingId(i.id); setEditName(i.name); setEditColor(i.color ?? "#3b82f6"); }}
+                  onStartEdit={(i) => {
+                    setEditingId(i.id);
+                    setEditName(i.name);
+                    setEditColor(i.color ?? "#3b82f6");
+                  }}
                   onEditNameChange={setEditName}
                   onEditColorChange={setEditColor}
                   onEditSave={handleUpdate}
@@ -246,32 +250,30 @@ export function OrderableListSection<T extends OrderableItem>({
           </SortableContext>
         </DndContext>
       ) : (
-        <p className="text-xs text-slate-400 py-2">{emptyText}</p>
+        <p className="py-1.5 text-xs text-slate-400">{emptyText}</p>
       )}
 
+      {/* add new */}
       <div className="flex items-center gap-2 pt-1">
         {hasColor && (
-          <div className="flex gap-0.5 shrink-0">
-            {PRESET_COLORS.slice(0, 5).map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => setNewColor(c)}
-                className={cn("size-4 rounded-full border transition-all", newColor === c ? "border-slate-800 scale-110" : "border-transparent")}
-                style={{ backgroundColor: c }}
-              />
-            ))}
-          </div>
+          <ColorPickerButton value={newColor} onChange={setNewColor} size="sm" />
         )}
         <Input
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           placeholder={addPlaceholder}
-          className="h-7 flex-1 text-sm"
+          className="h-7 flex-1 border-slate-200 text-sm"
           onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
         />
-        <Button size="sm" className="h-7 text-xs" onClick={handleCreate} disabled={!newName.trim()}>
-          <Plus className="size-3.5 mr-1" /> Добавить
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 shrink-0 gap-1 px-2 text-xs text-slate-600 hover:text-slate-900"
+          onClick={handleCreate}
+          disabled={!newName.trim()}
+        >
+          <Plus className="size-3.5" />
+          Добавить
         </Button>
       </div>
     </div>

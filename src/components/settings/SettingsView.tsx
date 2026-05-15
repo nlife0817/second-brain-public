@@ -25,7 +25,7 @@ import {
   Check,
   X,
   Link,
-  Palette,
+
   Loader2,
   RefreshCw,
   Download,
@@ -52,17 +52,13 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { CategoryManager } from "./CategoryManager";
+import { CategoriesSection } from "./CategoryManager";
 import { OrderableListSection } from "./OrderableListSection";
 import { UserManager } from "./UserManager";
 import { NotificationsSettings } from "./NotificationsSettings";
 import { TimingSettingsCard } from "@/components/timing/TimingSettings";
 import { Tag, Layers, Users, ListChecks } from "lucide-react";
-
-const PRESET_COLORS = [
-  "#6b7280", "#ef4444", "#f97316", "#eab308", "#22c55e",
-  "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6",
-];
+import { ColorPickerButton, PRESET_COLORS } from "@/components/ui/color-picker";
 
 const DEFAULT_SETTINGS: IntegrationSettings = {
   provider: "kaiten",
@@ -257,7 +253,6 @@ function RelationTypeRow({
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(rt.name);
   const [color, setColor] = useState(rt.color);
-  const [showColors, setShowColors] = useState(false);
 
   const handleSave = useCallback(async () => {
     if (!name.trim()) return;
@@ -269,87 +264,58 @@ function RelationTypeRow({
     setName(rt.name);
     setColor(rt.color);
     setEditing(false);
-    setShowColors(false);
   };
 
   if (editing) {
     return (
-      <div className="flex flex-col gap-2 rounded-lg border border-violet-200 bg-violet-50/30 p-3">
-        <div className="flex items-center gap-2">
-          <div
-            className="size-6 cursor-pointer rounded-md border border-slate-200 shrink-0"
-            style={{ backgroundColor: color }}
-            onClick={() => setShowColors(!showColors)}
-          />
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="h-8 flex-1 text-sm"
-            placeholder="Название типа..."
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSave();
-              if (e.key === "Escape") handleCancel();
-            }}
-          />
-          <Button variant="ghost" size="icon-xs" onClick={handleSave} className="text-emerald-600 hover:text-emerald-700">
-            <Check className="size-3.5" />
-          </Button>
-          <Button variant="ghost" size="icon-xs" onClick={handleCancel} className="text-slate-400 hover:text-slate-600">
-            <X className="size-3.5" />
-          </Button>
-        </div>
-        {showColors && (
-          <div className="flex flex-wrap gap-1.5 pl-8">
-            {PRESET_COLORS.map((c) => (
-              <button
-                key={c}
-                onClick={() => { setColor(c); setShowColors(false); }}
-                className={cn(
-                  "size-6 rounded-md border-2 transition-all hover:scale-110",
-                  color === c ? "border-slate-700 ring-1 ring-slate-400" : "border-transparent"
-                )}
-                style={{ backgroundColor: c }}
-              />
-            ))}
-            <div className="ml-1 flex items-center gap-1">
-              <Palette className="size-3 text-slate-400" />
-              <input
-                type="color"
-                value={color}
-                onChange={(e) => setColor(e.target.value)}
-                className="size-6 cursor-pointer rounded border-0 p-0"
-              />
-            </div>
-          </div>
-        )}
+      <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-2 py-1.5">
+        <ColorPickerButton value={color} onChange={setColor} size="sm" />
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="h-7 flex-1 border-slate-200 text-sm focus:border-slate-400"
+          placeholder="Название типа..."
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSave();
+            if (e.key === "Escape") handleCancel();
+          }}
+        />
+        <button type="button" onClick={handleSave} className="shrink-0 rounded p-1 text-emerald-600 hover:bg-emerald-50">
+          <Check className="size-3.5" />
+        </button>
+        <button type="button" onClick={handleCancel} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100">
+          <X className="size-3.5" />
+        </button>
       </div>
     );
   }
 
   return (
-    <div className="group flex items-center gap-3 rounded-lg border border-slate-100 bg-white px-3 py-2.5 transition-colors hover:border-slate-200">
-      <div className="size-4 shrink-0 rounded-md" style={{ backgroundColor: rt.color }} />
-      <span className="flex-1 text-sm font-medium text-slate-700">{rt.name}</span>
-      <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+    <div className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-slate-50">
+      <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: rt.color }} />
+      <span className="flex-1 text-sm text-slate-700">{rt.name}</span>
+      {!!rt.is_system && (
+        <span className="shrink-0 text-[10px] text-slate-400">системный</span>
+      )}
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
         <button
+          type="button"
           onClick={() => setEditing(true)}
           className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
         >
-          <Pencil className="size-3.5" />
+          <Pencil className="size-3" />
         </button>
         {!rt.is_system && (
           <button
+            type="button"
             onClick={() => onDelete(rt.id)}
             className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
           >
-            <Trash2 className="size-3.5" />
+            <Trash2 className="size-3" />
           </button>
         )}
       </div>
-      {!!rt.is_system && (
-        <span className="text-[10px] text-slate-400 shrink-0">системный</span>
-      )}
     </div>
   );
 }
@@ -475,9 +441,8 @@ export function SettingsView() {
 
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newColor, setNewColor] = useState("#6b7280");
-  const [showNewColors, setShowNewColors] = useState(false);
-  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
+  const [newColor, setNewColor] = useState(PRESET_COLORS[5]);
+
   const [kaitenOpen, setKaitenOpen] = useState(false);
 
   const [settings, setSettings] = useState<IntegrationSettings>(DEFAULT_SETTINGS);
@@ -673,7 +638,6 @@ export function SettingsView() {
     setNewName("");
     setNewColor("#6b7280");
     setShowAdd(false);
-    setShowNewColors(false);
   }, [newName, newColor, createRelationType]);
 
   const toggleSelection = (value: string, selected: string[], setter: (values: string[]) => void) => {
@@ -851,21 +815,11 @@ export function SettingsView() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {/* Categories */}
           <section className="rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-sm">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <FolderKanban className="size-4 text-sky-600" />
-                <span className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Категории</span>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 rounded-lg border-slate-200 px-3 text-xs"
-                onClick={() => setCategoryManagerOpen(true)}
-              >
-                Управлять
-              </Button>
+            <div className="mb-2 flex items-center gap-2">
+              <FolderKanban className="size-4 text-sky-600" />
+              <span className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Категории</span>
             </div>
-            <CategoryManager open={categoryManagerOpen} onOpenChange={setCategoryManagerOpen} />
+            <CategoriesSection />
           </section>
 
           {/* CRM Systems */}
@@ -918,56 +872,25 @@ export function SettingsView() {
             </div>
 
             {showAdd && (
-              <div className="mb-3 space-y-2 rounded-lg border border-violet-200 bg-violet-50/30 p-2.5">
-                <div className="flex items-center gap-2">
-                  <div
-                    className="size-6 shrink-0 cursor-pointer rounded-md border border-slate-200"
-                    style={{ backgroundColor: newColor }}
-                    onClick={() => setShowNewColors(!showNewColors)}
-                  />
-                  <Input
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    placeholder="Название нового типа..."
-                    className="h-8 flex-1 rounded-lg bg-white text-sm"
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleCreate();
-                      if (e.key === "Escape") { setShowAdd(false); setShowNewColors(false); }
-                    }}
-                  />
-                  <Button size="sm" onClick={handleCreate} disabled={!newName.trim()} className="h-8 px-2.5 text-xs">
-                    <Check className="mr-1 size-3.5" /> Создать
-                  </Button>
-                  <Button variant="ghost" size="icon-xs" onClick={() => { setShowAdd(false); setShowNewColors(false); }} className="text-slate-400">
-                    <X className="size-3.5" />
-                  </Button>
-                </div>
-                {showNewColors && (
-                  <div className="flex flex-wrap gap-1.5 pl-8">
-                    {PRESET_COLORS.map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => { setNewColor(c); setShowNewColors(false); }}
-                        className={cn(
-                          "size-6 rounded-md border-2 transition-all hover:scale-110",
-                          newColor === c ? "border-slate-700 ring-1 ring-slate-400" : "border-transparent"
-                        )}
-                        style={{ backgroundColor: c }}
-                      />
-                    ))}
-                    <div className="ml-1 flex items-center gap-1">
-                      <Palette className="size-3 text-slate-400" />
-                      <input
-                        type="color"
-                        value={newColor}
-                        onChange={(e) => setNewColor(e.target.value)}
-                        className="size-6 cursor-pointer rounded border-0 p-0"
-                      />
-                    </div>
-                  </div>
-                )}
+              <div className="mb-3 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 p-2">
+                <ColorPickerButton value={newColor} onChange={setNewColor} size="sm" />
+                <Input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="Название нового типа..."
+                  className="h-7 flex-1 border-slate-200 text-sm focus:border-slate-400"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleCreate();
+                    if (e.key === "Escape") { setShowAdd(false); }
+                  }}
+                />
+                <button type="button" onClick={handleCreate} disabled={!newName.trim()} className="shrink-0 rounded p-1 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
+                  <Check className="size-3.5" />
+                </button>
+                <button type="button" onClick={() => setShowAdd(false)} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100">
+                  <X className="size-3.5" />
+                </button>
               </div>
             )}
 

@@ -4,87 +4,70 @@ import { useState, useCallback } from "react";
 import { useBrainStore } from "@/lib/store";
 import { getIcon, CATEGORY_ICON_OPTIONS, ICON_MAP } from "@/lib/icon-map";
 import { cn } from "@/lib/utils";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { ColorPickerButton } from "@/components/ui/color-picker";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Popover,
   PopoverTrigger,
   PopoverContent,
 } from "@/components/ui/popover";
-import { Pencil, Trash2, Plus, Check, ChevronUp, ChevronDown } from "lucide-react";
-
-const PRESET_COLORS = [
-  "#ef4444",
-  "#f97316",
-  "#eab308",
-  "#22c55e",
-  "#06b6d4",
-  "#3b82f6",
-  "#8b5cf6",
-  "#ec4899",
-  "#6b7280",
-  "#14b8a6",
-];
-
-interface CategoryManagerProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}
+import { Pencil, Trash2, Plus, Check, X, GripVertical } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 /* ------------------------------------------------------------------ */
-/*  Icon Picker                                                       */
+/*  Icon Picker popover                                               */
 /* ------------------------------------------------------------------ */
 
-function IconPicker({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (icon: string) => void;
-}) {
-  const [pickerOpen, setPickerOpen] = useState(false);
+function IconPicker({ value, onChange }: { value: string; onChange: (icon: string) => void }) {
+  const [open, setOpen] = useState(false);
   const SelectedIcon = ICON_MAP[value] ?? ICON_MAP["Folder"];
 
   return (
-    <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         className={cn(
-          "flex size-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 transition-colors hover:bg-slate-50",
-          pickerOpen && "border-ring ring-2 ring-ring/30"
+          "flex size-7 shrink-0 items-center justify-center rounded-md border border-slate-200 transition-colors hover:bg-slate-50",
+          open && "border-slate-400 bg-slate-50",
         )}
+        aria-label="Выбрать иконку"
       >
-        <SelectedIcon className="size-4 text-slate-600" />
+        <SelectedIcon className="size-3.5 text-slate-600" />
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-56 p-2">
-        <ScrollArea className="max-h-48">
-          <div className="grid grid-cols-5 gap-1">
+      <PopoverContent align="start" sideOffset={6} className="w-52 p-2">
+        <ScrollArea className="max-h-44">
+          <div className="grid grid-cols-6 gap-1">
             {CATEGORY_ICON_OPTIONS.map((name) => {
               const Icon = getIcon(name);
-              const isActive = name === value;
               return (
                 <button
                   key={name}
                   type="button"
-                  onClick={() => {
-                    onChange(name);
-                    setPickerOpen(false);
-                  }}
+                  onClick={() => { onChange(name); setOpen(false); }}
                   className={cn(
-                    "flex size-8 items-center justify-center rounded-md transition-colors",
-                    isActive
-                      ? "bg-primary/10 text-primary ring-2 ring-primary/40"
-                      : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                    "flex size-7 items-center justify-center rounded-md transition-colors",
+                    name === value
+                      ? "bg-violet-100 text-violet-700"
+                      : "text-slate-500 hover:bg-slate-100 hover:text-slate-700",
                   )}
                   title={name}
                 >
-                  <Icon className="size-4" />
+                  <Icon className="size-3.5" />
                 </button>
               );
             })}
@@ -96,89 +79,161 @@ function IconPicker({
 }
 
 /* ------------------------------------------------------------------ */
-/*  Color Picker (preset grid)                                        */
+/*  Sortable category row                                             */
 /* ------------------------------------------------------------------ */
 
-function ColorGrid({
-  value,
-  onChange,
-  size = "md",
-}: {
-  value: string;
-  onChange: (color: string) => void;
-  size?: "sm" | "md";
-}) {
-  const dotSize = size === "sm" ? "size-5" : "size-6";
+interface SortableCatRowProps {
+  cat: { id: string; name: string; color: string; icon: string; position: number };
+  editingId: string | null;
+  editName: string;
+  editColor: string;
+  editIcon: string;
+  onStartEdit: (cat: SortableCatRowProps["cat"]) => void;
+  onEditNameChange: (v: string) => void;
+  onEditColorChange: (v: string) => void;
+  onEditIconChange: (v: string) => void;
+  onEditSave: (id: string) => void;
+  onEditCancel: () => void;
+  onDelete: (id: string) => void;
+}
+
+function SortableCatRow({
+  cat,
+  editingId,
+  editName,
+  editColor,
+  editIcon,
+  onStartEdit,
+  onEditNameChange,
+  onEditColorChange,
+  onEditIconChange,
+  onEditSave,
+  onEditCancel,
+  onDelete,
+}: SortableCatRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: cat.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  const isEditing = editingId === cat.id;
+  const CatIcon = getIcon(cat.icon);
+
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {PRESET_COLORS.map((c) => (
-        <button
-          key={c}
-          type="button"
-          onClick={() => onChange(c)}
-          className={cn(
-            dotSize,
-            "rounded-full border-2 transition-all",
-            value === c
-              ? "border-slate-900 scale-110"
-              : "border-transparent hover:border-slate-300"
-          )}
-          style={{ backgroundColor: c }}
-        />
-      ))}
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "group flex items-center gap-2 rounded-lg px-1.5 py-1 transition-colors",
+        isDragging ? "z-50 bg-slate-100 shadow-md opacity-80 ring-1 ring-slate-200" : "hover:bg-slate-50",
+      )}
+    >
+      {/* drag handle */}
+      <button
+        type="button"
+        className={cn(
+          "shrink-0 touch-none text-slate-300 transition-colors hover:text-slate-500",
+          isEditing ? "cursor-default opacity-30" : "cursor-grab active:cursor-grabbing",
+        )}
+        {...(isEditing ? {} : { ...attributes, ...listeners })}
+        aria-label="Перетащить"
+      >
+        <GripVertical className="size-3.5" />
+      </button>
+
+      {isEditing ? (
+        <>
+          <ColorPickerButton value={editColor} onChange={onEditColorChange} size="sm" />
+          <IconPicker value={editIcon} onChange={onEditIconChange} />
+          <Input
+            value={editName}
+            onChange={(e) => onEditNameChange(e.target.value)}
+            className="h-7 flex-1 border-slate-200 text-sm focus:border-slate-400"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onEditSave(cat.id);
+              if (e.key === "Escape") onEditCancel();
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => onEditSave(cat.id)}
+            className="shrink-0 rounded p-1 text-emerald-600 hover:bg-emerald-50"
+            aria-label="Сохранить"
+          >
+            <Check className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={onEditCancel}
+            className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100"
+            aria-label="Отмена"
+          >
+            <X className="size-3.5" />
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: cat.color }} />
+          <CatIcon className="size-3.5 shrink-0 text-slate-400" />
+          <span className="flex-1 truncate text-sm text-slate-700">{cat.name}</span>
+          <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+            <button
+              type="button"
+              onClick={() => onStartEdit(cat)}
+              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              aria-label="Редактировать"
+            >
+              <Pencil className="size-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(cat.id)}
+              className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
+              aria-label="Удалить"
+            >
+              <Trash2 className="size-3" />
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  Category Manager Dialog                                           */
+/*  CategoriesSection — inline in settings, no dialog                */
 /* ------------------------------------------------------------------ */
 
-export function CategoryManager({ open, onOpenChange }: CategoryManagerProps) {
+export function CategoriesSection() {
   const categories = useBrainStore((s) => s.categories);
   const createCategory = useBrainStore((s) => s.createCategory);
   const updateCategory = useBrainStore((s) => s.updateCategory);
   const deleteCategory = useBrainStore((s) => s.deleteCategory);
 
-  /* ---- editing state ---- */
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
-  const [editColor, setEditColor] = useState("");
-  const [editIcon, setEditIcon] = useState("");
+  const [editColor, setEditColor] = useState("#3b82f6");
+  const [editIcon, setEditIcon] = useState("Folder");
 
-  /* ---- new category state ---- */
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState("#3b82f6");
   const [newIcon, setNewIcon] = useState("Folder");
 
-  /* ---- handlers ---- */
+  const sorted = [...categories].sort((a, b) => a.position - b.position);
 
-  const startEdit = (id: string, name: string, color: string, icon: string) => {
-    setEditingId(id);
-    setEditName(name);
-    setEditColor(color);
-    setEditIcon(icon);
-  };
-
-  const cancelEdit = () => setEditingId(null);
-
-  const handleUpdate = useCallback(
-    async (id: string) => {
-      const name = editName.trim();
-      if (!name) return;
-      await updateCategory(id, { name, color: editColor, icon: editIcon });
-      setEditingId(null);
-    },
-    [editName, editColor, editIcon, updateCategory]
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
-  const handleDelete = useCallback(
-    async (id: string) => {
-      if (!confirm("Удалить эту категорию?")) return;
-      await deleteCategory(id);
-    },
-    [deleteCategory]
-  );
+  const handleUpdate = useCallback(async (id: string) => {
+    const name = editName.trim();
+    if (!name) return;
+    await updateCategory(id, { name, color: editColor, icon: editIcon });
+    setEditingId(null);
+  }, [editName, editColor, editIcon, updateCategory]);
+
+  const handleDelete = useCallback(async (id: string) => {
+    if (!confirm("Удалить категорию?")) return;
+    await deleteCategory(id);
+  }, [deleteCategory]);
 
   const handleCreate = useCallback(async () => {
     const name = newName.trim();
@@ -187,182 +242,86 @@ export function CategoryManager({ open, onOpenChange }: CategoryManagerProps) {
     setNewName("");
   }, [newName, newColor, newIcon, createCategory]);
 
-  /* ---- sorted categories ---- */
-  const sorted = [...categories].sort((a, b) => a.position - b.position);
-
-  const moveCategory = useCallback(
-    async (index: number, direction: -1 | 1) => {
-      const targetIndex = index + direction;
-      if (targetIndex < 0 || targetIndex >= sorted.length) return;
-      const a = sorted[index];
-      const b = sorted[targetIndex];
-      await updateCategory(a.id, { position: b.position });
-      await updateCategory(b.id, { position: a.position });
-    },
-    [sorted, updateCategory]
-  );
+  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = sorted.findIndex((c) => c.id === active.id);
+    const newIndex = sorted.findIndex((c) => c.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(sorted, oldIndex, newIndex);
+    await Promise.all(
+      reordered
+        .map((c, idx) => ({ c, idx }))
+        .filter(({ c, idx }) => c.position !== idx)
+        .map(({ c, idx }) => updateCategory(c.id, { position: idx })),
+    );
+  }, [sorted, updateCategory]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-slate-200 bg-white sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="text-slate-900">
-            Управление категориями
-          </DialogTitle>
-        </DialogHeader>
-
-        {/* ---------- existing categories ---------- */}
-        <ScrollArea className="max-h-[50vh]">
-          <div className="flex flex-col gap-1">
-            {sorted.map((cat, idx) => {
-              const CatIcon = getIcon(cat.icon);
-              const isEditing = editingId === cat.id;
-
-              if (isEditing) {
-                return (
-                  <div
-                    key={cat.id}
-                    className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3"
-                  >
-                    {/* color row */}
-                    <ColorGrid
-                      value={editColor}
-                      onChange={setEditColor}
-                      size="sm"
-                    />
-
-                    {/* name + icon row */}
-                    <div className="flex items-center gap-2">
-                      <IconPicker value={editIcon} onChange={setEditIcon} />
-                      <Input
-                        value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
-                        className="h-8 flex-1 border-slate-200 text-sm"
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleUpdate(cat.id);
-                          if (e.key === "Escape") cancelEdit();
-                        }}
-                        autoFocus
-                      />
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        onClick={() => handleUpdate(cat.id)}
-                        className="text-green-600 hover:text-green-700"
-                      >
-                        <Check className="size-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={cancelEdit}
-                        className="h-7 px-2 text-xs text-slate-400"
-                      >
-                        Отмена
-                      </Button>
-                    </div>
-                  </div>
-                );
-              }
-
-              return (
-                <div
+    <div className="space-y-1">
+      {sorted.length > 0 ? (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={sorted.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+            <div className="flex flex-col gap-0.5">
+              {sorted.map((cat) => (
+                <SortableCatRow
                   key={cat.id}
-                  className="group flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-slate-50"
-                >
-                  {/* color dot */}
-                  <span
-                    className="size-3 shrink-0 rounded-full"
-                    style={{ backgroundColor: cat.color }}
-                  />
-                  {/* icon */}
-                  <CatIcon className="size-4 shrink-0 text-slate-400" />
-                  {/* name */}
-                  <span className="flex-1 truncate text-sm text-slate-700">
-                    {cat.name}
-                  </span>
-                  {/* actions: visible on hover */}
-                  <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      disabled={idx === 0}
-                      onClick={() => moveCategory(idx, -1)}
-                    >
-                      <ChevronUp className="size-3.5 text-slate-400" />
-                    </Button>
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      disabled={idx === sorted.length - 1}
-                      onClick={() => moveCategory(idx, 1)}
-                    >
-                      <ChevronDown className="size-3.5 text-slate-400" />
-                    </Button>
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      onClick={() =>
-                        startEdit(cat.id, cat.name, cat.color, cat.icon)
-                      }
-                    >
-                      <Pencil className="size-3.5 text-slate-400" />
-                    </Button>
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      onClick={() => handleDelete(cat.id)}
-                    >
-                      <Trash2 className="size-3.5 text-slate-400 hover:text-red-500" />
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
+                  cat={cat}
+                  editingId={editingId}
+                  editName={editName}
+                  editColor={editColor}
+                  editIcon={editIcon}
+                  onStartEdit={(c) => { setEditingId(c.id); setEditName(c.name); setEditColor(c.color); setEditIcon(c.icon); }}
+                  onEditNameChange={setEditName}
+                  onEditColorChange={setEditColor}
+                  onEditIconChange={setEditIcon}
+                  onEditSave={handleUpdate}
+                  onEditCancel={() => setEditingId(null)}
+                  onDelete={handleDelete}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      ) : (
+        <p className="py-1.5 text-xs text-slate-400">Нет категорий</p>
+      )}
 
-            {sorted.length === 0 && (
-              <p className="py-4 text-center text-sm text-slate-400">
-                Нет категорий
-              </p>
-            )}
-          </div>
-        </ScrollArea>
+      {/* add new */}
+      <div className="flex items-center gap-2 pt-1">
+        <ColorPickerButton value={newColor} onChange={setNewColor} size="sm" />
+        <IconPicker value={newIcon} onChange={setNewIcon} />
+        <Input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="Название категории..."
+          className="h-7 flex-1 border-slate-200 text-sm"
+          onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
+        />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 shrink-0 gap-1 px-2 text-xs text-slate-600 hover:text-slate-900"
+          onClick={handleCreate}
+          disabled={!newName.trim()}
+        >
+          <Plus className="size-3.5" />
+          Добавить
+        </Button>
+      </div>
+    </div>
+  );
+}
 
-        {/* ---------- separator ---------- */}
-        {sorted.length > 0 && (
-          <div className="border-t border-slate-100" />
-        )}
-
-        {/* ---------- add new category ---------- */}
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-medium text-slate-500">
-            Новая категория
-          </span>
-
-          <ColorGrid value={newColor} onChange={setNewColor} />
-
-          <div className="flex items-center gap-2">
-            <IconPicker value={newIcon} onChange={setNewIcon} />
-            <Input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="Название категории..."
-              className="flex-1 border-slate-200 text-sm"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreate();
-              }}
-            />
-            <Button
-              onClick={handleCreate}
-              disabled={!newName.trim()}
-              size="sm"
-            >
-              <Plus className="size-4" />
-              Добавить
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+/* keep backward-compatible export so old imports don't break */
+export function CategoryManager({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  if (!open) return null;
+  return (
+    <div>
+      <CategoriesSection />
+      <button type="button" onClick={() => onOpenChange(false)} className="sr-only">
+        Закрыть
+      </button>
+    </div>
   );
 }
