@@ -33,9 +33,25 @@ import {
   Settings2,
   FolderKanban,
   Database,
-  ChevronUp,
   ChevronDown,
+  ChevronUp,
+  GripVertical,
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { CategoryManager } from "./CategoryManager";
 import { OrderableListSection } from "./OrderableListSection";
 import { UserManager } from "./UserManager";
@@ -209,102 +225,22 @@ function CrmSystemsSection() {
   const createCrm = useBrainStore((s) => s.createCrmSystem);
   const updateCrm = useBrainStore((s) => s.updateCrmSystem);
   const deleteCrm = useBrainStore((s) => s.deleteCrmSystem);
-  const [newName, setNewName] = useState("");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
-
-  const sorted = [...crmSystems].sort((a, b) => a.position - b.position);
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    await createCrm(newName.trim());
-    setNewName("");
-  };
-
-  const handleUpdate = async (id: string) => {
-    if (!editName.trim()) return;
-    await updateCrm(id, { name: editName.trim() });
-    setEditingId(null);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm("Удалить эту CRM-систему?")) return;
-    await deleteCrm(id);
-  };
-
-  const move = async (idx: number, dir: -1 | 1) => {
-    const target = idx + dir;
-    if (target < 0 || target >= sorted.length) return;
-    const a = sorted[idx];
-    const b = sorted[target];
-    await updateCrm(a.id, { position: b.position });
-    await updateCrm(b.id, { position: a.position });
-  };
 
   return (
     <div>
       <div className="mb-3 flex items-center gap-2">
         <Database className="size-4 text-violet-500" />
         <span className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">CRM-системы</span>
-        {sorted.length > 0 && <span className="text-xs text-slate-400">({sorted.length})</span>}
+        {crmSystems.length > 0 && <span className="text-xs text-slate-400">({crmSystems.length})</span>}
       </div>
-
-      {sorted.length > 0 && (
-        <div className="flex flex-col gap-1 mb-3">
-          {sorted.map((crm, idx) => (
-            <div key={crm.id} className="group flex items-center gap-2 rounded-lg border border-slate-100 px-3 py-1.5">
-              {editingId === crm.id ? (
-                <>
-                  <Input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="h-7 flex-1 text-sm"
-                    autoFocus
-                    onKeyDown={(e) => { if (e.key === "Enter") handleUpdate(crm.id); if (e.key === "Escape") setEditingId(null); }}
-                  />
-                  <Button size="icon-xs" variant="ghost" onClick={() => handleUpdate(crm.id)} className="text-green-600">
-                    <Check className="size-3.5" />
-                  </Button>
-                  <Button size="icon-xs" variant="ghost" onClick={() => setEditingId(null)}>
-                    <X className="size-3.5 text-slate-400" />
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <span className="flex-1 text-sm text-slate-700">{crm.name}</span>
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button size="icon-xs" variant="ghost" disabled={idx === 0} onClick={() => move(idx, -1)}>
-                      <ChevronUp className="size-3.5 text-slate-400" />
-                    </Button>
-                    <Button size="icon-xs" variant="ghost" disabled={idx === sorted.length - 1} onClick={() => move(idx, 1)}>
-                      <ChevronDown className="size-3.5 text-slate-400" />
-                    </Button>
-                    <Button size="icon-xs" variant="ghost" onClick={() => { setEditingId(crm.id); setEditName(crm.name); }}>
-                      <Pencil className="size-3.5 text-slate-400" />
-                    </Button>
-                    <Button size="icon-xs" variant="ghost" onClick={() => handleDelete(crm.id)}>
-                      <Trash2 className="size-3.5 text-slate-400 hover:text-red-500" />
-                    </Button>
-                  </div>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="flex items-center gap-2">
-        <Input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="Название CRM-системы..."
-          className="h-8 flex-1 text-sm"
-          onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
-        />
-        <Button size="sm" onClick={handleCreate} disabled={!newName.trim()}>
-          <Plus className="size-4 mr-1" /> Добавить
-        </Button>
-      </div>
+      <OrderableListSection
+        items={crmSystems}
+        onCreate={(name) => createCrm(name)}
+        onUpdate={(id, updates) => updateCrm(id, updates)}
+        onDelete={(id) => deleteCrm(id)}
+        emptyText="Нет CRM-систем"
+        addPlaceholder="Название CRM-системы..."
+      />
     </div>
   );
 }
@@ -418,6 +354,40 @@ function RelationTypeRow({
   );
 }
 
+function SortableRelationTypeRow({
+  rt,
+  onUpdate,
+  onDelete,
+}: {
+  rt: RelationType;
+  onUpdate: (id: string, updates: Partial<RelationType>) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: rt.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn("flex items-center gap-1", isDragging && "z-50 opacity-80")}
+    >
+      <button
+        type="button"
+        className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-400 shrink-0 touch-none p-0.5"
+        aria-label="Перетащить"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="size-4" />
+      </button>
+      <div className="flex-1 min-w-0">
+        <RelationTypeRow rt={rt} onUpdate={onUpdate} onDelete={onDelete} />
+      </div>
+    </div>
+  );
+}
+
 function normalizeMappings(defaults: typeof KAITEN_DEFAULT_FIELD_MAPPINGS, mappings: SyncFieldMapping[]) {
   return defaults.map((defaultMapping) => {
     const existing = mappings.find((mapping) => mapping.local_field === defaultMapping.local_field);
@@ -508,6 +478,7 @@ export function SettingsView() {
   const [newColor, setNewColor] = useState("#6b7280");
   const [showNewColors, setShowNewColors] = useState(false);
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
+  const [kaitenOpen, setKaitenOpen] = useState(false);
 
   const [settings, setSettings] = useState<IntegrationSettings>(DEFAULT_SETTINGS);
   const [tokenInput, setTokenInput] = useState("");
@@ -676,6 +647,25 @@ export function SettingsView() {
       ? "Готово"
       : "Настройте";
   const connectionStatusTone = !settings.enabled ? "slate" : isConnectionConfigured ? "emerald" : "amber";
+
+  const rtSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const sortedRelationTypes = [...relationTypes].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+
+  const handleRelationTypeDragEnd = useCallback(async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = sortedRelationTypes.findIndex((rt) => rt.id === active.id);
+    const newIndex = sortedRelationTypes.findIndex((rt) => rt.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(sortedRelationTypes, oldIndex, newIndex);
+    await Promise.all(
+      reordered
+        .map((rt, idx) => ({ rt, idx }))
+        .filter(({ rt, idx }) => (rt.position ?? 0) !== idx)
+        .map(({ rt, idx }) => updateRelationType(rt.id, { position: idx })),
+    );
+  }, [sortedRelationTypes, updateRelationType]);
 
   const handleCreate = useCallback(async () => {
     if (!newName.trim()) return;
@@ -853,374 +843,8 @@ export function SettingsView() {
       <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
 
         {/* ---- Compact header ---- */}
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="mb-4">
           <h1 className="text-xl font-semibold tracking-tight text-slate-950">Настройки</h1>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600">
-              <span className={cn("size-1.5 rounded-full", statusDotColor)} />
-              {connectionStatusLabel}
-            </div>
-            {selectedBoard && (
-              <div className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600">
-                {selectedBoard.title}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {banner && (
-          <div
-            className={cn(
-              "mb-4 rounded-lg border px-3 py-2 text-sm",
-              banner.tone === "success"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                : "border-red-200 bg-red-50 text-red-700"
-            )}
-          >
-            {banner.text}
-          </div>
-        )}
-
-        {/* ---- Kaiten Sync section ---- */}
-        <div className="mb-6 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="rounded-lg border border-sky-200 bg-sky-50 p-1.5">
-                <PlugZap className="size-4 text-sky-600" />
-              </div>
-              <h2 className="text-base font-semibold tracking-tight text-slate-900">Kaiten Sync</h2>
-            </div>
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] text-slate-500">
-              staging + sync
-            </span>
-          </div>
-
-          {kaitenLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="flex items-center gap-2 text-sm text-slate-500">
-                <Loader2 className="size-4 animate-spin" />
-                Загрузка настроек Kaiten...
-              </div>
-            </div>
-          ) : (
-          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-            <div className="space-y-4">
-              {/* Connection card */}
-              <div
-                className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    handleSaveSync();
-                  }
-                }}
-              >
-                <div className="mb-3 flex items-center gap-2">
-                  <Settings2 className="size-4 text-slate-500" />
-                  <span className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Подключение</span>
-                </div>
-
-                <div className="space-y-3">
-                  <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-700">
-                    <Checkbox
-                      checked={settings.enabled}
-                      onCheckedChange={() => setSettings((current) => ({ ...current, enabled: !current.enabled }))}
-                    />
-                    <span className="font-medium text-slate-900">Включить интеграцию Kaiten</span>
-                  </label>
-
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Company domain
-                      </label>
-                      <Input
-                        value={settings.company_domain}
-                        onChange={(e) => setSettings((current) => ({ ...current, company_domain: e.target.value.trim() }))}
-                        placeholder="my-company"
-                        className="h-9 rounded-lg border-slate-200 bg-slate-50/60 px-3"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        API token
-                      </label>
-                      <Input
-                        type="password"
-                        value={tokenInput}
-                        onChange={(e) => setTokenInput(e.target.value)}
-                        placeholder={settings.has_token ? settings.token_masked ?? "Token saved" : "Paste Kaiten token"}
-                        className="h-9 rounded-lg border-slate-200 bg-slate-50/60 px-3"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <Button onClick={handleTestConnection} disabled={testLoading || saveLoading} size="sm" className="rounded-lg px-3">
-                      {testLoading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                      Проверить
-                    </Button>
-                    <Button variant="outline" onClick={handleSaveSync} disabled={saveLoading} size="sm" className="rounded-lg px-3">
-                      {saveLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                      Сохранить
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Import profile card */}
-              <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm">
-                <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                  <h3 className="text-sm font-semibold text-slate-900">Профиль импорта</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {profiles.length > 0 && (
-                      <Select value={selectedProfileId ?? profiles[0]?.id} onValueChange={handleProfileSelect}>
-                        <SelectTrigger className="h-9 min-w-[200px] rounded-lg border-slate-200 bg-white px-3 text-sm">
-                          <span className="flex flex-1 text-left">
-                            {profiles.find((profile) => profile.id === (selectedProfileId ?? profiles[0]?.id))?.name ?? "Выберите профиль"}
-                          </span>
-                        </SelectTrigger>
-                        <SelectContent className="border-slate-200 bg-white">
-                          {profiles.map((profile) => (
-                            <SelectItem key={profile.id} value={profile.id}>
-                              {profile.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-9 rounded-lg border-slate-200 px-3 text-sm"
-                      onClick={() =>
-                        loadBoards({
-                          settingsValue: settings,
-                          spaceIdValue: sourceSpaceId,
-                        })
-                      }
-                      disabled={boardsLoading || !isConnectionConfigured}
-                    >
-                      {boardsLoading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                      Обновить
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Profile name</label>
-                    <Input
-                      value={profileName}
-                      onChange={(e) => setProfileName(e.target.value)}
-                      placeholder="Kaiten import"
-                      className="h-9 rounded-lg border-slate-200 bg-slate-50/60 px-3"
-                    />
-                  </div>
-
-                  <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-700">
-                    <Checkbox checked={importEnabled} onCheckedChange={() => setImportEnabled((value) => !value)} />
-                    <span className="font-medium text-slate-900">Импорт включён</span>
-                  </label>
-                </div>
-
-                <div className="mt-3 grid gap-3 md:grid-cols-2">
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Space</label>
-                    <Select
-                      value={sourceSpaceId ? String(sourceSpaceId) : "__none__"}
-                      onValueChange={async (value) => {
-                        const nextSpaceId = value === "__none__" ? null : Number(value);
-                        setSourceSpaceId(nextSpaceId);
-                        setSourceBoardId(null);
-                        setSourceStatuses([]);
-                        setSourceColumns([]);
-                        setSourceLanes([]);
-                        if (nextSpaceId) {
-                          await loadBoards({
-                            settingsValue: settings,
-                            spaceIdValue: nextSpaceId,
-                          });
-                        } else {
-                          setBoards([]);
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="h-9 w-full rounded-lg border-slate-200 bg-slate-50/60 px-3 text-sm">
-                        <span className={cn("flex flex-1 text-left", !selectedSpace && "text-muted-foreground")}>
-                          {selectedSpace?.title ?? "Select space"}
-                        </span>
-                      </SelectTrigger>
-                      <SelectContent className="border-slate-200 bg-white">
-                        <SelectItem value="__none__">Не выбрано</SelectItem>
-                        {spaces.map((space) => (
-                          <SelectItem key={space.id} value={String(space.id)}>
-                            {space.title}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Board</label>
-                    <Select
-                      value={sourceBoardId ? String(sourceBoardId) : "__none__"}
-                      onValueChange={(value) => {
-                        const nextBoardId = value === "__none__" ? null : Number(value);
-                        setSourceBoardId(nextBoardId);
-                        setSourceStatuses([]);
-                        setSourceColumns([]);
-                        setSourceLanes([]);
-                      }}
-                    >
-                      <SelectTrigger className="h-9 w-full rounded-lg border-slate-200 bg-slate-50/60 px-3 text-sm">
-                        <span className={cn("flex flex-1 text-left", !selectedBoard && "text-muted-foreground")}>
-                          {selectedBoard?.title ?? "Select board"}
-                        </span>
-                      </SelectTrigger>
-                      <SelectContent className="border-slate-200 bg-white">
-                        <SelectItem value="__none__">Не выбрано</SelectItem>
-                        {boards.map((board) => (
-                          <SelectItem key={board.id} value={String(board.id)}>
-                            {board.title}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {boardsLoading && (
-                  <div className="mt-2 inline-flex items-center gap-2 text-xs text-slate-500">
-                    <Loader2 className="size-3 animate-spin" />
-                    Загружаем структуру доски...
-                  </div>
-                )}
-
-                <div className="mt-3 grid gap-3 xl:grid-cols-3">
-                  <SelectionGroup
-                    title="Статусы"
-                    items={(selectedBoard?.statuses ?? []).map((status) => ({ id: status, title: status }))}
-                    selected={sourceStatuses}
-                    onToggle={(value) => toggleSelection(value, sourceStatuses, setSourceStatuses)}
-                    onSelectAll={() => setSourceStatuses(selectedBoard?.statuses ?? [])}
-                    onClear={() => setSourceStatuses([])}
-                    emptyText={boardsLoading ? "Загружаем..." : "Нет статусов"}
-                  />
-                  <SelectionGroup
-                    title="Колонки"
-                    items={selectedBoard?.columns ?? []}
-                    selected={sourceColumns}
-                    onToggle={(value) => toggleSelection(value, sourceColumns, setSourceColumns)}
-                    onSelectAll={() => setSourceColumns((selectedBoard?.columns ?? []).map((column) => column.id))}
-                    onClear={() => setSourceColumns([])}
-                    emptyText={boardsLoading ? "Загружаем..." : "Нет колонок"}
-                  />
-                  <SelectionGroup
-                    title="Лейны"
-                    items={selectedBoard?.lanes ?? []}
-                    selected={sourceLanes}
-                    onToggle={(value) => toggleSelection(value, sourceLanes, setSourceLanes)}
-                    onSelectAll={() => setSourceLanes((selectedBoard?.lanes ?? []).map((lane) => lane.id))}
-                    onClear={() => setSourceLanes([])}
-                    emptyText={boardsLoading ? "Загружаем..." : "Нет лейнов"}
-                  />
-                </div>
-              </div>
-
-              {/* Field mappings card */}
-              <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm">
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-slate-900">Маппинг полей</h3>
-                  <span className="text-xs text-slate-400">{fieldMappings.length} полей</span>
-                </div>
-
-                <div className="divide-y divide-slate-100">
-                  {fieldMappings.map((mapping) => (
-                    <div key={mapping.local_field} className="flex items-center gap-3 py-2">
-                      <span className="w-40 text-sm font-medium text-slate-600">{mapping.local_field}</span>
-                      <span className="text-slate-300">&rarr;</span>
-                      <Input
-                        value={mapping.remote_field}
-                        onChange={(e) => {
-                          const nextValue = e.target.value;
-                          setFieldMappings((current) =>
-                            current.map((item) =>
-                              item.local_field === mapping.local_field
-                                ? { ...item, remote_field: nextValue }
-                                : item
-                            )
-                          );
-                        }}
-                        className="h-8 flex-1 rounded-lg text-sm"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Right sidebar: import panel (merged into one card) */}
-            <div className="xl:sticky xl:top-4 xl:self-start">
-              <div className="rounded-xl border border-slate-900/80 bg-gradient-to-b from-slate-900 to-slate-950 p-4 text-white shadow-lg">
-                <div className="mb-3 flex items-center gap-2">
-                  <Download className="size-4 text-sky-300" />
-                  <h3 className="text-sm font-semibold text-sky-100/90">Ручной импорт</h3>
-                </div>
-
-                <Button
-                  className="h-9 w-full rounded-lg bg-sky-500 text-sm text-white hover:bg-sky-400 disabled:bg-slate-700"
-                  onClick={handleImport}
-                  disabled={importLoading || !canImport}
-                >
-                  {importLoading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-                  Запустить импорт
-                </Button>
-
-                <Separator className="my-3 bg-white/10" />
-
-                <div className="text-xs text-slate-300">
-                  <div className="mb-1.5 font-medium text-slate-200">Последний запуск</div>
-                  {lastImport ? (
-                    <div className="space-y-1.5">
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Found</span>
-                          <span className="font-medium text-white">{lastImport.found}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Created</span>
-                          <span className="font-medium text-white">{lastImport.created}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Updated</span>
-                          <span className="font-medium text-white">{lastImport.updated}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Errors</span>
-                          <span className={cn("font-medium", lastImport.errors > 0 ? "text-red-400" : "text-white")}>{lastImport.errors}</span>
-                        </div>
-                      </div>
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-500">Skipped: {lastImport.skipped}</span>
-                        <span className="text-slate-500">IDs: {lastImport.imported_ids.length}</span>
-                      </div>
-                      {lastImport.errors_detail.length > 0 && (
-                        <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-[11px] leading-4 text-red-300">
-                          {lastImport.errors_detail.join(" | ")}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-slate-500">Импорт еще не запускался.</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-          )}
         </div>
 
         {/* ---- Bottom reference sections ---- */}
@@ -1347,24 +971,392 @@ export function SettingsView() {
               </div>
             )}
 
-            {relationTypes.length === 0 && !showAdd ? (
+            {sortedRelationTypes.length === 0 && !showAdd ? (
               <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/70 px-4 py-4 text-center">
                 <Link className="mx-auto mb-1 size-6 text-slate-300" />
                 <p className="text-xs text-slate-500">Типы связей пока не созданы</p>
               </div>
             ) : (
-              <div className="space-y-1">
-                {relationTypes.map((rt) => (
-                  <RelationTypeRow
-                    key={rt.id}
-                    rt={rt}
-                    onUpdate={updateRelationType}
-                    onDelete={deleteRelationType}
-                  />
-                ))}
-              </div>
+              <DndContext sensors={rtSensors} collisionDetection={closestCenter} onDragEnd={handleRelationTypeDragEnd}>
+                <SortableContext items={sortedRelationTypes.map((rt) => rt.id)} strategy={verticalListSortingStrategy}>
+                  <div className="space-y-1">
+                    {sortedRelationTypes.map((rt) => (
+                      <SortableRelationTypeRow
+                        key={rt.id}
+                        rt={rt}
+                        onUpdate={updateRelationType}
+                        onDelete={deleteRelationType}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
             )}
           </section>
+        </div>
+
+        {/* ---- Kaiten Sync — collapsible at the bottom ---- */}
+        <div className="mt-6 rounded-2xl border border-slate-200/80 bg-white/80 shadow-sm backdrop-blur">
+          <button
+            type="button"
+            onClick={() => setKaitenOpen((v) => !v)}
+            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="rounded-lg border border-sky-200 bg-sky-50 p-1.5">
+                <PlugZap className="size-4 text-sky-600" />
+              </div>
+              <h2 className="text-base font-semibold tracking-tight text-slate-900">Kaiten Sync</h2>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] text-slate-500">
+                staging + sync
+              </span>
+              <div className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-xs text-slate-600">
+                <span className={cn("size-1.5 rounded-full", statusDotColor)} />
+                {connectionStatusLabel}
+              </div>
+            </div>
+            {kaitenOpen ? (
+              <ChevronUp className="size-4 text-slate-400 shrink-0" />
+            ) : (
+              <ChevronDown className="size-4 text-slate-400 shrink-0" />
+            )}
+          </button>
+
+          {kaitenOpen && (
+            <div className="border-t border-slate-100 p-4">
+              {banner && (
+                <div
+                  className={cn(
+                    "mb-4 rounded-lg border px-3 py-2 text-sm",
+                    banner.tone === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-red-200 bg-red-50 text-red-700",
+                  )}
+                >
+                  {banner.text}
+                </div>
+              )}
+
+              {kaitenLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="flex items-center gap-2 text-sm text-slate-500">
+                    <Loader2 className="size-4 animate-spin" />
+                    Загрузка настроек Kaiten...
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+                  <div className="space-y-4">
+                    {/* Connection card */}
+                    <div
+                      className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault();
+                          handleSaveSync();
+                        }
+                      }}
+                    >
+                      <div className="mb-3 flex items-center gap-2">
+                        <Settings2 className="size-4 text-slate-500" />
+                        <span className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Подключение</span>
+                      </div>
+
+                      <div className="space-y-3">
+                        <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-700">
+                          <Checkbox
+                            checked={settings.enabled}
+                            onCheckedChange={() => setSettings((current) => ({ ...current, enabled: !current.enabled }))}
+                          />
+                          <span className="font-medium text-slate-900">Включить интеграцию Kaiten</span>
+                        </label>
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                              Company domain
+                            </label>
+                            <Input
+                              value={settings.company_domain}
+                              onChange={(e) => setSettings((current) => ({ ...current, company_domain: e.target.value.trim() }))}
+                              placeholder="my-company"
+                              className="h-9 rounded-lg border-slate-200 bg-slate-50/60 px-3"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                              API token
+                            </label>
+                            <Input
+                              type="password"
+                              value={tokenInput}
+                              onChange={(e) => setTokenInput(e.target.value)}
+                              placeholder={settings.has_token ? settings.token_masked ?? "Token saved" : "Paste Kaiten token"}
+                              className="h-9 rounded-lg border-slate-200 bg-slate-50/60 px-3"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <Button onClick={handleTestConnection} disabled={testLoading || saveLoading} size="sm" className="rounded-lg px-3">
+                            {testLoading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                            Проверить
+                          </Button>
+                          <Button variant="outline" onClick={handleSaveSync} disabled={saveLoading} size="sm" className="rounded-lg px-3">
+                            {saveLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                            Сохранить
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Import profile card */}
+                    <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm">
+                      <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                        <h3 className="text-sm font-semibold text-slate-900">Профиль импорта</h3>
+                        <div className="flex flex-wrap gap-2">
+                          {profiles.length > 0 && (
+                            <Select value={selectedProfileId ?? profiles[0]?.id} onValueChange={handleProfileSelect}>
+                              <SelectTrigger className="h-9 min-w-[200px] rounded-lg border-slate-200 bg-white px-3 text-sm">
+                                <span className="flex flex-1 text-left">
+                                  {profiles.find((profile) => profile.id === (selectedProfileId ?? profiles[0]?.id))?.name ?? "Выберите профиль"}
+                                </span>
+                              </SelectTrigger>
+                              <SelectContent className="border-slate-200 bg-white">
+                                {profiles.map((profile) => (
+                                  <SelectItem key={profile.id} value={profile.id}>
+                                    {profile.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-9 rounded-lg border-slate-200 px-3 text-sm"
+                            onClick={() => loadBoards({ settingsValue: settings, spaceIdValue: sourceSpaceId })}
+                            disabled={boardsLoading || !isConnectionConfigured}
+                          >
+                            {boardsLoading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                            Обновить
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Profile name</label>
+                          <Input
+                            value={profileName}
+                            onChange={(e) => setProfileName(e.target.value)}
+                            placeholder="Kaiten import"
+                            className="h-9 rounded-lg border-slate-200 bg-slate-50/60 px-3"
+                          />
+                        </div>
+
+                        <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-700">
+                          <Checkbox checked={importEnabled} onCheckedChange={() => setImportEnabled((value) => !value)} />
+                          <span className="font-medium text-slate-900">Импорт включён</span>
+                        </label>
+                      </div>
+
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Space</label>
+                          <Select
+                            value={sourceSpaceId ? String(sourceSpaceId) : "__none__"}
+                            onValueChange={async (value) => {
+                              const nextSpaceId = value === "__none__" ? null : Number(value);
+                              setSourceSpaceId(nextSpaceId);
+                              setSourceBoardId(null);
+                              setSourceStatuses([]);
+                              setSourceColumns([]);
+                              setSourceLanes([]);
+                              if (nextSpaceId) {
+                                await loadBoards({ settingsValue: settings, spaceIdValue: nextSpaceId });
+                              } else {
+                                setBoards([]);
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="h-9 w-full rounded-lg border-slate-200 bg-slate-50/60 px-3 text-sm">
+                              <span className={cn("flex flex-1 text-left", !selectedSpace && "text-muted-foreground")}>
+                                {selectedSpace?.title ?? "Select space"}
+                              </span>
+                            </SelectTrigger>
+                            <SelectContent className="border-slate-200 bg-white">
+                              <SelectItem value="__none__">Не выбрано</SelectItem>
+                              {spaces.map((space) => (
+                                <SelectItem key={space.id} value={String(space.id)}>
+                                  {space.title}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Board</label>
+                          <Select
+                            value={sourceBoardId ? String(sourceBoardId) : "__none__"}
+                            onValueChange={(value) => {
+                              const nextBoardId = value === "__none__" ? null : Number(value);
+                              setSourceBoardId(nextBoardId);
+                              setSourceStatuses([]);
+                              setSourceColumns([]);
+                              setSourceLanes([]);
+                            }}
+                          >
+                            <SelectTrigger className="h-9 w-full rounded-lg border-slate-200 bg-slate-50/60 px-3 text-sm">
+                              <span className={cn("flex flex-1 text-left", !selectedBoard && "text-muted-foreground")}>
+                                {selectedBoard?.title ?? "Select board"}
+                              </span>
+                            </SelectTrigger>
+                            <SelectContent className="border-slate-200 bg-white">
+                              <SelectItem value="__none__">Не выбрано</SelectItem>
+                              {boards.map((board) => (
+                                <SelectItem key={board.id} value={String(board.id)}>
+                                  {board.title}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      {boardsLoading && (
+                        <div className="mt-2 inline-flex items-center gap-2 text-xs text-slate-500">
+                          <Loader2 className="size-3 animate-spin" />
+                          Загружаем структуру доски...
+                        </div>
+                      )}
+
+                      <div className="mt-3 grid gap-3 xl:grid-cols-3">
+                        <SelectionGroup
+                          title="Статусы"
+                          items={(selectedBoard?.statuses ?? []).map((status) => ({ id: status, title: status }))}
+                          selected={sourceStatuses}
+                          onToggle={(value) => toggleSelection(value, sourceStatuses, setSourceStatuses)}
+                          onSelectAll={() => setSourceStatuses(selectedBoard?.statuses ?? [])}
+                          onClear={() => setSourceStatuses([])}
+                          emptyText={boardsLoading ? "Загружаем..." : "Нет статусов"}
+                        />
+                        <SelectionGroup
+                          title="Колонки"
+                          items={selectedBoard?.columns ?? []}
+                          selected={sourceColumns}
+                          onToggle={(value) => toggleSelection(value, sourceColumns, setSourceColumns)}
+                          onSelectAll={() => setSourceColumns((selectedBoard?.columns ?? []).map((column) => column.id))}
+                          onClear={() => setSourceColumns([])}
+                          emptyText={boardsLoading ? "Загружаем..." : "Нет колонок"}
+                        />
+                        <SelectionGroup
+                          title="Лейны"
+                          items={selectedBoard?.lanes ?? []}
+                          selected={sourceLanes}
+                          onToggle={(value) => toggleSelection(value, sourceLanes, setSourceLanes)}
+                          onSelectAll={() => setSourceLanes((selectedBoard?.lanes ?? []).map((lane) => lane.id))}
+                          onClear={() => setSourceLanes([])}
+                          emptyText={boardsLoading ? "Загружаем..." : "Нет лейнов"}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Field mappings card */}
+                    <div className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm">
+                      <div className="mb-3 flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-slate-900">Маппинг полей</h3>
+                        <span className="text-xs text-slate-400">{fieldMappings.length} полей</span>
+                      </div>
+
+                      <div className="divide-y divide-slate-100">
+                        {fieldMappings.map((mapping) => (
+                          <div key={mapping.local_field} className="flex items-center gap-3 py-2">
+                            <span className="w-40 text-sm font-medium text-slate-600">{mapping.local_field}</span>
+                            <span className="text-slate-300">&rarr;</span>
+                            <Input
+                              value={mapping.remote_field}
+                              onChange={(e) => {
+                                const nextValue = e.target.value;
+                                setFieldMappings((current) =>
+                                  current.map((item) =>
+                                    item.local_field === mapping.local_field
+                                      ? { ...item, remote_field: nextValue }
+                                      : item,
+                                  )
+                                );
+                              }}
+                              className="h-8 flex-1 rounded-lg text-sm"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right sidebar: import panel */}
+                  <div className="xl:sticky xl:top-4 xl:self-start">
+                    <div className="rounded-xl border border-slate-900/80 bg-gradient-to-b from-slate-900 to-slate-950 p-4 text-white shadow-lg">
+                      <div className="mb-3 flex items-center gap-2">
+                        <Download className="size-4 text-sky-300" />
+                        <h3 className="text-sm font-semibold text-sky-100/90">Ручной импорт</h3>
+                      </div>
+
+                      <Button
+                        className="h-9 w-full rounded-lg bg-sky-500 text-sm text-white hover:bg-sky-400 disabled:bg-slate-700"
+                        onClick={handleImport}
+                        disabled={importLoading || !canImport}
+                      >
+                        {importLoading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                        Запустить импорт
+                      </Button>
+
+                      <Separator className="my-3 bg-white/10" />
+
+                      <div className="text-xs text-slate-300">
+                        <div className="mb-1.5 font-medium text-slate-200">Последний запуск</div>
+                        {lastImport ? (
+                          <div className="space-y-1.5">
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                              <div className="flex justify-between">
+                                <span className="text-slate-400">Found</span>
+                                <span className="font-medium text-white">{lastImport.found}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-slate-400">Created</span>
+                                <span className="font-medium text-white">{lastImport.created}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-slate-400">Updated</span>
+                                <span className="font-medium text-white">{lastImport.updated}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-slate-400">Errors</span>
+                                <span className={cn("font-medium", lastImport.errors > 0 ? "text-red-400" : "text-white")}>{lastImport.errors}</span>
+                              </div>
+                            </div>
+                            <div className="flex justify-between text-[11px]">
+                              <span className="text-slate-500">Skipped: {lastImport.skipped}</span>
+                              <span className="text-slate-500">IDs: {lastImport.imported_ids.length}</span>
+                            </div>
+                            {lastImport.errors_detail.length > 0 && (
+                              <div className="mt-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-[11px] leading-4 text-red-300">
+                                {lastImport.errors_detail.join(" | ")}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-slate-500">Импорт еще не запускался.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
