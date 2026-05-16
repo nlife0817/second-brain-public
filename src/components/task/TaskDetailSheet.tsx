@@ -38,12 +38,6 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
 import { Separator } from "@/components/ui/separator";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import { SubtaskList } from "./SubtaskList";
@@ -52,9 +46,7 @@ import { CommentsList } from "@/components/comments/CommentsList";
 import { TimerSection } from "@/components/timing/TimerSection";
 
 import {
-  CalendarIcon,
   Trash2,
-  AlertTriangle,
   Clock,
   Bold as BoldIcon,
   Italic as ItalicIcon,
@@ -66,6 +58,8 @@ import {
   Pencil,
   X,
   RotateCw,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { TagSelector } from "./TagSelector";
 import { RecurrenceEditor } from "./RecurrenceEditor";
@@ -307,6 +301,56 @@ const RichEditor = memo(function RichEditor({
   );
 });
 
+function plainTextLength(html: string) {
+  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().length;
+}
+
+function CollapsibleLongBlock({
+  children,
+  shouldCollapse,
+  maxHeight = 360,
+}: {
+  children: React.ReactNode;
+  shouldCollapse: boolean;
+  maxHeight?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!shouldCollapse) return <>{children}</>;
+
+  return (
+    <div className="relative">
+      <div
+        className={cn(
+          "transition-[max-height] duration-200",
+          !expanded && "overflow-hidden"
+        )}
+        style={!expanded ? { maxHeight } : undefined}
+      >
+        {children}
+      </div>
+      <div
+        className={cn(
+          "mt-2 flex justify-center",
+          !expanded &&
+            "pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white/95 to-transparent pt-16"
+        )}
+      >
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="pointer-events-auto h-7 rounded-full px-3 text-xs"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+          {expanded ? "Свернуть" : "Показать полностью"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  Field selectors (shared)                                           */
 /* ------------------------------------------------------------------ */
@@ -322,6 +366,7 @@ function FieldSelectors({
   onStartChange,
   onEndChange,
   onAssigneeChange,
+  tagsNode,
 }: {
   item: ItemWithSubtasks;
   layout: "modal" | "panel";
@@ -333,6 +378,7 @@ function FieldSelectors({
   onStartChange: (next: { date: string | null; time: string | null }) => void;
   onEndChange: (next: { date: string | null; time: string | null }) => void;
   onAssigneeChange: (id: string | null) => void;
+  tagsNode?: React.ReactNode;
 }) {
   const categoryConfig = useCategoryConfig();
   const categories = useBrainStore((s) => s.categories);
@@ -523,6 +569,14 @@ function FieldSelectors({
             </SelectContent>
           </Select>
         </div>
+        {tagsNode && (
+          <div className="flex flex-col gap-1">
+            <span className={labelCls}>РўРµРіРё</span>
+            <div className="min-h-7 rounded-md border border-slate-200 bg-white px-2 py-1">
+              {tagsNode}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -687,6 +741,15 @@ function FieldSelectors({
           ))}
         </SelectContent>
       </Select>
+
+      {tagsNode && (
+        <>
+          <span className={labelCls}>РўРµРіРё</span>
+          <div className="min-h-8 rounded-md border border-slate-200 bg-white px-2 py-1.5">
+            {tagsNode}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1188,6 +1251,18 @@ function TaskDetailContent({
     </div>
   );
 
+  /* ---- Tags block ---- */
+  const handleTagsChange = useCallback(
+    (tagIds: string[]) => updateItem(item.id, { tags: tagIds }),
+    [item.id, updateItem]
+  );
+  const tagsBlock = (
+    <TagSelector
+      selectedTags={item.tags ?? []}
+      onTagsChange={handleTagsChange}
+    />
+  );
+
   /* ---- Field selectors block ---- */
   const fieldsBlock = (
     <FieldSelectors
@@ -1201,18 +1276,7 @@ function TaskDetailContent({
       onStartChange={handleStartChange}
       onEndChange={handleEndChange}
       onAssigneeChange={handleAssigneeChange}
-    />
-  );
-
-  /* ---- Tags block ---- */
-  const handleTagsChange = useCallback(
-    (tagIds: string[]) => updateItem(item.id, { tags: tagIds }),
-    [item.id, updateItem]
-  );
-  const tagsBlock = (
-    <TagSelector
-      selectedTags={item.tags ?? []}
-      onTagsChange={handleTagsChange}
+      tagsNode={tagsBlock}
     />
   );
 
@@ -1264,13 +1328,16 @@ function TaskDetailContent({
   ) : null;
 
   /* ---- Description block ---- */
+  const shouldCollapseDescription = plainTextLength(item.description || "") > 600;
   const descriptionBlock = (
     <div className="space-y-2">
       <span className={cn("font-medium text-slate-500", layout === "panel" ? "text-xs" : "text-sm")}>Описание</span>
-      <RichEditor
-        content={item.description || ""}
-        onSave={handleDescriptionSave}
-      />
+      <CollapsibleLongBlock key={item.id} shouldCollapse={shouldCollapseDescription}>
+        <RichEditor
+          content={item.description || ""}
+          onSave={handleDescriptionSave}
+        />
+      </CollapsibleLongBlock>
     </div>
   );
 
@@ -1296,7 +1363,7 @@ function TaskDetailContent({
 
   /* ---- Comments block ---- */
   const commentsBlock = (
-    <CommentsList entityType="item" entityId={item.id} />
+    <CommentsList key={item.id} entityType="item" entityId={item.id} collapseLong />
   );
 
   /* ---- Timestamps block ---- */
@@ -1314,33 +1381,60 @@ function TaskDetailContent({
   /* ===== MODAL: responsive two-column layout ===== */
   if (layout === "modal") {
     return (
-      <div className="flex flex-col md:flex-row gap-6">
-        {/* LEFT column — main content */}
-        <div className="flex-1 min-w-0 flex flex-col gap-5">
+      <div className="max-h-[90vh] overflow-y-auto bg-white">
+        <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-5 py-4 pr-12 shadow-[0_1px_0_rgba(15,23,42,0.03)] backdrop-blur sm:px-6 lg:px-8">
           {titleBlock}
-          <Separator className="bg-slate-200" />
-          {descriptionBlock}
-          {subtasksBlock && <Separator className="bg-slate-200" />}
-          {subtasksBlock}
-          <Separator className="bg-slate-200" />
-          {relationsBlock}
-          <Separator className="bg-slate-200" />
-          {commentsBlock}
         </div>
+        <div className="grid gap-6 px-5 py-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:px-8 lg:py-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+        {/* LEFT column — main content */}
+          <div className="min-w-0 space-y-5">
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              {descriptionBlock}
+            </section>
+
+            {subtasksBlock && (
+              <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                {subtasksBlock}
+              </section>
+            )}
+
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              {relationsBlock}
+            </section>
+
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              {commentsBlock}
+            </section>
+          </div>
 
         {/* RIGHT column — fields sidebar, stacks below on small screens */}
-        <div className="w-full md:w-[260px] lg:w-[280px] shrink-0 flex flex-col gap-4">
-          {fieldsBlock}
-          {recurrenceBlock && <Separator className="bg-slate-200" />}
-          {recurrenceBlock}
-          {developmentFieldsBlock}
-          {tagsBlock}
-          {timerBlock && <Separator className="bg-slate-200" />}
-          {timerBlock}
-          <Separator className="bg-slate-200" />
-          {timestampsBlock}
-          <Separator className="bg-slate-200" />
-          {deleteBlock}
+          <aside className="space-y-4 lg:sticky lg:top-[104px] lg:self-start">
+            <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 shadow-sm">
+              {fieldsBlock}
+            </section>
+
+            {recurrenceBlock && (
+              <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                {recurrenceBlock}
+              </section>
+            )}
+
+            {developmentFieldsBlock}
+
+            {timerBlock && (
+              <section className="rounded-xl border border-blue-100 bg-blue-50/40 p-4 shadow-sm">
+                {timerBlock}
+              </section>
+            )}
+
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              {timestampsBlock}
+            </section>
+
+            <section className="rounded-xl border border-red-100 bg-red-50/30 p-4">
+              {deleteBlock}
+            </section>
+          </aside>
         </div>
       </div>
     );
@@ -1355,7 +1449,6 @@ function TaskDetailContent({
       {recurrenceBlock && <Separator className="bg-slate-200" />}
       {recurrenceBlock}
       {developmentFieldsBlock}
-      {tagsBlock}
       {timerBlock && <Separator className="bg-slate-200" />}
       {timerBlock}
       {descriptionBlock}
@@ -1399,7 +1492,7 @@ export function TaskDetailModal({ forceModal }: { forceModal?: boolean } = {}) {
     >
       <DialogContent
         className={cn(
-          "max-w-[calc(100%-1rem)] sm:max-w-[92vw] md:max-w-[90vw] lg:max-w-5xl xl:max-w-7xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-6 lg:p-8 bg-white"
+          "max-w-[calc(100%-1rem)] sm:max-w-[92vw] md:max-w-[90vw] lg:max-w-5xl xl:max-w-7xl w-full max-h-[90vh] overflow-hidden p-0 bg-white"
         )}
         showCloseButton
       >

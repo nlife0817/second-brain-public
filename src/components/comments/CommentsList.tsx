@@ -25,11 +25,19 @@ import {
   Underline as UnderlineIcon,
   List,
   ListOrdered,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 
 interface CommentsListProps {
   entityType: EntityType;
   entityId: string;
+  collapseLong?: boolean;
+  collapseThreshold?: number;
+}
+
+function plainTextLength(html: string) {
+  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().length;
 }
 
 function MiniToolbar({ editor }: { editor: ReturnType<typeof useEditor> | null }) {
@@ -130,11 +138,17 @@ function CommentEditor({ initialContent, onSave, onCancel, placeholder }: {
   );
 }
 
-export function CommentsList({ entityType, entityId }: CommentsListProps) {
+export function CommentsList({
+  entityType,
+  entityId,
+  collapseLong = false,
+  collapseThreshold = 600,
+}: CommentsListProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [commentsExpanded, setCommentsExpanded] = useState(false);
   const editingRef = useRef<HTMLDivElement>(null);
 
   const fetchComments = useBrainStore((s) => s.fetchComments);
@@ -155,7 +169,6 @@ export function CommentsList({ entityType, entityId }: CommentsListProps) {
   }, [fetchComments, entityType, entityId]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadComments();
   }, [loadComments]);
 
@@ -181,6 +194,12 @@ export function CommentsList({ entityType, entityId }: CommentsListProps) {
     await deleteComment(commentId);
     await loadComments();
   }, [deleteComment, loadComments]);
+
+  const shouldCollapseComments =
+    collapseLong &&
+    comments.reduce((sum, comment) => sum + plainTextLength(comment.text), 0) >
+      collapseThreshold;
+  const visibleComments = [...comments].reverse();
 
   return (
     <div className="space-y-2">
@@ -214,8 +233,14 @@ export function CommentsList({ entityType, entityId }: CommentsListProps) {
       )}
 
       {comments.length > 0 && (
-        <div className="space-y-2">
-          {[...comments].reverse().map((comment) => (
+        <div className="relative">
+          <div
+            className={cn(
+              "space-y-2 transition-[max-height] duration-200",
+              shouldCollapseComments && !commentsExpanded && "max-h-[360px] overflow-hidden"
+            )}
+          >
+          {visibleComments.map((comment) => (
             <div
               key={comment.id}
               ref={editingId === comment.id ? editingRef : undefined}
@@ -258,6 +283,27 @@ export function CommentsList({ entityType, entityId }: CommentsListProps) {
               )}
             </div>
           ))}
+          </div>
+          {shouldCollapseComments && (
+            <div
+              className={cn(
+                "mt-2 flex justify-center",
+                !commentsExpanded &&
+                  "pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white/95 to-transparent pt-16"
+              )}
+            >
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="pointer-events-auto h-7 rounded-full px-3 text-xs"
+                onClick={() => setCommentsExpanded((v) => !v)}
+              >
+                {commentsExpanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+                {commentsExpanded ? "Свернуть" : "Показать полностью"}
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

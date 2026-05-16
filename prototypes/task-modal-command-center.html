@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вариант 3 - Command Center</title>
+  <link rel="stylesheet" href="task-modal-prototypes.css">
+  <script src="task-modal-prototypes.js" defer></script>
+</head>
+<body>
+  <main class="prototype-shell">
+    <header class="topbar">
+      <div>
+        <h1>Вариант 3: Command Center</h1>
+        <p>Операционный интерфейс: состояние задачи, метрики и крупные разделы разнесены по вкладкам.</p>
+      </div>
+      <nav class="nav" aria-label="Варианты">
+        <a href="index.html">Все</a>
+        <a href="task-modal-working-card.html">1</a>
+        <a href="task-modal-focus-mode.html">2</a>
+        <a class="active" href="task-modal-command-center.html">3</a>
+      </nav>
+    </header>
+
+    <div class="backdrop">
+      <article class="modal command-modal">
+        <div class="modal-scroll">
+          <header class="command-header">
+            <div>
+              <input class="title-input" value="Подготовить КП для клиента Альфа" aria-label="Название задачи">
+              <div class="chip-row" style="margin-top: 13px">
+                <span class="chip"><span class="dot green"></span>
+                  <select data-chip-select aria-label="Статус">
+                    <option>В работе</option>
+                    <option>Запланировано</option>
+                    <option>Готово</option>
+                    <option>Пауза</option>
+                  </select>
+                </span>
+                <span class="chip"><span class="dot red"></span>Срочно</span>
+                <span class="chip">Сегодня, 18:00</span>
+                <span class="chip">Алексей</span>
+              </div>
+            </div>
+
+            <div class="command-stats" aria-label="Метрики">
+              <div class="stat"><span>Подзадачи</span><strong>1 / 3</strong></div>
+              <div class="stat"><span>Время</span><strong>42 мин</strong></div>
+              <div class="stat"><span>Связи</span><strong>2</strong></div>
+            </div>
+          </header>
+
+          <div class="command-body">
+            <main class="command-main" data-tabs>
+              <div class="tabs" role="tablist" aria-label="Разделы задачи">
+                <button class="tab active" data-tab="overview" type="button">Описание</button>
+                <button class="tab" data-tab="subtasks" type="button">Подзадачи</button>
+                <button class="tab" data-tab="relations" type="button">Связи</button>
+                <button class="tab" data-tab="comments" type="button">Комментарии</button>
+              </div>
+
+              <section class="tab-panel active" data-panel="overview">
+                <h2>Описание</h2>
+                <textarea class="editor" style="min-height: 230px">Коммерческое предложение на разработку мобильного приложения. Нужно собрать вводные, уточнить бюджет и подготовить версию для отправки клиенту.</textarea>
+              </section>
+
+              <section class="tab-panel" data-panel="subtasks">
+                <h2>Подзадачи</h2>
+                <div class="subtasks">
+                  <label class="subtask"><input type="checkbox" checked><span>Собрать требования от клиента</span></label>
+                  <label class="subtask"><input type="checkbox"><span>Проверить оценку с разработкой</span></label>
+                  <label class="subtask"><input type="checkbox"><span>Подготовить PDF и письмо</span></label>
+                </div>
+              </section>
+
+              <section class="tab-panel" data-panel="relations">
+                <h2>Связи</h2>
+                <div class="comment" style="margin-bottom: 10px">
+                  <strong>Клиент: Альфа</strong>
+                  <p>Карточка клиента, контакты и история коммуникаций.</p>
+                </div>
+                <div class="comment">
+                  <strong>Цель: продажи Q2</strong>
+                  <p>Связано с целью квартала: увеличить долю проектных продаж.</p>
+                </div>
+              </section>
+
+              <section class="tab-panel" data-panel="comments">
+                <h2>Комментарии</h2>
+                <div class="comment" style="margin-bottom: 10px">
+                  <strong>Мария, 14:20</strong>
+                  <p>Клиент попросил показать два сценария бюджета: базовый и с аналитикой.</p>
+                </div>
+                <textarea class="editor" style="min-height: 90px" placeholder="Добавить комментарий"></textarea>
+              </section>
+            </main>
+
+            <aside class="command-sidebar" aria-label="Свойства задачи">
+              <div class="field-list">
+                <div class="field"><label>Категория</label><select><option>Клиенты</option><option>Разработка</option></select></div>
+                <div class="field"><label>Тип</label><select><option>Задача</option><option>Встреча</option></select></div>
+                <div class="field"><label>Старт</label><input type="date" value="2026-05-15"></div>
+                <div class="field"><label>Конец</label><input type="date" value="2026-05-15"></div>
+                <div class="field"><label>Исполнитель</label><select><option>Алексей</option><option>Мария</option></select></div>
+              </div>
+
+              <div class="section">
+                <h2>Таймер</h2>
+                <div class="timer" data-timer data-seconds="2520">
+                  <time>00:42:00</time>
+                  <button class="primary-button" type="button">Старт</button>
+                </div>
+              </div>
+
+              <div class="section">
+                <h2>Теги</h2>
+                <div class="chip-row">
+                  <span class="chip">КП</span>
+                  <span class="chip">Продажи</span>
+                  <span class="chip">Q2</span>
+                </div>
+              </div>
+
+              <div class="section">
+                <p class="muted">Создано 15 мая 2026, 09:10<br>Обновлено 15 мая 2026, 14:22</p>
+                <button class="danger-button" type="button">Удалить</button>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </article>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Прототипы модального окна задачи</title>
+  <link rel="stylesheet" href="task-modal-prototypes.css">
+</head>
+<body>
+  <main class="prototype-shell">
+    <header class="topbar">
+      <div>
+        <h1>Прототипы модального окна задачи</h1>
+        <p>Три направления для сравнения: рабочая карточка, фокусный документ и операционный центр. Все страницы статические, но с базовой интерактивностью.</p>
+      </div>
+      <nav class="nav" aria-label="Варианты">
+        <a href="task-modal-working-card.html">Вариант 1</a>
+        <a href="task-modal-focus-mode.html">Вариант 2</a>
+        <a href="task-modal-command-center.html">Вариант 3</a>
+      </nav>
+    </header>
+
+    <section class="index-grid" aria-label="Список вариантов">
+      <a class="concept-card" href="task-modal-working-card.html">
+        <div class="chip-row">
+          <span class="chip"><span class="dot green"></span>Практичный</span>
+        </div>
+        <h2>1. Рабочая карточка</h2>
+        <p>Плотная двухколоночная модалка: слева содержание задачи, справа sticky-инспектор со свойствами, тегами и таймером.</p>
+        <div class="mini-wire" aria-hidden="true">
+          <div class="wire-line"></div>
+          <div class="wire-box"></div>
+          <div class="wire-line short"></div>
+        </div>
+      </a>
+
+      <a class="concept-card" href="task-modal-focus-mode.html">
+        <div class="chip-row">
+          <span class="chip"><span class="dot amber"></span>Спокойный</span>
+        </div>
+        <h2>2. Focus Mode</h2>
+        <p>Задача ощущается как документ: минимум рамок, основное внимание на названии, описании и подзадачах.</p>
+        <div class="mini-wire" aria-hidden="true">
+          <div class="wire-line short"></div>
+          <div class="wire-line"></div>
+          <div class="wire-box"></div>
+        </div>
+      </a>
+
+      <a class="concept-card" href="task-modal-command-center.html">
+        <div class="chip-row">
+          <span class="chip"><span class="dot violet"></span>Операционный</span>
+        </div>
+        <h2>3. Command Center</h2>
+        <p>Верхняя панель состояния, метрики, вкладки для крупных разделов и отдельная боковая панель свойств.</p>
+        <div class="mini-wire" aria-hidden="true">
+          <div class="wire-box"></div>
+          <div class="wire-line"></div>
+          <div class="wire-line short"></div>
+        </div>
+      </a>
+    </section>
+  </main>
+</body>
+</html>
