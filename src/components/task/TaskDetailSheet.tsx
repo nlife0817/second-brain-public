@@ -8,6 +8,7 @@ import {
   ItemPriority,
   ItemCategory,
   ItemType,
+  ItemStatusRow,
   DevelopmentParticipantInput,
   STATUS_CONFIG,
   PRIORITY_CONFIG,
@@ -351,6 +352,18 @@ function CollapsibleLongBlock({
   );
 }
 
+function statusDisplay(
+  status: string,
+  itemStatuses: ItemStatusRow[]
+): { label: string; className?: string; color?: string } {
+  const row = itemStatuses.find((s) => s.id === status);
+  if (row) return { label: row.name, color: row.color };
+  const fallback = STATUS_CONFIG[status as ItemStatus];
+  return fallback
+    ? { label: fallback.label, className: fallback.color }
+    : { label: status, className: "bg-slate-100 text-slate-700" };
+}
+
 /* ------------------------------------------------------------------ */
 /*  Field selectors (shared)                                           */
 /* ------------------------------------------------------------------ */
@@ -367,6 +380,7 @@ function FieldSelectors({
   onEndChange,
   onAssigneeChange,
   tagsNode,
+  developmentNode,
 }: {
   item: ItemWithSubtasks;
   layout: "modal" | "panel";
@@ -379,9 +393,11 @@ function FieldSelectors({
   onEndChange: (next: { date: string | null; time: string | null }) => void;
   onAssigneeChange: (id: string | null) => void;
   tagsNode?: React.ReactNode;
+  developmentNode?: React.ReactNode;
 }) {
   const categoryConfig = useCategoryConfig();
   const categories = useBrainStore((s) => s.categories);
+  const itemStatuses = useBrainStore((s) => s.itemStatuses);
   const allParticipants = useBrainStore((s) => s.allParticipants);
   const fetchAllParticipants = useBrainStore((s) => s.fetchAllParticipants);
   useEffect(() => {
@@ -393,6 +409,14 @@ function FieldSelectors({
   const isPanel = layout === "panel";
   const labelCls = isPanel ? "text-xs text-slate-500" : "text-sm text-slate-500";
   const triggerH = isPanel ? "h-7" : "h-8";
+  const statusOptions: { key: ItemStatus; label: string; className?: string; color?: string }[] =
+    itemStatuses.length === 0
+      ? (Object.entries(STATUS_CONFIG) as [ItemStatus, (typeof STATUS_CONFIG)[ItemStatus]][])
+          .map(([key, cfg]) => ({ key, label: cfg.label, className: cfg.color }))
+      : [...itemStatuses]
+          .sort((a, b) => a.position - b.position)
+          .map((status) => ({ key: status.id as ItemStatus, label: status.name, color: status.color }));
+  const currentStatus = statusDisplay(item.status, itemStatuses);
 
   /* ===== PANEL layout: grouped 2-column with labels on top ===== */
   if (isPanel) {
@@ -408,28 +432,25 @@ function FieldSelectors({
                   <span
                     className={cn(
                       "inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-medium",
-                      STATUS_CONFIG[item.status].color
+                      currentStatus.className
                     )}
+                    style={currentStatus.color ? { backgroundColor: `${currentStatus.color}1A`, color: currentStatus.color } : undefined}
                   >
-                    {STATUS_CONFIG[item.status].label}
+                    {currentStatus.label}
                   </span>
                 </SelectValue>
               </SelectTrigger>
               <SelectContent className="border-slate-200 bg-white">
-                {(
-                  Object.entries(STATUS_CONFIG) as [
-                    ItemStatus,
-                    (typeof STATUS_CONFIG)[ItemStatus],
-                  ][]
-                ).map(([key, config]) => (
-                  <SelectItem key={key} value={key}>
+                {statusOptions.map((option) => (
+                  <SelectItem key={option.key} value={option.key}>
                     <span
                       className={cn(
                         "inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium",
-                        config.color
+                        option.className
                       )}
+                      style={option.color ? { backgroundColor: `${option.color}1A`, color: option.color } : undefined}
                     >
-                      {config.label}
+                      {option.label}
                     </span>
                   </SelectItem>
                 ))}
@@ -522,6 +543,7 @@ function FieldSelectors({
             </Select>
           </div>
         </div>
+        {developmentNode}
 
         {/* Row 3: Start + End */}
         <div className="grid grid-cols-2 gap-2">
@@ -571,7 +593,7 @@ function FieldSelectors({
         </div>
         {tagsNode && (
           <div className="flex flex-col gap-1">
-            <span className={labelCls}>РўРµРіРё</span>
+            <span className={labelCls}>Теги</span>
             <div className="min-h-7 rounded-md border border-slate-200 bg-white px-2 py-1">
               {tagsNode}
             </div>
@@ -592,28 +614,25 @@ function FieldSelectors({
             <span
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-medium",
-                STATUS_CONFIG[item.status].color
+                currentStatus.className
               )}
+              style={currentStatus.color ? { backgroundColor: `${currentStatus.color}1A`, color: currentStatus.color } : undefined}
             >
-              {STATUS_CONFIG[item.status].label}
+              {currentStatus.label}
             </span>
           </SelectValue>
         </SelectTrigger>
         <SelectContent className="border-slate-200 bg-white">
-          {(
-            Object.entries(STATUS_CONFIG) as [
-              ItemStatus,
-              (typeof STATUS_CONFIG)[ItemStatus],
-            ][]
-          ).map(([key, config]) => (
-            <SelectItem key={key} value={key}>
+          {statusOptions.map((option) => (
+            <SelectItem key={option.key} value={option.key}>
               <span
                 className={cn(
                   "inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium",
-                  config.color
+                  option.className
                 )}
+                style={option.color ? { backgroundColor: `${option.color}1A`, color: option.color } : undefined}
               >
-                {config.label}
+                {option.label}
               </span>
             </SelectItem>
           ))}
@@ -701,6 +720,13 @@ function FieldSelectors({
         </SelectContent>
       </Select>
 
+      {developmentNode && (
+        <>
+          <span />
+          {developmentNode}
+        </>
+      )}
+
       {/* Start */}
       <span className={labelCls}>Старт</span>
       <DateTimePicker
@@ -744,7 +770,7 @@ function FieldSelectors({
 
       {tagsNode && (
         <>
-          <span className={labelCls}>РўРµРіРё</span>
+          <span className={labelCls}>Теги</span>
           <div className="min-h-8 rounded-md border border-slate-200 bg-white px-2 py-1.5">
             {tagsNode}
           </div>
@@ -1263,23 +1289,6 @@ function TaskDetailContent({
     />
   );
 
-  /* ---- Field selectors block ---- */
-  const fieldsBlock = (
-    <FieldSelectors
-      item={item}
-      layout={layout}
-      onStatusChange={handleStatusChange}
-      onPriorityChange={handlePriorityChange}
-      onCategoryChange={handleCategoryChange}
-      onTypeChange={handleTypeChange}
-      onDueChange={handleDueChange}
-      onStartChange={handleStartChange}
-      onEndChange={handleEndChange}
-      onAssigneeChange={handleAssigneeChange}
-      tagsNode={tagsBlock}
-    />
-  );
-
   const developmentFieldsBlock = item.category === "development" ? (
     <div className="space-y-2.5 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
       <div className="space-y-1">
@@ -1326,6 +1335,24 @@ function TaskDetailContent({
       )}
     </div>
   ) : null;
+
+  /* ---- Field selectors block ---- */
+  const fieldsBlock = (
+    <FieldSelectors
+      item={item}
+      layout={layout}
+      onStatusChange={handleStatusChange}
+      onPriorityChange={handlePriorityChange}
+      onCategoryChange={handleCategoryChange}
+      onTypeChange={handleTypeChange}
+      onDueChange={handleDueChange}
+      onStartChange={handleStartChange}
+      onEndChange={handleEndChange}
+      onAssigneeChange={handleAssigneeChange}
+      tagsNode={tagsBlock}
+      developmentNode={developmentFieldsBlock}
+    />
+  );
 
   /* ---- Description block ---- */
   const shouldCollapseDescription = plainTextLength(item.description || "") > 600;
@@ -1388,46 +1415,44 @@ function TaskDetailContent({
         <div className="grid gap-6 px-5 py-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:px-8 lg:py-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         {/* LEFT column — main content */}
           <div className="min-w-0 space-y-5">
-            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
               {descriptionBlock}
             </section>
 
             {subtasksBlock && (
-              <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
                 {subtasksBlock}
               </section>
             )}
 
-            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
               {relationsBlock}
             </section>
 
-            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
               {commentsBlock}
             </section>
           </div>
 
         {/* RIGHT column — fields sidebar, stacks below on small screens */}
           <aside className="space-y-4 lg:sticky lg:top-[104px] lg:self-start">
-            <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 shadow-sm">
+            <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
               {fieldsBlock}
             </section>
 
             {recurrenceBlock && (
-              <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
                 {recurrenceBlock}
               </section>
             )}
 
-            {developmentFieldsBlock}
-
             {timerBlock && (
-              <section className="rounded-xl border border-blue-100 bg-blue-50/40 p-4 shadow-sm">
+              <section className="rounded-xl border border-blue-100 bg-blue-50/40 p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
                 {timerBlock}
               </section>
             )}
 
-            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
               {timestampsBlock}
             </section>
 
@@ -1448,7 +1473,6 @@ function TaskDetailContent({
       {fieldsBlock}
       {recurrenceBlock && <Separator className="bg-slate-200" />}
       {recurrenceBlock}
-      {developmentFieldsBlock}
       {timerBlock && <Separator className="bg-slate-200" />}
       {timerBlock}
       {descriptionBlock}

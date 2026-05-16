@@ -49,6 +49,7 @@ export function TimerSection({ item, layout }: Props) {
   const [manualOpen, setManualOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [sessionsExpanded, setSessionsExpanded] = useState(false);
 
   // ---- Live tick for the elapsed display when this item is active ----
   const [, setTick] = useState(0);
@@ -251,7 +252,7 @@ export function TimerSection({ item, layout }: Props) {
           <div className="text-xs text-slate-400 py-2">Нет сессий</div>
         ) : (
           <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
-            {entries.map((entry) => (
+            {(sessionsExpanded ? entries : entries.slice(0, 3)).map((entry) => (
               <EntryRow
                 key={entry.id}
                 entry={entry}
@@ -261,6 +262,19 @@ export function TimerSection({ item, layout }: Props) {
                 onDelete={() => handleDelete(entry.id)}
               />
             ))}
+            {entries.length > 3 && (
+              <li className="flex justify-center px-2 py-1.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="h-6 text-[11px] text-slate-500"
+                  onClick={() => setSessionsExpanded((v) => !v)}
+                >
+                  {sessionsExpanded ? "Свернуть" : `Показать ещё ${entries.length - 3}`}
+                </Button>
+              </li>
+            )}
           </ul>
         )}
       </div>

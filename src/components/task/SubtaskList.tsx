@@ -1,85 +1,102 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useBrainStore } from "@/lib/store";
 import {
   Item,
   ItemStatus,
   ItemPriority,
+  ItemStatusRow,
   STATUS_CONFIG,
   PRIORITY_CONFIG,
 } from "@/types";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
-import { ru } from "date-fns/locale";
 
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from "@/components/ui/select";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
-import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Plus, X, Unlink, CalendarIcon, ExternalLink } from "lucide-react";
-
-/* ------------------------------------------------------------------ */
-/*  Priority dot color helper                                          */
-/* ------------------------------------------------------------------ */
+import { InlineSelectPopover, type InlineSelectOption } from "@/components/ui/inline-select-popover";
+import {
+  ArrowUpDown,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Plus,
+  Unlink,
+  X,
+} from "lucide-react";
 
 const PRIORITY_DOT: Record<ItemPriority, string> = {
   urgent: "bg-red-500",
   high: "bg-orange-500",
-  medium: "bg-yellow-500",
+  medium: "bg-yellow-400",
   low: "bg-blue-500",
-  none: "bg-gray-400",
+  none: "border border-slate-300 bg-transparent",
 };
 
-/* ------------------------------------------------------------------ */
-/*  Statuses & priorities we allow in the subtask selects              */
-/* ------------------------------------------------------------------ */
+const SUBTASK_PRIORITIES: ItemPriority[] = ["urgent", "high", "medium", "low", "none"];
 
-const SUBTASK_STATUSES: ItemStatus[] = [
-  "inbox",
-  "todo",
-  "in_progress",
-  "review",
-  "done",
-];
+const STATUS_WEIGHT: Record<string, number> = {
+  in_progress: 0,
+  review: 1,
+  todo: 2,
+  inbox: 3,
+  done: 4,
+  archived: 5,
+};
 
-const SUBTASK_PRIORITIES: ItemPriority[] = [
-  "urgent",
-  "high",
-  "medium",
-  "low",
-  "none",
-];
+const PRIORITY_WEIGHT: Record<string, number> = {
+  urgent: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  none: 4,
+};
 
-/* ------------------------------------------------------------------ */
-/*  Props                                                              */
-/* ------------------------------------------------------------------ */
+type SubtaskSortMode = "default" | "due_date" | "priority" | "status";
+type EditingField = "status" | "priority" | null;
 
 interface SubtaskListProps {
   parentId: string;
   subtasks: Item[];
 }
 
-/* ------------------------------------------------------------------ */
-/*  SubtaskList                                                        */
-/* ------------------------------------------------------------------ */
+function statusDisplay(
+  status: string,
+  itemStatuses: ItemStatusRow[]
+): { label: string; className?: string; color?: string; kind?: string } {
+  const row = itemStatuses.find((s) => s.id === status);
+  if (row) return { label: row.name, color: row.color, kind: row.kind };
+  const fallback = STATUS_CONFIG[status as ItemStatus];
+  return fallback
+    ? { label: fallback.label, className: fallback.color }
+    : { label: status, className: "bg-slate-100 text-slate-700" };
+}
+
+function isClosedSubtaskStatus(status: string, itemStatuses: ItemStatusRow[]) {
+  const row = itemStatuses.find((s) => s.id === status);
+  const label = (row?.name ?? STATUS_CONFIG[status as ItemStatus]?.label ?? status).toLowerCase();
+  return (
+    row?.kind === "done" ||
+    row?.kind === "archived" ||
+    status === "done" ||
+    status === "archived" ||
+    label.includes("готов") ||
+    label.includes("архив") ||
+    label.includes("не актуал")
+  );
+}
+
+function PriorityDot({ priority, className }: { priority: ItemPriority; className?: string }) {
+  return <span className={cn("inline-block size-2.5 rounded-full", PRIORITY_DOT[priority], className)} />;
+}
 
 export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
   const createItem = useBrainStore((s) => s.createItem);
@@ -87,19 +104,78 @@ export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
   const deleteItem = useBrainStore((s) => s.deleteItem);
   const detachSubtask = useBrainStore((s) => s.detachSubtask);
   const openDetail = useBrainStore((s) => s.openDetail);
+  const itemStatuses = useBrainStore((s) => s.itemStatuses);
 
   const [newTitle, setNewTitle] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const [sortMode, setSortMode] = useState<SubtaskSortMode>("default");
+  const [hideClosed, setHideClosed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const doneCount = subtasks.filter((s) => s.status === "done").length;
+  const doneCount = subtasks.filter((s) => isClosedSubtaskStatus(s.status, itemStatuses)).length;
   const totalCount = subtasks.length;
-  const progress =
-    totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+  const progress = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
 
-  /* ---- handlers ---- */
+  const statusOptions = useMemo<InlineSelectOption<ItemStatus>[]>(() => {
+    if (itemStatuses.length === 0) {
+      return (Object.entries(STATUS_CONFIG) as [ItemStatus, (typeof STATUS_CONFIG)[ItemStatus]][])
+        .map(([key, cfg]) => ({ key, label: cfg.label }));
+    }
+    return [...itemStatuses]
+      .sort((a, b) => a.position - b.position)
+      .map((status) => ({ key: status.id as ItemStatus, label: status.name }));
+  }, [itemStatuses]);
+
+  const priorityOptions = useMemo<InlineSelectOption<ItemPriority>[]>(
+    () =>
+      SUBTASK_PRIORITIES.map((key) => ({
+        key,
+        label: PRIORITY_CONFIG[key].label,
+        node: (
+          <span className="inline-flex items-center gap-2">
+            <PriorityDot priority={key} />
+            <span>{PRIORITY_CONFIG[key].label}</span>
+          </span>
+        ),
+      })),
+    []
+  );
+
+  const sortedSubtasks = useMemo(() => {
+    let list = hideClosed
+      ? subtasks.filter((subtask) => !isClosedSubtaskStatus(subtask.status, itemStatuses))
+      : subtasks;
+    if (sortMode === "default") return list;
+    list = [...list];
+    list.sort((a, b) => {
+      switch (sortMode) {
+        case "due_date": {
+          const aTime = a.due_date ? new Date(a.due_date).getTime() : Infinity;
+          const bTime = b.due_date ? new Date(b.due_date).getTime() : Infinity;
+          return aTime - bTime;
+        }
+        case "priority":
+          return (PRIORITY_WEIGHT[a.priority] ?? 99) - (PRIORITY_WEIGHT[b.priority] ?? 99);
+        case "status":
+          return (STATUS_WEIGHT[a.status] ?? 99) - (STATUS_WEIGHT[b.status] ?? 99);
+        default:
+          return 0;
+      }
+    });
+    return list;
+  }, [hideClosed, itemStatuses, sortMode, subtasks]);
+
+  const visibleSubtasks = expanded ? sortedSubtasks : sortedSubtasks.slice(0, 8);
+  const canCollapse = sortedSubtasks.length > 8;
+  const sortLabel: Record<SubtaskSortMode, string> = {
+    default: "Без сортировки",
+    due_date: "По дедлайну",
+    priority: "По приоритету",
+    status: "По статусу",
+  };
 
   const handleAdd = useCallback(async () => {
     const title = newTitle.trim();
@@ -118,24 +194,10 @@ export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
   const handleToggle = useCallback(
     async (subtask: Item) => {
       await updateItem(subtask.id, {
-        status: subtask.status === "done" ? "todo" : "done",
+        status: isClosedSubtaskStatus(subtask.status, itemStatuses) ? "todo" : "done",
       });
     },
-    [updateItem]
-  );
-
-  const handleDelete = useCallback(
-    async (id: string) => {
-      await deleteItem(id);
-    },
-    [deleteItem]
-  );
-
-  const handleDetach = useCallback(
-    async (subtaskId: string) => {
-      await detachSubtask(subtaskId);
-    },
-    [detachSubtask]
+    [itemStatuses, updateItem]
   );
 
   const handleEditStart = useCallback((subtask: Item) => {
@@ -155,51 +217,55 @@ export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
     [editingTitle, subtasks, updateItem]
   );
 
-  const handleStatusChange = useCallback(
-    async (id: string, status: ItemStatus) => {
-      await updateItem(id, { status });
-    },
-    [updateItem]
-  );
-
-  const handlePriorityChange = useCallback(
-    async (id: string, priority: ItemPriority) => {
-      await updateItem(id, { priority });
-    },
-    [updateItem]
-  );
-
-  const handleDueChange = useCallback(
-    async (id: string, next: { date: string | null; time: string | null }) => {
-      await updateItem(id, { due_date: next.date, due_time: next.time });
-    },
-    [updateItem]
-  );
-
-  /* ---- render ---- */
-
   return (
     <div className="space-y-3">
-      {/* Progress header */}
       {totalCount > 0 && (
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-500">
-              Подзадачи
-            </span>
-            <span className="text-xs tabular-nums text-slate-500">
-              {doneCount}/{totalCount}
-            </span>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-slate-500">Подзадачи</span>
+            <div className="flex items-center gap-1.5">
+              {subtasks.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setHideClosed((v) => !v)}
+                    className={cn(
+                      "inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] transition-colors",
+                      hideClosed
+                        ? "bg-violet-50 text-violet-700 hover:bg-violet-100"
+                        : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                    )}
+                    title={hideClosed ? "Показать закрытые" : "Скрыть готовые, архивные и неактуальные"}
+                  >
+                    {hideClosed ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const modes: SubtaskSortMode[] = ["default", "due_date", "priority", "status"];
+                      setSortMode((current) => modes[(modes.indexOf(current) + 1) % modes.length]);
+                    }}
+                    className={cn(
+                      "inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] transition-colors",
+                      sortMode !== "default"
+                        ? "bg-violet-50 text-violet-700 hover:bg-violet-100"
+                        : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                    )}
+                    title={sortLabel[sortMode]}
+                  >
+                    <ArrowUpDown className="size-3" />
+                    {sortMode !== "default" && <span>{sortLabel[sortMode]}</span>}
+                  </button>
+                </>
+              )}
+              <span className="text-xs tabular-nums text-slate-500">{doneCount}/{totalCount}</span>
+            </div>
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
             <div
               className={cn(
                 "h-full rounded-full transition-all duration-300 ease-out",
-                progress === 100
-                  ? "bg-emerald-500"
-                  : progress > 0
-                    ? "bg-primary"
-                    : "bg-transparent"
+                progress === 100 ? "bg-emerald-500" : progress > 0 ? "bg-primary" : "bg-transparent"
               )}
               style={{ width: `${progress}%` }}
             />
@@ -207,35 +273,35 @@ export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
         </div>
       )}
 
-      {/* Subtask table */}
-      {subtasks.length > 0 && (
+      {sortedSubtasks.length > 0 && (
         <div className="w-full overflow-x-auto">
-          <table className="w-full border-collapse">
-            {/* Column header */}
+          <table className="w-full table-fixed border-collapse">
             <thead>
               <tr className="border-b border-slate-100">
                 <th className="w-7 pb-1" />
                 <th className="pb-1 text-left text-[10px] font-medium uppercase tracking-wider text-slate-400">
                   Название
                 </th>
-                <th className="hidden w-[100px] pb-1 text-left text-[10px] font-medium uppercase tracking-wider text-slate-400 sm:table-cell">
+                <th className="hidden w-[112px] pb-1 text-left text-[10px] font-medium uppercase tracking-wider text-slate-400 sm:table-cell">
                   Статус
                 </th>
-                <th className="hidden w-[90px] pb-1 text-left text-[10px] font-medium uppercase tracking-wider text-slate-400 sm:table-cell">
-                  Приоритет
+                <th className="hidden w-[44px] pb-1 text-center text-[10px] font-medium uppercase tracking-wider text-slate-400 sm:table-cell">
+                  P
                 </th>
-                <th className="hidden w-[86px] pb-1 text-left text-[10px] font-medium uppercase tracking-wider text-slate-400 md:table-cell">
-                  Срок
+                <th className="hidden w-[96px] pb-1 text-left text-[10px] font-medium uppercase tracking-wider text-slate-400 md:table-cell">
+                  Дедлайн
                 </th>
                 <th className="w-14 pb-1" />
               </tr>
             </thead>
-
             <tbody>
-              {subtasks.map((subtask) => (
+              {visibleSubtasks.map((subtask) => (
                 <SubtaskRow
                   key={subtask.id}
                   subtask={subtask}
+                  itemStatuses={itemStatuses}
+                  statusOptions={statusOptions}
+                  priorityOptions={priorityOptions}
                   isEditing={editingId === subtask.id}
                   editingTitle={editingTitle}
                   onEditTitleChange={setEditingTitle}
@@ -246,20 +312,39 @@ export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
                     setEditingTitle("");
                   }}
                   onToggle={handleToggle}
-                  onStatusChange={handleStatusChange}
-                  onPriorityChange={handlePriorityChange}
-                  onDueChange={handleDueChange}
-                  onDetach={handleDetach}
-                  onDelete={handleDelete}
+                  onStatusChange={(id, status) => void updateItem(id, { status })}
+                  onPriorityChange={(id, priority) => void updateItem(id, { priority })}
+                  onDueChange={(id, next) => void updateItem(id, { due_date: next.date, due_time: next.time })}
+                  onDetach={(id) => void detachSubtask(id)}
+                  onDelete={(id) => void deleteItem(id)}
                   onOpen={openDetail}
                 />
               ))}
             </tbody>
           </table>
+          {canCollapse && (
+            <div className="flex justify-center pt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 rounded-full px-3 text-xs text-slate-500"
+                onClick={() => setExpanded((v) => !v)}
+              >
+                {expanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+                {expanded ? "Свернуть" : `Показать ещё ${sortedSubtasks.length - visibleSubtasks.length}`}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Add subtask */}
+      {subtasks.length > 0 && sortedSubtasks.length === 0 && (
+        <div className="rounded-md border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-400">
+          Все закрытые подзадачи скрыты
+        </div>
+      )}
+
       {isAdding ? (
         <div className="flex items-center gap-2 px-1">
           <div className="size-4 shrink-0" />
@@ -276,9 +361,7 @@ export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
               }
             }}
             onBlur={() => {
-              if (!newTitle.trim()) {
-                setIsAdding(false);
-              }
+              if (!newTitle.trim()) setIsAdding(false);
             }}
             placeholder="Название подзадачи..."
             className="min-w-0 flex-1 bg-transparent text-xs text-slate-900 placeholder:text-slate-400 outline-none"
@@ -286,6 +369,7 @@ export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
         </div>
       ) : (
         <button
+          type="button"
           onClick={() => setIsAdding(true)}
           className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-xs text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
         >
@@ -297,12 +381,11 @@ export function SubtaskList({ parentId, subtasks }: SubtaskListProps) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  SubtaskRow (extracted for clarity)                                 */
-/* ------------------------------------------------------------------ */
-
 interface SubtaskRowProps {
   subtask: Item;
+  itemStatuses: ItemStatusRow[];
+  statusOptions: InlineSelectOption<ItemStatus>[];
+  priorityOptions: InlineSelectOption<ItemPriority>[];
   isEditing: boolean;
   editingTitle: string;
   onEditTitleChange: (v: string) => void;
@@ -320,6 +403,9 @@ interface SubtaskRowProps {
 
 function SubtaskRow({
   subtask,
+  itemStatuses,
+  statusOptions,
+  priorityOptions,
   isEditing,
   editingTitle,
   onEditTitleChange,
@@ -334,21 +420,23 @@ function SubtaskRow({
   onDelete,
   onOpen,
 }: SubtaskRowProps) {
-  const isDone = subtask.status === "done";
+  const isDone = isClosedSubtaskStatus(subtask.status, itemStatuses);
+  const status = statusDisplay(subtask.status, itemStatuses);
+  const [editingField, setEditingField] = useState<EditingField>(null);
+  const statusRef = useRef<HTMLTableCellElement>(null);
+  const priorityRef = useRef<HTMLTableCellElement>(null);
 
   return (
     <tr className="group/row border-b border-slate-50 last:border-b-0 hover:bg-slate-50/60">
-      {/* Checkbox */}
-      <td className="py-0.5 pl-1 align-middle">
+      <td className="py-1 pl-1 align-middle">
         <Checkbox
           checked={isDone}
           onCheckedChange={() => onToggle(subtask)}
-          className="shrink-0"
+          className="shrink-0 align-middle"
         />
       </td>
 
-      {/* Title */}
-      <td className="py-0.5 pr-2 align-middle">
+      <td className="min-w-0 py-1 pr-2 align-middle">
         {isEditing ? (
           <input
             autoFocus
@@ -362,115 +450,95 @@ function SubtaskRow({
             className="h-7 w-full min-w-0 bg-transparent text-xs text-slate-900 outline-none"
           />
         ) : (
-          <span
-            onClick={() => onEditStart(subtask)}
-            className={cn(
-              "block h-7 cursor-text truncate leading-7 text-xs text-slate-900",
-              isDone && "text-slate-400 line-through"
-            )}
-          >
-            {subtask.title}
-          </span>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={() => onEditStart(subtask)}
+                  className={cn(
+                    "flex h-7 w-full min-w-0 items-center text-left text-xs text-slate-900",
+                    isDone && "text-slate-400 line-through"
+                  )}
+                />
+              }
+            >
+              <span className="block min-w-0 truncate">{subtask.title}</span>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>{subtask.title}</p>
+            </TooltipContent>
+          </Tooltip>
         )}
       </td>
 
-      {/* Status */}
-      <td className="hidden py-0.5 pr-1 align-middle sm:table-cell">
-        <Select
-          value={subtask.status}
-          onValueChange={(v) => onStatusChange(subtask.id, v as ItemStatus)}
+      <td
+        ref={statusRef}
+        className="hidden cursor-pointer py-1 pr-1 align-middle sm:table-cell"
+        onClick={(e) => {
+          e.stopPropagation();
+          setEditingField("status");
+        }}
+      >
+        <span
+          className={cn(
+            "inline-flex max-w-full rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-none",
+            status.className
+          )}
+          style={status.color ? { backgroundColor: `${status.color}1A`, color: status.color } : undefined}
         >
-          <SelectTrigger
-            size="sm"
-            className="h-6 w-full border-0 bg-transparent px-1.5 text-[11px] shadow-none hover:bg-slate-100"
-          >
-            <SelectValue>
-              <span
-                className={cn(
-                  "inline-block rounded px-1.5 py-0.5 text-[11px] font-medium leading-none",
-                  STATUS_CONFIG[subtask.status].color
-                )}
-              >
-                {STATUS_CONFIG[subtask.status].label}
-              </span>
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent className="border-slate-200 bg-white">
-            {SUBTASK_STATUSES.map((key) => (
-              <SelectItem key={key} value={key}>
-                <span
-                  className={cn(
-                    "inline-block rounded px-1.5 py-0.5 text-[11px] font-medium leading-none",
-                    STATUS_CONFIG[key].color
-                  )}
-                >
-                  {STATUS_CONFIG[key].label}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          <span className="truncate">{status.label}</span>
+        </span>
+        {editingField === "status" && (
+          <InlineSelectPopover
+            value={subtask.status as ItemStatus}
+            options={statusOptions}
+            onCommit={(status) => {
+              setEditingField(null);
+              onStatusChange(subtask.id, status);
+            }}
+            onCancel={() => setEditingField(null)}
+            anchorRef={statusRef}
+          />
+        )}
       </td>
 
-      {/* Priority */}
-      <td className="hidden py-0.5 pr-1 align-middle sm:table-cell">
-        <Select
-          value={subtask.priority}
-          onValueChange={(v) =>
-            onPriorityChange(subtask.id, v as ItemPriority)
-          }
-        >
-          <SelectTrigger
-            size="sm"
-            className="h-6 w-full border-0 bg-transparent px-1.5 text-[11px] shadow-none hover:bg-slate-100"
-          >
-            <SelectValue>
-              <span className="inline-flex items-center gap-1.5 text-[11px]">
-                <span
-                  className={cn(
-                    "inline-block size-2 shrink-0 rounded-full",
-                    PRIORITY_DOT[subtask.priority]
-                  )}
-                />
-                <span className={PRIORITY_CONFIG[subtask.priority].color}>
-                  {PRIORITY_CONFIG[subtask.priority].label}
-                </span>
-              </span>
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent className="border-slate-200 bg-white">
-            {SUBTASK_PRIORITIES.map((key) => (
-              <SelectItem key={key} value={key}>
-                <span className="inline-flex items-center gap-1.5">
-                  <span
-                    className={cn(
-                      "inline-block size-2 shrink-0 rounded-full",
-                      PRIORITY_DOT[key]
-                    )}
-                  />
-                  <span className={PRIORITY_CONFIG[key].color}>
-                    {PRIORITY_CONFIG[key].label}
-                  </span>
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <td
+        ref={priorityRef}
+        className="hidden cursor-pointer py-1 pr-1 text-center align-middle sm:table-cell"
+        onClick={(e) => {
+          e.stopPropagation();
+          setEditingField("priority");
+        }}
+      >
+        <PriorityDot priority={subtask.priority} />
+        {editingField === "priority" && (
+          <InlineSelectPopover
+            value={subtask.priority}
+            options={priorityOptions}
+            onCommit={(priority) => {
+              setEditingField(null);
+              onPriorityChange(subtask.id, priority);
+            }}
+            onCancel={() => setEditingField(null)}
+            anchorRef={priorityRef}
+          />
+        )}
       </td>
 
-      {/* Due date + time */}
-      <td className="hidden py-0.5 pr-1 align-middle md:table-cell">
+      <td className="hidden py-1 pr-1 align-middle md:table-cell" onClick={(e) => e.stopPropagation()}>
         <DateTimePicker
           size="xs"
-          placeholder="—"
-          className="w-full border-0 bg-transparent hover:bg-slate-100"
+          compact
+          hideCurrentYear
+          highlightOverdue={!isDone}
+          placeholder="--"
           value={{ date: subtask.due_date ?? null, time: subtask.due_time ?? null }}
           onChange={(next) => onDueChange(subtask.id, next)}
         />
       </td>
 
-      {/* Actions */}
-      <td className="py-0.5 pr-1 align-middle">
+      <td className="py-1 pr-1 align-middle">
         <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100">
           <Tooltip>
             <TooltipTrigger
@@ -485,9 +553,7 @@ function SubtaskRow({
             >
               <ExternalLink className="size-3 text-slate-400" />
             </TooltipTrigger>
-            <TooltipContent side="top">
-              <p>Открыть подзадачу</p>
-            </TooltipContent>
+            <TooltipContent side="top"><p>Открыть подзадачу</p></TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -503,9 +569,7 @@ function SubtaskRow({
             >
               <Unlink className="size-3 text-slate-400" />
             </TooltipTrigger>
-            <TooltipContent side="top">
-              <p>Открепить подзадачу</p>
-            </TooltipContent>
+            <TooltipContent side="top"><p>Открепить подзадачу</p></TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -521,9 +585,7 @@ function SubtaskRow({
             >
               <X className="size-3 text-slate-400" />
             </TooltipTrigger>
-            <TooltipContent side="top">
-              <p>Удалить подзадачу</p>
-            </TooltipContent>
+            <TooltipContent side="top"><p>Удалить подзадачу</p></TooltipContent>
           </Tooltip>
         </div>
       </td>

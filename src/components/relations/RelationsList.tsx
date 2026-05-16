@@ -316,8 +316,7 @@ export function RelationsList({ entityType, entityId }: RelationsListProps) {
         closeClientDetail();
         setTimeout(() => openClientDetail(rel.target_id), 0);
       } else {
-        closeDetail();
-        setTimeout(() => openClientDetail(rel.target_id), 0);
+        openClientDetail(rel.target_id);
       }
     }
   }, [entityType, closeDetail, closeClientDetail, openDetail, openClientDetail]);
