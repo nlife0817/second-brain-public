@@ -60,7 +60,7 @@ export default function Home() {
       {appSection === "clients" && <ClientDetailModal />}
       {appSection === "clients" && <CreateClientDialog />}
       {/* Task detail modal opened from Clients section (e.g. via relations) */}
-      {appSection === "clients" && isDetailOpen && <TaskDetailModal forceModal />}
+      {(appSection === "clients" || appSection === "timing") && isDetailOpen && <TaskDetailModal forceModal />}
     </div>
   );
 }
