@@ -32,14 +32,10 @@ import {
   ListGroupByField,
   ListGroupByConfig,
 } from "@/types";
-import { format, isPast, isToday, parseISO } from "date-fns";
-import { ru } from "date-fns/locale";
 import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  Calendar,
-  AlertCircle,
   Inbox,
   ChevronRight,
   ChevronDown,
@@ -59,7 +55,6 @@ import {
   Archive,
   Link,
   MessageSquare,
-  ChevronsUpDown,
   Search,
   Building2,
   Maximize2,
@@ -68,8 +63,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
-import { EstimatePicker, formatEstimate } from "@/components/ui/EstimatePicker";
-import { AdvancedFilterBuilder } from "@/components/filters/AdvancedFilterBuilder";
+import { EstimatePicker } from "@/components/ui/EstimatePicker";
 import { CardTimerControl } from "@/components/timing/CardTimerControl";
 
 function SourceIcon({ source }: { source: string }) {
@@ -125,6 +119,7 @@ type SortColumn =
   | "priority"
   | "category"
   | "type"
+  | "planned_start_date"
   | "due_date"
   | "estimated_minutes"
   | "created_at"
@@ -161,6 +156,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { id: "participants", label: "Участники", width: "w-44", sortable: false },
   { id: "tags", label: "Теги", width: "w-36", sortable: false },
   { id: "type", label: "Тип", width: "w-24", sortable: true },
+  { id: "planned_start_date", label: "Начало", width: "w-24", sortable: true },
   { id: "due_date", label: "Дедлайн", width: "w-24", sortable: true },
   { id: "estimated_minutes", label: "Оценка времени", headerLabel: "Оценка", width: "w-24", sortable: true },
   { id: "time", label: "Время", width: "w-24", sortable: false },
@@ -174,6 +170,7 @@ const DEFAULT_COLUMN_ORDER = [
   "category",
   "clients",
   "type",
+  "planned_start_date",
   "due_date",
   "estimated_minutes",
   "time",
@@ -192,6 +189,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   participants: 176,
   tags: 144,
   type: 96,
+  planned_start_date: 112,
   due_date: 112,
   estimated_minutes: 110,
   time: 110,
@@ -1031,7 +1029,6 @@ function InlineCompanyCell({
       const rect = anchor.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
       const top = spaceBelow < 250 ? rect.top - 8 : rect.bottom + 4;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPos({ top, left: rect.left });
     }
   }, [anchorRef]);
@@ -1478,11 +1475,9 @@ export function ListView() {
   const updateItemsLocal = useBrainStore((s) => s.updateItemsLocal);
   const reorderItems = useBrainStore((s) => s.reorderItems);
   const listColumnOrder = useBrainStore((s) => s.listColumnOrder);
-  const setListColumnOrder = useBrainStore((s) => s.setListColumnOrder);
   const listColumnWidths = useBrainStore((s) => s.listColumnWidths);
   const setListColumnWidth = useBrainStore((s) => s.setListColumnWidth);
   const listGroupBy = useBrainStore((s) => s.listGroupBy);
-  const setListGroupBy = useBrainStore((s) => s.setListGroupBy);
   const listCollapsedGroupsArr = useBrainStore((s) => s.listCollapsedGroups);
   const setListCollapsedGroups = useBrainStore((s) => s.setListCollapsedGroups);
   const categories = useBrainStore((s) => s.categories);
@@ -1495,6 +1490,7 @@ export function ListView() {
   const pushUndoEntry = useBrainStore((s) => s.pushUndoEntry);
   const undo = useBrainStore((s) => s.undo);
   const redo = useBrainStore((s) => s.redo);
+  const filtersSearch = useBrainStore((s) => s.filters.search);
 
   /* ----- Undoable inline update ------------------------------------------- */
   // Wraps updateItem: snapshots the fields being changed, pushes an entry to
@@ -1638,13 +1634,8 @@ export function ListView() {
     [colWidthFor, setListColumnWidth]
   );
 
-  /* ----- Quick search (title + description + tags + clients) -------------- */
-  const [searchInput, setSearchInput] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  useEffect(() => {
-    const t = setTimeout(() => setSearchQuery(searchInput), 150);
-    return () => clearTimeout(t);
-  }, [searchInput]);
+  /* ----- Search match metadata for the global task search ------------------ */
+  const searchQuery = filtersSearch;
 
   const { items, searchMatchInfo } = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -1760,6 +1751,12 @@ export function ListView() {
             "ru"
           );
           break;
+        case "planned_start_date": {
+          const sa = a.planned_start_date ? new Date(a.planned_start_date).getTime() : Infinity;
+          const sb = b.planned_start_date ? new Date(b.planned_start_date).getTime() : Infinity;
+          cmp = sa - sb;
+          break;
+        }
         case "due_date": {
           const da = a.due_date ? new Date(a.due_date).getTime() : Infinity;
           const db = b.due_date ? new Date(b.due_date).getTime() : Infinity;
@@ -1807,29 +1804,6 @@ export function ListView() {
 
   const isGrouped = listGroupBy[0] !== "none" && groups.length > 0;
   const hasLevel2 = listGroupBy[1] !== "none";
-
-  const allGroupKeys = useMemo(() => {
-    const keys: string[] = [];
-    for (const g of groups) {
-      keys.push(g.key);
-      if (hasLevel2) {
-        for (const sub of groupItems(g.items, listGroupBy[1], categoryConfig, itemLinkedClients, groupPositionMaps[listGroupBy[1]], statusLabelMap)) {
-          keys.push(`${g.key}::${sub.key}`);
-        }
-      }
-    }
-    return keys;
-  }, [groups, hasLevel2, listGroupBy, categoryConfig, itemLinkedClients, groupPositionMaps, statusLabelMap]);
-
-  const allGroupsCollapsed = isGrouped && allGroupKeys.length > 0 && allGroupKeys.every((k) => collapsedGroups.has(k));
-
-  const toggleAllGroups = useCallback(() => {
-    if (allGroupsCollapsed) {
-      setListCollapsedGroups([]);
-    } else {
-      setListCollapsedGroups([...allGroupKeys]);
-    }
-  }, [allGroupsCollapsed, allGroupKeys, setListCollapsedGroups]);
 
   const toggleGroup = useCallback((key: string) => {
     setListCollapsedGroups(
@@ -2139,16 +2113,6 @@ export function ListView() {
 
   /* ----- Inline task creation handlers ----------------------------------- */
 
-  const handleStartCreate = useCallback(() => {
-    setIsCreating(true);
-    setNewItem({
-      ...NEW_ITEM_DEFAULTS,
-      due_date: format(new Date(), "yyyy-MM-dd"),
-    });
-    setCreateDropdown(null);
-    // Focus handled via autoFocus on the title input — avoids setTimeout delay
-  }, []);
-
   const handleCancelCreate = useCallback(() => {
     setIsCreating(false);
     setNewItem({ ...NEW_ITEM_DEFAULTS });
@@ -2197,10 +2161,6 @@ export function ListView() {
         }
         await createRelation("item", created.id, "client", snapshot.clientId, clientType.id);
         await fetchEntityCounts("item");
-      }
-      if (opts?.openAfterCreate && created) {
-        setDetailMode("modal");
-        openDetail(created.id);
       }
     } catch {
       // silently fail — store rollback handles temp item removal
@@ -2561,7 +2521,6 @@ export function ListView() {
           </td>
         );
       }
-
       case "estimated_minutes": {
         return (
           <td key={colId} className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
@@ -2754,25 +2713,9 @@ export function ListView() {
 
   /* ----- render ----------------------------------------------------------- */
 
-  const toolbar = (
-    <ListViewToolbar
-      search={searchInput}
-      onSearchChange={setSearchInput}
-      totalCount={rawItems.length}
-      filteredCount={items.length}
-      onNewTask={handleStartCreate}
-      listGroupBy={listGroupBy}
-      setListGroupBy={setListGroupBy}
-      isGrouped={isGrouped}
-      allGroupsCollapsed={allGroupsCollapsed}
-      toggleAllGroups={toggleAllGroups}
-    />
-  );
-
   if (items.length === 0 && !isCreating) {
     return (
-      <div className="flex flex-col h-full">
-        {toolbar}
+      <div className="flex flex-col h-full">
         <div className="flex-1 min-h-0 overflow-auto">
           <EmptyState search={searchQuery || undefined} />
         </div>
@@ -2781,8 +2724,7 @@ export function ListView() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {toolbar}
+    <div className="flex flex-col h-full">
       <ScrollArea className="flex-1 w-full">
         <div className="min-w-[900px]">
         <DndContext
@@ -2857,26 +2799,8 @@ export function ListView() {
               {/* ---- Body --------------------------------------------- */}
               <tbody className="divide-y divide-slate-100">
                 {/* === Inline creation row === */}
-                {!isCreating ? (
-                  <tr
-                    className="hover:bg-slate-50/50 cursor-pointer group"
-                    onClick={handleStartCreate}
-                  >
-                    <td className="px-1 py-1.5" />
-                    <td className="px-1 py-1.5" />
-                    <td className="px-1.5 py-1.5">
-                      <Plus className="size-3.5 text-slate-400 group-hover:text-blue-500 transition-colors" />
-                    </td>
-                    <td
-                      colSpan={visibleColumns.length}
-                      className="px-3 py-1.5"
-                    >
-                      <span className="text-xs text-slate-400 group-hover:text-blue-500 transition-colors">
-                        Добавить задачу
-                      </span>
-                    </td>
-                  </tr>
-                ) : (
+                {isCreating && (
+
                   <tr className="bg-blue-50/40 ring-1 ring-inset ring-blue-200">
                     {/* Drag handle placeholder */}
                     <td className="px-1 py-1.5" />
@@ -2903,7 +2827,7 @@ export function ListView() {
                             void handleCommitCreate({ openAfterCreate: true });
                           }}
                           className="inline-flex items-center justify-center size-5 rounded hover:bg-blue-100 text-blue-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                          title="Создать и открыть карточку"
+                          title="РЎРѕР·РґР°С‚СЊ Рё РѕС‚РєСЂС‹С‚СЊ РєР°СЂС‚РѕС‡РєСѓ"
                           disabled={!newItem.title.trim()}
                         >
                           <Maximize2 className="size-3.5" />
@@ -2922,7 +2846,6 @@ export function ListView() {
                       </div>
                     </td>
                     {/* Dynamic creation cells */}
-                    {/* eslint-disable-next-line react-hooks/refs */}
                     {visibleColumns.map((col) => renderCreateCell(col.id))}
                   </tr>
                 )}
@@ -3651,7 +3574,6 @@ const ItemRow = memo(function ItemRow({
 }) {
   const { item, isSubtask, totalSubtasks, doneSubtasks } = row;
   const allItems = useBrainStore((s) => s.items);
-  const relCount = useBrainStore((s) => s.itemRelationCounts[item.id] ?? 0);
   const relTitles = useBrainStore((s) => s.itemRelationTitles[item.id] ?? EMPTY_REL_TITLES);
   const commentCount = useBrainStore((s) => s.itemCommentCounts[item.id] ?? 0);
   const linkedClientNames = useBrainStore((s) => s.itemLinkedClients[item.id] ?? EMPTY_REL_TITLES);
@@ -3703,14 +3625,11 @@ const ItemRow = memo(function ItemRow({
   const categoryCfg = itemCategoryConfig[item.category];
   const typeCfg = TYPE_CONFIG[item.type as ItemType];
 
-  /* Due date logic */
-  const dueDate = item.due_date ? parseISO(item.due_date) : null;
-  const isOverdue =
-    dueDate &&
-    !isToday(dueDate) &&
-    isPast(dueDate) &&
-    item.status !== "done" &&
-    item.status !== "archived";
+  const isClosedStatus =
+    statusRow?.kind === "done" ||
+    statusRow?.kind === "archived" ||
+    item.status === "done" ||
+    item.status === "archived";
 
   /* ----- Inline edit commit helper --------------------------------------- */
 
@@ -4061,6 +3980,29 @@ const ItemRow = memo(function ItemRow({
               compact
               placeholder="—"
               hideCurrentYear
+              highlightOverdue={!isClosedStatus}
+            />
+          </td>
+        );
+      }
+
+      case "planned_start_date": {
+        return (
+          <td
+            key={colId}
+            className="relative px-3 py-1.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <DateTimePicker
+              value={{ date: item.planned_start_date ?? null, time: null }}
+              onChange={({ date }) => {
+                void updateItem(item.id, { planned_start_date: date });
+              }}
+              size="xs"
+              compact
+              placeholder="?"
+              hideCurrentYear
+              highlightOverdue={false}
             />
           </td>
         );
@@ -4277,58 +4219,6 @@ function EmptyState({ search }: { search?: string }) {
 /*  ListView toolbar                                                          */
 /* -------------------------------------------------------------------------- */
 
-function FilterButton() {
-  const [open, setOpen] = useState(false);
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const groups = useBrainStore((s) => s.filters.advancedGroups);
-  const useAdvanced = useBrainStore((s) => s.filters.useAdvanced);
-
-  const activeCount = useMemo(() => {
-    if (!useAdvanced) return 0;
-    return groups.reduce((acc, g) => acc + g.conditions.length, 0);
-  }, [groups, useAdvanced]);
-
-  useEffect(() => {
-    if (!open) return;
-    function handleClick(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
-
-  return (
-    <div className="relative" ref={popoverRef}>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className={cn(
-          "inline-flex items-center gap-1 px-2 h-7 text-xs rounded border transition-colors",
-          activeCount > 0
-            ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
-            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-        )}
-        title="Фильтры"
-      >
-        <Layers className="size-3.5" />
-        Фильтр
-        {activeCount > 0 && (
-          <span className="inline-flex items-center justify-center min-w-4 h-4 px-1 text-[10px] font-semibold rounded-full bg-blue-500 text-white tabular-nums">
-            {activeCount}
-          </span>
-        )}
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-[560px] max-w-[90vw] max-h-[70vh] overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl">
-          <AdvancedFilterBuilder />
-        </div>
-      )}
-    </div>
-  );
-}
-
 function UndoRedoButtons() {
   const undoCount = useBrainStore((s) => s.undoStack.length);
   const redoCount = useBrainStore((s) => s.redoStack.length);
@@ -4361,100 +4251,18 @@ function UndoRedoButtons() {
   );
 }
 
-function ListViewToolbar({
-  search,
-  onSearchChange,
-  totalCount,
-  filteredCount,
-  onNewTask,
-  listGroupBy,
-  setListGroupBy,
-  isGrouped,
-  allGroupsCollapsed,
-  toggleAllGroups,
-}: {
-  search: string;
-  onSearchChange: (value: string) => void;
-  totalCount: number;
-  filteredCount: number;
-  onNewTask: () => void;
-  listGroupBy: ListGroupByConfig;
-  setListGroupBy: (config: ListGroupByConfig) => void;
-  isGrouped: boolean;
-  allGroupsCollapsed: boolean;
-  toggleAllGroups: () => void;
-}) {
+export function ListHeaderControls() {
+  const listGroupBy = useBrainStore((s) => s.listGroupBy);
+  const setListGroupBy = useBrainStore((s) => s.setListGroupBy);
+
   return (
-    <div className="flex items-center gap-2 px-2 py-1.5 border-b border-slate-200 bg-white">
-      {/* Search */}
-      <div className="relative flex-1 max-w-xs">
-        <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-slate-400 pointer-events-none" />
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Поиск по названию, описанию, тегам, клиентам…"
-          className="w-full h-7 pl-7 pr-7 text-xs rounded border border-slate-200 bg-white placeholder:text-slate-400 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
-        />
-        {search && (
-          <button
-            type="button"
-            onClick={() => onSearchChange("")}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center size-4 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-            title="Очистить поиск"
-          >
-            <X className="size-3" />
-          </button>
-        )}
-      </div>
-
-      {/* Counter */}
-      <span className="text-[11px] text-slate-500 tabular-nums whitespace-nowrap">
-        {filteredCount === totalCount
-          ? `${totalCount} задач${pluralRu(totalCount, "а", "и", "")}`
-          : `${filteredCount} из ${totalCount}`}
-      </span>
-
-      <div className="flex-1" />
-
-      {/* Filter */}
-      <FilterButton />
-
-      {/* Undo / Redo */}
+    <div className="flex items-center gap-1">
       <UndoRedoButtons />
-
-      {/* New task */}
-      <button
-        type="button"
-        onClick={onNewTask}
-        className="inline-flex items-center gap-1 px-2 h-7 text-xs rounded bg-blue-500 hover:bg-blue-600 text-white transition-colors"
-        title="Новая задача"
-      >
-        <Plus className="size-3.5" />
-        Новая
-      </button>
-
-      {/* Collapse all groups (only when grouping is on) */}
-      {isGrouped && (
-        <button
-          type="button"
-          onClick={toggleAllGroups}
-          className="inline-flex items-center justify-center size-7 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-          title={allGroupsCollapsed ? "Раскрыть всё" : "Свернуть всё"}
-        >
-          <ChevronsUpDown className="size-3.5" />
-        </button>
-      )}
-
-      {/* Group-by config */}
       <GroupByPopover value={listGroupBy} onChange={setListGroupBy} />
-
-      {/* Column config */}
       <ColumnConfigPopover />
     </div>
   );
 }
-
 /* -------------------------------------------------------------------------- */
 /*  Floating bulk-actions bar                                                 */
 /* -------------------------------------------------------------------------- */

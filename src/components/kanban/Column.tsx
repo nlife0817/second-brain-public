@@ -7,11 +7,8 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { STATUS_CONFIG, ItemStatus, ItemWithSubtasks } from "@/types";
-import { useBrainStore } from "@/lib/store";
 import { KanbanCard } from "./Card";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface KanbanColumnProps {
@@ -36,7 +33,6 @@ const headerDot: Record<string, string> = {
 };
 
 export const KanbanColumn = React.memo(function KanbanColumn({ status, items }: KanbanColumnProps) {
-  const openCreate = useBrainStore((s) => s.openCreate);
   const config = STATUS_CONFIG[status];
 
   const { setNodeRef, isOver } = useDroppable({
@@ -56,38 +52,22 @@ export const KanbanColumn = React.memo(function KanbanColumn({ status, items }: 
         columnBg[status] ?? columnBg.inbox,
         "border border-slate-200",
         "transition-all duration-200",
-        isOver && "ring-2 ring-blue-400/40 border-blue-300"
+        isOver && "border-blue-300 ring-2 ring-blue-400/40"
       )}
     >
-      {/* Column header */}
-      <div className="flex items-center justify-between px-3 pt-3 pb-2">
+      <div className="flex items-center justify-between px-3 pb-2 pt-3">
         <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "size-2 rounded-full",
-              headerDot[status] ?? "bg-slate-400"
-            )}
-          />
+          <span className={cn("size-2 rounded-full", headerDot[status] ?? "bg-slate-400")} />
           <h3 className="text-[13px] font-semibold text-slate-700">
             {config.label}
           </h3>
-          <span className="flex items-center justify-center min-w-[18px] h-[18px] rounded-full bg-slate-200/70 px-1.5 text-[10px] font-semibold tabular-nums text-slate-500">
+          <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-slate-200/70 px-1.5 text-[10px] font-semibold tabular-nums text-slate-500">
             {items.length}
           </span>
         </div>
-
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          className="opacity-0 group-hover/column:opacity-100 focus-visible:opacity-100 hover:bg-slate-200/60 transition-opacity"
-          onClick={() => openCreate({ status })}
-        >
-          <Plus className="size-3.5 text-slate-500" />
-        </Button>
       </div>
 
-      {/* Cards area */}
-      <div className="flex-1 min-h-0">
+      <div className="min-h-0 flex-1">
         <ScrollArea className="h-full max-h-[calc(100vh-180px)]">
           <SortableContext
             items={itemIds}
@@ -96,7 +76,7 @@ export const KanbanColumn = React.memo(function KanbanColumn({ status, items }: 
             <div
               ref={setNodeRef}
               className={cn(
-                "flex flex-col gap-1.5 px-2 pb-2 min-h-[60px]",
+                "flex min-h-[60px] flex-col gap-1.5 px-2 pb-2",
                 "transition-colors duration-200",
                 isOver && "bg-blue-50/50"
               )}
@@ -105,7 +85,6 @@ export const KanbanColumn = React.memo(function KanbanColumn({ status, items }: 
                 <KanbanCard key={item.id} item={item} />
               ))}
 
-              {/* Empty state */}
               {items.length === 0 && (
                 <div
                   className={cn(
@@ -123,22 +102,6 @@ export const KanbanColumn = React.memo(function KanbanColumn({ status, items }: 
             </div>
           </SortableContext>
         </ScrollArea>
-      </div>
-
-      {/* Bottom add button */}
-      <div className="px-2 pb-2">
-        <button
-          onClick={() => openCreate({ status })}
-          className={cn(
-            "flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5",
-            "text-[12px] font-medium text-slate-400",
-            "transition-all duration-150",
-            "hover:bg-slate-200/50 hover:text-slate-600"
-          )}
-        >
-          <Plus className="size-3.5" />
-          Добавить
-        </button>
       </div>
     </div>
   );

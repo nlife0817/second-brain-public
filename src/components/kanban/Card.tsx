@@ -413,6 +413,7 @@ export const KanbanCard = React.memo(function KanbanCard({ item, isDragOverlay =
   const setEditingItem = useBrainStore((s) => s.setEditingItem);
   const subtaskDisplayMode = useBrainStore((s) => s.subtaskDisplayMode);
   const cardVisibleFields = useBrainStore((s) => s.cardVisibleFields);
+  const itemStatuses = useBrainStore((s) => s.itemStatuses);
   const relCount = useBrainStore((s) => s.itemRelationCounts[item.id] ?? 0);
   const commentCount = useBrainStore((s) => s.itemCommentCounts[item.id] ?? 0);
 
@@ -451,9 +452,15 @@ export const KanbanCard = React.memo(function KanbanCard({ item, isDragOverlay =
   const totalSubtasks = item.subtasks.length;
 
   const dueDate = item.due_date ? new Date(item.due_date) : null;
+  const statusKind = itemStatuses.find((s) => s.id === item.status)?.kind;
+  const isClosedStatus =
+    statusKind === "done" ||
+    statusKind === "archived" ||
+    item.status === "done" ||
+    item.status === "archived";
   const isOverdue =
-    dueDate && isPast(dueDate) && !isToday(dueDate) && item.status !== "done";
-  const isDueToday = dueDate && isToday(dueDate);
+    dueDate && isPast(dueDate) && !isToday(dueDate) && !isClosedStatus;
+  const isDueToday = dueDate && isToday(dueDate) && !isClosedStatus;
 
   const TypeIcon = typeIcons[typeConfig.icon] ?? CheckSquare;
 

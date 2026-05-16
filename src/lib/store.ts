@@ -20,10 +20,6 @@ import {
   FilterGroup,
   FilterCondition,
   SavedFilter,
-  WeeklyPlan,
-  WeeklyPlanFull,
-  WeeklyPlanReport,
-  EntryResultStatus,
   ListGroupByConfig,
   AppSection,
   ClientViewMode,
@@ -207,26 +203,6 @@ interface BrainStore {
   closeCreateClient: () => void;
   setClientSearch: (search: string) => void;
 
-  // Weekly plans
-  weeklyPlans: WeeklyPlan[];
-  currentPlan: WeeklyPlanFull | null;
-  currentPlanId: string | null;
-  currentPlanReport: WeeklyPlanReport | null;
-
-  fetchWeeklyPlans: () => Promise<void>;
-  fetchCurrentPlan: (id: string) => Promise<void>;
-  createWeeklyPlan: (weekStart: string, weekEnd: string, title?: string, transferFromPlanId?: string, transferEntryIds?: string[]) => Promise<WeeklyPlan>;
-  updateWeeklyPlan: (id: string, updates: Partial<WeeklyPlan>) => Promise<void>;
-  deleteWeeklyPlan: (id: string) => Promise<void>;
-  addItemsToPlan: (planId: string, itemIds: string[]) => Promise<void>;
-  removeItemFromPlan: (planId: string, itemId: string) => Promise<void>;
-  updatePlanEntry: (planId: string, entryId: string, updates: { result_status?: EntryResultStatus; result_comment?: string }) => Promise<void>;
-  completeWeeklyPlan: (id: string) => Promise<void>;
-  addEntryComment: (planId: string, entryId: string, text: string) => Promise<void>;
-  fetchPlanReport: (planId: string) => Promise<void>;
-  fetchUnplannedDone: (planId: string) => Promise<void>;
-  unplannedDoneItems: Item[];
-
   // Entity counts (relations + comments per item/client)
   itemRelationCounts: Record<string, number>;
   itemCommentCounts: Record<string, number>;
@@ -394,7 +370,7 @@ export const useBrainStore = create<BrainStore>()(
   editingItemId: null,
   editingField: null,
   cardVisibleFields: ["priority", "category", "due_date", "subtasks", "type"],
-  listColumnOrder: ["priority", "title", "status", "category", "clients", "type", "due_date", "estimated_minutes", "subtasks"],
+  listColumnOrder: ["priority", "title", "status", "category", "clients", "type", "planned_start_date", "due_date", "estimated_minutes", "time", "subtasks"],
   listColumnWidths: {},
   savedFilters: [],
   activeFilterId: null,
@@ -428,13 +404,6 @@ export const useBrainStore = create<BrainStore>()(
   clientGroupBy: ["none", "none"] as ClientGroupByConfig,
   clientsCollapsedGroups: [] as string[],
   listCollapsedGroups: [] as string[],
-
-  // Weekly plans
-  weeklyPlans: [],
-  currentPlan: null,
-  currentPlanId: null,
-  currentPlanReport: null,
-  unplannedDoneItems: [],
 
   fetchInit: async () => {
     set({ loading: true });
@@ -983,10 +952,7 @@ export const useBrainStore = create<BrainStore>()(
   },
   resetActiveFilter: () => set({ activeFilterId: null, filters: { ...defaultFilters } }),
   setDetailMode: (detailMode) => set({ detailMode }),
-  setAppSection: (appSection) => set({
-    appSection,
-    activeCategory: appSection === "tasks" ? "all" : get().activeCategory,
-  }),
+  setAppSection: (appSection) => set({ appSection }),
   setListGroupBy: (listGroupBy) => {
     // If level 1 is "none", level 2 must also be "none"
     if (listGroupBy[0] === "none") {
@@ -1434,113 +1400,6 @@ export const useBrainStore = create<BrainStore>()(
   closeCreateClient: () => set({ isCreateClientOpen: false }),
   setClientSearch: (clientSearch) => set({ clientSearch }),
 
-  // Weekly plans
-  fetchWeeklyPlans: async () => {
-    const res = await fetch("/api/weekly-plans");
-    if (!res.ok) return;
-    const weeklyPlans = await res.json();
-    set({ weeklyPlans });
-  },
-
-  fetchCurrentPlan: async (id) => {
-    const res = await fetch(`/api/weekly-plans/${id}`);
-    if (!res.ok) { set({ currentPlan: null, currentPlanId: null }); return; }
-    const currentPlan = await res.json();
-    set({ currentPlan, currentPlanId: id });
-  },
-
-  createWeeklyPlan: async (weekStart, weekEnd, title, transferFromPlanId, transferEntryIds) => {
-    const res = await fetch("/api/weekly-plans", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ week_start: weekStart, week_end: weekEnd, title: title ?? "", transferFromPlanId, transferEntryIds }),
-    });
-    if (!res.ok) throw new Error("Failed to create weekly plan");
-    const plan = await res.json();
-    await get().fetchWeeklyPlans();
-    await get().fetchCurrentPlan(plan.id);
-    return plan;
-  },
-
-  updateWeeklyPlan: async (id, updates) => {
-    const res = await fetch(`/api/weekly-plans/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
-    });
-    if (!res.ok) return;
-    await get().fetchWeeklyPlans();
-    if (get().currentPlanId === id) await get().fetchCurrentPlan(id);
-  },
-
-  deleteWeeklyPlan: async (id) => {
-    const res = await fetch(`/api/weekly-plans/${id}`, { method: "DELETE" });
-    if (!res.ok) return;
-    if (get().currentPlanId === id) set({ currentPlan: null, currentPlanId: null });
-    await get().fetchWeeklyPlans();
-  },
-
-  addItemsToPlan: async (planId, itemIds) => {
-    const res = await fetch(`/api/weekly-plans/${planId}/entries`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ itemIds }),
-    });
-    if (!res.ok) return;
-    if (get().currentPlanId === planId) await get().fetchCurrentPlan(planId);
-  },
-
-  removeItemFromPlan: async (planId, itemId) => {
-    const res = await fetch(`/api/weekly-plans/${planId}/entries`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ itemId }),
-    });
-    if (!res.ok) return;
-    if (get().currentPlanId === planId) await get().fetchCurrentPlan(planId);
-  },
-
-  updatePlanEntry: async (planId, entryId, updates) => {
-    const res = await fetch(`/api/weekly-plans/${planId}/entries/${entryId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
-    });
-    if (!res.ok) return;
-    if (get().currentPlanId === planId) await get().fetchCurrentPlan(planId);
-  },
-
-  completeWeeklyPlan: async (id) => {
-    const res = await fetch(`/api/weekly-plans/${id}/complete`, { method: "POST" });
-    if (!res.ok) return;
-    await get().fetchWeeklyPlans();
-    await get().fetchCurrentPlan(id);
-  },
-
-  addEntryComment: async (planId, entryId, text) => {
-    const res = await fetch(`/api/weekly-plans/${planId}/entries/${entryId}/comments`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    if (!res.ok) return;
-    if (get().currentPlanId === planId) await get().fetchCurrentPlan(planId);
-  },
-
-  fetchPlanReport: async (planId) => {
-    const res = await fetch(`/api/weekly-plans/${planId}/report`);
-    if (!res.ok) { set({ currentPlanReport: null }); return; }
-    const currentPlanReport = await res.json();
-    set({ currentPlanReport });
-  },
-
-  fetchUnplannedDone: async (planId) => {
-    const res = await fetch(`/api/weekly-plans/${planId}/report`);
-    if (!res.ok) { set({ unplannedDoneItems: [] }); return; }
-    const report = await res.json();
-    set({ unplannedDoneItems: report.unplanned_done || [] });
-  },
-
   // --- Entity counts ---
   itemRelationCounts: {},
   itemCommentCounts: {},
@@ -1756,6 +1615,22 @@ export const useBrainStore = create<BrainStore>()(
       }
       if (state && version < 9) {
         state.activeCategory = "all";
+        if (state.viewMode === "weekly") state.viewMode = "list";
+        const cols = state.listColumnOrder as string[] | undefined;
+        if (cols) {
+          const next = [...cols];
+          if (!next.includes("planned_start_date")) {
+            const dueIdx = next.indexOf("due_date");
+            if (dueIdx >= 0) next.splice(dueIdx, 0, "planned_start_date");
+            else next.push("planned_start_date");
+          }
+          if (!next.includes("time")) {
+            const estimateIdx = next.indexOf("estimated_minutes");
+            if (estimateIdx >= 0) next.splice(estimateIdx + 1, 0, "time");
+            else next.push("time");
+          }
+          state.listColumnOrder = next;
+        }
       }
       return state;
     },
@@ -1764,6 +1639,7 @@ export const useBrainStore = create<BrainStore>()(
       clientViewMode: state.clientViewMode,
       clientGroupBy: state.clientGroupBy,
       viewMode: state.viewMode,
+      activeCategory: state.activeCategory,
       subtaskDisplayMode: state.subtaskDisplayMode,
       cardVisibleFields: state.cardVisibleFields,
       listColumnOrder: state.listColumnOrder,
@@ -1774,7 +1650,6 @@ export const useBrainStore = create<BrainStore>()(
       listGroupBy: state.listGroupBy,
       listCollapsedGroups: state.listCollapsedGroups,
       clientsCollapsedGroups: state.clientsCollapsedGroups,
-      currentPlanId: state.currentPlanId,
       filters: {
         categories: state.filters.categories,
         priorities: state.filters.priorities,
@@ -1865,6 +1740,7 @@ export function useFilteredItems() {
   const items = useBrainStore((s) => s.items);
   const filters = useBrainStore((s) => s.filters);
   const activeCategory = useBrainStore((s) => s.activeCategory);
+  const itemLinkedClients = useBrainStore((s) => s.itemLinkedClients);
 
   return useMemo(() => items.filter((item) => {
     if (filters.showArchived && item.status !== "archived") return false;
@@ -1881,7 +1757,14 @@ export function useFilteredItems() {
     // Search always applies
     if (filters.search) {
       const q = filters.search.toLowerCase();
-      if (!item.title.toLowerCase().includes(q) && !item.description.toLowerCase().includes(q)) return false;
+      const tags = item.tags?.some((tag) => tag.name.toLowerCase().includes(q)) ?? false;
+      const clients = itemLinkedClients[item.id]?.some((name) => name.toLowerCase().includes(q)) ?? false;
+      if (
+        !item.title.toLowerCase().includes(q) &&
+        !item.description.toLowerCase().includes(q) &&
+        !tags &&
+        !clients
+      ) return false;
     }
 
     // Advanced filter groups
@@ -1899,7 +1782,7 @@ export function useFilteredItems() {
     }
 
     return true;
-  }), [items, filters, activeCategory]);
+  }), [items, filters, activeCategory, itemLinkedClients]);
 }
 
 export function useSelectedItem(): ItemWithSubtasks | null {

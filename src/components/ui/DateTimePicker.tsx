@@ -26,6 +26,8 @@ type Props = {
   align?: "start" | "center" | "end";
   /** If true, hides the year part when the selected date is in the current year. */
   hideCurrentYear?: boolean;
+  /** If false, overdue dates render neutrally. Useful for completed/archived tasks. */
+  highlightOverdue?: boolean;
 };
 
 function parseDate(s: string | null): Date | undefined {
@@ -55,6 +57,7 @@ export function DateTimePicker({
   compact = false,
   align = "start",
   hideCurrentYear = false,
+  highlightOverdue = true,
 }: Props) {
   const [open, setOpen] = useState(false);
 
@@ -67,13 +70,14 @@ export function DateTimePicker({
   // Re-sync the buffer whenever the popover opens (or props change while open
   // due to an external update).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (open) setBuffer(value);
   }, [open, value]);
 
   const committedDate = parseDate(value.date);
   const bufferedDate = parseDate(buffer.date);
 
-  const isOverdue = committedDate && (() => {
+  const isOverdue = highlightOverdue && committedDate && (() => {
     const now = new Date();
     if (value.time && /^\d{2}:\d{2}$/.test(value.time)) {
       const [h, m] = value.time.split(":").map((p) => parseInt(p, 10));
