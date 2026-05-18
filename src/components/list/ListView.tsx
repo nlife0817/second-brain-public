@@ -3659,15 +3659,8 @@ const ItemRow = memo(function ItemRow({
     item.status === "done" ||
     item.status === "archived";
 
-  /* Due date logic */
-  const dueDate = item.due_date ? parseISO(item.due_date) : null;
-  const isOverdue =
-    dueDate &&
-    !isToday(dueDate) &&
-    isPast(dueDate) &&
-    item.status !== "done" &&
-    item.status !== "archived";
-  const isDueToday = dueDate ? isToday(dueDate) : false;
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const isDueToday = !!item.due_date && item.due_date === todayStr;
 
   /* ----- Inline edit commit helper --------------------------------------- */
 
