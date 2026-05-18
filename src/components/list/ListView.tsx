@@ -4012,6 +4012,7 @@ const ItemRow = memo(function ItemRow({
               placeholder="—"
               hideCurrentYear
               highlightOverdue={!isClosedStatus}
+              className={isDueToday ? "text-blue-600" : undefined}
             />
           </td>
         );
@@ -4034,7 +4035,7 @@ const ItemRow = memo(function ItemRow({
               placeholder="?"
               hideCurrentYear
               highlightOverdue={false}
-              className={isDueToday ? "text-blue-600" : undefined}
+              className={item.planned_start_date ? "text-blue-600" : undefined}
             />
           </td>
         );
