@@ -81,6 +81,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next|api/cron|api/notifications/dispatch|api/timing/watchdog|icons|favicon|manifest|sw\\.js).*)",
+    "/((?!_next|api/cron|api/notifications/dispatch|api/timing/watchdog|api/mcp|icons|favicon|manifest|sw\\.js).*)",
   ],
 };
