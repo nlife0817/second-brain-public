@@ -609,7 +609,7 @@ export const KanbanCard = React.memo(function KanbanCard({ item, isDragOverlay =
                   className={cn(
                     "inline-flex items-center gap-0.5 text-[10px] font-medium cursor-pointer",
                     isOverdue && "text-red-500 hover:text-red-600",
-                    isDueToday && "text-amber-600 hover:text-amber-700",
+                    isDueToday && "text-blue-600 hover:text-blue-700",
                     !isOverdue &&
                       !isDueToday &&
                       "text-slate-400 hover:text-slate-500"

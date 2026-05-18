@@ -2725,7 +2725,7 @@ export function ListView() {
 
   if (items.length === 0 && !isCreating) {
     return (
-      <div className="flex flex-col h-full">
+      <div className="flex flex-col h-full">
         <div className="flex-1 min-h-0 overflow-auto">
           <EmptyState search={searchQuery || undefined} />
         </div>
@@ -2734,7 +2734,7 @@ export function ListView() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full">
       <ScrollArea className="flex-1 w-full">
         <div className="min-w-[900px]">
         <DndContext
@@ -3659,6 +3659,16 @@ const ItemRow = memo(function ItemRow({
     item.status === "done" ||
     item.status === "archived";
 
+  /* Due date logic */
+  const dueDate = item.due_date ? parseISO(item.due_date) : null;
+  const isOverdue =
+    dueDate &&
+    !isToday(dueDate) &&
+    isPast(dueDate) &&
+    item.status !== "done" &&
+    item.status !== "archived";
+  const isDueToday = dueDate ? isToday(dueDate) : false;
+
   /* ----- Inline edit commit helper --------------------------------------- */
 
   const commitFieldEdit = useCallback(
@@ -4031,6 +4041,7 @@ const ItemRow = memo(function ItemRow({
               placeholder="?"
               hideCurrentYear
               highlightOverdue={false}
+              className={isDueToday ? "text-blue-600" : undefined}
             />
           </td>
         );
