@@ -1,4 +1,4 @@
-import { createMcpRouteHandler, withMcpAuth } from "mcp-handler";
+import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import {
@@ -76,7 +76,7 @@ function fail(message: string) {
   };
 }
 
-const handler = createMcpRouteHandler(
+const handler = createMcpHandler(
   (server) => {
     // ---------------- Tasks ----------------
 
