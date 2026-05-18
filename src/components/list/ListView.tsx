@@ -32,6 +32,7 @@ import {
   ListGroupByField,
   ListGroupByConfig,
 } from "@/types";
+import { format } from "date-fns";
 import {
   ArrowUpDown,
   ArrowUp,
@@ -2113,6 +2114,15 @@ export function ListView() {
 
   /* ----- Inline task creation handlers ----------------------------------- */
 
+  const handleStartCreate = useCallback(() => {
+    setIsCreating(true);
+    setNewItem({
+      ...NEW_ITEM_DEFAULTS,
+      due_date: format(new Date(), "yyyy-MM-dd"),
+    });
+    setCreateDropdown(null);
+  }, []);
+
   const handleCancelCreate = useCallback(() => {
     setIsCreating(false);
     setNewItem({ ...NEW_ITEM_DEFAULTS });
@@ -2799,8 +2809,26 @@ export function ListView() {
               {/* ---- Body --------------------------------------------- */}
               <tbody className="divide-y divide-slate-100">
                 {/* === Inline creation row === */}
-                {isCreating && (
-
+                {!isCreating ? (
+                  <tr
+                    className="cursor-pointer hover:bg-slate-50/50 group"
+                    onClick={handleStartCreate}
+                  >
+                    <td className="px-1 py-1.5" />
+                    <td className="px-1 py-1.5" />
+                    <td className="px-1.5 py-1.5">
+                      <Plus className="size-3.5 text-slate-400 transition-colors group-hover:text-blue-500" />
+                    </td>
+                    <td
+                      colSpan={visibleColumns.length}
+                      className="px-3 py-1.5"
+                    >
+                      <span className="text-xs text-slate-400 transition-colors group-hover:text-blue-500">
+                        Добавить задачу
+                      </span>
+                    </td>
+                  </tr>
+                ) : (
                   <tr className="bg-blue-50/40 ring-1 ring-inset ring-blue-200">
                     {/* Drag handle placeholder */}
                     <td className="px-1 py-1.5" />
