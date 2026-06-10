@@ -265,16 +265,43 @@ interface FlatRow {
 
 function buildFlatRows(
   sortedItems: ItemWithSubtasks[],
-  expandedItems: Set<string>
+  expandedItems: Set<string>,
+  opts?: {
+    hideCompletedSubtasks?: boolean;
+    hiddenSubtaskStatusIds?: Set<string>;
+  }
 ): FlatRow[] {
   const rows: FlatRow[] = [];
+  const hide = opts?.hideCompletedSubtasks ?? false;
+  const hiddenIds = opts?.hiddenSubtaskStatusIds ?? new Set<string>();
+
+  // Sort subtasks by due_date ascending (overdue first → future last);
+  // subtasks without a due_date fall to the bottom. Stable created_at tiebreak.
+  const sortSubtasks = (subs: Item[]): Item[] => {
+    const arr = [...subs];
+    arr.sort((a, b) => {
+      const da = a.due_date ? new Date(a.due_date).getTime() : Infinity;
+      const db = b.due_date ? new Date(b.due_date).getTime() : Infinity;
+      if (da !== db) return da - db;
+      return (
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+    });
+    return arr;
+  };
 
   for (const item of sortedItems) {
     // Items with parent_id are subtasks shown as detached — no nesting allowed
     const isDetachedSubtask = !!item.parent_id;
-    const totalSub = isDetachedSubtask ? 0 : (item.subtasks?.length ?? 0);
-    const doneSub = isDetachedSubtask ? 0 :
-      (item.subtasks?.filter((s) => s.status === "done").length ?? 0);
+    const allSubs = isDetachedSubtask ? [] : (item.subtasks ?? []);
+    const visibleSubs = hide
+      ? allSubs.filter((s) => !hiddenIds.has(s.status))
+      : allSubs;
+    const sortedSubs = sortSubtasks(visibleSubs);
+    const totalSub = sortedSubs.length;
+    const doneSub = isDetachedSubtask
+      ? 0
+      : (allSubs.filter((s) => s.status === "done").length ?? 0);
 
     rows.push({
       item,
@@ -287,7 +314,7 @@ function buildFlatRows(
     });
 
     if (totalSub > 0 && expandedItems.has(item.id)) {
-      for (const sub of item.subtasks) {
+      for (const sub of sortedSubs) {
         rows.push({
           item: sub,
           isSubtask: true,
@@ -1831,11 +1858,26 @@ export function ListView() {
     return map;
   }, [isGrouped, groups]);
 
+  /* ----- subtask hide-completed filter ----------------------------------- */
+  const hideCompletedSubtasks = useBrainStore((s) => s.hideCompletedSubtasks);
+
+  const hiddenSubtaskStatusIds = useMemo(() => {
+    const ids = new Set<string>(["done", "archived"]);
+    for (const s of itemStatusesArr) {
+      if (s.kind === "done" || s.kind === "archived") ids.add(s.id);
+      // "Не актуально" is a user-defined status that may be kind="open" —
+      // catch it by name so it still gets hidden when the toggle is on.
+      const name = s.name.toLowerCase().trim();
+      if (name === "не актуально" || name === "неактуально") ids.add(s.id);
+    }
+    return ids;
+  }, [itemStatusesArr]);
+
   /* ----- flat rows -------------------------------------------------------- */
 
   const flatRows = useMemo(
-    () => buildFlatRows(sortedItems, expandedItems),
-    [sortedItems, expandedItems]
+    () => buildFlatRows(sortedItems, expandedItems, { hideCompletedSubtasks, hiddenSubtaskStatusIds }),
+    [sortedItems, expandedItems, hideCompletedSubtasks, hiddenSubtaskStatusIds]
   );
 
   /* ----- IDs for SortableContext ------------------------------------------ */
@@ -2903,7 +2945,7 @@ export function ListView() {
                             ? level2Groups.map((subGroup) => {
                                 const l2Key = `${l1Key}::${subGroup.key}`;
                                 const l2Collapsed = collapsedGroups.has(l2Key);
-                                const l2FlatRows = buildFlatRows(subGroup.items, expandedItems);
+                                const l2FlatRows = buildFlatRows(subGroup.items, expandedItems, { hideCompletedSubtasks, hiddenSubtaskStatusIds });
 
                                 return (
                                   <GroupSection
@@ -2919,7 +2961,7 @@ export function ListView() {
                                   </GroupSection>
                                 );
                               })
-                            : renderFlatRows(buildFlatRows(group.items, expandedItems))
+                            : renderFlatRows(buildFlatRows(group.items, expandedItems, { hideCompletedSubtasks, hiddenSubtaskStatusIds }))
                           )}
                         </GroupSection>
                       );
@@ -4287,10 +4329,33 @@ function UndoRedoButtons() {
 export function ListHeaderControls() {
   const listGroupBy = useBrainStore((s) => s.listGroupBy);
   const setListGroupBy = useBrainStore((s) => s.setListGroupBy);
+  const hideCompletedSubtasks = useBrainStore((s) => s.hideCompletedSubtasks);
+  const setHideCompletedSubtasks = useBrainStore((s) => s.setHideCompletedSubtasks);
 
   return (
     <div className="flex items-center gap-1">
       <UndoRedoButtons />
+      <button
+        type="button"
+        onClick={() => setHideCompletedSubtasks(!hideCompletedSubtasks)}
+        className={cn(
+          "inline-flex items-center justify-center size-6 rounded hover:bg-slate-200/70 transition-colors",
+          hideCompletedSubtasks
+            ? "text-emerald-600 hover:text-emerald-700 bg-emerald-50"
+            : "text-slate-400 hover:text-slate-600"
+        )}
+        title={
+          hideCompletedSubtasks
+            ? "Показать подзадачи в статусах «Готово», «Архив», «Не актуально»"
+            : "Скрыть подзадачи в статусах «Готово», «Архив», «Не актуально»"
+        }
+      >
+        {hideCompletedSubtasks ? (
+          <EyeOff className="size-3.5" />
+        ) : (
+          <Eye className="size-3.5" />
+        )}
+      </button>
       <GroupByPopover value={listGroupBy} onChange={setListGroupBy} />
       <ColumnConfigPopover />
     </div>

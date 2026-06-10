@@ -80,6 +80,7 @@ interface BrainStore {
   activeFilterId: string | null;
   detailMode: "modal" | "panel";
   listGroupBy: ListGroupByConfig;
+  hideCompletedSubtasks: boolean;
 
   fetchInit: () => Promise<void>;
   fetchItems: () => Promise<void>;
@@ -126,6 +127,7 @@ interface BrainStore {
   resetActiveFilter: () => void;
   setDetailMode: (mode: "modal" | "panel") => void;
   setListGroupBy: (config: ListGroupByConfig) => void;
+  setHideCompletedSubtasks: (hide: boolean) => void;
 
   // Undo / redo stack for inline list edits
   undoStack: UndoEntry[];
@@ -376,6 +378,7 @@ export const useBrainStore = create<BrainStore>()(
   activeFilterId: null,
   detailMode: "modal" as "modal" | "panel",
   listGroupBy: ["none", "none"] as ListGroupByConfig,
+  hideCompletedSubtasks: false,
   undoStack: [] as UndoEntry[],
   redoStack: [] as UndoEntry[],
 
@@ -964,6 +967,7 @@ export const useBrainStore = create<BrainStore>()(
     }
   },
   setListCollapsedGroups: (groups) => set({ listCollapsedGroups: groups }),
+  setHideCompletedSubtasks: (hide) => set({ hideCompletedSubtasks: hide }),
   setClientsCollapsedGroups: (groups) => set({ clientsCollapsedGroups: groups }),
 
   // ----- Undo / redo --------------------------------------------------------
@@ -1649,6 +1653,7 @@ export const useBrainStore = create<BrainStore>()(
       detailMode: state.detailMode,
       listGroupBy: state.listGroupBy,
       listCollapsedGroups: state.listCollapsedGroups,
+      hideCompletedSubtasks: state.hideCompletedSubtasks,
       clientsCollapsedGroups: state.clientsCollapsedGroups,
       filters: {
         categories: state.filters.categories,
