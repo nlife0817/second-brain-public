@@ -292,6 +292,17 @@ export function Sidebar() {
 
         <Separator className="bg-slate-200" />
 
+        <a
+          href="/v2"
+          className={cn(
+            "mx-2 mt-2 flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-2 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:border-slate-400 hover:text-slate-700",
+            collapsed && "px-1",
+          )}
+          title="Новый командный интерфейс"
+        >
+          {collapsed ? "v2" : "Открыть новый интерфейс (v2)"}
+        </a>
+
         <div className="flex shrink-0 items-center justify-center p-2">
           <Tooltip>
             <TooltipTrigger

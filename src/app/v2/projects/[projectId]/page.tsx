@@ -1,0 +1,268 @@
+"use client";
+
+// Доска проекта: канбан по статусам, drag&drop карточек между колонками.
+
+import { use, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import { Plus, Users } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CreateTaskDialog } from "@/components/v2/CreateTaskDialog";
+import { ProjectMembersDialog } from "@/components/v2/ProjectMembersDialog";
+import { TaskCard } from "@/components/v2/TaskCard";
+import { TaskSheet } from "@/components/v2/TaskSheet";
+import { api } from "@/lib/core/client";
+import type {
+  Project,
+  ProjectMemberWithUser,
+  ProjectRole,
+  Section,
+  TaskStatus,
+  TaskWithMeta,
+} from "@/lib/core/types";
+import { useV2Store } from "@/lib/core/ui-store";
+import { AvatarStack } from "@/components/v2/bits";
+
+type ProjectDetail = Project & {
+  my_role: ProjectRole | null;
+  sections: Section[];
+  members: ProjectMemberWithUser[];
+};
+
+function Column({
+  status,
+  tasks,
+  canEdit,
+  onOpenTask,
+  onAdd,
+}: {
+  status: TaskStatus;
+  tasks: TaskWithMeta[];
+  canEdit: boolean;
+  onOpenTask: (id: string) => void;
+  onAdd: () => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `status:${status.id}` });
+  return (
+    <div className="flex w-72 shrink-0 flex-col rounded-xl bg-muted/40">
+      <div className="flex items-center gap-2 px-3 pb-1 pt-2.5">
+        <span className="size-2 rounded-full" style={{ backgroundColor: status.color }} />
+        <span className="text-sm font-medium">{status.name}</span>
+        <span className="text-xs text-muted-foreground">{tasks.length}</span>
+        <span className="flex-1" />
+        {canEdit && (
+          <button onClick={onAdd} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+            <Plus className="size-3.5" />
+          </button>
+        )}
+      </div>
+      <div
+        ref={setNodeRef}
+        className={`flex min-h-24 flex-1 flex-col gap-1.5 overflow-y-auto p-2 transition-colors ${isOver ? "bg-muted/70" : ""}`}
+      >
+        {tasks.map((t) => (
+          <DraggableCard key={t.id} task={t} disabled={!canEdit} onClick={() => onOpenTask(t.id)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DraggableCard({
+  task,
+  disabled,
+  onClick,
+}: {
+  task: TaskWithMeta;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: task.id,
+    disabled,
+  });
+  return (
+    <div ref={setNodeRef} {...listeners} {...attributes} className={isDragging ? "opacity-40" : ""}>
+      <TaskCard task={task} onClick={onClick} />
+    </div>
+  );
+}
+
+export default function ProjectBoardPage({ params }: { params: Promise<{ projectId: string }> }) {
+  const { projectId } = use(params);
+  const { orgId, statuses, refreshProjects } = useV2Store();
+  const [project, setProject] = useState<ProjectDetail | null>(null);
+  const [tasks, setTasks] = useState<TaskWithMeta[]>([]);
+  const [showDone, setShowDone] = useState(false);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [createIn, setCreateIn] = useState<string | null | false>(false); // false = закрыт, null/statusId = открыт
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [dragTask, setDragTask] = useState<TaskWithMeta | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
+  const load = useCallback(async () => {
+    if (!orgId) return;
+    try {
+      const [p, ts] = await Promise.all([
+        api.get<ProjectDetail>(`/orgs/${orgId}/projects/${projectId}`),
+        api.get<TaskWithMeta[]>(`/orgs/${orgId}/projects/${projectId}/tasks${showDone ? "?done=1" : ""}`),
+      ]);
+      setProject(p);
+      setTasks(ts);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Проект недоступен");
+    }
+  }, [orgId, projectId, showDone]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const canEdit = project?.my_role === "admin" || project?.my_role === "editor";
+
+  const columns = useMemo(() => {
+    const visible = statuses.filter((s) => showDone || s.kind !== "archived");
+    const noStatusTasks = tasks.filter(
+      (t) => !t.status_id || !statuses.some((s) => s.id === t.status_id),
+    );
+    return { visible, noStatusTasks };
+  }, [statuses, tasks, showDone]);
+
+  function tasksFor(statusId: string): TaskWithMeta[] {
+    return tasks.filter((t) => t.status_id === statusId);
+  }
+
+  function onDragStart(e: DragStartEvent) {
+    setDragTask(tasks.find((t) => t.id === e.active.id) ?? null);
+  }
+
+  async function onDragEnd(e: DragEndEvent) {
+    setDragTask(null);
+    const overId = e.over?.id;
+    if (!orgId || !overId || typeof overId !== "string" || !overId.startsWith("status:")) return;
+    const statusId = overId.slice("status:".length);
+    const taskId = String(e.active.id);
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task || task.status_id === statusId) return;
+    // Оптимистично двигаем карточку, при ошибке откатываем.
+    const prev = tasks;
+    setTasks((cur) => cur.map((t) => (t.id === taskId ? { ...t, status_id: statusId } : t)));
+    try {
+      await api.patch(`/orgs/${orgId}/tasks/${taskId}`, { status_id: statusId });
+      void load();
+      void refreshProjects();
+    } catch {
+      setTasks(prev);
+    }
+  }
+
+  if (error) {
+    return <div className="flex h-full items-center justify-center text-sm text-destructive">{error}</div>;
+  }
+  if (!project) {
+    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Загрузка…</div>;
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <header className="flex items-center gap-3 border-b border-border px-6 py-3.5">
+        <span className="size-3 rounded" style={{ backgroundColor: project.color }} />
+        <h1 className="text-base font-semibold">{project.name}</h1>
+        {project.visibility === "private" && (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">приватный</span>
+        )}
+        <span className="flex-1" />
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={showDone}
+            onChange={(e) => setShowDone(e.target.checked)}
+            className="size-3.5 accent-primary"
+          />
+          Все задачи
+        </label>
+        <button
+          onClick={() => setMembersOpen(true)}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 hover:bg-muted"
+          title="Участники проекта"
+        >
+          <AvatarStack
+            users={project.members.map((m) => ({ id: m.user_id, email: m.email, name: m.name, avatar_url: m.avatar_url }))}
+          />
+          <Users className="size-4 text-muted-foreground" />
+        </button>
+        {canEdit && (
+          <Button size="sm" onClick={() => setCreateIn(null)}>
+            <Plus className="size-4" />
+            Задача
+          </Button>
+        )}
+      </header>
+
+      <div className="flex-1 overflow-x-auto overflow-y-hidden">
+        <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+          <div className="flex h-full gap-3 px-6 py-4">
+            {columns.visible.map((s) => (
+              <Column
+                key={s.id}
+                status={s}
+                tasks={tasksFor(s.id)}
+                canEdit={!!canEdit}
+                onOpenTask={setOpenTaskId}
+                onAdd={() => setCreateIn(s.id)}
+              />
+            ))}
+            {columns.noStatusTasks.length > 0 && (
+              <div className="flex w-72 shrink-0 flex-col rounded-xl bg-muted/40">
+                <div className="px-3 pb-1 pt-2.5 text-sm font-medium text-muted-foreground">Без статуса</div>
+                <div className="flex flex-1 flex-col gap-1.5 overflow-y-auto p-2">
+                  {columns.noStatusTasks.map((t) => (
+                    <TaskCard key={t.id} task={t} onClick={() => setOpenTaskId(t.id)} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <DragOverlay>{dragTask ? <TaskCard task={dragTask} className="w-64 rotate-2" /> : null}</DragOverlay>
+        </DndContext>
+      </div>
+
+      <TaskSheet
+        taskId={openTaskId}
+        onClose={() => setOpenTaskId(null)}
+        onChanged={() => {
+          void load();
+          void refreshProjects();
+        }}
+      />
+      <CreateTaskDialog
+        open={createIn !== false}
+        onOpenChange={(open) => !open && setCreateIn(false)}
+        projectId={projectId}
+        statusId={createIn === false ? null : createIn}
+        onCreated={() => {
+          void load();
+          void refreshProjects();
+        }}
+      />
+      <ProjectMembersDialog
+        open={membersOpen}
+        onOpenChange={setMembersOpen}
+        project={project}
+        onChanged={() => void load()}
+      />
+    </div>
+  );
+}

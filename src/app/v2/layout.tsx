@@ -1,0 +1,171 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { Bell, CheckCircle2, FolderKanban, Plus, Settings } from "lucide-react";
+import { CreateProjectDialog } from "@/components/v2/CreateProjectDialog";
+import { Avatar } from "@/components/v2/bits";
+import { useV2Store } from "@/lib/core/ui-store";
+import { cn } from "@/lib/utils";
+
+function NavLink({
+  href,
+  icon,
+  label,
+  badge,
+  active,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+  badge?: number;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors",
+        active ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+      )}
+    >
+      {icon}
+      <span className="flex-1 truncate">{label}</span>
+      {badge != null && badge > 0 && (
+        <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary-foreground">
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
+    </Link>
+  );
+}
+
+export default function V2Layout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const { ready, error, me, orgName, orgRole, projects, unreadCount, bootstrap, refreshUnread } = useV2Store();
+  const [createOpen, setCreateOpen] = useState(false);
+
+  useEffect(() => {
+    void bootstrap();
+  }, [bootstrap]);
+
+  useEffect(() => {
+    const t = setInterval(() => void refreshUnread(), 30_000);
+    return () => clearInterval(t);
+  }, [refreshUnread]);
+
+  if (!ready) {
+    return (
+      <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">
+        Загрузка…
+      </div>
+    );
+  }
+  if (error || !me) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-2">
+        <p className="text-sm text-destructive">{error ?? "Нет доступа"}</p>
+        <Link className="text-sm text-primary underline" href="/">
+          Вернуться в старый интерфейс
+        </Link>
+      </div>
+    );
+  }
+
+  const isGuest = orgRole === "guest";
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-sidebar">
+        <div className="flex items-center gap-2 px-4 pb-2 pt-4">
+          <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">
+            {orgName.slice(0, 1).toUpperCase()}
+          </span>
+          <span className="truncate text-sm font-semibold">{orgName}</span>
+        </div>
+
+        <nav className="flex flex-col gap-0.5 px-2 py-2">
+          <NavLink
+            href="/v2/my"
+            icon={<CheckCircle2 className="size-4" />}
+            label="Мои задачи"
+            active={pathname.startsWith("/v2/my")}
+          />
+          <NavLink
+            href="/v2/inbox"
+            icon={<Bell className="size-4" />}
+            label="Уведомления"
+            badge={unreadCount}
+            active={pathname.startsWith("/v2/inbox")}
+          />
+          {!isGuest && (
+            <NavLink
+              href="/v2/settings"
+              icon={<Settings className="size-4" />}
+              label="Настройки"
+              active={pathname.startsWith("/v2/settings")}
+            />
+          )}
+        </nav>
+
+        <div className="mt-2 flex items-center justify-between px-4">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Проекты
+          </span>
+          {!isGuest && (
+            <button
+              onClick={() => setCreateOpen(true)}
+              className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+              title="Новый проект"
+            >
+              <Plus className="size-3.5" />
+            </button>
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto px-2 py-1.5">
+          <div className="flex flex-col gap-0.5">
+            {projects.map((p) => (
+              <NavLink
+                key={p.id}
+                href={`/v2/projects/${p.id}`}
+                icon={<span className="size-2.5 rounded-sm" style={{ backgroundColor: p.color }} />}
+                label={p.name}
+                badge={p.open_task_count}
+                active={pathname === `/v2/projects/${p.id}`}
+              />
+            ))}
+            {projects.length === 0 && (
+              <p className="px-2.5 py-2 text-xs text-muted-foreground">
+                {isGuest ? "Вам ещё не открыли ни одного проекта" : "Пока нет проектов"}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="border-t border-border px-4 py-3">
+          <div className="flex items-center gap-2">
+            <Avatar user={me} size="md" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-medium">{me.name || me.email}</p>
+              <p className="truncate text-[11px] text-muted-foreground">
+                {orgRole === "owner" ? "Владелец" : orgRole === "admin" ? "Администратор" : orgRole === "member" ? "Сотрудник" : "Гость"}
+              </p>
+            </div>
+            <Link
+              href="/"
+              title="Старый интерфейс"
+              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <FolderKanban className="size-4" />
+            </Link>
+          </div>
+        </div>
+      </aside>
+
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
+
+      <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
+    </div>
+  );
+}
