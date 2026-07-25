@@ -45,7 +45,8 @@ function NavLink({
 
 export default function V2Layout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { ready, error, me, orgName, orgRole, projects, unreadCount, bootstrap, refreshUnread } = useV2Store();
+  const { ready, error, me, orgName, orgRole, projects, unreadCount, bootstrap, refreshUnread, refreshProjects } =
+    useV2Store();
   const [createOpen, setCreateOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
@@ -207,7 +208,12 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
 
       <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
       <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} onPickTask={setSearchTaskId} />
-      <TaskSheet taskId={searchTaskId} onClose={() => setSearchTaskId(null)} />
+      {/* Карточка задачи, открытая из поиска: страницы держат собственную. */}
+      <TaskSheet
+        taskId={searchTaskId}
+        onClose={() => setSearchTaskId(null)}
+        onChanged={() => void refreshProjects()}
+      />
     </div>
   );
 }

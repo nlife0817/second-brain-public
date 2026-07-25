@@ -40,11 +40,14 @@ function formatDuration(seconds: number): string {
   return h > 0 ? `${h} ч ${m} мин` : `${m} мин`;
 }
 
+/** Локальная дата (не UTC): иначе ночью период и ручная запись съезжают на сутки. */
 function isoDaysAgo(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export default function TimePage() {
   const { orgId, orgRole } = useV2Store();
@@ -61,6 +64,9 @@ export default function TimePage() {
 
   const load = useCallback(async () => {
     if (!orgId) return;
+    // Промежуточное состояние <input type="date"> (пустая строка) не должно
+    // уходить в API — вернётся 400 и мигнёт ошибка.
+    if (!DATE_RE.test(from) || !DATE_RE.test(to)) return;
     try {
       const [list, sum] = await Promise.all([
         api.get<{ entries: TimeEntry[]; active: TimeEntry | null }>(
@@ -115,7 +121,7 @@ export default function TimePage() {
           <div className="flex items-center gap-2">
             <span className="font-mono text-sm tabular-nums">{formatDuration(activeSeconds)}</span>
             <span className="max-w-48 truncate text-sm text-muted-foreground">
-              {active.task_title ?? active.note ?? "Без задачи"}
+              {active.task_title || active.note || "Без задачи"}
             </span>
             <Button size="sm" variant="secondary" onClick={() => void call(() => api.del(`/orgs/${orgId}/time/timer`))}>
               <Pause className="size-4" />
@@ -217,7 +223,7 @@ export default function TimePage() {
                     })}
                   </span>
                   <span className="min-w-0 flex-1 truncate">
-                    {e.task_title ?? e.note ?? <span className="text-muted-foreground">Без задачи</span>}
+                    {e.task_title || e.note || <span className="text-muted-foreground">Без задачи</span>}
                   </span>
                   <span className="tabular-nums text-muted-foreground">
                     {e.seconds != null ? formatDuration(e.seconds) : "идёт"}

@@ -3,7 +3,8 @@
 // CRM: список клиентов слева, карточка справа. Раздел недоступен гостям
 // (сервер вернёт 403; в навигации пункт скрыт).
 
-import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +49,8 @@ interface ClientFull extends Client {
 
 export default function ClientsPage() {
   const { orgId } = useV2Store();
+  const searchParams = useSearchParams();
+  const deepLinkId = searchParams.get("client");
   const [clients, setClients] = useState<Client[]>([]);
   const [statuses, setStatuses] = useState<ClientStatus[]>([]);
   const [crmSystems, setCrmSystems] = useState<CrmSystem[]>([]);
@@ -55,6 +58,9 @@ export default function ClientsPage() {
   const [newName, setNewName] = useState("");
   const [noteText, setNoteText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Держим id открытой карточки в ref: ответы медленных запросов не должны
+  // перерисовывать панель, если пользователь уже переключился на другого клиента.
+  const openId = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     if (!orgId) return;
@@ -76,21 +82,35 @@ export default function ClientsPage() {
     void load();
   }, [load]);
 
-  async function open(clientId: string) {
-    if (!orgId) return;
-    try {
-      setSelected(await api.get<ClientFull>(`/orgs/${orgId}/clients/${clientId}`));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось открыть карточку");
-    }
-  }
+  const open = useCallback(
+    async (clientId: string) => {
+      if (!orgId) return;
+      openId.current = clientId;
+      try {
+        const full = await api.get<ClientFull>(`/orgs/${orgId}/clients/${clientId}`);
+        if (openId.current !== clientId) return;
+        setSelected(full);
+        setError(null);
+      } catch (e) {
+        if (openId.current !== clientId) return;
+        setError(e instanceof Error ? e.message : "Не удалось открыть карточку");
+      }
+    },
+    [orgId],
+  );
+
+  // Переход из поиска: /v2/clients?client=<id>
+  useEffect(() => {
+    if (deepLinkId) void open(deepLinkId);
+  }, [deepLinkId, open]);
 
   async function call(fn: () => Promise<unknown>) {
     try {
       await fn();
       setError(null);
       await load();
-      if (selected) await open(selected.id);
+      // Перечитываем именно ту карточку, что открыта сейчас (fn мог её закрыть).
+      if (openId.current) await open(openId.current);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка");
     }
@@ -98,7 +118,10 @@ export default function ClientsPage() {
 
   async function patchSelected(body: Record<string, unknown>) {
     if (!orgId || !selected) return;
-    await call(() => api.patch(`/orgs/${orgId}/clients/${selected.id}`, body));
+    const id = selected.id;
+    // Оптимистично, иначе быстрый второй клик посчитается от старого состояния.
+    setSelected((prev) => (prev && prev.id === id ? { ...prev, ...(body as Partial<ClientFull>) } : prev));
+    await call(() => api.patch(`/orgs/${orgId}/clients/${id}`, body));
   }
 
   return (
@@ -196,6 +219,7 @@ export default function ClientsPage() {
                   if (window.confirm(`Удалить клиента «${selected.name}»?`)) {
                     void call(async () => {
                       await api.del(`/orgs/${orgId}/clients/${selected.id}`);
+                      openId.current = null;
                       setSelected(null);
                     });
                   }
@@ -217,6 +241,7 @@ export default function ClientsPage() {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="">Без статуса</SelectItem>
                   {statuses.map((s) => (
                     <SelectItem key={s.id} value={s.id}>
                       {s.name}
@@ -230,9 +255,10 @@ export default function ClientsPage() {
                 key={`rev-${selected.id}`}
                 type="number"
                 defaultValue={selected.monthly_revenue ?? ""}
-                onBlur={(e) =>
-                  void patchSelected({ monthly_revenue: e.target.value === "" ? null : Number(e.target.value) })
-                }
+                onBlur={(e) => {
+                  const next = e.target.value === "" ? null : Number(e.target.value);
+                  if (next !== selected.monthly_revenue) void patchSelected({ monthly_revenue: next });
+                }}
                 className="h-8 w-40"
               />
 

@@ -26,14 +26,19 @@ export interface TimeEntryWithTask extends TimeEntry {
 
 const MAX_TIMER_HOURS = 12;
 
+/**
+ * Активный таймер пользователя в ТЕКУЩЕЙ организации. Индекс уникальности
+ * глобальный (один таймер на человека), но показывать чужую организацию
+ * в её контексте нельзя — там это чужая задача.
+ */
 export async function getActiveTimer(ctx: AuthContext): Promise<TimeEntryWithTask | null> {
   const row = await prepare<TimeEntryWithTask>(
     `SELECT e.*, t.title AS task_title, u.name AS user_name
      FROM core.time_entries e
      LEFT JOIN core.tasks t ON t.id = e.task_id
      LEFT JOIN core.users u ON u.id = e.user_id
-     WHERE e.user_id = ? AND e.ended_at IS NULL`,
-  ).get(ctx.user.id);
+     WHERE e.user_id = ? AND e.org_id = ? AND e.ended_at IS NULL`,
+  ).get(ctx.user.id, ctx.orgId);
   return row ?? null;
 }
 
@@ -46,6 +51,8 @@ export async function startTimer(
   if (taskId) await requireTaskAccess(ctx, taskId, "view");
 
   const id = await transaction(async (tx) => {
+    // Прежний таймер (в любой организации) закрывается: у человека один рабочий
+    // поток, и partial unique index это гарантирует на уровне БД.
     await tx
       .prepare(
         `UPDATE core.time_entries
@@ -61,10 +68,16 @@ export async function startTimer(
       .get(ctx.orgId, ctx.user.id, taskId, note);
     if (!row) throw new DomainError(500, "Failed to start timer");
     return row.id;
+  }).catch((err: unknown) => {
+    // Две вкладки нажали «Старт» одновременно — это конфликт, а не сбой.
+    if (typeof err === "object" && err && (err as { code?: string }).code === "23505") {
+      throw new DomainError(409, "Таймер уже запущен в другой вкладке");
+    }
+    throw err;
   });
 
   const entry = await getActiveTimer(ctx);
-  if (!entry || entry.id !== id) throw new DomainError(500, "Timer state is inconsistent");
+  if (!entry || entry.id !== id) throw new DomainError(409, "Таймер был изменён в другой вкладке");
   return entry;
 }
 
@@ -72,9 +85,9 @@ export async function stopTimer(ctx: AuthContext): Promise<TimeEntry | null> {
   const row = await prepare<TimeEntry>(
     `UPDATE core.time_entries
      SET ended_at = now(), seconds = GREATEST(0, EXTRACT(EPOCH FROM (now() - started_at))::int)
-     WHERE user_id = ? AND ended_at IS NULL
+     WHERE user_id = ? AND org_id = ? AND ended_at IS NULL
      RETURNING *`,
-  ).get(ctx.user.id);
+  ).get(ctx.user.id, ctx.orgId);
   return row ?? null;
 }
 
@@ -165,17 +178,21 @@ export interface TimeSummaryRow {
   seconds: number;
 }
 
-/** Сводка за период: по людям (только для админов) или по задачам/проектам. */
+/**
+ * Сводка за период.
+ *  - `user` (только для админов): часы по сотрудникам — без названий задач,
+ *    поэтому приватные проекты и личные задачи не раскрываются;
+ *  - `task` / `project`: всегда по СВОИМ записям, даже у админа. Иначе в сводку
+ *    попали бы заголовки задач из приватных проектов и чужих личных инбоксов.
+ */
 export async function summary(
   ctx: AuthContext,
   opts: { from: string; to: string; groupBy: "user" | "task" | "project" },
 ): Promise<TimeSummaryRow[]> {
-  const isAdmin = canOrg(ctx, "org.members.manage");
-  const scope = isAdmin ? "" : "AND e.user_id = ?";
-  const scopeParams = isAdmin ? [] : [ctx.user.id];
-
   if (opts.groupBy === "user") {
-    if (!isAdmin) throw new DomainError(403, "Only org admins can see the team summary");
+    if (!canOrg(ctx, "org.members.manage")) {
+      throw new DomainError(403, "Only org admins can see the team summary");
+    }
     return prepare<TimeSummaryRow>(
       `SELECT e.user_id::text AS key, COALESCE(NULLIF(u.name, ''), u.email) AS label,
               COALESCE(sum(e.seconds), 0)::int AS seconds
@@ -192,11 +209,11 @@ export async function summary(
               COALESCE(t.title, 'Без задачи') AS label,
               COALESCE(sum(e.seconds), 0)::int AS seconds
        FROM core.time_entries e LEFT JOIN core.tasks t ON t.id = e.task_id
-       WHERE e.org_id = ? AND e.started_at >= ?::date AND e.started_at < (?::date + 1) ${scope}
+       WHERE e.org_id = ? AND e.user_id = ? AND e.started_at >= ?::date AND e.started_at < (?::date + 1)
        GROUP BY e.task_id, t.title
        ORDER BY seconds DESC
        LIMIT 100`,
-    ).all(ctx.orgId, opts.from, opts.to, ...scopeParams);
+    ).all(ctx.orgId, ctx.user.id, opts.from, opts.to);
   }
 
   return prepare<TimeSummaryRow>(
@@ -206,9 +223,9 @@ export async function summary(
      FROM core.time_entries e
      LEFT JOIN core.task_projects tp ON tp.task_id = e.task_id
      LEFT JOIN core.projects p ON p.id = tp.project_id
-     WHERE e.org_id = ? AND e.started_at >= ?::date AND e.started_at < (?::date + 1) ${scope}
+     WHERE e.org_id = ? AND e.user_id = ? AND e.started_at >= ?::date AND e.started_at < (?::date + 1)
      GROUP BY p.id, p.name
      ORDER BY seconds DESC
      LIMIT 100`,
-  ).all(ctx.orgId, opts.from, opts.to, ...scopeParams);
+  ).all(ctx.orgId, ctx.user.id, opts.from, opts.to);
 }

@@ -98,7 +98,11 @@ export const useV2Store = create<V2State>((set, get) => ({
   refreshUnread: async () => {
     const { orgId } = get();
     if (!orgId) return;
-    const res = await api.get<{ unread_count: number }>(`/orgs/${orgId}/notifications?unread=1`);
-    set({ unreadCount: res.unread_count });
+    try {
+      const res = await api.get<{ unread_count: number }>(`/orgs/${orgId}/notifications?unread=1`);
+      set({ unreadCount: res.unread_count });
+    } catch {
+      // Периодический опрос: офлайн или мигнувший 500 не должны шуметь в консоль.
+    }
   },
 }));

@@ -1,12 +1,12 @@
 // Повторяющиеся задачи: правило хранит шаблон и дату следующего запуска.
 // Материализация — идемпотентная (по next_run_date), вызывается из cron.
 
-import { prepare, transaction } from "@/lib/sql";
+import { prepare } from "@/lib/sql";
 import { DomainError } from "./http";
-import { assertOrg } from "./policy";
+import { assertOrg, canOrg, effectiveProjectRole, PolicyError } from "./policy";
 import { requireProject } from "./projects";
 import { createTask } from "./tasks";
-import type { AuthContext, TaskPriority } from "./types";
+import type { AuthContext, PolicyProject, TaskPriority } from "./types";
 
 export type Freq = "daily" | "weekdays" | "weekly" | "monthly";
 
@@ -55,13 +55,17 @@ export function nextOccurrence(
     }
     case "weekly": {
       const days = (rule.byweekday ?? [d.getUTCDay()]).slice().sort((a, b) => a - b);
-      for (let i = 1; i <= 7 * Math.max(1, rule.interval); i++) {
+      // Внутри текущей недели — ближайший следующий день из списка.
+      for (let i = 1; i <= 6; i++) {
         const probe = new Date(d);
         probe.setUTCDate(probe.getUTCDate() + i);
-        if (days.includes(probe.getUTCDay())) return toIso(probe);
+        if (probe.getUTCDay() > d.getUTCDay() && days.includes(probe.getUTCDay())) return toIso(probe);
       }
-      d.setUTCDate(d.getUTCDate() + 7 * rule.interval);
-      return toIso(d);
+      // Иначе первый день из списка через `interval` недель — интервал
+      // обязан соблюдаться, иначе «каждые 2 недели» станет «каждую неделю».
+      const jump = new Date(d);
+      jump.setUTCDate(jump.getUTCDate() + 7 * rule.interval - d.getUTCDay() + days[0]);
+      return toIso(jump);
     }
     case "monthly": {
       const day = rule.bymonthday ?? d.getUTCDate();
@@ -74,12 +78,29 @@ export function nextOccurrence(
   }
 }
 
+/** Правило видно автору и тем, кто видит его проект: шаблон содержит и текст задачи, и исполнителей. */
 export async function listRules(ctx: AuthContext): Promise<RecurringRule[]> {
-  return prepare<RecurringRule>(
+  const rows = await prepare<RecurringRule & { created_by: string | null }>(
     `SELECT id, org_id, template, freq, interval, byweekday, bymonthday,
-            start_date, until_date, next_run_date, created_at
+            start_date, until_date, next_run_date, created_at, created_by
      FROM core.recurring_rules WHERE org_id = ? ORDER BY next_run_date`,
   ).all(ctx.orgId);
+
+  const projectIds = [...new Set(rows.map((r) => r.template?.project_id).filter((id): id is string => !!id))];
+  const visible = new Set<string>();
+  if (projectIds.length > 0) {
+    const ph = projectIds.map(() => "?").join(",");
+    const projects = await prepare<PolicyProject>(
+      `SELECT id, org_id, visibility FROM core.projects WHERE id IN (${ph})`,
+    ).all(projectIds);
+    for (const p of projects) {
+      if (effectiveProjectRole(ctx, p) !== null) visible.add(p.id);
+    }
+  }
+
+  return rows
+    .filter((r) => r.created_by === ctx.user.id || (r.template?.project_id && visible.has(r.template.project_id)))
+    .map(({ created_by: _created_by, ...rule }) => rule);
 }
 
 export async function createRule(
@@ -121,11 +142,19 @@ export async function createRule(
   return row;
 }
 
+/** Удалять правило вправе автор, админ проекта правила или админ организации. */
 export async function deleteRule(ctx: AuthContext, ruleId: string): Promise<void> {
-  const changed = await prepare(
-    `DELETE FROM core.recurring_rules WHERE id = ? AND org_id = ?`,
-  ).run(ruleId, ctx.orgId);
-  if (changed.changes === 0) throw new DomainError(404, "Rule not found");
+  const rule = await prepare<{ created_by: string | null; template: RecurringTemplate }>(
+    `SELECT created_by, template FROM core.recurring_rules WHERE id = ? AND org_id = ?`,
+  ).get(ruleId, ctx.orgId);
+  if (!rule) throw new DomainError(404, "Rule not found");
+
+  if (rule.created_by !== ctx.user.id && !canOrg(ctx, "org.members.manage")) {
+    if (!rule.template?.project_id) throw new PolicyError("recurring.delete");
+    await requireProject(ctx, rule.template.project_id, "project.update");
+  }
+
+  await prepare(`DELETE FROM core.recurring_rules WHERE id = ? AND org_id = ?`).run(ruleId, ctx.orgId);
 }
 
 /**
@@ -177,6 +206,14 @@ export async function materializeDueRules(today: string): Promise<{ created: num
       ),
     };
 
+    // Захват правила: сдвигаем дату ДО создания задачи и только если её ещё
+    // никто не сдвинул. Иначе параллельный тик cron создаст дубль задачи.
+    const claimed = await prepare(
+      `UPDATE core.recurring_rules SET next_run_date = ?::date
+       WHERE id = ? AND next_run_date = ?::date`,
+    ).run(nextOccurrence(rule, today), rule.id, rule.next_run_date);
+    if (claimed.changes === 0) continue;
+
     try {
       const task = await createTask(ctx, {
         title: rule.template.title,
@@ -188,19 +225,12 @@ export async function materializeDueRules(today: string): Promise<{ created: num
         assignee_ids: rule.template.assignee_ids,
         source: "recurring",
       });
-      await transaction(async (tx) => {
-        await tx
-          .prepare(`UPDATE core.recurring_rules SET next_run_date = ?::date, last_task_id = ? WHERE id = ?`)
-          .run(nextOccurrence(rule, today), task.id, rule.id);
-      });
+      await prepare(`UPDATE core.recurring_rules SET last_task_id = ? WHERE id = ?`).run(task.id, rule.id);
       created++;
-    } catch {
-      // Правило могло указывать на удалённый проект/статус — сдвигаем дату,
-      // чтобы не зациклиться на нём при каждом прогоне.
-      await prepare(`UPDATE core.recurring_rules SET next_run_date = ?::date WHERE id = ?`).run(
-        nextOccurrence(rule, today),
-        rule.id,
-      );
+    } catch (err) {
+      // Правило могло указывать на удалённый проект/статус. Дата уже сдвинута,
+      // поэтому следующий тик не зациклится; логируем, чтобы это было видно.
+      console.error(`[recurring] правило ${rule.id} не материализовано:`, err);
     }
   }
   return { created };

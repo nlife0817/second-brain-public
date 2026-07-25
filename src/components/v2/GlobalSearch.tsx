@@ -36,6 +36,9 @@ export function GlobalSearch({
 
   useEffect(() => {
     if (!open) {
+      // Инкремент отменяет ответы в полёте: иначе они дорисуют результаты
+      // прошлого запроса в уже очищенную палитру.
+      seq.current++;
       setQuery("");
       setHits([]);
       setActive(0);
@@ -44,6 +47,7 @@ export function GlobalSearch({
 
   useEffect(() => {
     if (!orgId || query.trim().length < 2) {
+      seq.current++;
       setHits([]);
       return;
     }
@@ -73,7 +77,10 @@ export function GlobalSearch({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="top-24 max-w-xl translate-y-0 gap-0 overflow-hidden p-0">
+      <DialogContent
+        showCloseButton={false}
+        className="top-24 translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
+      >
         <DialogTitle className="sr-only">Поиск</DialogTitle>
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <Search className="size-4 shrink-0 text-muted-foreground" />
