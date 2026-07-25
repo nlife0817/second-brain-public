@@ -25,6 +25,7 @@ import type {
   TaskMeta,
   TaskPlacement,
   TaskPriority,
+  TaskRow,
   TaskStatus,
   UserBrief,
 } from "./types";
@@ -244,13 +245,36 @@ async function enrichTasks<T extends { id: string }>(rows: T[]): Promise<Array<T
   }));
 }
 
+/**
+ * Значения кастомных полей — одним запросом на весь список: они играют роль
+ * колонок, которые в v1 были зашиты в схему (категория, этап, участники).
+ * Нужны везде, где список рисуется таблицей — и в сводном виде, и в проекте.
+ */
+async function attachFieldValues<T extends { id: string }>(
+  rows: T[],
+): Promise<Array<T & { field_values: Record<string, unknown> }>> {
+  if (rows.length === 0) return [];
+  const ph = rows.map(() => "?").join(",");
+  const values = await prepare<{ task_id: string; field_id: string; value: unknown }>(
+    `SELECT task_id, field_id, value FROM core.task_field_values WHERE task_id IN (${ph})`,
+  ).all(rows.map((t) => t.id));
+
+  const byTask = new Map<string, Record<string, unknown>>();
+  for (const v of values) {
+    const bucket = byTask.get(v.task_id) ?? {};
+    bucket[v.field_id] = v.value;
+    byTask.set(v.task_id, bucket);
+  }
+  return rows.map((t) => ({ ...t, field_values: byTask.get(t.id) ?? {} }));
+}
+
 // --- Списки ---------------------------------------------------------------------------
 
 export async function listProjectTasks(
   ctx: AuthContext,
   projectId: string,
   opts: { includeDone?: boolean } = {},
-): Promise<TaskListItem[]> {
+): Promise<TaskRow[]> {
   await requireProject(ctx, projectId, "project.view");
   const rows = await prepare<Omit<CoreTask, "description">>(
     `SELECT ${TASK_LIST_COLUMNS} FROM core.task_projects tp
@@ -259,7 +283,9 @@ export async function listProjectTasks(
        AND (?::boolean OR t.completed_at IS NULL OR t.completed_at > now() - interval '14 days')
      ORDER BY tp.position, t.created_at`,
   ).all(projectId, opts.includeDone ?? false);
-  return enrichTasks(rows);
+  // Экран проекта рисует те же колонки, что и сводный список, — включая
+  // кастомные поля: без значений они были бы пустыми на всех строках.
+  return attachFieldValues(await enrichTasks(rows));
 }
 
 export async function listMyTasks(
@@ -411,27 +437,8 @@ export async function listAllTasks(
 
   const truncated = rows.length > ALL_TASKS_CAP;
   const page = truncated ? rows.slice(0, ALL_TASKS_CAP) : rows;
-  const enriched = await enrichTasks(page);
 
-  // Значения кастомных полей — одним запросом на весь экран: они играют роль
-  // колонок, которые в v1 были зашиты в схему (категория, этап, участники).
-  const valuesByTask = new Map<string, Record<string, unknown>>();
-  if (page.length > 0) {
-    const ph = page.map(() => "?").join(",");
-    const values = await prepare<{ task_id: string; field_id: string; value: unknown }>(
-      `SELECT task_id, field_id, value FROM core.task_field_values WHERE task_id IN (${ph})`,
-    ).all(page.map((t) => t.id));
-    for (const v of values) {
-      const bucket = valuesByTask.get(v.task_id) ?? {};
-      bucket[v.field_id] = v.value;
-      valuesByTask.set(v.task_id, bucket);
-    }
-  }
-
-  return {
-    tasks: enriched.map((t) => ({ ...t, field_values: valuesByTask.get(t.id) ?? {} })),
-    truncated,
-  };
+  return { tasks: await attachFieldValues(await enrichTasks(page)), truncated };
 }
 
 export async function listSubtasks(ctx: AuthContext, parentTaskId: string): Promise<TaskListItem[]> {

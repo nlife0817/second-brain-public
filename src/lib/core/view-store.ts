@@ -1,11 +1,17 @@
 "use client";
 
-// Настройки сводного экрана «Все задачи»: колонки, сортировка, группировка,
-// фильтры и именованные представления. Персистится в localStorage — как
+// Настройки таблицы задач: колонки, сортировка, группировка, фильтры и
+// именованные представления. Персистится в localStorage — как
 // listColumnOrder/savedFilters в v1: набор колонок это рабочая привычка,
 // терять её при перезагрузке нельзя.
+//
+// Стор не один: у сводного списка «Все задачи» и у каждого проекта он свой.
+// Колонки и фильтры проекта — это другой рабочий срез, чем «всё сразу», и общий
+// стор заставлял бы перенастраивать экран после каждого перехода. Отсюда
+// фабрика + контекст вместо модульного синглтона.
 
-import { create } from "zustand";
+import { createContext, createElement, useContext, type ReactNode } from "react";
+import { create, createStore, useStore } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { FilterGroup, GroupByConfig, SortState, SubtaskMode } from "./views";
 
@@ -50,6 +56,26 @@ export const DEFAULT_COLUMNS = [
 export const COLUMN_MIN_WIDTH = 44;
 export const COLUMN_MAX_WIDTH = 640;
 
+// --- Область настроек ---------------------------------------------------------
+
+/** Чьи это настройки: сводного списка или конкретного проекта. */
+export type ViewScope = "all" | `project:${string}`;
+
+export function projectScope(projectId: string): ViewScope {
+  return `project:${projectId}`;
+}
+
+/**
+ * Ключ в localStorage. У сводного списка он прежний: иначе выкатка стёрла бы
+ * сохранённые представления и порядок колонок у всех, кто их настроил.
+ */
+function storageKey(scope: ViewScope): string {
+  return scope === "all" ? "sb.v2.tasksView" : `sb.v2.view.${scope}`;
+}
+
+/** Как экран проекта показывает задачи. */
+export type ProjectViewMode = "table" | "board";
+
 /** Снимок настроек, который сохраняется как именованное представление. */
 export interface ViewSnapshot {
   columns: string[];
@@ -68,12 +94,15 @@ export interface SavedView extends ViewSnapshot {
   name: string;
 }
 
-interface ViewState extends ViewSnapshot {
+export interface ViewState extends ViewSnapshot {
   savedViews: SavedView[];
   activeViewId: string | null;
   /** Свёрнутые группы — по ключу «уровень1/уровень2». */
   collapsed: string[];
+  /** Таблица или доска — только для экрана проекта. */
+  mode: ProjectViewMode;
 
+  setMode: (mode: ProjectViewMode) => void;
   setColumns: (columns: string[]) => void;
   setWidth: (columnId: string, width: number) => void;
   toggleSort: (column: SortState["column"]) => void;
@@ -104,6 +133,14 @@ const DEFAULT_SNAPSHOT: ViewSnapshot = {
   subtaskMode: "nested",
 };
 
+/** В проекте колонка «Проект» повторяет заголовок экрана — её там нет. */
+const PROJECT_DEFAULT_COLUMNS = DEFAULT_COLUMNS.filter((c) => c !== "project");
+
+function defaultSnapshot(scope: ViewScope): ViewSnapshot {
+  if (scope === "all") return DEFAULT_SNAPSHOT;
+  return { ...DEFAULT_SNAPSHOT, columns: PROJECT_DEFAULT_COLUMNS };
+}
+
 function snapshotOf(state: ViewSnapshot): ViewSnapshot {
   return {
     columns: state.columns,
@@ -132,82 +169,122 @@ function newId(): string {
     : `v${Date.now()}${Math.round(Math.random() * 1e6)}`;
 }
 
-export const useViewStore = create<ViewState>()(
-  persist(
-    (set, get) => ({
-      ...DEFAULT_SNAPSHOT,
-      savedViews: [],
-      activeViewId: null,
-      collapsed: [],
+function createViewStore(scope: ViewScope) {
+  const defaults = defaultSnapshot(scope);
+  return createStore<ViewState>()(
+    persist(
+      (set, get) => ({
+        ...defaults,
+        savedViews: [],
+        activeViewId: null,
+        collapsed: [],
+        mode: "table",
 
-      setColumns: (columns) => set(edit({ columns })),
-      setWidth: (columnId, width) =>
-        set((s) => ({
-          ...edit({
-            widths: {
-              ...s.widths,
-              [columnId]: Math.min(COLUMN_MAX_WIDTH, Math.max(COLUMN_MIN_WIDTH, Math.round(width))),
-            },
-          }),
-        })),
-      toggleSort: (column) =>
-        set((s) => ({
-          ...edit({
-            sort:
-              s.sort.column === column
-                ? { column, direction: s.sort.direction === "asc" ? "desc" : "asc" }
-                : { column, direction: "asc" },
-          }),
-        })),
-      setGroupBy: (groupBy) => set(edit({ groupBy })),
-      setGroups: (groups) => set(edit({ groups })),
-      setSearch: (search) => set({ search }),
-      setShowDone: (showDone) => set(edit({ showDone })),
-      setShowArchivedProjects: (showArchivedProjects) => set(edit({ showArchivedProjects })),
-      setSubtaskMode: (subtaskMode) => set(edit({ subtaskMode })),
-      toggleCollapsed: (key) =>
-        set((s) => ({
-          collapsed: s.collapsed.includes(key) ? s.collapsed.filter((k) => k !== key) : [...s.collapsed, key],
-        })),
+        setMode: (mode) => set({ mode }),
+        setColumns: (columns) => set(edit({ columns })),
+        setWidth: (columnId, width) =>
+          set((s) => ({
+            ...edit({
+              widths: {
+                ...s.widths,
+                [columnId]: Math.min(COLUMN_MAX_WIDTH, Math.max(COLUMN_MIN_WIDTH, Math.round(width))),
+              },
+            }),
+          })),
+        toggleSort: (column) =>
+          set((s) => ({
+            ...edit({
+              sort:
+                s.sort.column === column
+                  ? { column, direction: s.sort.direction === "asc" ? "desc" : "asc" }
+                  : { column, direction: "asc" },
+            }),
+          })),
+        setGroupBy: (groupBy) => set(edit({ groupBy })),
+        setGroups: (groups) => set(edit({ groups })),
+        setSearch: (search) => set({ search }),
+        setShowDone: (showDone) => set(edit({ showDone })),
+        setShowArchivedProjects: (showArchivedProjects) => set(edit({ showArchivedProjects })),
+        setSubtaskMode: (subtaskMode) => set(edit({ subtaskMode })),
+        toggleCollapsed: (key) =>
+          set((s) => ({
+            collapsed: s.collapsed.includes(key) ? s.collapsed.filter((k) => k !== key) : [...s.collapsed, key],
+          })),
 
-      saveView: (name) => {
-        const view: SavedView = { id: newId(), name, ...snapshotOf(get()) };
-        set((s) => ({ savedViews: [...s.savedViews, view], activeViewId: view.id }));
-      },
-      applyView: (id) => {
-        const view = get().savedViews.find((v) => v.id === id);
-        if (!view) return;
-        set({ ...snapshotOf(view), activeViewId: id });
-      },
-      updateActiveView: () => {
-        const { activeViewId } = get();
-        if (!activeViewId) return;
-        const snapshot = snapshotOf(get());
-        set((s) => ({
-          savedViews: s.savedViews.map((v) => (v.id === activeViewId ? { ...v, ...snapshot } : v)),
-        }));
-      },
-      deleteView: (id) =>
-        set((s) => ({
-          savedViews: s.savedViews.filter((v) => v.id !== id),
-          activeViewId: s.activeViewId === id ? null : s.activeViewId,
-        })),
-      resetView: () => set({ ...DEFAULT_SNAPSHOT, activeViewId: null }),
-    }),
-    {
-      name: "sb.v2.tasksView",
-      storage: createJSONStorage(() => localStorage),
-      // collapsed не персистим: свёрнутые группы — состояние сессии, а не
-      // настройка. Иначе после смены группировки половина списка «пропадает».
-      partialize: (s) => ({
-        ...snapshotOf(s),
-        savedViews: s.savedViews,
-        activeViewId: s.activeViewId,
+        saveView: (name) => {
+          const view: SavedView = { id: newId(), name, ...snapshotOf(get()) };
+          set((s) => ({ savedViews: [...s.savedViews, view], activeViewId: view.id }));
+        },
+        applyView: (id) => {
+          const view = get().savedViews.find((v) => v.id === id);
+          if (!view) return;
+          set({ ...snapshotOf(view), activeViewId: id });
+        },
+        updateActiveView: () => {
+          const { activeViewId } = get();
+          if (!activeViewId) return;
+          const snapshot = snapshotOf(get());
+          set((s) => ({
+            savedViews: s.savedViews.map((v) => (v.id === activeViewId ? { ...v, ...snapshot } : v)),
+          }));
+        },
+        deleteView: (id) =>
+          set((s) => ({
+            savedViews: s.savedViews.filter((v) => v.id !== id),
+            activeViewId: s.activeViewId === id ? null : s.activeViewId,
+          })),
+        resetView: () => set({ ...defaults, activeViewId: null }),
       }),
-      version: 1,
-    },
-  ),
-);
+      {
+        name: storageKey(scope),
+        storage: createJSONStorage(() => localStorage),
+        // collapsed не персистим: свёрнутые группы — состояние сессии, а не
+        // настройка. Иначе после смены группировки половина списка «пропадает».
+        partialize: (s) => ({
+          ...snapshotOf(s),
+          savedViews: s.savedViews,
+          activeViewId: s.activeViewId,
+          mode: s.mode,
+        }),
+        version: 1,
+      },
+    ),
+  );
+}
+
+export type ViewStoreApi = ReturnType<typeof createViewStore>;
+
+const stores = new Map<ViewScope, ViewStoreApi>();
+
+/**
+ * Экземпляр стора на область. Кэш живёт только в браузере: на сервере модульная
+ * карта общая для всех одновременных запросов и росла бы по числу проектов, а
+ * localStorage там всё равно нет — стор отдаёт умолчания, и свежий экземпляр
+ * ничем не хуже сохранённого.
+ */
+function getViewStore(scope: ViewScope): ViewStoreApi {
+  if (typeof window === "undefined") return createViewStore(scope);
+  const existing = stores.get(scope);
+  if (existing) return existing;
+  const created = createViewStore(scope);
+  stores.set(scope, created);
+  return created;
+}
+
+const ViewStoreContext = createContext<ViewStoreApi | null>(null);
+
+export function ViewStoreProvider({ scope, children }: { scope: ViewScope; children: ReactNode }) {
+  // Без useState/useRef намеренно: кэш по области уже даёт стабильную ссылку, а
+  // переход между проектами меняет область — состояние компонента здесь только
+  // мешало бы отдать стор нового проекта.
+  return createElement(ViewStoreContext.Provider, { value: getViewStore(scope) }, children);
+}
+
+export function useViewStore<T>(selector: (state: ViewState) => T): T {
+  const store = useContext(ViewStoreContext);
+  if (!store) throw new Error("useViewStore вне <ViewStoreProvider>");
+  return useStore(store, selector);
+}
 
 // --- Карточка доски ---------------------------------------------------------------
 
