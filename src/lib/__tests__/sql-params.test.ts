@@ -6,7 +6,33 @@
 // обращения к БД, поэтому тесту не нужен ни коннект, ни переменные окружения.
 
 import { describe, expect, it } from "vitest";
-import { prepare } from "../sql";
+import { prepare, serializeJson } from "../sql";
+
+describe("serializeJson: параметр для jsonb-колонки", () => {
+  // Штатный сериализатор postgres.js — JSON.stringify, и он кодировал бы уже
+  // готовый JSON-текст второй раз: '[]' → '"[]"'. В колонке вместо массива
+  // оказывалась jsonb-строка, и приём приглашения падал на обходе по символам.
+  it("не кодирует готовый JSON-текст второй раз", () => {
+    expect(serializeJson("[]")).toBe("[]");
+    expect(serializeJson(JSON.stringify([{ project_id: "p", role: "editor" }]))).toBe(
+      '[{"project_id":"p","role":"editor"}]',
+    );
+    expect(serializeJson(JSON.stringify({ title: "Проверка" }))).toBe('{"title":"Проверка"}');
+  });
+
+  it("кодирует значение, которое пришло не текстом", () => {
+    expect(serializeJson([])).toBe("[]");
+    expect(serializeJson({ title: "Проверка" })).toBe('{"title":"Проверка"}');
+    expect(serializeJson(null)).toBe("null");
+  });
+
+  it("оба пути дают один и тот же jsonb", () => {
+    // Драйвер выбирает путь по тому, успел ли он узнать тип параметра;
+    // раньше от этого зависел результат записи.
+    const value = [{ project_id: "p", role: "editor" }];
+    expect(JSON.parse(serializeJson(value))).toEqual(JSON.parse(serializeJson(JSON.stringify(value))));
+  });
+});
 
 describe("prepare(): undefined в параметрах", () => {
   it("называет номер параметра и запрос", async () => {

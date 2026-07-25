@@ -2,6 +2,26 @@ import postgres from "postgres";
 
 let client: postgres.Sql | null = null;
 
+/**
+ * Сериализация параметра для jsonb-колонки.
+ *
+ * По всей кодовой базе в `?::jsonb` передаётся уже готовый JSON-текст
+ * (`JSON.stringify(...)`). Штатный сериализатор postgres.js — тоже
+ * `JSON.stringify`, и он кодирует такую строку второй раз: `'[]'` → `'"[]"'`,
+ * в колонке оказывается jsonb-строка вместо массива.
+ *
+ * Причём срабатывает это не всегда. Драйвер применяет сериализатор по типу
+ * параметра, а тип он знает только когда успел сделать Describe: без него
+ * значение уходит как текст и `::jsonb` разбирает его правильно. Отсюда
+ * «то работает, то нет»: часть строк в базе корректная, часть — двойная.
+ *
+ * Готовый JSON-текст пропускаем как есть, объект — кодируем. Оба пути
+ * драйвера дают один результат.
+ */
+export function serializeJson(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
 function getClient(): postgres.Sql {
   if (!client) {
     const url = process.env.DATABASE_POOL_URL || process.env.DATABASE_URL;
@@ -23,6 +43,14 @@ function getClient(): postgres.Sql {
           serialize: (x: unknown) =>
             x instanceof Date ? x.toISOString().slice(0, 10) : String(x),
           parse: (x: string) => x,
+        },
+        // json/jsonb (OID 114/3802) — без этой замены готовый JSON-текст
+        // кодируется второй раз. Подробности — у serializeJson.
+        json: {
+          to: 114,
+          from: [114, 3802],
+          serialize: serializeJson,
+          parse: (x: string) => JSON.parse(x),
         },
       },
     });
