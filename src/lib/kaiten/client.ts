@@ -1,0 +1,461 @@
+import type {
+  DevelopmentParticipantInput,
+  KaitenBoardOption,
+  KaitenSpace,
+  KaitenStageOption,
+} from "@/types";
+import MarkdownIt from "markdown-it";
+
+export class KaitenApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "KaitenApiError";
+    this.status = status;
+  }
+}
+
+type KaitenClientOptions = {
+  baseUrl: string;
+  token: string;
+};
+
+let lastKaitenRequestAt = 0;
+const markdownRenderer = new MarkdownIt({
+  breaks: true,
+  html: false,
+  linkify: true,
+});
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeBaseUrl(baseUrl: string) {
+  return baseUrl.replace(/\/+$/, "");
+}
+
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function readString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function readNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && !Number.isNaN(Number(value))) return Number(value);
+  return null;
+}
+
+function readObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function looksLikeHtml(value: string) {
+  return /<\/?[a-z][\s\S]*>/i.test(value);
+}
+
+function normalizeDescriptionMarkup(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (looksLikeHtml(trimmed)) return trimmed;
+  return markdownRenderer.render(trimmed);
+}
+
+function isImageFile(file: Record<string, unknown>) {
+  const mimeType = readString(file.mime_type).toLowerCase();
+  const url = readString(file.url || file.thumbnail_url).toLowerCase();
+  const name = readString(file.name).toLowerCase();
+  return mimeType.startsWith("image/")
+    || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(url)
+    || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(name);
+}
+
+function extractCardImageUrls(card: Record<string, unknown>) {
+  return asArray<Record<string, unknown>>(card.files)
+    .filter((file) => !file.deleted && isImageFile(file))
+    .map((file) => readString(file.url || file.thumbnail_url))
+    .filter(Boolean);
+}
+
+function appendImageGallery(descriptionHtml: string, imageUrls: string[]) {
+  if (imageUrls.length === 0) return descriptionHtml;
+
+  const missingImageUrls = imageUrls.filter((url) => !descriptionHtml.includes(url));
+  if (missingImageUrls.length === 0) return descriptionHtml;
+
+  const galleryHtml = missingImageUrls
+    .map((url) => `<p><img src="${escapeHtml(url)}" alt="" /></p>`)
+    .join("");
+
+  return `${descriptionHtml}${galleryHtml}`;
+}
+
+function collectBoardStatuses(board: Record<string, unknown>): string[] {
+  const raw = [
+    ...asArray<Record<string, unknown>>(board.statuses),
+    ...asArray<Record<string, unknown>>(board.columns),
+    ...asArray<Record<string, unknown>>(board.states),
+  ];
+  return Array.from(new Set(
+    raw
+      .map((item) => readString(item.title || item.name || item.status || item.label))
+      .filter(Boolean)
+  ));
+}
+
+function collectBoardColumns(board: Record<string, unknown>): { id: string; title: string }[] {
+  const raw = asArray<Record<string, unknown>>(board.columns);
+  return raw
+    .map((item) => ({
+      id: String(item.id ?? item.uid ?? item.column_id ?? ""),
+      title: readString(item.title || item.name || item.label),
+    }))
+    .filter((item) => item.id && item.title);
+}
+
+function collectBoardLanes(board: Record<string, unknown>): { id: string; title: string }[] {
+  const raw = [
+    ...asArray<Record<string, unknown>>(board.lanes),
+    ...asArray<Record<string, unknown>>(board.rows),
+  ];
+  return raw
+    .map((item) => ({
+      id: String(item.id ?? item.uid ?? item.lane_id ?? ""),
+      title: readString(item.title || item.name || item.label),
+    }))
+    .filter((item) => item.id && item.title);
+}
+
+async function rateLimit() {
+  const minDelayMs = 220;
+  const elapsed = Date.now() - lastKaitenRequestAt;
+  if (elapsed < minDelayMs) {
+    await sleep(minDelayMs - elapsed);
+  }
+  lastKaitenRequestAt = Date.now();
+}
+
+export class KaitenClient {
+  private baseUrl: string;
+  private token: string;
+
+  constructor(options: KaitenClientOptions) {
+    this.baseUrl = normalizeBaseUrl(options.baseUrl);
+    this.token = options.token.trim();
+  }
+
+  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    if (!this.baseUrl) throw new KaitenApiError("Kaiten base URL is not configured", 400);
+    if (!this.token) throw new KaitenApiError("Kaiten token is not configured", 400);
+
+    await rateLimit();
+
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${this.token}`,
+        ...(init?.headers ?? {}),
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      let message = `Kaiten request failed with status ${response.status}`;
+      try {
+        const payload = await response.json() as { message?: string; error?: string };
+        message = payload.message || payload.error || message;
+      } catch {
+        // ignore JSON parse failure
+      }
+      throw new KaitenApiError(message, response.status);
+    }
+
+    return await response.json() as T;
+  }
+
+  async testConnection() {
+    return await this.getSpaces();
+  }
+
+  async getSpaces(): Promise<KaitenSpace[]> {
+    const payload = await this.request<unknown>("/spaces");
+    const spaces = asArray<Record<string, unknown>>(payload);
+    return spaces
+      .map((space) => ({
+        id: readNumber(space.id) ?? 0,
+        title: readString(space.title || space.name),
+      }))
+      .filter((space) => space.id > 0 && space.title);
+  }
+
+  async getBoards(spaceId: number): Promise<KaitenBoardOption[]> {
+    const payload = await this.request<unknown>(`/spaces/${spaceId}/boards`);
+    const boards = asArray<Record<string, unknown>>(payload);
+    return boards
+      .map((board) => ({
+        id: readNumber(board.id) ?? 0,
+        title: readString(board.title || board.name),
+        space_id: readNumber(board.space_id ?? board.spaceId),
+        statuses: collectBoardStatuses(board),
+        columns: collectBoardColumns(board),
+        lanes: collectBoardLanes(board),
+      }))
+      .filter((board) => board.id > 0 && board.title);
+  }
+
+  async getCards(boardId: number): Promise<Record<string, unknown>[]> {
+    const pageSize = 100;
+    const cards: Record<string, unknown>[] = [];
+    let offset = 0;
+
+    while (true) {
+      const payload = await this.request<unknown>(
+        `/cards?board_id=${boardId}&additional_card_fields=description&limit=${pageSize}&offset=${offset}`
+      );
+      const page = asArray<Record<string, unknown>>(payload);
+      cards.push(...page);
+
+      if (page.length < pageSize) {
+        break;
+      }
+
+      offset += pageSize;
+    }
+
+    return cards;
+  }
+
+  async getCard(cardId: number): Promise<Record<string, unknown>> {
+    return await this.request<Record<string, unknown>>(`/cards/${cardId}`);
+  }
+
+  async createCard(payload: Record<string, unknown>) {
+    return await this.request<Record<string, unknown>>("/cards", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async uploadCardFile(
+    cardId: number,
+    file: {
+      filename: string;
+      mimeType: string;
+      bytes: Uint8Array;
+    }
+  ) {
+    const formData = new FormData();
+    const normalizedBytes = Uint8Array.from(file.bytes);
+    formData.append(
+      "file",
+      new Blob([normalizedBytes], { type: file.mimeType }),
+      file.filename
+    );
+
+    return await this.request<Record<string, unknown>>(`/cards/${cardId}/files`, {
+      method: "PUT",
+      body: formData,
+    });
+  }
+
+  async getCardMembers(cardId: number): Promise<DevelopmentParticipantInput[]> {
+    const payload = await this.request<unknown>(`/cards/${cardId}/members`);
+    return asArray<Record<string, unknown>>(payload)
+      .map((member) => ({
+        provider: "kaiten" as const,
+        remote_id: String(member.id ?? member.uid ?? ""),
+        name: readString(member.full_name || member.name || member.username),
+      }))
+      .filter((member) => member.remote_id && member.name);
+  }
+
+  async getSpaceUsers(spaceId: number): Promise<DevelopmentParticipantInput[]> {
+    const parseUsers = (payload: unknown) =>
+      asArray<Record<string, unknown>>(payload)
+        .map((member) => ({
+          provider: "kaiten" as const,
+          remote_id: String(member.id ?? member.uid ?? ""),
+          name: readString(member.full_name || member.name || member.username),
+        }))
+        .filter((member) => member.remote_id && member.name);
+
+    try {
+      return parseUsers(await this.request<unknown>(`/spaces/${spaceId}/users`));
+    } catch {
+      try {
+        return parseUsers(await this.request<unknown>("/Users"));
+      } catch {
+        return parseUsers(await this.request<unknown>("/users"));
+      }
+    }
+  }
+
+  async updateCard(cardId: number, payload: Record<string, unknown>) {
+    return await this.request<Record<string, unknown>>(`/cards/${cardId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async archiveCard(cardId: number) {
+    return await this.updateCard(cardId, { condition: 2 });
+  }
+
+  async unarchiveCard(cardId: number) {
+    return await this.updateCard(cardId, { condition: 1 });
+  }
+
+  async addCardMember(cardId: number, userId: number) {
+    return await this.request<Record<string, unknown>>(`/cards/${cardId}/members`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ user_id: userId }),
+    });
+  }
+
+  async removeCardMember(cardId: number, userId: number) {
+    return await this.request<Record<string, unknown>>(`/cards/${cardId}/members/${userId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async syncCardMembers(cardId: number, members: DevelopmentParticipantInput[]) {
+    const current = await this.getCardMembers(cardId);
+    const currentIds = new Set(
+      current.map((member) => Number(member.remote_id)).filter(Number.isFinite)
+    );
+    const targetIds = new Set(
+      members
+        .map((member) => Number(member.remote_id))
+        .filter(Number.isFinite)
+    );
+
+    for (const userId of currentIds) {
+      if (!targetIds.has(userId)) {
+        await this.removeCardMember(cardId, userId);
+      }
+    }
+
+    for (const userId of targetIds) {
+      if (!currentIds.has(userId)) {
+        await this.addCardMember(cardId, userId);
+      }
+    }
+  }
+}
+
+export function createKaitenClient(options: KaitenClientOptions) {
+  return new KaitenClient(options);
+}
+
+export function extractCardStatus(card: Record<string, unknown>): string {
+  const candidates = [
+    card.status,
+    card.state,
+    card.column_title,
+    card.column_name,
+    readObject(card.column)?.title,
+    readObject(card.column)?.name,
+  ];
+  return candidates.map((value) => readString(value)).find(Boolean) ?? "";
+}
+
+export function extractCardColumnId(card: Record<string, unknown>): number | null {
+  return readNumber(card.column_id ?? card.columnId ?? readObject(card.column)?.id);
+}
+
+export function extractCardLaneId(card: Record<string, unknown>): number | null {
+  return readNumber(card.lane_id ?? card.laneId ?? readObject(card.lane)?.id);
+}
+
+export function extractCardTitle(card: Record<string, unknown>): string {
+  return readString(card.title || card.name || card.subject);
+}
+
+export function extractCardArchived(card: Record<string, unknown>): boolean {
+  const condition = readNumber(card.condition);
+  return card.archived === true || condition === 2 || condition === 3;
+}
+
+export function extractCardDescription(card: Record<string, unknown>): string {
+  const rawDescription = readString(card.description || card.text || card.details);
+  const descriptionHtml = normalizeDescriptionMarkup(rawDescription);
+  const imageUrls = extractCardImageUrls(card);
+  return appendImageGallery(descriptionHtml, imageUrls);
+}
+
+export function extractCardDevelopmentStage(card: Record<string, unknown>): string | null {
+  const columnTitle = readString(card.column_title || card.column_name || readObject(card.column)?.title || readObject(card.column)?.name);
+  const laneTitle = readString(card.lane_title || card.lane_name || readObject(card.lane)?.title || readObject(card.lane)?.name);
+  if (columnTitle && laneTitle) return `${columnTitle} / ${laneTitle}`;
+  return columnTitle || laneTitle || null;
+}
+
+export function extractCardDueDate(card: Record<string, unknown>): string | null {
+  return readString(card.due_date || card.dueDate || card.deadline || card.finish_date) || null;
+}
+
+export function extractCardPriority(card: Record<string, unknown>): string {
+  return readString(card.priority || readObject(card.priority_data)?.name).toLowerCase();
+}
+
+export function extractCardTags(card: Record<string, unknown>): string[] {
+  return asArray<Record<string, unknown>>(card.tags)
+    .map((tag) => readString(tag.title || tag.name))
+    .filter(Boolean);
+}
+
+export function buildBoardStageOptions(board: KaitenBoardOption): KaitenStageOption[] {
+  const result: KaitenStageOption[] = [];
+
+  if (board.lanes.length === 0) {
+    for (const column of board.columns) {
+      result.push({
+        value: column.title,
+        label: column.title,
+        column_id: Number(column.id),
+        lane_id: null,
+        column_title: column.title,
+        lane_title: null,
+      });
+    }
+    return result;
+  }
+
+  for (const column of board.columns) {
+    for (const lane of board.lanes) {
+      result.push({
+        value: `${column.title} / ${lane.title}`,
+        label: `${column.title} / ${lane.title}`,
+        column_id: Number(column.id),
+        lane_id: Number(lane.id),
+        column_title: column.title,
+        lane_title: lane.title,
+      });
+    }
+  }
+
+  return result;
+}
