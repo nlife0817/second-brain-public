@@ -108,14 +108,29 @@ async function requireEntity(
 }
 
 /**
+ * Сторона связи, противоположная карточке. Сверяем и тип, и id: сравнение по
+ * одному id ошибётся, если разные сущности когда-нибудь разделят идентификатор.
+ */
+function farSide(
+  r: RawRelation,
+  anchorType: RelationEntityType,
+  anchorId: string,
+): { type: RelationEntityType; id: string } {
+  const outgoing = r.source_type === anchorType && r.source_id === anchorId;
+  return outgoing ? { type: r.target_type, id: r.target_id } : { type: r.source_type, id: r.source_id };
+}
+
+/**
  * Отсеивает связи, чья «дальняя» сторона недоступна: задачи — по правам на
  * задачу, клиенты — по доступу к CRM, проекты — по видимости проекта.
  */
-async function keepVisible(ctx: AuthContext, rows: RawRelation[], anchorId: string): Promise<RawRelation[]> {
-  const far = (r: RawRelation) =>
-    r.source_id === anchorId
-      ? { type: r.target_type, id: r.target_id }
-      : { type: r.source_type, id: r.source_id };
+async function keepVisible(
+  ctx: AuthContext,
+  rows: RawRelation[],
+  anchorType: RelationEntityType,
+  anchorId: string,
+): Promise<RawRelation[]> {
+  const far = (r: RawRelation) => farSide(r, anchorType, anchorId);
 
   const taskIds = [...new Set(rows.filter((r) => far(r).type === "task").map((r) => far(r).id))];
   const projectIds = [...new Set(rows.filter((r) => far(r).type === "project").map((r) => far(r).id))];
@@ -145,13 +160,10 @@ async function keepVisible(ctx: AuthContext, rows: RawRelation[], anchorId: stri
 /** Подписи «дальних» сторон: заголовок задачи, имя клиента или проекта. */
 async function resolveTitles(
   rows: RawRelation[],
+  anchorType: RelationEntityType,
   anchorId: string,
 ): Promise<Map<string, { title: string; color: string | null }>> {
-  const wanted = rows.map((r) =>
-    r.source_id === anchorId
-      ? { type: r.target_type, id: r.target_id }
-      : { type: r.source_type, id: r.source_id },
-  );
+  const wanted = rows.map((r) => farSide(r, anchorType, anchorId));
   const byType = (type: RelationEntityType) => [
     ...new Set(wanted.filter((w) => w.type === type).map((w) => w.id)),
   ];
@@ -200,13 +212,12 @@ export async function listRelations(
      ORDER BY created_at`,
   ).all(ctx.orgId, entityType, entityId, entityType, entityId);
 
-  const visible = await keepVisible(ctx, raw, entityId);
-  const titles = await resolveTitles(visible, entityId);
+  const visible = await keepVisible(ctx, raw, entityType, entityId);
+  const titles = await resolveTitles(visible, entityType, entityId);
 
   return visible.map((r) => {
-    const outgoing = r.source_id === entityId && r.source_type === entityType;
-    const type = outgoing ? r.target_type : r.source_type;
-    const id = outgoing ? r.target_id : r.source_id;
+    const outgoing = r.source_type === entityType && r.source_id === entityId;
+    const { type, id } = farSide(r, entityType, entityId);
     const resolved = titles.get(id);
     return {
       id: r.id,

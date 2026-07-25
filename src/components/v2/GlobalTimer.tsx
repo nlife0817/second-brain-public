@@ -45,8 +45,13 @@ export function GlobalTimer() {
   const [timer, setTimer] = useState<ActiveTimer | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
-  const [idleMs, setIdleMs] = useState(0);
-  const [dismissedIdle, setDismissedIdle] = useState(false);
+  /**
+   * Замеченная пауза, на которую пользователь ещё не ответил. Именно
+   * «защёлкнутое» значение, а не текущее время бездействия: вопрос «вас не
+   * было N минут» должен пережить возвращение к компьютеру — иначе первое же
+   * движение мыши стёрло бы повод его задать.
+   */
+  const [pendingIdleMs, setPendingIdleMs] = useState(0);
 
   // Момент последней активности живёт в ref: обновлять состояние на каждое
   // движение мыши — это ре-рендер на каждое движение мыши.
@@ -67,20 +72,22 @@ export function GlobalTimer() {
     return () => clearInterval(t);
   }, [sync]);
 
-  // Отметки активности: любое из этих событий означает, что человек за столом.
+  /**
+   * Активность — только настоящее действие руками. `focus` и
+   * `visibilitychange` сюда не входят: они срабатывают при возвращении во
+   * вкладку и обнулили бы паузу ровно в тот момент, когда о ней надо спросить.
+   */
   useEffect(() => {
     const mark = () => {
+      const away = Date.now() - lastActivity.current;
       lastActivity.current = Date.now();
+      // Возврат после долгого отсутствия: защёлкиваем паузу до ответа.
+      if (away >= IDLE_THRESHOLD_MS) setPendingIdleMs((prev) => Math.max(prev, away));
     };
-    const events: (keyof WindowEventMap)[] = ["pointerdown", "keydown", "wheel", "focus"];
+    const events: (keyof WindowEventMap)[] = ["pointerdown", "keydown", "wheel"];
     for (const e of events) window.addEventListener(e, mark, { passive: true });
-    const onVisible = () => {
-      if (document.visibilityState === "visible") mark();
-    };
-    document.addEventListener("visibilitychange", onVisible);
     return () => {
       for (const e of events) window.removeEventListener(e, mark);
-      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
@@ -89,9 +96,10 @@ export function GlobalTimer() {
     const t = setInterval(() => {
       const current = Date.now();
       setNow(current);
+      // Пока человека нет, счётчик паузы растёт и в фоне: интервал в скрытой
+      // вкладке душится браузером, но время меряется по часам, а не по тикам.
       const away = current - lastActivity.current;
-      setIdleMs(away);
-      if (away < IDLE_THRESHOLD_MS) setDismissedIdle(false);
+      if (away >= IDLE_THRESHOLD_MS) setPendingIdleMs((prev) => Math.max(prev, away));
     }, TICK_MS);
     return () => clearInterval(t);
   }, [timer]);
@@ -112,32 +120,32 @@ export function GlobalTimer() {
     if (!orgId || !timer) return;
     setBusy(true);
     try {
-      const shifted = new Date(new Date(timer.started_at).getTime() + idleMs);
+      const shifted = new Date(new Date(timer.started_at).getTime() + pendingIdleMs);
+      // Пауза длиннее самой записи: вычитать больше, чем натикало, нельзя —
+      // сервер отвергнет старт в будущем. Сбрасываем счётчик в ноль.
       const capped = shifted.getTime() > Date.now() ? new Date() : shifted;
       const updated = await api.patch<ActiveTimer>(`/orgs/${orgId}/time/${timer.id}`, {
         started_at: capped.toISOString(),
       });
       setTimer((prev) => (prev ? { ...prev, started_at: updated.started_at } : prev));
       lastActivity.current = Date.now();
-      setIdleMs(0);
-    } catch {
-      setDismissedIdle(true);
+      setPendingIdleMs(0);
     } finally {
       setBusy(false);
     }
-  }, [orgId, timer, idleMs]);
+  }, [orgId, timer, pendingIdleMs]);
 
   if (!timer) return null;
 
   const elapsed = (now - new Date(timer.started_at).getTime()) / 1000;
-  const showIdle = idleMs >= IDLE_THRESHOLD_MS && !dismissedIdle;
+  const showIdle = pendingIdleMs >= IDLE_THRESHOLD_MS;
 
   return (
     <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2">
       {showIdle && (
         <div className="pointer-events-auto flex max-w-xs items-start gap-2 rounded-xl border border-amber-500/40 bg-background p-3 shadow-lg">
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium">Вас не было {Math.round(idleMs / 60000)} мин</p>
+            <p className="text-xs font-medium">Вас не было {Math.round(pendingIdleMs / 60000)} мин</p>
             <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
               Таймер всё это время шёл. Вычесть паузу из записи?
             </p>
@@ -145,13 +153,13 @@ export function GlobalTimer() {
               <Button size="xs" disabled={busy} onClick={() => void discardIdle()}>
                 Вычесть
               </Button>
-              <Button size="xs" variant="ghost" onClick={() => setDismissedIdle(true)}>
+              <Button size="xs" variant="ghost" onClick={() => setPendingIdleMs(0)}>
                 Оставить
               </Button>
             </div>
           </div>
           <button
-            onClick={() => setDismissedIdle(true)}
+            onClick={() => setPendingIdleMs(0)}
             className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
             title="Закрыть"
           >

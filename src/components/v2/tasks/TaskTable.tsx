@@ -334,7 +334,14 @@ function GroupBody({
   );
   const shown = rows.length > limit ? rows.slice(0, limit) : rows;
   const rest = rows.length - shown.length;
-  const allSelected = node.tasks.length > 0 && node.tasks.every((t) => selected.has(t.id));
+  // «Выбрать все» относится к тому, что группа реально показывает: в режиме
+  // «скрыть подзадачи» они не на экране, и молча попадать под массовое
+  // действие не должны.
+  const selectable = useMemo(
+    () => (node.children.length === 0 ? rows.map((r) => r.task.id) : node.tasks.map((t) => t.id)),
+    [node.children.length, node.tasks, rows],
+  );
+  const allSelected = selectable.length > 0 && selectable.every((id) => selected.has(id));
 
   return (
     <div>
@@ -361,11 +368,11 @@ function GroupBody({
               {node.label.text}
             </span>
             <span className="shrink-0 rounded bg-background px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground">
-              {node.tasks.length}
+              {node.children.length === 0 ? rows.length : node.tasks.length}
             </span>
           </button>
           <button
-            onClick={() => onSelectMany(node.tasks.map((t) => t.id), !allSelected)}
+            onClick={() => onSelectMany(selectable, !allSelected)}
             className="ml-auto shrink-0 rounded px-1.5 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
           >
             {allSelected ? "снять выбор" : "выбрать все"}

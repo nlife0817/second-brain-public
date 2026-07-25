@@ -5,7 +5,7 @@
 // группировка идут на клиенте, поэтому реакция на любую настройку мгновенная,
 // а счётчики групп остаются честными (при серверной пагинации они бы врали).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Filter, Loader2, Plus, Redo2, Search, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -112,6 +112,9 @@ export default function AllTasksPage() {
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [redoStack, setRedoStack] = useState<UndoEntry[]>([]);
 
+  /** Зеркало строк для колбэков: см. комментарий в patchTasks. */
+  const tasksRef = useRef<TaskRow[]>(tasks);
+
   const load = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
@@ -136,6 +139,12 @@ export default function AllTasksPage() {
   useEffect(() => {
     if (deepLinkTaskId) setOpenTaskId(deepLinkTaskId);
   }, [deepLinkTaskId]);
+
+  // Обновляется после коммита — колбэки срабатывают от действий пользователя,
+  // то есть заведомо позже, и видят актуальный список.
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
 
   // --- Локальное применение патча ------------------------------------------------
 
@@ -219,7 +228,10 @@ export default function AllTasksPage() {
   const patchTasks = useCallback(
     async (patches: Array<{ id: string; payload: Record<string, unknown> }>) => {
       if (patches.length === 0) return;
-      const current = new Map(tasks.map((t) => [t.id, t]));
+      // Читаем строки из ref, а не из состояния: иначе patchTasks (а за ним
+      // cellCtx) пересоздаётся на каждое изменение списка и memo строк
+      // перестаёт работать — ровно та потеря, ради которой оно и вводилось.
+      const current = new Map(tasksRef.current.map((t) => [t.id, t]));
       const entry: UndoEntry = {
         before: patches
           .filter((p) => current.has(p.id))
@@ -231,7 +243,7 @@ export default function AllTasksPage() {
       setRedoStack([]);
       await applyPatches(patches);
     },
-    [tasks, applyPatches],
+    [applyPatches],
   );
 
   const patchOne = useCallback(
