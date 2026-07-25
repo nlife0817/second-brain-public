@@ -10,6 +10,7 @@ import {
   updateProject,
 } from "@/lib/core/projects";
 import { projectPatchSchema } from "@/lib/core/schemas";
+import { setProjectTeam } from "@/lib/core/teams";
 
 export const GET = withOrg(async (_request, { params, auth }) => {
   const { projectId } = await params;
@@ -32,9 +33,12 @@ export const PATCH = withOrg(async (request, { params, auth }) => {
   if (!isUuid(projectId)) return jsonError(404, "Project not found");
   const [body, invalid] = await parseJson(request, projectPatchSchema);
   if (invalid) return invalid;
-  const { archived, ...patch } = body;
+  const { archived, team_id, ...patch } = body;
   if (archived !== undefined) {
     await setProjectArchived(auth, projectId, archived);
+  }
+  if (team_id !== undefined) {
+    await setProjectTeam(auth, projectId, team_id);
   }
   const project =
     Object.keys(patch).length > 0

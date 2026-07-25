@@ -15,6 +15,8 @@ export interface Team {
 }
 
 export async function listTeams(ctx: AuthContext): Promise<Team[]> {
+  // Структура организации — не для внешних подрядчиков.
+  assertOrg(ctx, "clients.view");
   return prepare<Team>(
     `SELECT t.id, t.org_id, t.name, t.created_at,
             (SELECT count(*)::int FROM core.projects p

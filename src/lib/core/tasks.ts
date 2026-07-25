@@ -34,6 +34,8 @@ export interface TaskAccess {
   task: CoreTask;
   /** Проекты, в которых размещена сама задача (не предки). */
   placements: Array<TaskPlacement & { project: Project }>;
+  /** Проекты всей цепочки, включая родительские: определяют, кто уже видит задачу. */
+  chainProjectIds: string[];
   canView: boolean;
   canEdit: boolean;
   canComment: boolean;
@@ -128,6 +130,7 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
 
   return {
     task,
+    chainProjectIds: [...new Set(chainPlacements.map((pl) => pl.project_id))],
     placements: directPlacementRows.map((pl) => ({
       project_id: pl.project_id,
       section_id: pl.section_id,
@@ -137,8 +140,9 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
     canView,
     canEdit,
     canComment,
-    canEditAllPlacements:
-      directPlacementRows.length === 0 ? canEdit : allDirectEditor || anyChainEditor,
+    // Удаление задачи затрагивает все её проекты, поэтому нужен editor в каждом:
+    // права в родительском проекте (anyChainEditor) здесь не годятся.
+    canEditAllPlacements: directPlacementRows.length === 0 ? canEdit : allDirectEditor,
   };
 }
 
@@ -386,15 +390,23 @@ export interface CreateTaskInput {
 
 export async function createTask(ctx: AuthContext, input: CreateTaskInput): Promise<TaskDetail> {
   const placements = input.placements ?? [];
-  // Задача без проекта попадает в личный инбокс и может быть назначена коллеге —
-  // гостю такой канал закрыт (иначе внешний подрядчик рассылает задачи всей org).
-  if (placements.length === 0 && !input.parent_task_id) assertOrg(ctx, "task.create.personal");
   for (const pl of placements) {
     await requireProject(ctx, pl.project_id, "task.create");
     if (pl.section_id) await assertSectionInProject(pl.section_id, pl.project_id);
   }
+
+  let parentAccess: TaskAccess | undefined;
   if (input.parent_task_id) {
-    await requireTaskAccess(ctx, input.parent_task_id, "edit");
+    parentAccess = await requireTaskAccess(ctx, input.parent_task_id, "edit");
+  }
+
+  // Задача вне проектов попадает в личный инбокс и может быть назначена коллеге —
+  // гостю этот канал закрыт, иначе внешний подрядчик рассылает задачи всей org.
+  // Подзадача наследует проекты родителя, поэтому «вне проектов» она только
+  // тогда, когда и у родителя их нет.
+  const inheritsProject = (parentAccess?.chainProjectIds.length ?? 0) > 0;
+  if (placements.length === 0 && !inheritsProject) {
+    assertOrg(ctx, "task.create.personal");
   }
   const assigneeIds = [...new Set(input.assignee_ids ?? [])];
   await assertOrgUsers(ctx, assigneeIds);
@@ -670,10 +682,11 @@ export async function setTaskPlacements(
 
   const addsPlacement = [...nextByProject.keys()].some((id) => !currentByProject.has(id));
   if (addsPlacement) {
-    // Расширять видимость задачи вправе только тот, кто сам редактор во всех её
-    // текущих проектах: иначе исполнитель выносит задачу из приватного проекта
-    // в свой и открывает её посторонним.
-    for (const projectId of currentByProject.keys()) {
+    // Расширять видимость задачи вправе только тот, кто сам редактор во всех
+    // проектах, где она уже видна — включая проекты родителя (у подзадачи своих
+    // размещений нет). Иначе исполнитель выносит подзадачу из приватного
+    // проекта в свой и открывает её посторонним.
+    for (const projectId of access.chainProjectIds) {
       await requireProject(ctx, projectId, "task.edit");
     }
   }

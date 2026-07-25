@@ -23,6 +23,7 @@ import type {
 } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { Avatar } from "@/components/v2/bits";
+import { PushToggle } from "@/components/v2/PushToggle";
 
 const ORG_ROLE_LABELS: Record<OrgRole, string> = {
   owner: "Владелец",
@@ -529,6 +530,10 @@ export default function SettingsPage() {
               </p>
             </Section>
           )}
+
+          <Section title="Уведомления на этом устройстве">
+            <PushToggle />
+          </Section>
 
           {isAdmin && <AdminSection orgId={orgId} />}
 

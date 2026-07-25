@@ -293,7 +293,7 @@ export async function upsertProjectMember(
 }
 
 export async function removeProjectMember(ctx: AuthContext, projectId: string, userId: string): Promise<void> {
-  await requireProject(ctx, projectId, "project.members.manage");
+  const project = await requireProject(ctx, projectId, "project.members.manage");
   // Последнего admin не удаляем при любой видимости: в приватном проекте org-админ
   // не имеет неявного доступа, а в org-видимом проект остался бы без хозяина.
   await assertNotLastProjectAdmin(projectId, userId);
@@ -304,23 +304,6 @@ export async function removeProjectMember(ctx: AuthContext, projectId: string, u
       .run(projectId, userId);
     if (changed.changes === 0) throw new DomainError(404, "Member not found");
 
-    // Отзыв доступа должен быть настоящим: снимаем подписки и назначения по задачам
-    // проекта, иначе исключённый участник продолжает читать задачу как follower.
-    await tx
-      .prepare(
-        `DELETE FROM core.task_followers f
-         USING core.task_projects tp
-         WHERE f.task_id = tp.task_id AND tp.project_id = ? AND f.user_id = ?`,
-      )
-      .run(projectId, userId);
-    await tx
-      .prepare(
-        `DELETE FROM core.task_assignees a
-         USING core.task_projects tp
-         WHERE a.task_id = tp.task_id AND tp.project_id = ? AND a.user_id = ?`,
-      )
-      .run(projectId, userId);
-
     await emitEvent(tx, {
       orgId: ctx.orgId,
       actorId: ctx.user.id,
@@ -329,6 +312,52 @@ export async function removeProjectMember(ctx: AuthContext, projectId: string, u
       verb: "project.member_removed",
       payload: { user_id: userId },
     });
+  });
+
+  // Если после удаления доступ к проекту всё равно остаётся (org-видимый проект
+  // и человек — сотрудник), назначения и подписки трогать нельзя: иначе снятие
+  // лишней явной роли молча стирает его задачи. Чистим только при реальной
+  // потере доступа — у гостей и в приватных проектах.
+  await revokeProjectTaskLinks(projectId, userId, project.org_id, project.visibility);
+}
+
+/** Снимает назначения и подписки по задачам проекта, если доступ действительно утрачен. */
+async function revokeProjectTaskLinks(
+  projectId: string,
+  userId: string,
+  orgId: string,
+  visibility: "org" | "private",
+): Promise<void> {
+  if (visibility === "org") {
+    const membership = await prepare<{ role: string }>(
+      `SELECT role FROM core.org_members WHERE org_id = ? AND user_id = ?`,
+    ).get(orgId, userId);
+    const stillSees = membership && membership.role !== "guest";
+    if (stillSees) return;
+  }
+
+  await transaction(async (tx) => {
+    // Подзадачи собственных размещений не имеют — снимаем по всей ветке.
+    const scope = `
+      WITH RECURSIVE roots AS (
+        SELECT tp.task_id FROM core.task_projects tp WHERE tp.project_id = ?
+        UNION
+        SELECT t.id FROM core.tasks t JOIN roots r ON t.parent_task_id = r.task_id
+      )`;
+    await tx
+      .prepare(
+        `${scope}
+         DELETE FROM core.task_followers f USING roots r
+         WHERE f.task_id = r.task_id AND f.user_id = ?`,
+      )
+      .run(projectId, userId);
+    await tx
+      .prepare(
+        `${scope}
+         DELETE FROM core.task_assignees a USING roots r
+         WHERE a.task_id = r.task_id AND a.user_id = ?`,
+      )
+      .run(projectId, userId);
   });
 }
 

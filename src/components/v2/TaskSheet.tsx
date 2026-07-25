@@ -10,6 +10,7 @@ import {
   Calendar,
   CheckCircle2,
   Circle,
+  Play,
   Plus,
   Trash2,
   X,
@@ -175,7 +176,7 @@ export function TaskSheet({
   async function toggleSubtaskDone(sub: TaskWithMeta) {
     if (!orgId) return;
     const doneStatus = statuses.find((s) => s.kind === "done");
-    const openStatus = statuses.find((s) => s.kind === "open");
+    const openStatus = reopenStatus();
     const target = sub.completed_at ? openStatus : doneStatus;
     if (!target) return;
     await run(async () => {
@@ -231,6 +232,25 @@ export function TaskSheet({
     });
   }
 
+  /**
+   * Куда возвращать задачу, если снимают отметку «завершена»: в последний
+   * рабочий статус перед «Готово», а не в самый первый («Входящие») — иначе
+   * снятая галочка отбрасывает задачу в начало процесса.
+   */
+  function reopenStatus() {
+    const open = statuses.filter((s) => s.kind === "open");
+    return open.length > 0 ? open[open.length - 1] : undefined;
+  }
+
+  /** Учёт времени начинается там, где идёт работа — в карточке задачи. */
+  async function startTimerHere() {
+    if (!orgId || !taskId) return;
+    await run(async () => {
+      await api.post(`/orgs/${orgId}/time/timer`, { task_id: taskId });
+      setError(null);
+    });
+  }
+
   const amFollower = !!task && !!me && task.followers.some((f) => f.id === me.id);
 
   async function toggleFollow() {
@@ -267,9 +287,7 @@ export function TaskSheet({
                   variant={isDone ? "secondary" : "outline"}
                   size="sm"
                   onClick={() => {
-                    const target = isDone
-                      ? statuses.find((s) => s.kind === "open")
-                      : doneStatus;
+                    const target = isDone ? reopenStatus() : doneStatus;
                     if (target) void patch({ status_id: target.id });
                   }}
                 >
@@ -277,6 +295,15 @@ export function TaskSheet({
                   {isDone ? "Завершена" : "Завершить"}
                 </Button>
                 <span className="flex-1" />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void startTimerHere()}
+                  title="Начать отсчёт времени по этой задаче"
+                >
+                  <Play className="size-4" />
+                  Таймер
+                </Button>
                 <Button variant="ghost" size="icon-sm" onClick={() => void toggleFollow()} title={amFollower ? "Не следить" : "Следить"}>
                   {amFollower ? <BellOff className="size-4" /> : <Bell className="size-4" />}
                 </Button>

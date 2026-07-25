@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { prepare } from "@/lib/sql";
 import { DomainError } from "./http";
-import { assertOrg, effectiveProjectRole } from "./policy";
+import { assertOrg, assertProject, effectiveProjectRole } from "./policy";
 import { requireProject } from "./projects";
 import { requireTaskAccess } from "./tasks";
 import type { AuthContext, CustomField, FieldOption, FieldType, PolicyProject } from "./types";
@@ -168,6 +168,11 @@ export async function setTaskFieldValue(
   if (!field) throw new DomainError(404, "Field not found");
   if (field.project_id && !access.placements.some((p) => p.project_id === field.project_id)) {
     throw new DomainError(422, "Field belongs to a project the task is not in");
+  }
+  // Значения полей — часть данных проекта: наблюдателю и комментатору их не
+  // менять, даже если он назначен на задачу.
+  for (const placement of access.placements) {
+    assertProject(ctx, "field.value.edit", placement.project);
   }
 
   if (value === null || value === undefined) {

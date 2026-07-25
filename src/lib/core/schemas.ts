@@ -45,6 +45,7 @@ export const projectPatchSchema = z
     visibility: z.enum(["org", "private"]).optional(),
     position: z.number().finite().optional(),
     archived: z.boolean().optional(),
+    team_id: z.uuid().nullable().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 

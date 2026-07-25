@@ -19,8 +19,9 @@ create table if not exists core.migration_map (
 );
 
 -- Парсеры легаси-форматов (sqlite-текстовые даты v1).
+-- stable, не immutable: в ветке по умолчанию вызывается now().
 create or replace function core._mig_ts(t text) returns timestamptz
-language sql immutable as $$
+language sql stable as $$
   select case
     when t is null then now()
     when t ~ '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}' then (left(replace(t, 'T', ' '), 19))::timestamp at time zone 'UTC'
@@ -162,8 +163,10 @@ begin
        core._mig_date(r.due_date), core._mig_time(r.due_time), r.estimated_minutes,
        case when coalesce(r.source, '') = '' then 'import' else r.source end,
        v_owner,
+       -- completed_at ставим только для kind='done': архив в v1 означал
+       -- «убрано с глаз», а не «выполнено» (иначе задачи приедут зачёркнутыми).
        case when exists (select 1 from core.task_statuses s
-                         where s.id = v_status and s.kind in ('done','archived'))
+                         where s.id = v_status and s.kind = 'done')
             then core._mig_ts(r.updated_at) end,
        core._mig_ts(r.created_at), core._mig_ts(r.updated_at))
     returning id into v_task;

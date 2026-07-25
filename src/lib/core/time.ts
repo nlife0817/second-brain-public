@@ -110,10 +110,15 @@ export async function listEntries(
   opts: { from?: string; to?: string; userId?: string; taskId?: string } = {},
 ): Promise<TimeEntryWithTask[]> {
   // Чужое время видят только админы организации.
-  const targetUser =
-    opts.userId && opts.userId !== ctx.user.id
-      ? (canOrg(ctx, "org.members.manage") ? opts.userId : ctx.user.id)
-      : opts.userId ?? ctx.user.id;
+  const isOwnEntries = !opts.userId || opts.userId === ctx.user.id;
+  const targetUser = isOwnEntries
+    ? ctx.user.id
+    : canOrg(ctx, "org.members.manage")
+      ? opts.userId!
+      : ctx.user.id;
+  // Заголовок чужой задачи мог бы раскрыть приватный проект — админу отдаём
+  // только длительности; свои записи всегда показываем с названиями.
+  const showTitles = targetUser === ctx.user.id;
 
   const where: string[] = ["e.org_id = ?", "e.user_id = ?"];
   const params: unknown[] = [ctx.orgId, targetUser];
@@ -130,7 +135,7 @@ export async function listEntries(
     params.push(opts.taskId);
   }
   return prepare<TimeEntryWithTask>(
-    `SELECT e.*, t.title AS task_title, u.name AS user_name
+    `SELECT e.*, ${showTitles ? "t.title" : "NULL::text"} AS task_title, u.name AS user_name
      FROM core.time_entries e
      LEFT JOIN core.tasks t ON t.id = e.task_id
      LEFT JOIN core.users u ON u.id = e.user_id
@@ -216,15 +221,22 @@ export async function summary(
     ).all(ctx.orgId, ctx.user.id, opts.from, opts.to);
   }
 
+  // Задача может жить в нескольких проектах (multi-homing), поэтому берём
+  // только первый — иначе её время удвоится и «Всего» превысит реальное.
   return prepare<TimeSummaryRow>(
-    `SELECT COALESCE(p.id::text, 'none') AS key,
+    `SELECT COALESCE(pick.project_id::text, 'none') AS key,
             COALESCE(p.name, 'Без проекта') AS label,
             COALESCE(sum(e.seconds), 0)::int AS seconds
      FROM core.time_entries e
-     LEFT JOIN core.task_projects tp ON tp.task_id = e.task_id
-     LEFT JOIN core.projects p ON p.id = tp.project_id
+     LEFT JOIN LATERAL (
+       SELECT tp.project_id FROM core.task_projects tp
+       WHERE tp.task_id = e.task_id
+       ORDER BY tp.created_at, tp.project_id
+       LIMIT 1
+     ) pick ON TRUE
+     LEFT JOIN core.projects p ON p.id = pick.project_id
      WHERE e.org_id = ? AND e.user_id = ? AND e.started_at >= ?::date AND e.started_at < (?::date + 1)
-     GROUP BY p.id, p.name
+     GROUP BY pick.project_id, p.name
      ORDER BY seconds DESC
      LIMIT 100`,
   ).all(ctx.orgId, ctx.user.id, opts.from, opts.to);

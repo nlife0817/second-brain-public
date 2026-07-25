@@ -3,8 +3,8 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { prepare } from "@/lib/sql";
 import { DomainError } from "./http";
-import { assertOrg } from "./policy";
-import type { AuthContext, CoreEvent } from "./types";
+import { assertOrg, canOrg, effectiveProjectRole } from "./policy";
+import type { AuthContext, CoreEvent, PolicyProject } from "./types";
 
 // --- Лимиты плана ------------------------------------------------------------------
 
@@ -17,10 +17,12 @@ export interface Limits {
   webhooks: number;
 }
 
+// Лимиты подобраны так, чтобы ни одна функция продукта не оказалась полностью
+// недоступной на бесплатном плане: иначе фича существует только в коде.
 const PLAN_LIMITS: Record<Plan, Limits> = {
-  free: { members: 5, projects: 5, guests: 2, webhooks: 0 },
-  team: { members: 50, projects: 100, guests: 25, webhooks: 5 },
-  business: { members: 500, projects: 1000, guests: 250, webhooks: 50 },
+  free: { members: 10, projects: 20, guests: 3, webhooks: 1 },
+  team: { members: 50, projects: 200, guests: 25, webhooks: 5 },
+  business: { members: 500, projects: 2000, guests: 250, webhooks: 50 },
 };
 
 export interface OrgUsage {
@@ -30,6 +32,8 @@ export interface OrgUsage {
 }
 
 export async function getOrgUsage(ctx: AuthContext): Promise<OrgUsage> {
+  // Тариф, лимиты и численность организации — внутренняя информация.
+  assertOrg(ctx, "clients.view");
   const row = await prepare<{ plan: Plan; entitlements: Partial<Limits> }>(
     `SELECT plan, entitlements FROM core.organizations WHERE id = ?`,
   ).get(ctx.orgId);
@@ -69,6 +73,11 @@ export async function assertWithinLimit(ctx: AuthContext, key: keyof Limits): Pr
 
 // --- Аудит-лента организации ---------------------------------------------------------
 
+/**
+ * Журнал действий организации: кто и что делал. Для сущностей, которых админ
+ * не видит (приватные проекты), payload скрывается — остаются факт действия,
+ * автор и время. Аудит отвечает на вопрос «кто менял», а не «что именно».
+ */
 export async function listOrgAudit(
   ctx: AuthContext,
   opts: { limit?: number; before?: number } = {},
@@ -86,19 +95,73 @@ export async function listOrgAudit(
      LIMIT ?`,
   ).all(ctx.orgId, opts.before ?? null, opts.before ?? null, Math.min(opts.limit ?? 100, 500));
 
-  return rows.map((r) => ({
-    id: Number(r.id),
-    org_id: r.org_id,
-    actor_id: r.actor_id,
-    entity_type: r.entity_type,
-    entity_id: r.entity_id,
-    verb: r.verb,
-    payload: r.payload,
-    created_at: r.created_at,
-    actor: r.actor_id
-      ? { id: r.actor_id, email: r.actor_email ?? "", name: r.actor_name ?? "", avatar_url: r.actor_avatar }
-      : null,
-  }));
+  const projectIds = [
+    ...new Set([
+      ...rows.filter((r) => r.entity_type === "project").map((r) => r.entity_id),
+      ...rows
+        .map((r) => (r.payload as { project_id?: string } | null)?.project_id)
+        .filter((id): id is string => !!id),
+    ]),
+  ];
+  const visibleProjects = new Set<string>();
+  if (projectIds.length > 0) {
+    const ph = projectIds.map(() => "?").join(",");
+    const projects = await prepare<PolicyProject>(
+      `SELECT id, org_id, visibility FROM core.projects WHERE id IN (${ph})`,
+    ).all(projectIds);
+    for (const p of projects) {
+      if (effectiveProjectRole(ctx, p) !== null) visibleProjects.add(p.id);
+    }
+  }
+
+  // Задачи приватных проектов: заголовок в payload не показываем.
+  const taskIds = rows.filter((r) => r.entity_type === "task").map((r) => r.entity_id);
+  const visibleTasks = new Set<string>();
+  if (taskIds.length > 0) {
+    const ph = taskIds.map(() => "?").join(",");
+    const rowsWithProjects = await prepare<{ task_id: string; project_id: string | null; created_by: string | null }>(
+      `SELECT t.id AS task_id, tp.project_id, t.created_by
+       FROM core.tasks t LEFT JOIN core.task_projects tp ON tp.task_id = t.id
+       WHERE t.id IN (${ph})`,
+    ).all(taskIds);
+    const projectsOfTasks = [...new Set(rowsWithProjects.map((r) => r.project_id).filter((id): id is string => !!id))];
+    if (projectsOfTasks.length > 0) {
+      const ph2 = projectsOfTasks.map(() => "?").join(",");
+      const projects = await prepare<PolicyProject>(
+        `SELECT id, org_id, visibility FROM core.projects WHERE id IN (${ph2})`,
+      ).all(projectsOfTasks);
+      for (const p of projects) {
+        if (effectiveProjectRole(ctx, p) !== null) visibleProjects.add(p.id);
+      }
+    }
+    for (const r of rowsWithProjects) {
+      if (r.created_by === ctx.user.id || (r.project_id && visibleProjects.has(r.project_id))) {
+        visibleTasks.add(r.task_id);
+      }
+    }
+  }
+
+  return rows.map((r) => {
+    const visible =
+      r.entity_type === "task"
+        ? visibleTasks.has(r.entity_id)
+        : r.entity_type === "project"
+          ? visibleProjects.has(r.entity_id)
+          : true;
+    return {
+      id: Number(r.id),
+      org_id: r.org_id,
+      actor_id: r.actor_id,
+      entity_type: r.entity_type,
+      entity_id: r.entity_id,
+      verb: r.verb,
+      payload: visible ? r.payload : {},
+      created_at: r.created_at,
+      actor: r.actor_id
+        ? { id: r.actor_id, email: r.actor_email ?? "", name: r.actor_name ?? "", avatar_url: r.actor_avatar }
+        : null,
+    };
+  });
 }
 
 // --- Вебхуки ---------------------------------------------------------------------------
@@ -127,6 +190,9 @@ export async function createWebhook(
   input: { url: string; events: string[] },
 ): Promise<Webhook & { secret: string }> {
   assertOrg(ctx, "org.update");
+  if (!isPublicHttpsUrl(input.url)) {
+    throw new DomainError(422, "Нужен публичный https-адрес");
+  }
   await assertWithinLimit(ctx, "webhooks");
   // Секрет показывается один раз — им подписывается тело запроса (HMAC-SHA256).
   const secret = randomBytes(24).toString("base64url");
@@ -149,6 +215,36 @@ export async function deleteWebhook(ctx: AuthContext, webhookId: string): Promis
 
 export function signPayload(secret: string, body: string): string {
   return createHmac("sha256", secret).update(body).digest("hex");
+}
+
+const PRIVATE_IPV4_RE =
+  /^(0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+
+/**
+ * Вебхук указывает произвольный адрес, поэтому доставка не должна становиться
+ * дверью во внутреннюю сеть (метаданные облака, локальные сервисы).
+ */
+export function isPublicHttpsUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+
+  const host = url.hostname.toLowerCase();
+  // IPv6 в URL приходит в скобках; ::1 и fc00::/7 (unique local) — не публичные.
+  if (host.startsWith("[")) {
+    const ip = host.slice(1, -1);
+    return !(ip === "::1" || ip.startsWith("fc") || ip.startsWith("fd") || ip.startsWith("fe80"));
+  }
+  // Сравниваем именно домены целиком: localhost.example.com — публичный адрес.
+  const labels = host.split(".");
+  const tld = labels[labels.length - 1];
+  if (host === "localhost" || tld === "localhost" || tld === "local" || tld === "internal") return false;
+
+  return !PRIVATE_IPV4_RE.test(host);
 }
 
 interface DeliveryRow {
@@ -197,6 +293,7 @@ export async function deliverWebhooks(limit = 20): Promise<{ sent: number; faile
       created_at: d.created_at,
     });
     try {
+      if (!isPublicHttpsUrl(d.url)) throw new Error("Адрес недоступен для доставки");
       const res = await fetch(d.url, {
         method: "POST",
         headers: {
@@ -205,9 +302,11 @@ export async function deliverWebhooks(limit = 20): Promise<{ sent: number; faile
           "X-SecondBrain-Event": d.verb,
         },
         body,
-        signal: AbortSignal.timeout(10_000),
+        // Редирект мог бы увести запрос на внутренний адрес в обход проверки.
+        redirect: "manual",
+        signal: AbortSignal.timeout(5_000),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error("Эндпоинт не принял событие");
       await prepare(
         `UPDATE core.webhook_deliveries SET status = 'sent', attempts = attempts + 1 WHERE id = ?`,
       ).run(d.id);
@@ -215,7 +314,16 @@ export async function deliverWebhooks(limit = 20): Promise<{ sent: number; faile
       sent++;
     } catch (err) {
       const attempts = d.attempts + 1;
-      const message = err instanceof Error ? err.message.slice(0, 500) : "unknown error";
+      // Детали ответа наружу не показываем: иначе last_error превращается
+      // в сканер внутренней сети.
+      const message =
+        err instanceof Error && err.name === "TimeoutError"
+          ? "Эндпоинт не ответил вовремя"
+          : err instanceof Error && err.message.startsWith("Эндпоинт")
+            ? err.message
+            : err instanceof Error && err.message.startsWith("Адрес")
+              ? err.message
+              : "Ошибка доставки";
       // Экспоненциальная пауза: 1, 2, 4, 8 минут — потом сдаёмся.
       await prepare(
         `UPDATE core.webhook_deliveries
@@ -233,40 +341,80 @@ export async function deliverWebhooks(limit = 20): Promise<{ sent: number; faile
 
 // --- Экспорт данных организации ----------------------------------------------------------
 
+/**
+ * Выгрузка организации. Содержимое приватных проектов, куда выгружающий не
+ * входит, не включается: экспорт не должен быть обходным путём к чужому
+ * приватному контуру (сами проекты перечисляются, но без задач и комментариев).
+ */
 export async function exportOrg(ctx: AuthContext): Promise<Record<string, unknown>> {
   assertOrg(ctx, "org.update");
-  const [org, members, projects, tasks, placements, comments, clients] = await Promise.all([
+
+  const allProjects = await prepare<
+    PolicyProject & { name: string; description: string; archived_at: string | null; created_at: string }
+  >(
+    `SELECT id, org_id, visibility, name, description, archived_at, created_at
+     FROM core.projects WHERE org_id = ?`,
+  ).all(ctx.orgId);
+  const visibleProjectIds = allProjects
+    .filter((p) => effectiveProjectRole(ctx, p) !== null)
+    .map((p) => p.id);
+
+  // Задача попадает в выгрузку, если она лежит хотя бы в одном видимом проекте
+  // или создана самим выгружающим (личный инбокс).
+  const projectFilter = visibleProjectIds.length > 0 ? visibleProjectIds.map(() => "?").join(",") : "NULL";
+  const taskParams: unknown[] =
+    visibleProjectIds.length > 0 ? [ctx.orgId, visibleProjectIds, ctx.user.id] : [ctx.orgId, ctx.user.id];
+  const taskScope = `
+    t.org_id = ?
+    AND (
+      ${visibleProjectIds.length > 0
+        ? `EXISTS (SELECT 1 FROM core.task_projects tp WHERE tp.task_id = t.id AND tp.project_id IN (${projectFilter})) OR`
+        : ""}
+      t.created_by = ?
+    )`;
+
+  const [org, members, tasks, placements, comments, clients] = await Promise.all([
     prepare(`SELECT id, name, slug, plan, created_at FROM core.organizations WHERE id = ?`).get(ctx.orgId),
     prepare(
       `SELECT u.email, u.name, m.role, m.created_at
        FROM core.org_members m JOIN core.users u ON u.id = m.user_id WHERE m.org_id = ?`,
     ).all(ctx.orgId),
     prepare(
-      `SELECT id, name, description, visibility, archived_at, created_at FROM core.projects WHERE org_id = ?`,
-    ).all(ctx.orgId),
-    prepare(
       `SELECT t.id, t.title, t.description, t.priority, t.due_date, t.due_time, t.completed_at,
               t.parent_task_id, t.created_at, s.name AS status
        FROM core.tasks t LEFT JOIN core.task_statuses s ON s.id = t.status_id
-       WHERE t.org_id = ?`,
-    ).all(ctx.orgId),
+       WHERE ${taskScope}`,
+    ).all(...taskParams),
     prepare(
       `SELECT tp.task_id, tp.project_id FROM core.task_projects tp
-       JOIN core.tasks t ON t.id = tp.task_id WHERE t.org_id = ?`,
-    ).all(ctx.orgId),
+       JOIN core.tasks t ON t.id = tp.task_id
+       WHERE ${taskScope}`,
+    ).all(...taskParams),
     prepare(
       `SELECT c.entity_type, c.entity_id, c.body, c.created_at, u.email AS author
-       FROM core.comments c LEFT JOIN core.users u ON u.id = c.author_id
-       WHERE c.org_id = ? AND c.deleted_at IS NULL`,
-    ).all(ctx.orgId),
-    prepare(`SELECT id, name, budget, monthly_revenue, created_at FROM core.clients WHERE org_id = ?`).all(ctx.orgId),
+       FROM core.comments c
+       LEFT JOIN core.users u ON u.id = c.author_id
+       JOIN core.tasks t ON t.id = c.entity_id AND c.entity_type = 'task'
+       WHERE c.org_id = ? AND c.deleted_at IS NULL AND ${taskScope}`,
+    ).all(ctx.orgId, ...taskParams),
+    canOrg(ctx, "clients.view")
+      ? prepare(`SELECT id, name, budget, monthly_revenue, created_at FROM core.clients WHERE org_id = ?`).all(ctx.orgId)
+      : Promise.resolve([]),
   ]);
 
   return {
     exported_at: new Date().toISOString(),
     organization: org,
     members,
-    projects,
+    projects: allProjects.map((p) => ({
+      id: p.id,
+      name: p.name,
+      description: visibleProjectIds.includes(p.id) ? p.description : null,
+      visibility: p.visibility,
+      archived_at: p.archived_at,
+      created_at: p.created_at,
+      exported_content: visibleProjectIds.includes(p.id),
+    })),
     tasks,
     task_projects: placements,
     comments,

@@ -105,17 +105,84 @@ export async function countOwners(orgId: string): Promise<number> {
 }
 
 export async function updateMemberRole(orgId: string, userId: string, role: OrgRole): Promise<void> {
-  const changed = await prepare(
-    `UPDATE core.org_members SET role = ? WHERE org_id = ? AND user_id = ?`,
-  ).run(role, orgId, userId);
-  if (changed.changes === 0) throw new DomainError(404, "Member not found");
+  await transaction(async (tx) => {
+    const changed = await tx
+      .prepare(`UPDATE core.org_members SET role = ? WHERE org_id = ? AND user_id = ?`)
+      .run(role, orgId, userId);
+    if (changed.changes === 0) throw new DomainError(404, "Member not found");
+
+    // Понижение до гостя обнуляет неявный доступ к org-видимым проектам, но
+    // назначения продолжали бы его давать — снимаем их вместе с ролью.
+    if (role === "guest") {
+      await tx
+        .prepare(
+          `DELETE FROM core.task_assignees a USING core.tasks t
+           WHERE a.task_id = t.id AND t.org_id = ? AND a.user_id = ?
+             AND NOT EXISTS (
+               SELECT 1 FROM core.task_projects tp
+               JOIN core.project_members pm ON pm.project_id = tp.project_id AND pm.user_id = a.user_id
+               WHERE tp.task_id = t.id
+             )`,
+        )
+        .run(orgId, userId);
+      await tx
+        .prepare(
+          `DELETE FROM core.task_followers f USING core.tasks t
+           WHERE f.task_id = t.id AND t.org_id = ? AND f.user_id = ?
+             AND NOT EXISTS (
+               SELECT 1 FROM core.task_projects tp
+               JOIN core.project_members pm ON pm.project_id = tp.project_id AND pm.user_id = f.user_id
+               WHERE tp.task_id = t.id
+             )`,
+        )
+        .run(orgId, userId);
+    }
+  });
 }
 
+/**
+ * Удаление из организации отзывает доступ целиком: снимаются членство в
+ * проектах, назначения, подписки и непрочитанные уведомления. Иначе бывший
+ * сотрудник продолжает получать push с заголовками задач, а повторное
+ * приглашение молча воскрешает старые проектные роли.
+ */
 export async function removeMember(orgId: string, userId: string): Promise<void> {
-  const changed = await prepare(
-    `DELETE FROM core.org_members WHERE org_id = ? AND user_id = ?`,
-  ).run(orgId, userId);
-  if (changed.changes === 0) throw new DomainError(404, "Member not found");
+  await transaction(async (tx) => {
+    const changed = await tx
+      .prepare(`DELETE FROM core.org_members WHERE org_id = ? AND user_id = ?`)
+      .run(orgId, userId);
+    if (changed.changes === 0) throw new DomainError(404, "Member not found");
+
+    await tx
+      .prepare(
+        `DELETE FROM core.project_members pm USING core.projects p
+         WHERE pm.project_id = p.id AND p.org_id = ? AND pm.user_id = ?`,
+      )
+      .run(orgId, userId);
+    await tx
+      .prepare(
+        `DELETE FROM core.task_assignees a USING core.tasks t
+         WHERE a.task_id = t.id AND t.org_id = ? AND a.user_id = ?`,
+      )
+      .run(orgId, userId);
+    await tx
+      .prepare(
+        `DELETE FROM core.task_followers f USING core.tasks t
+         WHERE f.task_id = t.id AND t.org_id = ? AND f.user_id = ?`,
+      )
+      .run(orgId, userId);
+    await tx
+      .prepare(`DELETE FROM core.notifications WHERE org_id = ? AND user_id = ?`)
+      .run(orgId, userId);
+    // Приглашения, выписанные этим человеком и ещё не принятые, тоже отзываем:
+    // выданные им гранты пережили бы его уход.
+    await tx
+      .prepare(
+        `UPDATE core.invitations SET revoked_at = now()
+         WHERE org_id = ? AND invited_by = ? AND accepted_at IS NULL AND revoked_at IS NULL`,
+      )
+      .run(orgId, userId);
+  });
 }
 
 function slugify(name: string): string {

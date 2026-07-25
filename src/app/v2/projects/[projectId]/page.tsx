@@ -165,6 +165,15 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
     setTasks((cur) => cur.map((t) => (t.id === taskId ? { ...t, status_id: statusId } : t)));
     try {
       await api.patch(`/orgs/${orgId}/tasks/${taskId}`, { status_id: statusId });
+      // Карточка встаёт в конец колонки, и этот порядок переживает перезагрузку:
+      // список проекта сортируется по position.
+      const columnTail = tasks
+        .filter((t) => t.status_id === statusId && t.id !== taskId)
+        .map((t) => t.placements.find((p) => p.project_id === projectId)?.position ?? 0);
+      await api.post(`/orgs/${orgId}/tasks/${taskId}/placements`, {
+        project_id: projectId,
+        position: (columnTail.length > 0 ? Math.max(...columnTail) : 0) + 1,
+      });
       void load();
       void refreshProjects();
     } catch {

@@ -2,6 +2,7 @@
 
 // «Мои задачи»: назначенные мне + личный инбокс (задачи без проекта).
 
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { TaskCard } from "@/components/v2/TaskCard";
@@ -17,6 +18,8 @@ function todayIso(): string {
 
 export default function MyTasksPage() {
   const { orgId, refreshProjects } = useV2Store();
+  // Push-уведомление ведёт на /v2/my?task=<id> — открываем карточку сразу.
+  const deepLinkTaskId = useSearchParams().get("task");
   const [tasks, setTasks] = useState<TaskWithMeta[]>([]);
   const [showDone, setShowDone] = useState(false);
   const [quickTitle, setQuickTitle] = useState("");
@@ -39,6 +42,10 @@ export default function MyTasksPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (deepLinkTaskId) setOpenTaskId(deepLinkTaskId);
+  }, [deepLinkTaskId]);
 
   async function quickAdd() {
     if (!orgId || !quickTitle.trim()) return;
