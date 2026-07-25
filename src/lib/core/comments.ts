@@ -90,13 +90,30 @@ export async function addTaskComment(ctx: AuthContext, taskId: string, body: str
   return mapComment(row);
 }
 
-export async function editComment(ctx: AuthContext, commentId: string, body: string): Promise<CoreComment> {
-  const existing = await prepare<{ author_id: string | null; org_id: string; deleted_at: string | null }>(
-    `SELECT author_id, org_id, deleted_at FROM core.comments WHERE id = ?`,
+type CommentGuard = {
+  author_id: string | null;
+  org_id: string;
+  entity_type: "task" | "project" | "client";
+  entity_id: string;
+  deleted_at: string | null;
+};
+
+/** Комментарий доступен только вместе с сущностью, к которой он привязан. */
+async function loadCommentForWrite(ctx: AuthContext, commentId: string): Promise<CommentGuard> {
+  const existing = await prepare<CommentGuard>(
+    `SELECT author_id, org_id, entity_type, entity_id, deleted_at FROM core.comments WHERE id = ?`,
   ).get(commentId);
   if (!existing || existing.org_id !== ctx.orgId || existing.deleted_at) {
     throw new DomainError(404, "Comment not found");
   }
+  if (existing.entity_type === "task") {
+    await requireTaskAccess(ctx, existing.entity_id, "view");
+  }
+  return existing;
+}
+
+export async function editComment(ctx: AuthContext, commentId: string, body: string): Promise<CoreComment> {
+  const existing = await loadCommentForWrite(ctx, commentId);
   if (existing.author_id !== ctx.user.id) throw new DomainError(403, "Only the author can edit a comment");
 
   const clean = sanitizeRichText(body);
@@ -108,12 +125,7 @@ export async function editComment(ctx: AuthContext, commentId: string, body: str
 }
 
 export async function deleteComment(ctx: AuthContext, commentId: string): Promise<void> {
-  const existing = await prepare<{ author_id: string | null; org_id: string; deleted_at: string | null }>(
-    `SELECT author_id, org_id, deleted_at FROM core.comments WHERE id = ?`,
-  ).get(commentId);
-  if (!existing || existing.org_id !== ctx.orgId || existing.deleted_at) {
-    throw new DomainError(404, "Comment not found");
-  }
+  const existing = await loadCommentForWrite(ctx, commentId);
   const isAuthor = existing.author_id === ctx.user.id;
   if (!isAuthor && !canOrg(ctx, "org.members.manage")) {
     throw new DomainError(403, "Only the author or an org admin can delete a comment");

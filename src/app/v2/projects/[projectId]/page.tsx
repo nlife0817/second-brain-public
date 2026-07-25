@@ -133,7 +133,11 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
   const canEdit = project?.my_role === "admin" || project?.my_role === "editor";
 
   const columns = useMemo(() => {
-    const visible = statuses.filter((s) => showDone || s.kind !== "archived");
+    // Архивные колонки скрыты, пока в них нет задач — иначе задача, отправленная
+    // в архив из карточки, пропала бы с доски без следа.
+    const visible = statuses.filter(
+      (s) => showDone || s.kind !== "archived" || tasks.some((t) => t.status_id === s.id),
+    );
     const noStatusTasks = tasks.filter(
       (t) => !t.status_id || !statuses.some((s) => s.id === t.status_id),
     );

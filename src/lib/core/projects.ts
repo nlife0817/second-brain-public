@@ -119,8 +119,27 @@ export async function updateProject(
   patch: Partial<{ name: string; description: string; color: string; icon: string; visibility: "org" | "private"; position: number }>,
 ): Promise<Project> {
   const project = await requireProject(ctx, projectId, "project.update");
+  const visibilityChanged = patch.visibility !== undefined && patch.visibility !== project.visibility;
+  if (visibilityChanged) assertProject(ctx, "project.visibility", project);
   const next = { ...project, ...patch };
   const updated = await transaction(async (tx) => {
+    // org → private: приватный проект живёт только на явных участниках, поэтому
+    // гарантируем хотя бы одного admin — иначе проект осиротеет безвозвратно.
+    if (visibilityChanged && patch.visibility === "private") {
+      const admins = await tx
+        .prepare<{ n: number }>(
+          `SELECT count(*)::int AS n FROM core.project_members WHERE project_id = ? AND role = 'admin'`,
+        )
+        .get(projectId);
+      if ((admins?.n ?? 0) === 0) {
+        await tx
+          .prepare(
+            `INSERT INTO core.project_members (project_id, user_id, role) VALUES (?, ?, 'admin')
+             ON CONFLICT (project_id, user_id) DO UPDATE SET role = 'admin'`,
+          )
+          .run(projectId, ctx.user.id);
+      }
+    }
     const row = await tx
       .prepare<Project>(
         `UPDATE core.projects
@@ -213,6 +232,20 @@ export async function listProjectMembers(projectId: string): Promise<ProjectMemb
   ).all(projectId);
 }
 
+/** Проект не должен остаться без явного администратора (см. removeProjectMember). */
+async function assertNotLastProjectAdmin(projectId: string, userId: string): Promise<void> {
+  const targetRole = await prepare<{ role: ProjectRole }>(
+    `SELECT role FROM core.project_members WHERE project_id = ? AND user_id = ?`,
+  ).get(projectId, userId);
+  if (targetRole?.role !== "admin") return;
+  const admins = await prepare<{ n: number }>(
+    `SELECT count(*)::int AS n FROM core.project_members WHERE project_id = ? AND role = 'admin'`,
+  ).get(projectId);
+  if ((admins?.n ?? 0) <= 1) {
+    throw new DomainError(409, "Project must keep at least one admin");
+  }
+}
+
 export async function upsertProjectMember(
   ctx: AuthContext,
   projectId: string,
@@ -224,6 +257,7 @@ export async function upsertProjectMember(
     `SELECT user_id FROM core.org_members WHERE org_id = ? AND user_id = ?`,
   ).get(ctx.orgId, userId);
   if (!target) throw new DomainError(422, "User is not a member of this organization");
+  if (role !== "admin") await assertNotLastProjectAdmin(projectId, userId);
 
   await transaction(async (tx) => {
     const existing = await tx
@@ -257,25 +291,34 @@ export async function upsertProjectMember(
 }
 
 export async function removeProjectMember(ctx: AuthContext, projectId: string, userId: string): Promise<void> {
-  const project = await requireProject(ctx, projectId, "project.members.manage");
-  // Последнего project-admin не удаляем: проект останется неуправляемым
-  // (org owner/admin в приватный проект не попадёт по policy).
-  if (project.visibility === "private") {
-    const admins = await prepare<{ n: number }>(
-      `SELECT count(*)::int AS n FROM core.project_members WHERE project_id = ? AND role = 'admin'`,
-    ).get(projectId);
-    const targetRole = await prepare<{ role: ProjectRole }>(
-      `SELECT role FROM core.project_members WHERE project_id = ? AND user_id = ?`,
-    ).get(projectId, userId);
-    if (targetRole?.role === "admin" && (admins?.n ?? 0) <= 1) {
-      throw new DomainError(409, "Private project must keep at least one admin");
-    }
-  }
+  await requireProject(ctx, projectId, "project.members.manage");
+  // Последнего admin не удаляем при любой видимости: в приватном проекте org-админ
+  // не имеет неявного доступа, а в org-видимом проект остался бы без хозяина.
+  await assertNotLastProjectAdmin(projectId, userId);
+
   await transaction(async (tx) => {
     const changed = await tx
       .prepare(`DELETE FROM core.project_members WHERE project_id = ? AND user_id = ?`)
       .run(projectId, userId);
     if (changed.changes === 0) throw new DomainError(404, "Member not found");
+
+    // Отзыв доступа должен быть настоящим: снимаем подписки и назначения по задачам
+    // проекта, иначе исключённый участник продолжает читать задачу как follower.
+    await tx
+      .prepare(
+        `DELETE FROM core.task_followers f
+         USING core.task_projects tp
+         WHERE f.task_id = tp.task_id AND tp.project_id = ? AND f.user_id = ?`,
+      )
+      .run(projectId, userId);
+    await tx
+      .prepare(
+        `DELETE FROM core.task_assignees a
+         USING core.task_projects tp
+         WHERE a.task_id = tp.task_id AND tp.project_id = ? AND a.user_id = ?`,
+      )
+      .run(projectId, userId);
+
     await emitEvent(tx, {
       orgId: ctx.orgId,
       actorId: ctx.user.id,

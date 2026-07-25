@@ -17,15 +17,17 @@ export interface EmitInput {
 }
 
 export async function emitEvent(tx: TxContext, e: EmitInput): Promise<number> {
+  // events.id — bigint; postgres.js отдаёт его строкой, приводим к number,
+  // чтобы сортировки и сравнения на клиенте не сравнивали "9" > "10".
   const row = await tx
-    .prepare<{ id: number }>(
+    .prepare<{ id: string | number }>(
       `INSERT INTO core.events (org_id, actor_id, entity_type, entity_id, verb, payload)
        VALUES (?, ?, ?, ?, ?, ?::jsonb)
        RETURNING id`,
     )
     .get(e.orgId, e.actorId, e.entityType, e.entityId, e.verb, JSON.stringify(e.payload ?? {}));
   if (!row) throw new Error("emitEvent: insert failed");
-  return row.id;
+  return Number(row.id);
 }
 
 /** Уведомления получателям (кроме автора действия), в той же транзакции. */
@@ -78,7 +80,7 @@ export async function listEntityFeed(
      LIMIT ?`,
   ).all(entityType, entityId, limit);
   return rows.map((r) => ({
-    id: r.id,
+    id: Number(r.id),
     org_id: r.org_id,
     actor_id: r.actor_id,
     entity_type: r.entity_type,

@@ -3,7 +3,7 @@
 // Карточка задачи: поля, исполнители, проекты (multi-homing), кастомные поля,
 // подзадачи, комментарии и лента активности. Сохранение — по действию (PATCH).
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
   BellOff,
@@ -85,6 +85,9 @@ export function TaskSheet({
   const [subtaskTitle, setSubtaskTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Быстрое переключение задач: ответ по прежней задаче не должен перетереть текущую.
+  const currentTaskRef = useRef<string | null>(null);
+
   const load = useCallback(async () => {
     if (!orgId || !taskId) return;
     try {
@@ -95,6 +98,7 @@ export function TaskSheet({
         api.get<TaskWithMeta[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`),
         api.get<CustomField[]>(`/orgs/${orgId}/fields`),
       ]);
+      if (currentTaskRef.current !== taskId) return;
       setTask(detail);
       setComments(cs);
       setFeed(ev);
@@ -102,44 +106,68 @@ export function TaskSheet({
       setFields(fs);
       setError(null);
     } catch (e) {
+      if (currentTaskRef.current !== taskId) return;
       setError(e instanceof Error ? e.message : "Не удалось загрузить задачу");
     }
   }, [orgId, taskId]);
 
   useEffect(() => {
+    currentTaskRef.current = taskId;
     setTask(null);
     setTab("comments");
     if (taskId) void load();
   }, [taskId, load]);
 
-  async function patch(body: Record<string, unknown>) {
-    if (!orgId || !taskId) return;
+  /** Единая точка вызова API: показывает ошибку вместо тихого падения. */
+  async function run(fn: () => Promise<void>) {
     try {
-      const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`, body);
-      setTask(updated);
-      onChanged?.();
+      await fn();
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось сохранить");
+      setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
     }
+  }
+
+  async function patch(body: Record<string, unknown>) {
+    if (!orgId || !taskId) return;
+    await run(async () => {
+      const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`, body);
+      if (currentTaskRef.current !== taskId) return;
+      setTask(updated);
+      onChanged?.();
+    });
+  }
+
+  /** Многострочный ввод → HTML: иначе переносы строк теряются при рендере. */
+  function textToHtml(text: string): string {
+    const escape = (s: string) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return text
+      .split(/\n{2,}/)
+      .map((block) => `<p>${block.split("\n").map(escape).join("<br>")}</p>`)
+      .join("");
   }
 
   async function addComment() {
     if (!orgId || !taskId || !commentText.trim()) return;
-    const comment = await api.post<CoreComment>(`/orgs/${orgId}/tasks/${taskId}/comments`, {
-      body: commentText.trim(),
+    await run(async () => {
+      const comment = await api.post<CoreComment>(`/orgs/${orgId}/tasks/${taskId}/comments`, {
+        body: textToHtml(commentText.trim()),
+      });
+      setComments((prev) => [...prev, comment]);
+      setCommentText("");
+      onChanged?.();
     });
-    setComments((prev) => [...prev, comment]);
-    setCommentText("");
-    onChanged?.();
   }
 
   async function addSubtask() {
     if (!orgId || !taskId || !subtaskTitle.trim()) return;
-    await api.post(`/orgs/${orgId}/tasks`, { title: subtaskTitle.trim(), parent_task_id: taskId });
-    setSubtaskTitle("");
-    setSubtasks(await api.get<TaskWithMeta[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`));
-    onChanged?.();
+    await run(async () => {
+      await api.post(`/orgs/${orgId}/tasks`, { title: subtaskTitle.trim(), parent_task_id: taskId });
+      setSubtaskTitle("");
+      setSubtasks(await api.get<TaskWithMeta[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`));
+      onChanged?.();
+    });
   }
 
   async function toggleSubtaskDone(sub: TaskWithMeta) {
@@ -148,9 +176,11 @@ export function TaskSheet({
     const openStatus = statuses.find((s) => s.kind === "open");
     const target = sub.completed_at ? openStatus : doneStatus;
     if (!target) return;
-    await api.patch(`/orgs/${orgId}/tasks/${sub.id}`, { status_id: target.id });
-    setSubtasks(await api.get<TaskWithMeta[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`));
-    onChanged?.();
+    await run(async () => {
+      await api.patch(`/orgs/${orgId}/tasks/${sub.id}`, { status_id: target.id });
+      setSubtasks(await api.get<TaskWithMeta[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`));
+      onChanged?.();
+    });
   }
 
   async function setPlacements(projectIds: string[]) {
@@ -159,34 +189,55 @@ export function TaskSheet({
       const existing = task.placements.find((p) => p.project_id === pid);
       return { project_id: pid, section_id: existing?.section_id ?? null };
     });
-    const updated = await api.put<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}/placements`, { placements });
-    setTask(updated);
-    onChanged?.();
+    await run(async () => {
+      const updated = await api.put<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}/placements`, { placements });
+      if (currentTaskRef.current !== taskId) return;
+      setTask(updated);
+      onChanged?.();
+    });
   }
 
   async function setFieldValue(fieldId: string, value: unknown) {
     if (!orgId || !taskId) return;
-    await api.put(`/orgs/${orgId}/tasks/${taskId}/fields/${fieldId}`, { value });
-    setTask((prev) =>
-      prev ? { ...prev, field_values: { ...prev.field_values, [fieldId]: value } } : prev,
-    );
+    await run(async () => {
+      await api.put(`/orgs/${orgId}/tasks/${taskId}/fields/${fieldId}`, { value });
+      setTask((prev) =>
+        prev ? { ...prev, field_values: { ...prev.field_values, [fieldId]: value } } : prev,
+      );
+    });
+  }
+
+  /** Список исполнителей меняем оптимистично: иначе быстрый второй выбор
+   *  посчитается от старого списка и снимет только что назначенного. */
+  async function setAssignees(ids: string[]) {
+    const { members } = useV2Store.getState();
+    const optimistic = ids
+      .map((id) => members.find((m) => m.user_id === id))
+      .filter((m): m is NonNullable<typeof m> => !!m)
+      .map((m) => ({ id: m.user_id, email: m.email, name: m.name, avatar_url: m.avatar_url }));
+    setTask((prev) => (prev ? { ...prev, assignees: optimistic } : prev));
+    await patch({ assignee_ids: ids });
   }
 
   async function removeTask() {
     if (!orgId || !taskId) return;
     if (!window.confirm("Удалить задачу безвозвратно?")) return;
-    await api.del(`/orgs/${orgId}/tasks/${taskId}`);
-    onChanged?.();
-    onClose();
+    await run(async () => {
+      await api.del(`/orgs/${orgId}/tasks/${taskId}`);
+      onChanged?.();
+      onClose();
+    });
   }
 
   const amFollower = !!task && !!me && task.followers.some((f) => f.id === me.id);
 
   async function toggleFollow() {
     if (!orgId || !taskId) return;
-    if (amFollower) await api.del(`/orgs/${orgId}/tasks/${taskId}/follow`);
-    else await api.post(`/orgs/${orgId}/tasks/${taskId}/follow`);
-    void load();
+    await run(async () => {
+      if (amFollower) await api.del(`/orgs/${orgId}/tasks/${taskId}/follow`);
+      else await api.post(`/orgs/${orgId}/tasks/${taskId}/follow`);
+      await load();
+    });
   }
 
   const doneStatus = statuses.find((s) => s.kind === "done");
@@ -197,7 +248,11 @@ export function TaskSheet({
 
   return (
     <Sheet open={!!taskId} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+      <SheetContent
+        side="right"
+        showCloseButton={false}
+        className="flex flex-col gap-0 overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-xl"
+      >
         {!task ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             {error ?? "Загрузка…"}
@@ -254,7 +309,7 @@ export function TaskSheet({
                     onValueChange={(v) => v && void patch({ status_id: v })}
                   >
                     <SelectTrigger size="sm" className="w-fit min-w-36">
-                      <SelectValue>
+                      <SelectValue placeholder="Без статуса">
                         <StatusPill status={statuses.find((s) => s.id === task.status_id)} />
                       </SelectValue>
                     </SelectTrigger>
@@ -273,7 +328,7 @@ export function TaskSheet({
                     onValueChange={(v) => v && void patch({ priority: v as TaskPriority })}
                   >
                     <SelectTrigger size="sm" className="w-fit min-w-36">
-                      <SelectValue />
+                      <SelectValue>{PRIORITY_LABELS[task.priority].label}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {(Object.keys(PRIORITY_LABELS) as TaskPriority[]).map((p) => (
@@ -310,17 +365,14 @@ export function TaskSheet({
                         <button
                           className="text-muted-foreground hover:text-foreground"
                           onClick={() =>
-                            void patch({ assignee_ids: task.assignees.filter((x) => x.id !== a.id).map((x) => x.id) })
+                            void setAssignees(task.assignees.filter((x) => x.id !== a.id).map((x) => x.id))
                           }
                         >
                           <X className="size-3" />
                         </button>
                       </span>
                     ))}
-                    <MemberPicker
-                      selected={task.assignees}
-                      onChange={(ids) => void patch({ assignee_ids: ids })}
-                    />
+                    <MemberPicker selected={task.assignees} onChange={(ids) => void setAssignees(ids)} />
                   </div>
 
                   <span className="text-muted-foreground">Теги</span>
@@ -580,7 +632,9 @@ function FieldRow({
         {field.type === "select" && (
           <Select value={typeof value === "string" ? value : ""} onValueChange={(v) => onChange(v || null)}>
             <SelectTrigger size="sm" className="w-fit min-w-32">
-              <SelectValue placeholder="—" />
+              <SelectValue placeholder="—">
+                {field.options.find((o) => o.id === value)?.label ?? "—"}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {field.options.map((o) => (
@@ -614,7 +668,12 @@ function FieldRow({
         {field.type === "user" && (
           <Select value={typeof value === "string" ? value : ""} onValueChange={(v) => onChange(v || null)}>
             <SelectTrigger size="sm" className="w-fit min-w-36">
-              <SelectValue placeholder="—" />
+              <SelectValue placeholder="—">
+                {(() => {
+                  const m = members.find((x) => x.user_id === value);
+                  return m ? m.name || m.email : "—";
+                })()}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {members.map((m) => (

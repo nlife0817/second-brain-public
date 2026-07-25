@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -42,6 +42,12 @@ export function CreateTaskDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Диалог остаётся смонтированным между открытиями: подхватываем колонку,
+  // из которой его открыли, иначе задача уедет в статус прошлого раза.
+  useEffect(() => {
+    if (open) setStatus(statusId ?? null);
+  }, [open, statusId]);
+
   async function submit() {
     if (!orgId || !title.trim() || saving) return;
     setSaving(true);
@@ -49,7 +55,20 @@ export function CreateTaskDialog({
     try {
       const task = await api.post<TaskDetail>(`/orgs/${orgId}/tasks`, {
         title: title.trim(),
-        description: description || undefined,
+        // Описание хранится как HTML (Tiptap), поэтому оборачиваем сразу —
+        // иначе первое открытие карточки даст ложное «изменил описание».
+        description: description.trim()
+          ? description
+              .split(/\n{2,}/)
+              .map(
+                (block) =>
+                  `<p>${block
+                    .split("\n")
+                    .map((s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"))
+                    .join("<br>")}</p>`,
+              )
+              .join("")
+          : undefined,
         priority,
         due_date: dueDate || null,
         status_id: status ?? statusId ?? statuses.find((s) => s.kind === "open")?.id ?? null,
@@ -93,7 +112,9 @@ export function CreateTaskDialog({
           <div className="flex flex-wrap items-center gap-2">
             <Select value={status ?? ""} onValueChange={(v) => setStatus(v || null)}>
               <SelectTrigger size="sm" className="w-fit min-w-32">
-                <SelectValue placeholder="Статус" />
+                <SelectValue placeholder="Статус">
+                  {statuses.find((s) => s.id === status)?.name ?? "Статус"}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {statuses.map((s) => (
@@ -105,7 +126,7 @@ export function CreateTaskDialog({
             </Select>
             <Select value={priority} onValueChange={(v) => v && setPriority(v as TaskPriority)}>
               <SelectTrigger size="sm" className="w-fit min-w-32">
-                <SelectValue />
+                <SelectValue>{PRIORITY_LABELS[priority].label}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {(Object.keys(PRIORITY_LABELS) as TaskPriority[]).map((p) => (

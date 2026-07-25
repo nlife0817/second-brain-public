@@ -84,7 +84,7 @@ export function ProjectMembersDialog({
                     }
                   >
                     <SelectTrigger size="sm" className="w-36">
-                      <SelectValue />
+                      <SelectValue>{ROLE_LABELS[m.role]}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {(Object.keys(ROLE_LABELS) as ProjectRole[]).map((r) => (
@@ -114,7 +114,12 @@ export function ProjectMembersDialog({
             <div className="mt-2 flex items-center gap-2 border-t border-border pt-3">
               <Select value={adding} onValueChange={(v) => setAdding(v ?? "")}>
                 <SelectTrigger size="sm" className="flex-1">
-                  <SelectValue placeholder="Добавить участника…" />
+                  <SelectValue placeholder="Добавить участника…">
+                    {(() => {
+                      const m = notInProject.find((x) => x.user_id === adding);
+                      return m ? m.name || m.email : "Добавить участника…";
+                    })()}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {notInProject.map((m) => (

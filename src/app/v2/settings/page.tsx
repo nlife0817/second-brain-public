@@ -31,6 +31,13 @@ const ORG_ROLE_LABELS: Record<OrgRole, string> = {
   guest: "Гость",
 };
 
+const PROJECT_ROLE_LABELS: Record<ProjectRole, string> = {
+  admin: "Админ",
+  editor: "Редактор",
+  commenter: "Комментатор",
+  viewer: "Наблюдатель",
+};
+
 const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   text: "Текст",
   number: "Число",
@@ -55,6 +62,8 @@ export default function SettingsPage() {
   const store = useV2Store();
   const { orgId, orgRole, me, members, statuses, tags, projects } = store;
   const isAdmin = orgRole === "owner" || orgRole === "admin";
+  // Теги и кастомные поля org-уровня доступны сотрудникам, но не гостям.
+  const canManageTags = isAdmin || orgRole === "member";
 
   const [invites, setInvites] = useState<Invitation[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -144,14 +153,18 @@ export default function SettingsPage() {
                         }
                       >
                         <SelectTrigger size="sm" className="w-40">
-                          <SelectValue />
+                          <SelectValue>{ORG_ROLE_LABELS[m.role]}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
-                          {(Object.keys(ORG_ROLE_LABELS) as OrgRole[]).map((r) => (
-                            <SelectItem key={r} value={r}>
-                              {ORG_ROLE_LABELS[r]}
-                            </SelectItem>
-                          ))}
+                          {(Object.keys(ORG_ROLE_LABELS) as OrgRole[])
+                            // Владельца назначает только владелец — не показываем
+                            // опцию, которую сервер всё равно отклонит.
+                            .filter((r) => r !== "owner" || orgRole === "owner")
+                            .map((r) => (
+                              <SelectItem key={r} value={r}>
+                                {ORG_ROLE_LABELS[r]}
+                              </SelectItem>
+                            ))}
                         </SelectContent>
                       </Select>
                       <Button
@@ -186,7 +199,7 @@ export default function SettingsPage() {
                 />
                 <Select value={inviteRole} onValueChange={(v) => v && setInviteRole(v as typeof inviteRole)}>
                   <SelectTrigger size="sm" className="w-40">
-                    <SelectValue />
+                    <SelectValue>{ORG_ROLE_LABELS[inviteRole]}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="member">Сотрудник</SelectItem>
@@ -198,7 +211,9 @@ export default function SettingsPage() {
                   <>
                     <Select value={inviteProject} onValueChange={(v) => setInviteProject(v ?? "")}>
                       <SelectTrigger size="sm" className="w-44">
-                        <SelectValue placeholder="Проект для гостя" />
+                        <SelectValue placeholder="Проект для гостя">
+                          {projects.find((p) => p.id === inviteProject)?.name ?? "Проект для гостя"}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {projects.map((p) => (
@@ -213,7 +228,7 @@ export default function SettingsPage() {
                       onValueChange={(v) => v && setInviteProjectRole(v as ProjectRole)}
                     >
                       <SelectTrigger size="sm" className="w-36">
-                        <SelectValue />
+                        <SelectValue>{PROJECT_ROLE_LABELS[inviteProjectRole]}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="editor">Редактор</SelectItem>
@@ -330,28 +345,32 @@ export default function SettingsPage() {
                   style={{ backgroundColor: `${t.color}1a`, color: t.color }}
                 >
                   {t.name}
-                  <button
-                    className="opacity-60 hover:opacity-100"
-                    onClick={() => void call(() => api.del(`/orgs/${orgId}/tags/${t.id}`), store.refreshMeta)}
-                  >
-                    ×
-                  </button>
+                  {canManageTags && (
+                    <button
+                      className="opacity-60 hover:opacity-100"
+                      onClick={() => void call(() => api.del(`/orgs/${orgId}/tags/${t.id}`), store.refreshMeta)}
+                    >
+                      ×
+                    </button>
+                  )}
                 </span>
               ))}
-              <Input
-                placeholder="Новый тег"
-                value={newTag}
-                onChange={(e) => setNewTag(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && newTag.trim()) {
-                    void call(async () => {
-                      await api.post(`/orgs/${orgId}/tags`, { name: newTag.trim() });
-                      setNewTag("");
-                    }, store.refreshMeta);
-                  }
-                }}
-                className="h-8 w-40"
-              />
+              {canManageTags && (
+                <Input
+                  placeholder="Новый тег"
+                  value={newTag}
+                  onChange={(e) => setNewTag(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newTag.trim()) {
+                      void call(async () => {
+                        await api.post(`/orgs/${orgId}/tags`, { name: newTag.trim() });
+                        setNewTag("");
+                      }, store.refreshMeta);
+                    }
+                  }}
+                  className="h-8 w-40"
+                />
+              )}
             </div>
           </Section>
 
@@ -363,20 +382,22 @@ export default function SettingsPage() {
                   <div key={f.id} className="flex items-center gap-2 text-sm">
                     <span className="flex-1">{f.name}</span>
                     <span className="text-xs text-muted-foreground">{FIELD_TYPE_LABELS[f.type]}</span>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => {
-                        if (window.confirm(`Удалить поле «${f.name}» со всеми значениями?`)) {
-                          void call(() => api.del(`/orgs/${orgId}/fields/${f.id}`), loadExtras);
-                        }
-                      }}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
+                    {canManageTags && (
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => {
+                          if (window.confirm(`Удалить поле «${f.name}» со всеми значениями?`)) {
+                            void call(() => api.del(`/orgs/${orgId}/fields/${f.id}`), loadExtras);
+                          }
+                        }}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    )}
                   </div>
                 ))}
-              <div className="mt-1 flex flex-wrap items-center gap-2">
+              <div className={`mt-1 flex-wrap items-center gap-2 ${canManageTags ? "flex" : "hidden"}`}>
                 <Input
                   placeholder="Название поля"
                   value={newField}
@@ -385,7 +406,7 @@ export default function SettingsPage() {
                 />
                 <Select value={newFieldType} onValueChange={(v) => v && setNewFieldType(v as FieldType)}>
                   <SelectTrigger size="sm" className="w-36">
-                    <SelectValue />
+                    <SelectValue>{FIELD_TYPE_LABELS[newFieldType]}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {(Object.keys(FIELD_TYPE_LABELS) as FieldType[]).map((t) => (

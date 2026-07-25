@@ -21,6 +21,7 @@ export type OrgAction =
   | "org.invite"          // приглашения (в т.ч. гостей)
   | "org.delete"
   | "project.create"
+  | "task.create.personal" // задача без проекта (личный инбокс) — не для гостей
   | "clients.view"        // CRM закрыт для гостей
   | "clients.manage"
   | "statuses.manage"     // справочники org-уровня (статусы задач)
@@ -36,6 +37,7 @@ const MIN_ORG_ROLE: Record<OrgAction, OrgRole> = {
   "org.invite": "admin",
   "org.delete": "owner",
   "project.create": "member",
+  "task.create.personal": "member",
   "clients.view": "member",
   "clients.manage": "member",
   "statuses.manage": "admin",
@@ -52,7 +54,9 @@ export function canOrg(ctx: AuthContext, action: OrgAction): boolean {
 
 export type ProjectAction =
   | "project.view"
-  | "project.update"          // имя, цвет, видимость
+  | "project.update"          // имя, цвет, иконка, описание
+  | "project.visibility"      // смена org ↔ private: только не-гости (иначе гость
+                              // делает org-проект приватным и запирает организацию)
   | "project.archive"
   | "project.members.manage"
   | "section.manage"
@@ -65,6 +69,7 @@ export type ProjectAction =
 const MIN_PROJECT_ROLE: Record<ProjectAction, ProjectRole> = {
   "project.view": "viewer",
   "project.update": "admin",
+  "project.visibility": "admin",
   "project.archive": "admin",
   "project.members.manage": "admin",
   "section.manage": "editor",
@@ -96,6 +101,8 @@ export function effectiveProjectRole(ctx: AuthContext, project: PolicyProject): 
 export function canProject(ctx: AuthContext, action: ProjectAction, project: PolicyProject): boolean {
   const role = effectiveProjectRole(ctx, project);
   if (!role) return false;
+  // Гость — всегда внешний участник: видимостью проектов организации не управляет.
+  if (action === "project.visibility" && ctx.orgRole === "guest") return false;
   return PROJECT_ROLE_RANK[role] >= PROJECT_ROLE_RANK[MIN_PROJECT_ROLE[action]];
 }
 

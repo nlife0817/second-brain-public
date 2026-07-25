@@ -6,6 +6,7 @@ import { sanitizeRichText } from "@/lib/sanitize";
 import { emitEvent, notifyUsers, taskAudience } from "./events";
 import { DomainError } from "./http";
 import {
+  assertOrg,
   canEditLooseTask,
   canViewLooseTask,
   effectiveProjectRole,
@@ -46,10 +47,13 @@ async function getTaskRow(taskId: string): Promise<CoreTask | undefined> {
 
 /**
  * Правила доступа (зеркало SQL core.can_view_task):
- * видимость — создатель/исполнитель/подписчик задачи или любого предка,
- * либо видимый проект любого размещения задачи или предка.
- * Редактирование — editor+ в проекте размещения, либо исполнитель самой задачи,
- * либо для «свободной» задачи — создатель/исполнитель.
+ *  - задача в проекте: доступ дают роль в проекте (своём или предка), назначение
+ *    и авторство. Подписка (follower) НЕ является основанием — иначе исключённый
+ *    из проекта участник сохранял бы доступ навсегда через самоподписку;
+ *  - «свободная» задача (нет размещений во всей цепочке): создатель, исполнитель
+ *    и подписчик — как в личном инбоксе;
+ *  - редактирование: editor+ в любом проекте цепочки (родитель распространяется
+ *    на подзадачи) или назначение на саму задачу.
  */
 export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<TaskAccess | undefined> {
   const task = await getTaskRow(taskId);
@@ -93,20 +97,24 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
 
   const directPlacementRows = chainPlacements.filter((pl) => pl.task_id === task.id);
   const directRoles = directPlacementRows.map((pl) => roleOf(pl.project_id, pl.p_org_id, pl.p_visibility));
-  const anyDirectEditor = directRoles.some((r) => r !== null && PROJECT_ROLE_RANK[r] >= PROJECT_ROLE_RANK.editor);
   const allDirectEditor =
     directRoles.length > 0 && directRoles.every((r) => r !== null && PROJECT_ROLE_RANK[r] >= PROJECT_ROLE_RANK.editor);
+  const anyChainEditor = chainProjectRoles.some(
+    (r) => r !== null && PROJECT_ROLE_RANK[r] >= PROJECT_ROLE_RANK.editor,
+  );
   const anyChainCommenter = chainProjectRoles.some(
     (r) => r !== null && PROJECT_ROLE_RANK[r] >= PROJECT_ROLE_RANK.commenter,
   );
 
+  const isFree = chainPlacements.length === 0;
   const loose = { isCreator, isAssignee: isChainAssignee, isFollower: isChainFollower };
-  const canView = canViewLooseTask(loose) || anyProjectView;
-  const hasAnyPlacementInChain = chainPlacements.length > 0;
-  const canEdit = hasAnyPlacementInChain
-    ? anyDirectEditor || isDirectAssignee || (directPlacementRows.length === 0 && canEditLooseTask(loose))
-    : canEditLooseTask(loose);
-  const canComment = canView && (canViewLooseTask(loose) || anyChainCommenter);
+  const canView = isFree
+    ? canViewLooseTask(loose)
+    : anyProjectView || isCreator || isChainAssignee;
+  const canEdit = isFree
+    ? canEditLooseTask(loose)
+    : anyChainEditor || isDirectAssignee || isChainAssignee;
+  const canComment = canView && (isFree || anyChainCommenter || isCreator || isChainAssignee);
 
   if (!canView) return undefined;
 
@@ -129,7 +137,8 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
     canView,
     canEdit,
     canComment,
-    canEditAllPlacements: directPlacementRows.length === 0 ? canEditLooseTask(loose) : allDirectEditor,
+    canEditAllPlacements:
+      directPlacementRows.length === 0 ? canEdit : allDirectEditor || anyChainEditor,
   };
 }
 
@@ -327,16 +336,35 @@ async function assertSectionInProject(sectionId: string, projectId: string): Pro
   if (!row) throw new DomainError(422, "Section does not belong to the project");
 }
 
-async function syncPrimaryAssignee(tx: TxContext, taskId: string): Promise<void> {
-  await tx
-    .prepare(
-      `UPDATE core.task_assignees ta SET is_primary = (ta.user_id = (
-         SELECT user_id FROM core.task_assignees
-         WHERE task_id = ? ORDER BY is_primary DESC, created_at LIMIT 1
-       ))
-       WHERE ta.task_id = ?`,
+/**
+ * Ровно один ответственный на задачу. Приоритет: явно переданный primaryUserId,
+ * иначе текущий is_primary, иначе самый ранний назначенный. Полагаться на
+ * created_at внутри одной транзакции нельзя — у всех строк одинаковый now().
+ */
+async function syncPrimaryAssignee(
+  tx: TxContext,
+  taskId: string,
+  primaryUserId?: string | null,
+): Promise<void> {
+  const rows = await tx
+    .prepare<{ user_id: string; is_primary: boolean }>(
+      `SELECT user_id, is_primary FROM core.task_assignees WHERE task_id = ? ORDER BY created_at`,
     )
-    .run(taskId, taskId);
+    .all(taskId);
+  if (rows.length === 0) return;
+  const primary =
+    (primaryUserId && rows.some((r) => r.user_id === primaryUserId) ? primaryUserId : null) ??
+    rows.find((r) => r.is_primary)?.user_id ??
+    rows[0].user_id;
+  await tx
+    .prepare(`UPDATE core.task_assignees SET is_primary = (user_id = ?) WHERE task_id = ?`)
+    .run(primary, taskId);
+}
+
+/** Postgres отдаёт time как "HH:MM:SS", клиент шлёт "HH:MM" — сравниваем в одном формате. */
+function normalizeTime(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return value.slice(0, 5);
 }
 
 // --- Создание ---------------------------------------------------------------------------
@@ -358,6 +386,9 @@ export interface CreateTaskInput {
 
 export async function createTask(ctx: AuthContext, input: CreateTaskInput): Promise<TaskDetail> {
   const placements = input.placements ?? [];
+  // Задача без проекта попадает в личный инбокс и может быть назначена коллеге —
+  // гостю такой канал закрыт (иначе внешний подрядчик рассылает задачи всей org).
+  if (placements.length === 0 && !input.parent_task_id) assertOrg(ctx, "task.create.personal");
   for (const pl of placements) {
     await requireProject(ctx, pl.project_id, "task.create");
     if (pl.section_id) await assertSectionInProject(pl.section_id, pl.project_id);
@@ -489,7 +520,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
       scalar.due_date = patch.due_date;
       changedFields.push("due_date");
     }
-    if (patch.due_time !== undefined && patch.due_time !== task.due_time) {
+    if (patch.due_time !== undefined && normalizeTime(patch.due_time) !== normalizeTime(task.due_time)) {
       scalar.due_time = patch.due_time;
       changedFields.push("due_time");
     }
@@ -573,7 +604,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
           .run(taskId, userId);
       }
       if (added.length > 0 || removed.length > 0) {
-        await syncPrimaryAssignee(tx, taskId);
+        await syncPrimaryAssignee(tx, taskId, patch.assignee_ids[0] ?? null);
         const eventId = await emitEvent(tx, {
           orgId: ctx.orgId,
           actorId: ctx.user.id,
@@ -595,9 +626,30 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
     }
 
     if (patch.tag_ids) {
+      const currentTags = await tx
+        .prepare<{ tag_id: string }>(`SELECT tag_id FROM core.task_tags WHERE task_id = ?`)
+        .all(taskId);
+      const currentTagSet = new Set(currentTags.map((r) => r.tag_id));
+      const nextTagSet = new Set(patch.tag_ids);
+      const tagsChanged =
+        currentTagSet.size !== nextTagSet.size || [...nextTagSet].some((id) => !currentTagSet.has(id));
+
       await tx.prepare(`DELETE FROM core.task_tags WHERE task_id = ?`).run(taskId);
-      for (const tagId of new Set(patch.tag_ids)) {
+      for (const tagId of nextTagSet) {
         await tx.prepare(`INSERT INTO core.task_tags (task_id, tag_id) VALUES (?, ?)`).run(taskId, tagId);
+      }
+      if (tagsChanged) {
+        await emitEvent(tx, {
+          orgId: ctx.orgId,
+          actorId: ctx.user.id,
+          entityType: "task",
+          entityId: taskId,
+          verb: "task.tags_changed",
+          payload: {
+            added: [...nextTagSet].filter((id) => !currentTagSet.has(id)),
+            removed: [...currentTagSet].filter((id) => !nextTagSet.has(id)),
+          },
+        });
       }
     }
   });
@@ -615,6 +667,16 @@ export async function setTaskPlacements(
   const access = await requireTaskAccess(ctx, taskId, "edit");
   const currentByProject = new Map(access.placements.map((p) => [p.project_id, p]));
   const nextByProject = new Map(placements.map((p) => [p.project_id, p]));
+
+  const addsPlacement = [...nextByProject.keys()].some((id) => !currentByProject.has(id));
+  if (addsPlacement) {
+    // Расширять видимость задачи вправе только тот, кто сам редактор во всех её
+    // текущих проектах: иначе исполнитель выносит задачу из приватного проекта
+    // в свой и открывает её посторонним.
+    for (const projectId of currentByProject.keys()) {
+      await requireProject(ctx, projectId, "task.edit");
+    }
+  }
 
   for (const [projectId, pl] of nextByProject) {
     if (!currentByProject.has(projectId)) {

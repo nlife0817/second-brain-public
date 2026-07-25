@@ -3,10 +3,10 @@
 import { randomUUID } from "node:crypto";
 import { prepare } from "@/lib/sql";
 import { DomainError } from "./http";
-import { assertOrg } from "./policy";
+import { assertOrg, effectiveProjectRole } from "./policy";
 import { requireProject } from "./projects";
 import { requireTaskAccess } from "./tasks";
-import type { AuthContext, CustomField, FieldOption, FieldType } from "./types";
+import type { AuthContext, CustomField, FieldOption, FieldType, PolicyProject } from "./types";
 
 function normalizeOptions(type: FieldType, options: Array<{ id?: string; label: string; color?: string }> = []): FieldOption[] {
   if (type !== "select" && type !== "multi_select") return [];
@@ -27,11 +27,23 @@ export async function listFields(ctx: AuthContext, projectId?: string): Promise<
        ORDER BY position, created_at`,
     ).all(ctx.orgId, projectId);
   }
-  return prepare<CustomField>(
+  // Без фильтра по проекту отдаём только org-поля и поля видимых проектов:
+  // имена и опции полей приватного проекта — тоже его содержимое.
+  const rows = await prepare<CustomField>(
     `SELECT id, org_id, project_id, name, type, options, position
      FROM core.custom_fields WHERE org_id = ?
      ORDER BY position, created_at`,
   ).all(ctx.orgId);
+  const projectIds = [...new Set(rows.map((r) => r.project_id).filter((id): id is string => !!id))];
+  if (projectIds.length === 0) return rows;
+  const ph = projectIds.map(() => "?").join(",");
+  const projects = await prepare<PolicyProject>(
+    `SELECT id, org_id, visibility FROM core.projects WHERE id IN (${ph})`,
+  ).all(projectIds);
+  const visible = new Set(
+    projects.filter((p) => effectiveProjectRole(ctx, p) !== null).map((p) => p.id),
+  );
+  return rows.filter((r) => !r.project_id || visible.has(r.project_id));
 }
 
 async function assertFieldManageRights(ctx: AuthContext, projectId: string | null): Promise<void> {

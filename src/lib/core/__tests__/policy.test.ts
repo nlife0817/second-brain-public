@@ -43,6 +43,7 @@ describe("canOrg: матрица org-ролей", () => {
     ["org.invite",         { owner: true,  admin: true,  member: false, guest: false }],
     ["org.delete",         { owner: true,  admin: false, member: false, guest: false }],
     ["project.create",     { owner: true,  admin: true,  member: true,  guest: false }],
+    ["task.create.personal", { owner: true, admin: true, member: true,  guest: false }],
     ["clients.view",       { owner: true,  admin: true,  member: true,  guest: false }],
     ["clients.manage",     { owner: true,  admin: true,  member: true,  guest: false }],
     ["statuses.manage",    { owner: true,  admin: true,  member: false, guest: false }],
@@ -126,6 +127,18 @@ describe("canProject: пороги проектных ролей", () => {
   it("без эффективной роли всё запрещено", () => {
     expect(canProject(ctx("guest"), "project.view", project())).toBe(false);
     expect(canProject(ctx("member"), "project.view", project({ visibility: "private" }))).toBe(false);
+  });
+
+  it("гость не меняет видимость проекта даже будучи его админом", () => {
+    // Иначе гость делает org-проект приватным и запирает в нём организацию.
+    expect(canProject(ctx("guest", { p1: "admin" }), "project.visibility", project())).toBe(false);
+    expect(canProject(ctx("guest", { p1: "admin" }), "project.update", project())).toBe(true);
+  });
+
+  it("видимость меняют project admin из числа сотрудников", () => {
+    expect(canProject(ctx("member", { p1: "admin" }), "project.visibility", project())).toBe(true);
+    expect(canProject(ctx("owner"), "project.visibility", project())).toBe(true);
+    expect(canProject(ctx("member", { p1: "editor" }), "project.visibility", project())).toBe(false);
   });
 });
 

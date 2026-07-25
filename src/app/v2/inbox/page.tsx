@@ -25,12 +25,19 @@ export default function InboxPage() {
   const [items, setItems] = useState<CoreNotification[]>([]);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!orgId) return;
-    const res = await api.get<{ items: CoreNotification[] }>(`/orgs/${orgId}/notifications`);
-    setItems(res.items);
-    setLoading(false);
+    try {
+      const res = await api.get<{ items: CoreNotification[] }>(`/orgs/${orgId}/notifications`);
+      setItems(res.items);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось загрузить уведомления");
+    } finally {
+      setLoading(false);
+    }
   }, [orgId]);
 
   useEffect(() => {
@@ -39,18 +46,27 @@ export default function InboxPage() {
 
   async function markAll() {
     if (!orgId) return;
-    await api.post(`/orgs/${orgId}/notifications`, { all: true });
-    await Promise.all([load(), refreshUnread()]);
+    try {
+      await api.post(`/orgs/${orgId}/notifications`, { all: true });
+      await Promise.all([load(), refreshUnread()]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось отметить прочитанными");
+    }
   }
 
   async function openNotification(n: CoreNotification) {
     if (!orgId) return;
-    if (!n.read_at) {
-      await api.post(`/orgs/${orgId}/notifications`, { ids: [n.id] });
-      void refreshUnread();
-      setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x)));
-    }
+    // Задачу открываем в любом случае: сбой отметки прочтения не должен блокировать.
     if (n.entity_type === "task" && n.entity_id) setOpenTaskId(n.entity_id);
+    if (!n.read_at) {
+      try {
+        await api.post(`/orgs/${orgId}/notifications`, { ids: [n.id] });
+        setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x)));
+        await refreshUnread();
+      } catch {
+        // молча: уведомление останется непрочитанным, попробуем в следующий раз
+      }
+    }
   }
 
   return (
@@ -66,6 +82,7 @@ export default function InboxPage() {
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
         <div className="mx-auto flex max-w-2xl flex-col gap-1">
+          {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
           {loading && <p className="text-sm text-muted-foreground">Загрузка…</p>}
           {!loading && items.length === 0 && (
             <div className="flex flex-col items-center gap-2 py-16 text-muted-foreground">

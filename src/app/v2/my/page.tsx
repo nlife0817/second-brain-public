@@ -22,11 +22,18 @@ export default function MyTasksPage() {
   const [quickTitle, setQuickTitle] = useState("");
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!orgId) return;
-    setTasks(await api.get<TaskWithMeta[]>(`/orgs/${orgId}/tasks${showDone ? "?done=1" : ""}`));
-    setLoading(false);
+    try {
+      setTasks(await api.get<TaskWithMeta[]>(`/orgs/${orgId}/tasks${showDone ? "?done=1" : ""}`));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось загрузить задачи");
+    } finally {
+      setLoading(false);
+    }
   }, [orgId, showDone]);
 
   useEffect(() => {
@@ -35,9 +42,13 @@ export default function MyTasksPage() {
 
   async function quickAdd() {
     if (!orgId || !quickTitle.trim()) return;
-    await api.post(`/orgs/${orgId}/tasks`, { title: quickTitle.trim() });
-    setQuickTitle("");
-    void load();
+    try {
+      await api.post(`/orgs/${orgId}/tasks`, { title: quickTitle.trim() });
+      setQuickTitle("");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось создать задачу");
+    }
   }
 
   const groups = useMemo(() => {
@@ -92,6 +103,7 @@ export default function MyTasksPage() {
             />
           </div>
 
+          {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
           {loading && <p className="text-sm text-muted-foreground">Загрузка…</p>}
           {!loading && groups.length === 0 && (
             <p className="py-8 text-center text-sm text-muted-foreground">
