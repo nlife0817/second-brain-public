@@ -27,6 +27,8 @@ type PendingRow = {
   entity_type: string | null;
   entity_id: string | null;
   entity_title: string | null;
+  /** Текст комментария — только для kind = 'comment'. */
+  comment_html: string | null;
   unread: number;
 };
 
@@ -66,15 +68,38 @@ async function dropTarget(target: TargetRow): Promise<void> {
   }
 }
 
+/** Комментарии хранятся как HTML — в уведомление идёт обычный текст. */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<(br|\/p|\/div|\/li)[^>]*>/gi, " ")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function clamp(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
 /**
  * Полезная нагрузка пуша. Мобильной подписке отдаём мобильный URL напрямую
  * (без прыжка через UA-редирект в proxy — и мимо липкой cookie ?desktop),
  * десктопной — обычный экран v2.
  */
 function buildPayload(row: PendingRow, mobile: boolean): PushPayload {
-  const body = [row.actor_name, row.entity_title && `«${row.entity_title}»`]
-    .filter(Boolean)
-    .join(" · ");
+  const where = row.entity_title ? `«${row.entity_title}»` : "";
+  // В уведомлении о комментарии главное — сам текст: «Иван · «Задача»» не
+  // говорит ничего и заставляет открывать приложение ради одной строки.
+  const comment = row.comment_html ? htmlToText(row.comment_html) : "";
+  const body = comment
+    ? clamp([row.actor_name, where].filter(Boolean).join(" в ") + (where || row.actor_name ? ": " : "") + comment, 180)
+    : [row.actor_name, where].filter(Boolean).join(" · ");
   let url: string;
   if (row.entity_type === "task" && row.entity_id) {
     url = mobile ? `/v2/m/my?task=${row.entity_id}` : `/v2/my?task=${row.entity_id}`;
@@ -87,7 +112,9 @@ function buildPayload(row: PendingRow, mobile: boolean): PushPayload {
     title: KIND_TITLES[row.kind] ?? "Обновление",
     body: body || "Открыть задачу",
     url,
-    tag: `v2-${row.id}`,
+    // Тег по сущности, а не по уведомлению: пять комментариев к одной задаче
+    // схлопываются в одно уведомление вместо пяти строк в шторке.
+    tag: row.entity_id ? `v2-${row.entity_type}-${row.entity_id}` : `v2-${row.id}`,
     unread: row.unread,
   };
 }
@@ -123,6 +150,10 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
               WHEN e.entity_type = 'task' THEN (SELECT t.title FROM core.tasks t WHERE t.id = e.entity_id)
               WHEN e.entity_type = 'project' THEN (SELECT p.name FROM core.projects p WHERE p.id = e.entity_id)
             END AS entity_title,
+            CASE WHEN n.kind = 'comment' AND e.payload ->> 'comment_id' IS NOT NULL
+                 THEN (SELECT c.body FROM core.comments c
+                       WHERE c.id = (e.payload ->> 'comment_id')::uuid AND c.deleted_at IS NULL)
+            END AS comment_html,
             (SELECT count(*)::int FROM core.notifications un
              WHERE un.user_id = n.user_id AND un.read_at IS NULL) AS unread
      FROM core.notifications n

@@ -126,6 +126,6 @@ export const config = {
   matcher: [
     // api/v2/invitations исключён: GET показывает приглашение до входа, POST
     // сам требует сессию через withUser.
-    "/((?!_next|api/cron|api/v2/cron|api/notifications/dispatch|api/timing/watchdog|api/mcp|api/v2/invitations|icons|favicon|manifest|sw\\.js).*)",
+    "/((?!_next|api/cron|api/v2/cron|api/notifications/dispatch|api/timing/watchdog|api/mcp|api/v2/invitations|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
   ],
 };
