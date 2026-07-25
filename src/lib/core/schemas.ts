@@ -266,6 +266,15 @@ export const manualTimeEntrySchema = z.object({
   note: z.string().max(500).optional(),
 });
 
+export const timeEntryPatchSchema = z
+  .object({
+    started_at: z.string().min(10).max(40).optional(),
+    // null допустим: так активный таймер остаётся активным после правки начала.
+    ended_at: z.string().min(10).max(40).nullable().optional(),
+    note: z.string().max(500).optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
 // --- Повторяющиеся задачи -------------------------------------------------------------
 
 // --- SaaS: команды, вебхуки ---------------------------------------------------------

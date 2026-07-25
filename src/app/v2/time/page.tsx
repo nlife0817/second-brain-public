@@ -3,7 +3,7 @@
 // Учёт времени: таймер, ручные записи, сводка за период.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pause, Play, Plus, Trash2 } from "lucide-react";
+import { Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -59,6 +59,7 @@ export default function TimePage() {
   const [from, setFrom] = useState(isoDaysAgo(7));
   const [to, setTo] = useState(isoDaysAgo(0));
   const [note, setNote] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
   // Текущее время как состояние: чтение часов при рендере — недетерминированный
   // побочный эффект, счётчик должен обновляться тиком таймера.
   const [now, setNow] = useState(() => Date.now());
@@ -213,38 +214,140 @@ export default function TimePage() {
             <h2 className="mb-3 text-sm font-semibold">Записи</h2>
             <div className="flex flex-col gap-1.5">
               {entries.length === 0 && <p className="text-sm text-muted-foreground">Записей нет</p>}
-              {entries.map((e) => (
-                <div key={e.id} className="flex items-center gap-3 text-sm">
-                  <span className="w-28 shrink-0 text-muted-foreground">
-                    {new Date(e.started_at).toLocaleString("ru-RU", {
-                      day: "numeric",
-                      month: "short",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {e.task_title || e.note || <span className="text-muted-foreground">Без задачи</span>}
-                  </span>
-                  <span className="tabular-nums text-muted-foreground">
-                    {e.seconds != null ? formatDuration(e.seconds) : "идёт"}
-                  </span>
-                  {e.ended_at && (
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => void call(() => api.del(`/orgs/${orgId}/time/${e.id}`))}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  )}
-                </div>
-              ))}
+              {entries.map((e) =>
+                editing === e.id ? (
+                  <EditEntryRow
+                    key={e.id}
+                    entry={e}
+                    orgId={orgId}
+                    onDone={() => {
+                      setEditing(null);
+                      void load();
+                    }}
+                    onCancel={() => setEditing(null)}
+                  />
+                ) : (
+                  <div key={e.id} className="group flex items-center gap-3 text-sm">
+                    <span className="w-28 shrink-0 text-muted-foreground">
+                      {new Date(e.started_at).toLocaleString("ru-RU", {
+                        day: "numeric",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">
+                      {e.task_title || e.note || <span className="text-muted-foreground">Без задачи</span>}
+                    </span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {e.seconds != null ? formatDuration(e.seconds) : "идёт"}
+                    </span>
+                    {e.ended_at && (
+                      <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          title="Изменить"
+                          onClick={() => setEditing(e.id)}
+                        >
+                          <Pencil className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          title="Удалить"
+                          onClick={() => void call(() => api.del(`/orgs/${orgId}/time/${e.id}`))}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </span>
+                    )}
+                  </div>
+                ),
+              )}
             </div>
             <ManualEntryRow orgId={orgId} onAdded={() => void load()} />
           </section>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Правка готовой записи: границы интервала и комментарий. */
+function EditEntryRow({
+  entry,
+  orgId,
+  onDone,
+  onCancel,
+}: {
+  entry: TimeEntry;
+  orgId: string | null;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  // Значения полей — в локальном времени: пользователь вводит своё «10:00».
+  const localDate = (iso: string) => {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const localTime = (iso: string) => {
+    const d = new Date(iso);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+
+  const [date, setDate] = useState(() => localDate(entry.started_at));
+  const [start, setStart] = useState(() => localTime(entry.started_at));
+  const [end, setEnd] = useState(() => (entry.ended_at ? localTime(entry.ended_at) : "00:00"));
+  const [note, setNote] = useState(entry.note);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    if (!orgId) return;
+    try {
+      const startedAt = new Date(`${date}T${start}:00`);
+      let endedAt = new Date(`${date}T${end}:00`);
+      // Смена через полночь: конец раньше начала означает следующий день.
+      if (endedAt <= startedAt) endedAt = new Date(endedAt.getTime() + 24 * 3600_000);
+      await api.patch(`/orgs/${orgId}/time/${entry.id}`, {
+        started_at: startedAt.toISOString(),
+        ended_at: endedAt.toISOString(),
+        note,
+      });
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось сохранить");
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/40 p-2">
+      <input
+        type="date"
+        value={date}
+        onChange={(e) => setDate(e.target.value)}
+        className="h-8 rounded-md border border-border bg-background px-2 text-sm"
+      />
+      <input
+        type="time"
+        value={start}
+        onChange={(e) => setStart(e.target.value)}
+        className="h-8 rounded-md border border-border bg-background px-2 text-sm"
+      />
+      <input
+        type="time"
+        value={end}
+        onChange={(e) => setEnd(e.target.value)}
+        className="h-8 rounded-md border border-border bg-background px-2 text-sm"
+      />
+      <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Комментарий" className="h-8 w-48" />
+      <Button size="sm" onClick={() => void save()}>
+        Сохранить
+      </Button>
+      <Button size="sm" variant="ghost" onClick={onCancel}>
+        Отмена
+      </Button>
+      {error && <span className="text-sm text-destructive">{error}</span>}
     </div>
   );
 }

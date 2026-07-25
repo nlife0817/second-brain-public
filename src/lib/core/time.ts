@@ -170,6 +170,61 @@ export async function addManualEntry(
   return row;
 }
 
+/**
+ * Правка записи: комментарий и границы интервала. Правит только автор —
+ * учёт времени персональный, и чужие часы менять нельзя даже админу.
+ *
+ * Активный таймер (`ended_at IS NULL`) правится тоже: на этом держится
+ * вычитание простоя — начало сдвигается вперёд на время отсутствия.
+ */
+export async function updateEntry(
+  ctx: AuthContext,
+  entryId: string,
+  patch: { started_at?: string; ended_at?: string | null; note?: string },
+): Promise<TimeEntry> {
+  const current = await prepare<TimeEntry>(
+    `SELECT * FROM core.time_entries WHERE id = ? AND org_id = ? AND user_id = ?`,
+  ).get(entryId, ctx.orgId, ctx.user.id);
+  if (!current) throw new DomainError(404, "Entry not found");
+
+  const startedAt = patch.started_at ?? current.started_at;
+  const endedAt = patch.ended_at !== undefined ? patch.ended_at : current.ended_at;
+  const start = new Date(startedAt);
+  if (Number.isNaN(start.getTime())) throw new DomainError(422, "Invalid timestamps");
+
+  let seconds: number | null = null;
+  if (endedAt) {
+    const end = new Date(endedAt);
+    if (Number.isNaN(end.getTime())) throw new DomainError(422, "Invalid timestamps");
+    if (end <= start) throw new DomainError(422, "End must be after start");
+    seconds = Math.round((end.getTime() - start.getTime()) / 1000);
+    if (seconds > MAX_TIMER_HOURS * 3600) {
+      throw new DomainError(422, `Entry cannot exceed ${MAX_TIMER_HOURS} hours`);
+    }
+  } else if (start > new Date()) {
+    // Сдвинуть старт активного таймера в будущее — значит получить
+    // отрицательную длительность при остановке.
+    throw new DomainError(422, "Start cannot be in the future");
+  }
+
+  const row = await prepare<TimeEntry>(
+    `UPDATE core.time_entries
+     SET started_at = ?, ended_at = ?, seconds = ?, note = ?
+     WHERE id = ? AND org_id = ? AND user_id = ?
+     RETURNING *`,
+  ).get(
+    startedAt,
+    endedAt,
+    seconds,
+    patch.note !== undefined ? patch.note : current.note,
+    entryId,
+    ctx.orgId,
+    ctx.user.id,
+  );
+  if (!row) throw new DomainError(404, "Entry not found");
+  return row;
+}
+
 export async function deleteEntry(ctx: AuthContext, entryId: string): Promise<void> {
   const changed = await prepare(
     `DELETE FROM core.time_entries WHERE id = ? AND org_id = ? AND user_id = ?`,

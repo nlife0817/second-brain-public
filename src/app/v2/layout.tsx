@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { CreateProjectDialog } from "@/components/v2/CreateProjectDialog";
 import { GlobalSearch } from "@/components/v2/GlobalSearch";
+import { GlobalTimer } from "@/components/v2/GlobalTimer";
 import { OrgOnboarding } from "@/components/v2/OrgOnboarding";
 import { TaskSheet } from "@/components/v2/TaskSheet";
 import { Avatar } from "@/components/v2/bits";
@@ -304,6 +305,7 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
 
+      <GlobalTimer />
       <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
       <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} onPickTask={setSearchTaskId} />
       {/* Карточка задачи, открытая из поиска: страницы держат собственную. */}
