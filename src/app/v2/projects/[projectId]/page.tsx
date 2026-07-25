@@ -49,6 +49,42 @@ type ProjectDetail = Project & {
  */
 const COLUMN_PAGE = 50;
 
+/** Список карточек с пределом отрисовки — общий для колонок и «Без статуса». */
+function CardList({
+  tasks,
+  draggable,
+  canEdit,
+  onOpenTask,
+}: {
+  tasks: TaskListItem[];
+  draggable: boolean;
+  canEdit: boolean;
+  onOpenTask: (id: string) => void;
+}) {
+  const [limit, setLimit] = useState(COLUMN_PAGE);
+  const shown = tasks.length > limit ? tasks.slice(0, limit) : tasks;
+  const rest = tasks.length - shown.length;
+  return (
+    <>
+      {shown.map((t) =>
+        draggable ? (
+          <DraggableCard key={t.id} task={t} disabled={!canEdit} onOpen={onOpenTask} />
+        ) : (
+          <TaskCard key={t.id} task={t} onOpen={onOpenTask} />
+        ),
+      )}
+      {rest > 0 && (
+        <button
+          onClick={() => setLimit((l) => l + COLUMN_PAGE)}
+          className="rounded-lg border border-dashed border-border py-1.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+        >
+          Показать ещё {Math.min(COLUMN_PAGE, rest)} · осталось {rest}
+        </button>
+      )}
+    </>
+  );
+}
+
 function Column({
   status,
   tasks,
@@ -63,9 +99,6 @@ function Column({
   onAdd: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `status:${status.id}` });
-  const [limit, setLimit] = useState(COLUMN_PAGE);
-  const shown = tasks.length > limit ? tasks.slice(0, limit) : tasks;
-  const rest = tasks.length - shown.length;
   return (
     <div className="flex w-72 shrink-0 flex-col rounded-xl bg-muted/40">
       <div className="flex items-center gap-2 px-3 pb-1 pt-2.5">
@@ -83,17 +116,7 @@ function Column({
         ref={setNodeRef}
         className={`flex min-h-24 flex-1 flex-col gap-1.5 overflow-y-auto p-2 transition-colors ${isOver ? "bg-muted/70" : ""}`}
       >
-        {shown.map((t) => (
-          <DraggableCard key={t.id} task={t} disabled={!canEdit} onOpen={onOpenTask} />
-        ))}
-        {rest > 0 && (
-          <button
-            onClick={() => setLimit((l) => l + COLUMN_PAGE)}
-            className="rounded-lg border border-dashed border-border py-1.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-          >
-            Показать ещё {Math.min(COLUMN_PAGE, rest)} · осталось {rest}
-          </button>
-        )}
+        <CardList tasks={tasks} draggable canEdit={canEdit} onOpenTask={onOpenTask} />
       </div>
     </div>
   );
@@ -121,7 +144,7 @@ const DraggableCard = memo(function DraggableCard({
 
 export default function ProjectBoardPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
-  const { orgId, statuses, refreshProjects } = useV2Store();
+  const { orgId, statuses, metaLoading, refreshProjects } = useV2Store();
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [tasks, setTasks] = useState<TaskListItem[]>([]);
   const [showDone, setShowDone] = useState(false);
@@ -178,7 +201,7 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
     return { visible, byStatus, noStatusTasks };
   }, [statuses, tasks, showDone]);
 
-  // Стабильная ссылка: инлайновый [] ломал бы memo дочерних компонентов.
+  // Стабильная ссылка: инлайновая стрелка сводила бы memo карточек на нет.
   const openTask = useCallback((id: string) => setOpenTaskId(id), []);
 
   function onDragStart(e: DragStartEvent) {
@@ -241,7 +264,8 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
   if (error) {
     return <div className="flex h-full items-center justify-center text-sm text-destructive">{error}</div>;
   }
-  if (!project) {
+  // Ждём и статусы: без них раскладка свалила бы все задачи в «Без статуса».
+  if (!project || (statuses.length === 0 && metaLoading)) {
     return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Загрузка…</div>;
   }
 
@@ -298,9 +322,12 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
               <div className="flex w-72 shrink-0 flex-col rounded-xl bg-muted/40">
                 <div className="px-3 pb-1 pt-2.5 text-sm font-medium text-muted-foreground">Без статуса</div>
                 <div className="flex flex-1 flex-col gap-1.5 overflow-y-auto p-2">
-                  {columns.noStatusTasks.map((t) => (
-                    <TaskCard key={t.id} task={t} onOpen={openTask} />
-                  ))}
+                  <CardList
+                    tasks={columns.noStatusTasks}
+                    draggable={false}
+                    canEdit={!!canEdit}
+                    onOpenTask={openTask}
+                  />
                 </div>
               </div>
             )}

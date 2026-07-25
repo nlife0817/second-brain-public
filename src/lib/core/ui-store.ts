@@ -115,19 +115,27 @@ export const useV2Store = create<V2State>((set, get) => ({
       fields: [],
       unreadCount: 0,
       metaLoading: true,
+      error: null,
     });
     await get().loadOrgData();
   },
 
   loadOrgData: async () => {
-    await Promise.all([
-      get().refreshProjects(),
-      get().refreshMeta(),
-      get().refreshMembers(),
-      get().refreshFields(),
-      get().refreshUnread(),
-    ]).catch(() => {});
-    set({ metaLoading: false });
+    // Проекты и справочники статусов критичны — без них нечего показывать;
+    // участники, поля и счётчик уведомлений могут не доехать без последствий,
+    // и ронять из-за них весь экран не нужно.
+    const [projects, meta] = await Promise.all([
+      get().refreshProjects().then(() => null).catch((e: unknown) => e),
+      get().refreshMeta().then(() => null).catch((e: unknown) => e),
+      get().refreshMembers().catch(() => {}),
+      get().refreshFields().catch(() => {}),
+      get().refreshUnread().catch(() => {}),
+    ]);
+    const failure = projects ?? meta;
+    set({
+      metaLoading: false,
+      error: failure instanceof Error ? failure.message : failure ? "Не удалось загрузить" : null,
+    });
   },
 
   refreshProjects: async () => {
