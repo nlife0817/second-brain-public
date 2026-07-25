@@ -81,19 +81,13 @@ export async function getCoreUser(): Promise<CoreUser | null> {
 }
 
 async function loadProjectRoles(orgId: string, userId: string): Promise<Map<string, ProjectRole>> {
-  // TODO(фаза 1, 0024): снять try/catch сразу после появления core.project_members —
-  // глушить ошибки БД здесь нельзя, это занижает права (гость теряет явные гранты).
-  try {
-    const rows = await prepare<{ project_id: string; role: ProjectRole }>(
-      `SELECT pm.project_id, pm.role
-       FROM core.project_members pm
-       JOIN core.projects p ON p.id = pm.project_id
-       WHERE p.org_id = ? AND pm.user_id = ?`,
-    ).all(orgId, userId);
-    return new Map(rows.map((r) => [r.project_id, r.role]));
-  } catch {
-    return new Map();
-  }
+  const rows = await prepare<{ project_id: string; role: ProjectRole }>(
+    `SELECT pm.project_id, pm.role
+     FROM core.project_members pm
+     JOIN core.projects p ON p.id = pm.project_id
+     WHERE p.org_id = ? AND pm.user_id = ?`,
+  ).all(orgId, userId);
+  return new Map(rows.map((r) => [r.project_id, r.role]));
 }
 
 /** Собирает AuthContext для организации или отвечает причиной отказа. */

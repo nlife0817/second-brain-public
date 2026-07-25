@@ -154,6 +154,21 @@ export async function createOrganization(name: string, ownerId: string): Promise
     await tx
       .prepare(`INSERT INTO core.org_members (org_id, user_id, role) VALUES (?, ?, 'owner')`)
       .run(org.id, ownerId);
+    const defaultStatuses: Array<[string, string, string]> = [
+      ["Входящие", "#6b7280", "open"],
+      ["К выполнению", "#3b82f6", "open"],
+      ["В работе", "#f59e0b", "open"],
+      ["Готово", "#10b981", "done"],
+      ["Архив", "#9ca3af", "archived"],
+    ];
+    for (let i = 0; i < defaultStatuses.length; i++) {
+      const [statusName, color, kind] = defaultStatuses[i];
+      await tx
+        .prepare(
+          `INSERT INTO core.task_statuses (org_id, name, color, kind, position) VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(org.id, statusName, color, kind, i + 1);
+    }
     return org;
   });
 }

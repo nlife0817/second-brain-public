@@ -61,9 +61,19 @@ describe("canOrg: матрица org-ролей", () => {
 });
 
 describe("effectiveProjectRole", () => {
-  it("owner и admin — admin в любом проекте, включая приватные без членства", () => {
-    expect(effectiveProjectRole(ctx("owner"), project({ visibility: "private" }))).toBe("admin");
-    expect(effectiveProjectRole(ctx("admin"), project({ visibility: "private" }))).toBe("admin");
+  it("owner и admin — admin в org-видимых проектах", () => {
+    expect(effectiveProjectRole(ctx("owner"), project())).toBe("admin");
+    expect(effectiveProjectRole(ctx("admin"), project())).toBe("admin");
+  });
+
+  it("приватный проект закрыт даже для owner/admin без явного членства (личный контур)", () => {
+    expect(effectiveProjectRole(ctx("owner"), project({ visibility: "private" }))).toBeNull();
+    expect(effectiveProjectRole(ctx("admin"), project({ visibility: "private" }))).toBeNull();
+  });
+
+  it("приватный проект: явная запись действует для любой org-роли", () => {
+    expect(effectiveProjectRole(ctx("owner", { p1: "viewer" }), project({ visibility: "private" }))).toBe("viewer");
+    expect(effectiveProjectRole(ctx("member", { p1: "admin" }), project({ visibility: "private" }))).toBe("admin");
   });
 
   it("member: editor по умолчанию в org-видимом проекте", () => {

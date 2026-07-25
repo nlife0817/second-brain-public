@@ -78,6 +78,169 @@ export interface PolicyProject {
   visibility: ProjectVisibility;
 }
 
+// --- Задачи и проекты -----------------------------------------------------------
+
+export type TaskPriority = "urgent" | "high" | "medium" | "low" | "none";
+export type StatusKind = "open" | "done" | "archived";
+export type FieldType =
+  | "text" | "number" | "select" | "multi_select" | "date" | "user" | "checkbox" | "url";
+
+export interface UserBrief {
+  id: string;
+  email: string;
+  name: string;
+  avatar_url: string | null;
+}
+
+export interface Project {
+  id: string;
+  org_id: string;
+  team_id: string | null;
+  name: string;
+  description: string;
+  color: string;
+  icon: string;
+  visibility: ProjectVisibility;
+  position: number;
+  archived_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectWithMeta extends Project {
+  my_role: ProjectRole | null;
+  open_task_count: number;
+}
+
+export interface Section {
+  id: string;
+  project_id: string;
+  name: string;
+  position: number;
+  created_at: string;
+}
+
+export interface ProjectMemberWithUser {
+  project_id: string;
+  user_id: string;
+  role: ProjectRole;
+  email: string;
+  name: string;
+  avatar_url: string | null;
+}
+
+export interface TaskStatus {
+  id: string;
+  org_id: string;
+  name: string;
+  color: string;
+  kind: StatusKind;
+  position: number;
+}
+
+export interface CoreTag {
+  id: string;
+  org_id: string;
+  name: string;
+  color: string;
+  position: number;
+}
+
+export interface FieldOption {
+  id: string;
+  label: string;
+  color?: string;
+}
+
+export interface CustomField {
+  id: string;
+  org_id: string;
+  project_id: string | null;
+  name: string;
+  type: FieldType;
+  options: FieldOption[];
+  position: number;
+}
+
+export interface TaskPlacement {
+  project_id: string;
+  section_id: string | null;
+  position: number;
+}
+
+export interface CoreTask {
+  id: string;
+  org_id: string;
+  title: string;
+  description: string;
+  status_id: string | null;
+  priority: TaskPriority;
+  due_date: string | null;
+  due_time: string | null;
+  estimated_minutes: number | null;
+  completed_at: string | null;
+  parent_task_id: string | null;
+  source: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskWithMeta extends CoreTask {
+  assignees: UserBrief[];
+  tags: CoreTag[];
+  placements: TaskPlacement[];
+  subtask_count: number;
+  subtask_done_count: number;
+  comment_count: number;
+}
+
+export interface TaskDetail extends TaskWithMeta {
+  followers: UserBrief[];
+  field_values: Record<string, unknown>;
+  creator: UserBrief | null;
+}
+
+export interface CoreComment {
+  id: string;
+  org_id: string;
+  entity_type: "task" | "project" | "client";
+  entity_id: string;
+  author_id: string | null;
+  author_label: string;
+  body: string;
+  created_at: string;
+  edited_at: string | null;
+  author: UserBrief | null;
+}
+
+export interface CoreEvent {
+  id: number;
+  org_id: string;
+  actor_id: string | null;
+  entity_type: string;
+  entity_id: string;
+  verb: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+  actor: UserBrief | null;
+}
+
+export interface CoreNotification {
+  id: string;
+  org_id: string;
+  kind: string;
+  read_at: string | null;
+  created_at: string;
+  verb: string | null;
+  payload: Record<string, unknown> | null;
+  actor_name: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  entity_title: string | null;
+}
+
 export const ORG_ROLE_RANK: Record<OrgRole, number> = {
   guest: 0,
   member: 1,

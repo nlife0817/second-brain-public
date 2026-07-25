@@ -77,17 +77,19 @@ const MIN_PROJECT_ROLE: Record<ProjectAction, ProjectRole> = {
 
 /**
  * Эффективная роль пользователя в проекте:
- *  - org owner/admin → project admin везде;
- *  - явная запись в project_members выигрывает у дефолта (в обе стороны);
- *  - member без явной записи: editor в org-видимых проектах, нет доступа в приватных;
+ *  - приватный проект видят ТОЛЬКО явные участники — org owner/admin не имеют
+ *    имплицитного доступа (защита личного контура; поведение Asana);
+ *  - в org-видимых проектах owner/admin → admin, member → editor (дефолт),
+ *    явная запись в project_members выигрывает у дефолта member (в обе стороны);
  *  - guest: только явная запись.
  */
 export function effectiveProjectRole(ctx: AuthContext, project: PolicyProject): ProjectRole | null {
   if (project.org_id !== ctx.orgId) return null;
-  if (ctx.orgRole === "owner" || ctx.orgRole === "admin") return "admin";
   const explicit = ctx.projectRoles.get(project.id) ?? null;
+  if (project.visibility === "private") return explicit;
+  if (ctx.orgRole === "owner" || ctx.orgRole === "admin") return "admin";
   if (explicit) return explicit;
-  if (ctx.orgRole === "member" && project.visibility === "org") return "editor";
+  if (ctx.orgRole === "member") return "editor";
   return null;
 }
 
