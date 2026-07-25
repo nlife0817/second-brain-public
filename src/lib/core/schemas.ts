@@ -250,6 +250,16 @@ export const webhookCreateSchema = z.object({
 
 export const projectTeamSchema = z.object({ team_id: z.uuid().nullable() });
 
+// --- Push-подписки ----------------------------------------------------------------
+
+export const pushSubscribeSchema = z.object({
+  endpoint: z.url().max(2000),
+  keys: z.object({
+    p256dh: z.string().min(1).max(300),
+    auth: z.string().min(1).max(300),
+  }),
+});
+
 export const recurringCreateSchema = z.object({
   template: z.object({
     title: z.string().trim().min(1).max(500),

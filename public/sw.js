@@ -1,4 +1,4 @@
-const CACHE_NAME = "second-brain-v2";
+const CACHE_NAME = "second-brain-v3";
 const STATIC_ASSETS = ["/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -68,7 +68,17 @@ self.addEventListener("push", (event) => {
     requireInteraction: !!data.requireInteraction,
     actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : undefined,
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  const jobs = [self.registration.showNotification(title, options)];
+  // Счётчик на иконке установленного приложения (Android / iOS 16.4+).
+  if (typeof data.unread === "number" && "setAppBadge" in self.navigator) {
+    jobs.push(
+      (data.unread > 0
+        ? self.navigator.setAppBadge(data.unread)
+        : self.navigator.clearAppBadge()
+      ).catch(() => {})
+    );
+  }
+  event.waitUntil(Promise.all(jobs));
 });
 
 self.addEventListener("notificationclick", (event) => {

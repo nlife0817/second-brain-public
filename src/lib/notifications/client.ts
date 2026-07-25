@@ -28,7 +28,18 @@ export async function getPushState(): Promise<PushState> {
   };
 }
 
-export async function enablePushNotifications(): Promise<void> {
+/**
+ * Куда сохранять подписку. v1-экраны используют /api/push/subscribe
+ * (whitelist-авторизация), v2 передаёт /api/v2/push/subscribe — его
+ * авторизация построена на core-identity и принимает приглашённых
+ * участников, которых нет в whitelist v1.
+ */
+export type PushClientOptions = { subscribeUrl?: string };
+
+const DEFAULT_SUBSCRIBE_URL = "/api/push/subscribe";
+
+export async function enablePushNotifications(opts?: PushClientOptions): Promise<void> {
+  const subscribeUrl = opts?.subscribeUrl ?? DEFAULT_SUBSCRIBE_URL;
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
     throw new Error("Push API не поддерживается браузером");
   }
@@ -54,7 +65,7 @@ export async function enablePushNotifications(): Promise<void> {
   }
 
   const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
-  const res = await fetch("/api/push/subscribe", {
+  const res = await fetch(subscribeUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -68,14 +79,15 @@ export async function enablePushNotifications(): Promise<void> {
   }
 }
 
-export async function disablePushNotifications(): Promise<void> {
+export async function disablePushNotifications(opts?: PushClientOptions): Promise<void> {
+  const subscribeUrl = opts?.subscribeUrl ?? DEFAULT_SUBSCRIBE_URL;
   if (!("serviceWorker" in navigator)) return;
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.getSubscription();
   if (!sub) return;
   const endpoint = sub.endpoint;
   await sub.unsubscribe();
-  await fetch(`/api/push/subscribe?endpoint=${encodeURIComponent(endpoint)}`, {
+  await fetch(`${subscribeUrl}?endpoint=${encodeURIComponent(endpoint)}`, {
     method: "DELETE",
   });
 }

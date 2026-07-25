@@ -6,6 +6,54 @@ function isMobileUserAgent(ua: string): boolean {
   return /Mobile|Android|iPhone|iPad|iPod/i.test(ua);
 }
 
+/**
+ * Мобильный адрес для десктопного пути v2 (или null, если маппинга нет).
+ * Push-уведомления несут десктопные URL (/v2/my?task=…) — телефон должен
+ * попадать на мобильный экран, а десктоп остаться где был.
+ */
+function mobileV2Target(url: URL): string | null {
+  const { pathname } = url;
+  if (pathname === "/v2" || pathname === "/v2/my") {
+    const task = url.searchParams.get("task");
+    return task ? `/v2/m/my?task=${encodeURIComponent(task)}` : "/v2/m/my";
+  }
+  if (pathname === "/v2/inbox") return "/v2/m/inbox";
+  if (pathname === "/v2/time") return "/v2/m/time";
+  if (pathname === "/v2/settings") return "/v2/m/settings";
+  const project = pathname.match(/^\/v2\/projects\/([^/]+)$/);
+  if (project) return `/v2/m/projects/${project[1]}`;
+  return null;
+}
+
+/** Липкий «режим полной версии»: сессионная cookie, ставится по ?desktop. */
+const DESKTOP_COOKIE = "sb_desktop";
+
+/** Общий для dev-байпаса и обычного пути редирект мобильных UA. */
+function mobileRedirect(request: NextRequest): NextResponse | null {
+  const ua = request.headers.get("user-agent") ?? "";
+  if (!isMobileUserAgent(ua)) return null;
+  // ?desktop действует на всю сессию браузера, а не на один переход: иначе
+  // администрирование в полной версии недостижимо с телефона — любой клик
+  // по сайдбару снова уводил бы на /v2/m/*.
+  if (request.nextUrl.searchParams.has("desktop")) return null;
+  if (request.cookies.has(DESKTOP_COOKIE)) return null;
+  if (request.nextUrl.pathname === "/") {
+    return NextResponse.redirect(new URL("/m/tasks", request.url));
+  }
+  const v2 = mobileV2Target(request.nextUrl);
+  if (v2) return NextResponse.redirect(new URL(v2, request.url));
+  return null;
+}
+
+/** Проставляет/снимает cookie режима полной версии по ?desktop / ?mobile. */
+function applyDesktopModeCookie(request: NextRequest, response: NextResponse): void {
+  if (request.nextUrl.searchParams.has("desktop")) {
+    response.cookies.set(DESKTOP_COOKIE, "1", { path: "/", sameSite: "lax" });
+  } else if (request.nextUrl.searchParams.has("mobile")) {
+    response.cookies.delete(DESKTOP_COOKIE);
+  }
+}
+
 // /invite/* открыт до входа: страница сама показывает кнопку «Войти» с возвратом.
 const PUBLIC_PATHS = ["/login", "/auth/callback", "/mockup", "/invite"];
 
@@ -23,14 +71,9 @@ export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   if (DEV_BYPASS_ACTIVE) {
-    const ua = request.headers.get("user-agent") ?? "";
-    if (
-      pathname === "/" &&
-      isMobileUserAgent(ua) &&
-      !request.nextUrl.searchParams.has("desktop")
-    ) {
-      return NextResponse.redirect(new URL("/m/tasks", request.url));
-    }
+    const redirected = mobileRedirect(request);
+    if (redirected) return redirected;
+    applyDesktopModeCookie(request, response);
     return response;
   }
 
@@ -68,17 +111,14 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // Mobile redirect for root path (only for authenticated users).
-  const ua = request.headers.get("user-agent") ?? "";
-  if (
-    user &&
-    pathname === "/" &&
-    isMobileUserAgent(ua) &&
-    !request.nextUrl.searchParams.has("desktop")
-  ) {
-    return NextResponse.redirect(new URL("/m/tasks", request.url));
+  // Мобильные UA: корень v1 → /m/tasks, десктопные экраны v2 → /v2/m/*
+  // (только для авторизованных; обход — ?desktop, возврат — ?mobile).
+  if (user) {
+    const redirect = mobileRedirect(request);
+    if (redirect) return redirect;
   }
 
+  applyDesktopModeCookie(request, response);
   return response;
 }
 

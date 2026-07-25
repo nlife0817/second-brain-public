@@ -1,6 +1,6 @@
 // Событийная шина v2: каждая мутация пишет событие; уведомления раскладываются
-// в той же транзакции (fan-out). Push-доставка — отдельный диспетчер (фаза 2),
-// он же снимает dispatched_at.
+// в той же транзакции (fan-out). Push-доставка — диспетчер в ./push.ts:
+// after() в withOrg/withUser шлёт сразу после ответа, cron добирает остатки.
 
 import { prepare, type TxContext } from "@/lib/sql";
 import type { CoreEvent, CoreNotification } from "./types";
