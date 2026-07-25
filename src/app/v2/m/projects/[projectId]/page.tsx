@@ -5,8 +5,9 @@
 
 import Link from "next/link";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, Plus } from "lucide-react";
+import { ChevronLeft, Plus, Settings } from "lucide-react";
 import { CreateTaskDialog } from "@/components/v2/CreateTaskDialog";
+import { ProjectIcon } from "@/components/v2/project-icons";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { TaskSheet } from "@/components/v2/TaskSheet";
 import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
@@ -165,8 +166,17 @@ export default function MobileProjectPage({ params }: { params: Promise<{ projec
         <Link href="/v2/m/projects" className="rounded-lg p-2 text-muted-foreground active:bg-muted" aria-label="Назад">
           <ChevronLeft className="size-5" />
         </Link>
-        <span className="size-3 shrink-0 rounded" style={{ backgroundColor: project.color }} />
+        <ProjectIcon name={project.icon} color={project.color} className="size-4 shrink-0" />
         <h1 className="min-w-0 flex-1 truncate text-base font-semibold">{project.name}</h1>
+        {canEdit && (
+          <Link
+            href={`/v2/m/projects/${projectId}/settings`}
+            className="rounded-lg p-2 text-muted-foreground active:bg-muted"
+            aria-label="Настройки проекта"
+          >
+            <Settings className="size-5" />
+          </Link>
+        )}
         {canEdit && (
           <button
             onClick={() => setCreateOpen(true)}

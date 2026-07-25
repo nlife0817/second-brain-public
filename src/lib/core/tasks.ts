@@ -19,6 +19,7 @@ import type {
   CoreTag,
   CoreTask,
   Project,
+  ProjectDefaultRole,
   ProjectRole,
   TaskDetail,
   TaskListItem,
@@ -86,9 +87,14 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
        UNION ALL
        SELECT task_id, 'follower' AS src FROM core.task_followers WHERE user_id = ? AND task_id IN (${ph})`,
     ).all(ctx.user.id, chainIds, ctx.user.id, chainIds),
-    prepare<{ task_id: string; project_id: string; section_id: string | null; position: number } & { p_org_id: string; p_visibility: "org" | "private" }>(
+    prepare<
+      { task_id: string; project_id: string; section_id: string | null; position: number } & {
+        p_org_id: string;
+        p_default_role: ProjectDefaultRole | null;
+      }
+    >(
       `SELECT tp.task_id, tp.project_id, tp.section_id, tp.position,
-              p.org_id AS p_org_id, p.visibility AS p_visibility
+              p.org_id AS p_org_id, p.default_role AS p_default_role
        FROM core.task_projects tp
        JOIN core.projects p ON p.id = tp.project_id
        WHERE tp.task_id IN (${ph})`,
@@ -100,14 +106,18 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
   const isChainAssignee = myLinks.some((l) => l.src === "assignee");
   const isChainFollower = myLinks.some((l) => l.src === "follower");
 
-  const roleOf = (projectId: string, orgId: string, visibility: "org" | "private"): ProjectRole | null =>
-    effectiveProjectRole(ctx, { id: projectId, org_id: orgId, visibility });
+  const roleOf = (
+    projectId: string,
+    orgId: string,
+    defaultRole: ProjectDefaultRole | null,
+  ): ProjectRole | null =>
+    effectiveProjectRole(ctx, { id: projectId, org_id: orgId, default_role: defaultRole });
 
-  const chainProjectRoles = chainPlacements.map((pl) => roleOf(pl.project_id, pl.p_org_id, pl.p_visibility));
+  const chainProjectRoles = chainPlacements.map((pl) => roleOf(pl.project_id, pl.p_org_id, pl.p_default_role));
   const anyProjectView = chainProjectRoles.some((r) => r !== null);
 
   const directPlacementRows = chainPlacements.filter((pl) => pl.task_id === task.id);
-  const directRoles = directPlacementRows.map((pl) => roleOf(pl.project_id, pl.p_org_id, pl.p_visibility));
+  const directRoles = directPlacementRows.map((pl) => roleOf(pl.project_id, pl.p_org_id, pl.p_default_role));
   const allDirectEditor =
     directRoles.length > 0 && directRoles.every((r) => r !== null && PROJECT_ROLE_RANK[r] >= PROJECT_ROLE_RANK.editor);
   const anyChainEditor = chainProjectRoles.some(
@@ -297,8 +307,8 @@ export async function visibleProjectIds(
   ctx: AuthContext,
   opts: { includeArchived?: boolean } = {},
 ): Promise<string[]> {
-  const rows = await prepare<{ id: string; org_id: string; visibility: "org" | "private" }>(
-    `SELECT id, org_id, visibility FROM core.projects
+  const rows = await prepare<{ id: string; org_id: string; default_role: ProjectDefaultRole | null }>(
+    `SELECT id, org_id, default_role FROM core.projects
      WHERE org_id = ? AND (?::boolean OR archived_at IS NULL)`,
   ).all(ctx.orgId, opts.includeArchived ?? false);
   return rows.filter((p) => effectiveProjectRole(ctx, p) !== null).map((p) => p.id);

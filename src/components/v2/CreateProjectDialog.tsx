@@ -14,8 +14,8 @@ import { api } from "@/lib/core/client";
 import type { ProjectWithMeta } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
-
-const COLORS = ["#6b7280", "#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6"];
+import { ProjectAccessPicker, type ProjectAccessValue } from "./ProjectAccessPicker";
+import { PROJECT_COLORS } from "./project-icons";
 
 export function CreateProjectDialog({
   open,
@@ -27,8 +27,9 @@ export function CreateProjectDialog({
   const router = useRouter();
   const { orgId, refreshProjects } = useV2Store();
   const [name, setName] = useState("");
-  const [color, setColor] = useState(COLORS[5]);
-  const [visibility, setVisibility] = useState<"org" | "private">("org");
+  const [color, setColor] = useState(PROJECT_COLORS[5]);
+  // Базовая роль сотрудников; менять её потом — в настройках проекта.
+  const [defaultRole, setDefaultRole] = useState<ProjectAccessValue>("editor");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,7 +41,7 @@ export function CreateProjectDialog({
       const project = await api.post<ProjectWithMeta>(`/orgs/${orgId}/projects`, {
         name: name.trim(),
         color,
-        visibility,
+        default_role: defaultRole,
       });
       await refreshProjects();
       onOpenChange(false);
@@ -68,7 +69,7 @@ export function CreateProjectDialog({
             onKeyDown={(e) => e.key === "Enter" && void submit()}
           />
           <div className="flex items-center gap-2">
-            {COLORS.map((c) => (
+            {PROJECT_COLORS.map((c) => (
               <button
                 key={c}
                 onClick={() => setColor(c)}
@@ -80,27 +81,9 @@ export function CreateProjectDialog({
               />
             ))}
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setVisibility("org")}
-              className={cn(
-                "flex-1 rounded-lg border p-2.5 text-left text-sm",
-                visibility === "org" ? "border-primary bg-muted" : "border-border",
-              )}
-            >
-              <p className="font-medium">Для организации</p>
-              <p className="text-xs text-muted-foreground">Видят все сотрудники</p>
-            </button>
-            <button
-              onClick={() => setVisibility("private")}
-              className={cn(
-                "flex-1 rounded-lg border p-2.5 text-left text-sm",
-                visibility === "private" ? "border-primary bg-muted" : "border-border",
-              )}
-            >
-              <p className="font-medium">Приватный</p>
-              <p className="text-xs text-muted-foreground">Только приглашённые</p>
-            </button>
+          <div>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Доступ сотрудников</p>
+            <ProjectAccessPicker value={defaultRole} onChange={setDefaultRole} />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex justify-end gap-2">

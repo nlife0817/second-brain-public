@@ -55,9 +55,11 @@ export function canOrg(ctx: AuthContext, action: OrgAction): boolean {
 export type ProjectAction =
   | "project.view"
   | "project.update"          // имя, цвет, иконка, описание
-  | "project.visibility"      // смена org ↔ private: только не-гости (иначе гость
-                              // делает org-проект приватным и запирает организацию)
+  | "project.access"           // базовая роль организации (в т.ч. закрытие проекта):
+                               // только не-гости, иначе гость закрывает проект
+                               // организации и запирает в нём её же сотрудников
   | "project.archive"
+  | "project.delete"
   | "project.members.manage"
   | "section.manage"
   | "task.create"
@@ -69,8 +71,9 @@ export type ProjectAction =
 const MIN_PROJECT_ROLE: Record<ProjectAction, ProjectRole> = {
   "project.view": "viewer",
   "project.update": "admin",
-  "project.visibility": "admin",
+  "project.access": "admin",
   "project.archive": "admin",
+  "project.delete": "admin",
   "project.members.manage": "admin",
   "section.manage": "editor",
   "task.create": "editor",
@@ -81,28 +84,30 @@ const MIN_PROJECT_ROLE: Record<ProjectAction, ProjectRole> = {
 };
 
 /**
- * Эффективная роль пользователя в проекте:
- *  - приватный проект видят ТОЛЬКО явные участники — org owner/admin не имеют
- *    имплицитного доступа (защита личного контура; поведение Asana);
- *  - в org-видимых проектах owner/admin → admin, member → editor (дефолт),
- *    явная запись в project_members выигрывает у дефолта member (в обе стороны);
- *  - guest: только явная запись.
+ * Эффективная роль пользователя в проекте. Доступ сотрудника задаётся настройками
+ * самого проекта — полем `default_role`:
+ *  - закрытый проект (`default_role === null`) видят ТОЛЬКО явные участники —
+ *    org owner/admin не имеют имплицитного доступа (защита личного контура);
+ *  - иначе owner/admin → admin, member → `default_role`, а явная запись в
+ *    project_members выигрывает у базовой роли (в обе стороны);
+ *  - guest: только явная запись, базовая роль на него не распространяется —
+ *    внешний подрядчик не сотрудник организации.
  */
 export function effectiveProjectRole(ctx: AuthContext, project: PolicyProject): ProjectRole | null {
   if (project.org_id !== ctx.orgId) return null;
   const explicit = ctx.projectRoles.get(project.id) ?? null;
-  if (project.visibility === "private") return explicit;
+  if (!project.default_role) return explicit;
   if (ctx.orgRole === "owner" || ctx.orgRole === "admin") return "admin";
   if (explicit) return explicit;
-  if (ctx.orgRole === "member") return "editor";
+  if (ctx.orgRole === "member") return project.default_role;
   return null;
 }
 
 export function canProject(ctx: AuthContext, action: ProjectAction, project: PolicyProject): boolean {
   const role = effectiveProjectRole(ctx, project);
   if (!role) return false;
-  // Гость — всегда внешний участник: видимостью проектов организации не управляет.
-  if (action === "project.visibility" && ctx.orgRole === "guest") return false;
+  // Гость — всегда внешний участник: доступом сотрудников к проекту не управляет.
+  if (action === "project.access" && ctx.orgRole === "guest") return false;
   return PROJECT_ROLE_RANK[role] >= PROJECT_ROLE_RANK[MIN_PROJECT_ROLE[action]];
 }
 

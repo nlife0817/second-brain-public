@@ -3,6 +3,12 @@
 export type OrgRole = "owner" | "admin" | "member" | "guest";
 export type ProjectRole = "admin" | "editor" | "commenter" | "viewer";
 export type ProjectVisibility = "org" | "private";
+/**
+ * Базовая роль проекта: её получает сотрудник организации без явной записи в
+ * project_members. `null` — закрытый проект (только явные участники). «admin»
+ * недоступен: иначе любой сотрудник менял бы настройки проекта и удалял его.
+ */
+export type ProjectDefaultRole = "viewer" | "commenter" | "editor";
 
 export interface CoreUser {
   id: string;
@@ -75,7 +81,8 @@ export interface AuthContext {
 export interface PolicyProject {
   id: string;
   org_id: string;
-  visibility: ProjectVisibility;
+  /** Источник истины доступа. `null` = закрытый проект (см. ProjectDefaultRole). */
+  default_role: ProjectDefaultRole | null;
 }
 
 // --- Задачи и проекты -----------------------------------------------------------
@@ -100,6 +107,8 @@ export interface Project {
   description: string;
   color: string;
   icon: string;
+  default_role: ProjectDefaultRole | null;
+  /** Производная от `default_role` (generated-колонка): `private` ⇔ default_role is null. */
   visibility: ProjectVisibility;
   position: number;
   archived_at: string | null;

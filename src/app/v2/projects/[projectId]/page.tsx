@@ -14,11 +14,14 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Plus, Users } from "lucide-react";
+import Link from "next/link";
+import { Plus, Settings, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { CreateTaskDialog } from "@/components/v2/CreateTaskDialog";
+import { accessLabel } from "@/components/v2/ProjectAccessPicker";
 import { ProjectMembersDialog } from "@/components/v2/ProjectMembersDialog";
+import { ProjectIcon } from "@/components/v2/project-icons";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { TaskSheet } from "@/components/v2/TaskSheet";
 import { api } from "@/lib/core/client";
@@ -273,11 +276,11 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-border px-6 py-3.5">
-        <span className="size-3 rounded" style={{ backgroundColor: project.color }} />
+        <ProjectIcon name={project.icon} color={project.color} className="size-4" />
         <h1 className="text-base font-semibold">{project.name}</h1>
-        {project.visibility === "private" && (
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">приватный</span>
-        )}
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+          {accessLabel(project.default_role)}
+        </span>
         <span className="flex-1" />
         <CardSettingsPopover />
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -299,6 +302,15 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
           />
           <Users className="size-4 text-muted-foreground" />
         </button>
+        {(project.my_role === "admin" || project.my_role === "editor") && (
+          <Link
+            href={`/v2/projects/${projectId}/settings`}
+            className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            title="Настройки проекта"
+          >
+            <Settings className="size-4" />
+          </Link>
+        )}
         {canEdit && (
           <Button size="sm" onClick={() => setCreateIn(null)}>
             <Plus className="size-4" />
@@ -361,6 +373,7 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
         onOpenChange={setMembersOpen}
         project={project}
         onChanged={() => void load()}
+        settingsHref={`/v2/projects/${projectId}/settings`}
       />
     </div>
   );
