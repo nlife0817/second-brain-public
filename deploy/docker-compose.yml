@@ -1,0 +1,81 @@
+name: secondbrain
+
+# Всё приложение на одном сервере: база, Next.js, TLS-терминатор и расписания.
+# Переменные читаются из deploy/.env (см. env.example).
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Та же локаль, что у Supabase: дамп несёт коллации колонок, и при другой
+      # локали кластера восстановление ругается, а сортировка молча меняется.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.utf8"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    # Порт наружу не публикуем: база доступна только внутри compose-сети.
+    # С ноутбука — через `ssh -L 5433:localhost:5432 user@server` + `docker compose port`.
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* вшиваются в бандл при сборке — менять их можно только
+        # пересборкой образа, правки в .env на них не влияют.
+        NEXT_PUBLIC_APP_URL: ${APP_URL}
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      db:
+        condition: service_healthy
+    # after() дописывает пуши уже после ответа клиенту — даём процессу успеть
+    # доработать их перед SIGKILL.
+    stop_grace_period: 30s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+  cron:
+    build:
+      context: ./cron
+    restart: unless-stopped
+    environment:
+      # Ходит к приложению внутри сети, минуя Caddy и TLS: сертификат для
+      # внутреннего имени всё равно не выпишешь.
+      INTERNAL_URL: http://app:3000
+      CRON_SECRET: ${CRON_SECRET}
+      # Расписания заданы в UTC — как в исходных миграциях pg_cron.
+      TZ: UTC
+    depends_on:
+      - app
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:

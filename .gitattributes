@@ -1,0 +1,13 @@
+# Файлы, которые исполняются внутри Linux-контейнеров, обязаны быть с LF даже
+# при разработке на Windows: с CRLF шебанг превращается в `/bin/sh^M` и скрипт
+# падает с «bad interpreter», а строка crontab молча не выполняется.
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*/Dockerfile    text eol=lf
+crontab         text eol=lf
+Caddyfile       text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.sql           text eol=lf
+env.example     text eol=lf
+.dockerignore   text eol=lf

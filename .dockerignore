@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+.github
+.claude
+.vercel
+.playwright-mcp
+coverage
+data
+docs
+deploy
+supabase
+*.md
+!README.md
+.env*
+npm-debug.log*
+*.tsbuildinfo

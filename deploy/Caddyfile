@@ -1,0 +1,33 @@
+# Caddy сам получает и продлевает сертификат Let's Encrypt для APP_DOMAIN.
+# Условие: домен A-записью указывает на этот сервер, порты 80 и 443 открыты,
+# и Cloudflare (если он в цепочке) стоит в режиме DNS-only — иначе ACME-проверка
+# упрётся в его прокси.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy app:3000 {
+		# Ответы Next.js стримятся (Suspense, loading.tsx) — буферизация свела бы
+		# постепенный рендер к одному ответу в конце.
+		flush_interval -1
+	}
+
+	# Служебные заголовки. HSTS Caddy ставит сам вместе с сертификатом.
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
