@@ -2,14 +2,19 @@
 //
 // Порядок разрешения пользователя:
 //   1) dev-байпас (NODE_ENV !== production + DEV_USER_EMAIL) — как в v1;
-//   2) Supabase-сессия → core.users по auth_user_id, затем по email (с бэкфиллом);
+//   2) сессия → core.users по email;
 //   3) переходное авто-провижининг: email есть в whitelist public.users →
 //      создаём core.users + членство в бутстрап-организации по маппингу ролей.
+//
+// Почему по email, а не по core.users.auth_user_id: колонка объявлена uuid и
+// хранила идентификатор Supabase Auth, а Google выдаёт числовой `sub` — в uuid
+// он не приводится. Ключом идентичности остаётся email, и он у Google всегда
+// подтверждённый (lib/auth/google.ts отвергает email_verified !== true).
+// Старые значения auth_user_id остаются в базе как след прежней системы входа.
 
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getSessionUser } from "@/lib/supabase/claims";
+import { getSessionUser } from "@/lib/auth/session";
 import { prepare } from "@/lib/sql";
 import { dispatchPendingPush } from "./push";
 import { isUuid, jsonError, toHttpError } from "./http";
@@ -18,16 +23,13 @@ import {
   createUser,
   getFirstOrganization,
   getMembershipRole,
-  getUserByAuthId,
   getUserByEmail,
-  linkAuthUser,
 } from "./identity";
 import type { AuthContext, CoreUser, OrgRole, ProjectRole } from "./types";
 import { ORG_ROLE_RANK } from "./types";
 
 async function provisionFromWhitelist(
   email: string,
-  authUserId: string | null,
   fullName: string,
 ): Promise<CoreUser | null> {
   const legacy = await prepare<{ email: string; role: string; name: string }>(
@@ -38,7 +40,6 @@ async function provisionFromWhitelist(
   const user = await createUser({
     email,
     name: legacy.name || fullName,
-    authUserId,
   });
   const org = await getFirstOrganization();
   if (org) {
@@ -56,33 +57,26 @@ export async function getCoreUser(): Promise<CoreUser | null> {
   if (process.env.NODE_ENV !== "production" && devEmail) {
     const existing = await getUserByEmail(devEmail);
     if (existing) return existing;
-    const provisioned = await provisionFromWhitelist(devEmail, null, "Dev User");
+    const provisioned = await provisionFromWhitelist(devEmail, "Dev User");
     if (provisioned) return provisioned;
     return createUser({ email: devEmail, name: "Dev User" });
   }
 
-  const supabase = await createSupabaseServerClient();
-  const user = await getSessionUser(supabase);
+  const user = await getSessionUser();
   if (!user?.email) return null;
 
   const email = user.email.toLowerCase().trim();
 
-  const byAuthId = await getUserByAuthId(user.id);
-  if (byAuthId) return byAuthId;
-
   const byEmail = await getUserByEmail(email);
-  if (byEmail) {
-    await linkAuthUser(byEmail.id, user.id);
-    return { ...byEmail, auth_user_id: user.id };
-  }
+  if (byEmail) return byEmail;
 
-  const provisioned = await provisionFromWhitelist(email, user.id, user.fullName);
+  const provisioned = await provisionFromWhitelist(email, user.fullName);
   if (provisioned) return provisioned;
 
   // Первый вход человека, которого нет ни в v1-whitelist, ни в core.users:
   // заводим запись identity. Доступ она НЕ даёт — его даёт только членство
   // в организации (org_members), которое появляется при принятии приглашения.
-  return createUser({ email, name: user.fullName, authUserId: user.id });
+  return createUser({ email, name: user.fullName });
 }
 
 async function loadProjectRoles(orgId: string, userId: string): Promise<Map<string, ProjectRole>> {

@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+
+/** Сообщения по коду ошибки из ?error= (его ставит /auth/callback). */
+const ERRORS: Record<string, string> = {
+  denied: "Вход отменён.",
+  state: "Сессия входа устарела. Попробуйте ещё раз.",
+  oauth: "Не удалось войти через Google. Попробуйте ещё раз.",
+};
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
@@ -11,26 +17,16 @@ export default function LoginPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setNextPath(params.get("next") ?? "/");
+    const code = params.get("error");
+    if (code) setError(ERRORS[code] ?? ERRORS.oauth);
   }, []);
 
-  async function signInWithGoogle() {
+  // Полноценная навигация, а не fetch: дальше идёт редирект на accounts.google.com,
+  // а cookie с state и PKCE-верификатором ставит наш роут по пути.
+  function signInWithGoogle() {
     setLoading(true);
     setError(null);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`;
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo },
-      });
-      if (error) {
-        setError(error.message);
-        setLoading(false);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Sign-in failed");
-      setLoading(false);
-    }
+    window.location.href = `/api/auth/google?next=${encodeURIComponent(nextPath)}`;
   }
 
   return (

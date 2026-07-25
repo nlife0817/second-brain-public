@@ -1,6 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-import { getSessionUser } from "@/lib/supabase/claims";
+import {
+  SESSION_COOKIE,
+  sessionCookieOptions,
+  shouldRenew,
+  signSession,
+  toSessionUser,
+  verifySessionPayload,
+} from "@/lib/auth/session";
 
 function isMobileUserAgent(ua: string): boolean {
   return /Mobile|Android|iPhone|iPad|iPod/i.test(ua);
@@ -55,12 +61,13 @@ function applyDesktopModeCookie(request: NextRequest, response: NextResponse): v
 }
 
 // /invite/* открыт до входа: страница сама показывает кнопку «Войти» с возвратом.
-const PUBLIC_PATHS = ["/login", "/auth/callback", "/mockup", "/invite"];
+// /api/auth/* — сам вход: редирект на Google и возврат от него идут без сессии.
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/api/auth", "/mockup", "/invite"];
 
 // Local-only dev bypass. Active iff both conditions hold:
-//   1) NODE_ENV !== "production"  (Vercel builds always set this to "production")
+//   1) NODE_ENV !== "production"  (production builds always set this to "production")
 //   2) DEV_USER_EMAIL env var is set
-// When active, proxy skips the Supabase session check and treats every request as
+// When active, proxy skips the session check and treats every request as
 // authenticated. getAuthUser() also honors this env var to return a real DB user row.
 const DEV_BYPASS_ACTIVE =
   process.env.NODE_ENV !== "production" && !!process.env.DEV_USER_EMAIL;
@@ -68,7 +75,7 @@ const DEV_BYPASS_ACTIVE =
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  let response = NextResponse.next({ request });
+  const response = NextResponse.next({ request });
 
   if (DEV_BYPASS_ACTIVE) {
     const redirected = mobileRedirect(request);
@@ -77,34 +84,12 @@ export async function proxy(request: NextRequest) {
     return response;
   }
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-    ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-  const supabase = createServerClient(url, key, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet) {
-        for (const { name, value } of cookiesToSet) {
-          request.cookies.set(name, value);
-        }
-        response = NextResponse.next({ request });
-        for (const { name, value, options } of cookiesToSet) {
-          response.cookies.set(name, value, options);
-        }
-      },
-    },
-  });
-
-  // Обновление cookie сессии + проверка подписи (локально, без сетевого вызова
-  // к /auth/v1/user на каждый запрос — см. lib/supabase/claims.ts).
-  const user = await getSessionUser(supabase);
+  // Проверка подписи cookie — локальная, без сетевых вызовов (см. lib/auth/session.ts).
+  const session = await verifySessionPayload(request.cookies.get(SESSION_COOKIE)?.value);
 
   const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
-  if (!user && !isPublic) {
+  if (!session && !isPublic) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("next", pathname);
@@ -113,9 +98,17 @@ export async function proxy(request: NextRequest) {
 
   // Мобильные UA: корень v1 → /m/tasks, десктопные экраны v2 → /v2/m/*
   // (только для авторизованных; обход — ?desktop, возврат — ?mobile).
-  if (user) {
+  if (session) {
     const redirect = mobileRedirect(request);
     if (redirect) return redirect;
+
+    // Продление на подходе к концу срока: иначе активный пользователь ровно
+    // через 30 дней оказался бы на экране входа посреди работы. Ставим cookie
+    // только на «остающемся» ответе — на редиректе выше она бы потерялась.
+    if (shouldRenew(session)) {
+      const renewed = await signSession(toSessionUser(session));
+      response.cookies.set(SESSION_COOKIE, renewed, sessionCookieOptions());
+    }
   }
 
   applyDesktopModeCookie(request, response);
