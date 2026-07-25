@@ -35,11 +35,26 @@ function convertPlaceholders(query: string): string {
   return query.replace(/\?/g, () => `$${++i}`);
 }
 
-function flattenParams(params: unknown[]): unknown[] {
+/** Однострочный фрагмент запроса для текста ошибки. */
+function briefly(query: string): string {
+  const flat = query.replace(/\s+/g, " ").trim();
+  return flat.length > 160 ? `${flat.slice(0, 160)}…` : flat;
+}
+
+function flattenParams(query: string, params: unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const p of params) {
     if (Array.isArray(p)) out.push(...p);
     else out.push(p);
+  }
+  // На undefined postgres.js бросает голый UNDEFINED_VALUE: ни запроса, ни номера
+  // параметра — по такому логу причину не найти (см. 500-е на приёме приглашения).
+  // Отвечаем раньше драйвера и говорим, какой параметр какого запроса не заполнен.
+  const i = out.indexOf(undefined);
+  if (i !== -1) {
+    throw new Error(
+      `SQL: параметр $${i + 1} равен undefined (нужен явный null): ${briefly(query)}`,
+    );
   }
   return out;
 }
@@ -59,14 +74,14 @@ function makePrepared<Row = SqlRow>(runner: Runner, query: string): PreparedStat
   const pgQuery = convertPlaceholders(query);
   return {
     get: async (...params) => {
-      const rows = await runner<Row>(pgQuery, flattenParams(params));
+      const rows = await runner<Row>(pgQuery, flattenParams(pgQuery, params));
       return rows[0];
     },
     all: async (...params) => {
-      return await runner<Row>(pgQuery, flattenParams(params));
+      return await runner<Row>(pgQuery, flattenParams(pgQuery, params));
     },
     run: async (...params) => {
-      const rows = (await runner(pgQuery, flattenParams(params))) as unknown as
+      const rows = (await runner(pgQuery, flattenParams(pgQuery, params))) as unknown as
         (unknown[] & { count?: number });
       // postgres.js returns an array-like result with a `.count` property
       // for INSERT/UPDATE/DELETE without RETURNING (rows.length is 0 in that case).
