@@ -3,10 +3,11 @@
 # Стек и команды
 
 - Next.js 16 (App Router, `proxy.ts` вместо `middleware.ts`), React 19, TypeScript
-- Supabase (Postgres + Auth + Storage + Realtime), `@supabase/ssr` для сессий
+- Postgres напрямую через `postgres.js` ([src/lib/sql.ts](src/lib/sql.ts)), без ORM
+- Вход через Google OAuth своими силами ([src/lib/auth/](src/lib/auth/)), сессия — подписанная cookie
 - UI: Base UI (`@base-ui/react`), Tailwind v4, shadcn, Tiptap, dnd-kit, Zustand
 - Push: `web-push` + Service Worker (`/sw.js`)
-- Деплой: Vercel (auto-deploy с `master` → production)
+- Деплой: собственный VPS, Docker Compose ([deploy/](deploy/)) — см. [docs/VPS-MIGRATION.md](docs/VPS-MIGRATION.md)
 
 Команды: `npm run dev` · `npm run build` · `npm run lint`
 
@@ -23,8 +24,13 @@
 
 - [src/app/](src/app/) — App Router. Корень `/` — десктоп; `/m/*` (tasks/notes/inbox/settings) — мобильный UI; `/planning/` — недельное планирование; `/login/`, `/auth/callback/` — auth
 - [src/app/api/](src/app/api/) — REST endpoints. Крупные подсистемы: `kaiten/*` (двусторонняя синхронизация с Kaiten + cron), `weekly-plans/*` (план + entries + отчёты), `staging/*` (inbox), `push/*` + `notifications/dispatch` (web-push), `clients`, `items`, `relations`, `comments`
-- [src/lib/](src/lib/) — `sql.ts` (доступ к БД), `db.ts` (домен-запросы), `auth.ts`/`api-auth.ts` (`withAuth`/`withAdminOnly` обёртки), `store.ts` (Zustand), `realtime.ts` (Supabase Realtime), `storage.ts`
-- [supabase/migrations/](supabase/migrations/) — SQL миграции (см. правило ниже)
+- [src/lib/](src/lib/) — `sql.ts` (доступ к БД), `db.ts` (домен-запросы), `auth/` (вход через Google + сессия), `auth.ts`/`api-auth.ts` (`withAuth`/`withAdminOnly` обёртки), `store.ts` (Zustand)
+- [supabase/migrations/](supabase/migrations/) — SQL миграции (см. правило ниже). Каталог сохранил историческое имя, хотя Supabase больше не используется
+- [deploy/](deploy/) — docker-compose, Caddyfile, контейнер расписаний, шаблон `.env`
+
+## Наследие Supabase
+
+Проект переехал с Vercel + Supabase Cloud на собственный VPS. Не используются, но оставлены в репозитории: `src/lib/supabase/*`, `src/lib/realtime.ts`, `src/components/RealtimeProvider.tsx`. Загрузка вложений v1 (`src/lib/storage.ts`) отвечает ошибкой — Storage не переносился. Новый код не должен импортировать эти модули.
 
 # Правило: уточняющие вопросы перед кодом
 
@@ -73,14 +79,14 @@
 
 **ЗАПРЕЩЕНО** удалять, переименовывать или перемещать существующие файлы компонентов, роутов, утилит — если пользователь явно не попросил. Если файл кажется ненужным — спроси пользователя, но не удаляй самостоятельно. Удаление файла, от которого зависят импорты, ломает билд и все API.
 
-# Правило: миграции БД (Supabase Postgres)
+# Правило: миграции БД (Postgres)
 
-БД — Supabase Postgres (не SQLite). Доступ через `prepare()` из [src/lib/sql.ts](src/lib/sql.ts), который конвертит `?` → `$N` плейсхолдеры.
+БД — Postgres в контейнере `db` на VPS (не SQLite). Доступ через `prepare()` из [src/lib/sql.ts](src/lib/sql.ts), который конвертит `?` → `$N` плейсхолдеры.
 
 Новая миграция:
 1. Создай `supabase/migrations/NNNN_<name>.sql` (порядковый номер)
-2. Применить на удалённый: `npx supabase db push` ИЛИ скопировать SQL в Dashboard → SQL Editor → Run
-3. Миграции **не катятся автоматически** при деплое Vercel — это отдельный шаг
+2. Применить на сервере: `docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < supabase/migrations/NNNN_<name>.sql`
+3. Миграции **не катятся автоматически** при деплое — это отдельный шаг
 
 ## Атомарность изменений схемы
 
@@ -88,7 +94,7 @@
 
 # Правило: публичные API endpoints в Next.js 16
 
-`src/proxy.ts` (бывший middleware.ts) перехватывает **все** роуты и редиректит неавторизованных на `/login`. Для endpoint'ов, которые дёргаются извне без сессии (cron от Supabase pg_net, webhooks, health-checks):
+`src/proxy.ts` (бывший middleware.ts) перехватывает **все** роуты и редиректит неавторизованных на `/login`. Для endpoint'ов, которые дёргаются извне без сессии (контейнер `cron`, webhooks, health-checks):
 
 1. Добавь свою auth (например, проверка `Bearer <SECRET>` из env)
 2. Добавь путь в `config.matcher` exclusion list в [src/proxy.ts](src/proxy.ts)
@@ -100,6 +106,9 @@
 
 # Хостинг
 
-- **Vercel Hobby plan** — cron максимум 1 раз/сутки, не подходит для частых задач
-- **Supabase Postgres + Vault** — для cron используем pg_cron + pg_net, секреты в Vault (`app_url`, `cron_secret`)
-- Пример расписаний: [supabase/migrations/0005_notifications_cron.sql](supabase/migrations/0005_notifications_cron.sql)
+Собственный VPS, всё в Docker Compose ([deploy/docker-compose.yml](deploy/docker-compose.yml)): `app` (Next.js standalone), `db` (Postgres), `caddy` (TLS + reverse proxy), `cron` (расписания).
+
+- **Расписания** — контейнер `cron` (busybox crond + curl), задания в [deploy/cron/crontab](deploy/cron/crontab), время в UTC. Секрет `CRON_SECRET` из `.env`, а не из Vault
+- **Секреты** — `deploy/.env` на сервере (шаблон: [deploy/env.example](deploy/env.example)). `NEXT_PUBLIC_*` вшиваются при сборке образа, менять их можно только пересборкой
+- **Бэкапы** — [deploy/backup.sh](deploy/backup.sh) в системном cron хоста
+- Полный порядок переезда и эксплуатации: [docs/VPS-MIGRATION.md](docs/VPS-MIGRATION.md)
