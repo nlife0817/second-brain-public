@@ -1,13 +1,17 @@
 "use client";
 
 // «Мои задачи», мобильный экран: те же данные и группировка, что на десктопе
-// (/v2/my), но раскладка под палец. Push-диплинк ?task= открывает карточку.
+// (/v2/my), но раскладка под палец. Карточку открывает и push-диплинк ?task=
+// (холодный старт), и сообщение service worker (приложение уже открыто).
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Eye, EyeOff, Plus } from "lucide-react";
+import { ArrowUp, Eye, EyeOff, Plus, Search } from "lucide-react";
+import { GlobalSearch } from "@/components/v2/GlobalSearch";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { TaskSheet } from "@/components/v2/TaskSheet";
+import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
+import { useAppResume, useBackDismiss, useTaskDeepLink } from "@/components/v2/mobile/hooks";
 import { api } from "@/lib/core/client";
 import type { TaskListItem } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -19,12 +23,14 @@ function todayIso(): string {
 }
 
 export default function MobileMyTasksPage() {
-  const { orgId, refreshProjects } = useV2Store();
+  const { orgId, refreshProjects, refreshUnread } = useV2Store();
   const deepLinkTaskId = useSearchParams().get("task");
   const [tasks, setTasks] = useState<TaskListItem[]>([]);
   const [showDone, setShowDone] = useState(false);
   const [quickTitle, setQuickTitle] = useState("");
+  const [adding, setAdding] = useState(false);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,18 +50,31 @@ export default function MobileMyTasksPage() {
     void load();
   }, [load]);
 
+  // Возврат в приложение через день: список не должен показывать вчерашнее.
+  useAppResume(load);
+
   useEffect(() => {
     if (deepLinkTaskId) setOpenTaskId(deepLinkTaskId);
   }, [deepLinkTaskId]);
+  useTaskDeepLink(setOpenTaskId);
+
+  const closeTask = useCallback(() => setOpenTaskId(null), []);
+  const closeSearch = useCallback(() => setSearchOpen(false), []);
+  // «Назад» на Android закрывает верхний слой, а не уводит с экрана.
+  useBackDismiss(!!openTaskId, closeTask);
+  useBackDismiss(searchOpen, closeSearch);
 
   async function quickAdd() {
-    if (!orgId || !quickTitle.trim()) return;
+    if (!orgId || !quickTitle.trim() || adding) return;
+    setAdding(true);
     try {
       await api.post(`/orgs/${orgId}/tasks`, { title: quickTitle.trim() });
       setQuickTitle("");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось создать задачу");
+    } finally {
+      setAdding(false);
     }
   }
 
@@ -86,12 +105,19 @@ export default function MobileMyTasksPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
+      <header className="flex shrink-0 items-center gap-1 border-b border-border px-4 py-3">
         <h1 className="flex-1 text-base font-semibold">Мои задачи</h1>
+        <button
+          onClick={() => setSearchOpen(true)}
+          className="rounded-lg p-2 text-muted-foreground active:bg-muted"
+          aria-label="Поиск"
+        >
+          <Search className="size-4" />
+        </button>
         <button
           onClick={() => setShowDone((v) => !v)}
           className={cn(
-            "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs",
+            "flex items-center gap-1.5 rounded-lg px-2 py-2 text-xs",
             showDone ? "bg-muted text-foreground" : "text-muted-foreground",
           )}
         >
@@ -100,7 +126,12 @@ export default function MobileMyTasksPage() {
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3">
+      <PullToRefresh
+        onRefresh={async () => {
+          await Promise.all([load(), refreshUnread()]);
+        }}
+        className="px-4 py-3"
+      >
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2 rounded-xl border border-dashed border-border px-3 py-2.5">
             <Plus className="size-4 shrink-0 text-muted-foreground" />
@@ -112,11 +143,37 @@ export default function MobileMyTasksPage() {
               placeholder="Быстро добавить задачу…"
               className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
             />
+            {/* Экранная клавиатура не всегда показывает Enter — нужна кнопка. */}
+            {quickTitle.trim() && (
+              <button
+                onClick={() => void quickAdd()}
+                disabled={adding}
+                aria-label="Добавить задачу"
+                className="-my-1 rounded-lg bg-primary p-1.5 text-primary-foreground disabled:opacity-50"
+              >
+                <ArrowUp className="size-4" />
+              </button>
+            )}
           </div>
 
-          {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
-          {loading && <p className="text-sm text-muted-foreground">Загрузка…</p>}
-          {!loading && groups.length === 0 && (
+          {error && (
+            <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <span className="min-w-0 flex-1">{error}</span>
+              <button onClick={() => void load()} className="shrink-0 font-medium underline">
+                Повторить
+              </button>
+            </div>
+          )}
+
+          {loading && (
+            <div className="flex flex-col gap-1.5" aria-hidden>
+              {[0, 1, 2, 3, 4].map((i) => (
+                <span key={i} className="h-14 animate-pulse rounded-lg bg-muted" />
+              ))}
+            </div>
+          )}
+
+          {!loading && groups.length === 0 && !error && (
             <p className="py-10 text-center text-sm text-muted-foreground">
               Пусто. Добавьте задачу или дождитесь назначения.
             </p>
@@ -135,16 +192,17 @@ export default function MobileMyTasksPage() {
             </section>
           ))}
         </div>
-      </div>
+      </PullToRefresh>
 
       <TaskSheet
         taskId={openTaskId}
-        onClose={() => setOpenTaskId(null)}
+        onClose={closeTask}
         onChanged={() => {
           void load();
           void refreshProjects();
         }}
       />
+      <GlobalSearch mobile open={searchOpen} onOpenChange={setSearchOpen} onPickTask={setOpenTaskId} />
     </div>
   );
 }

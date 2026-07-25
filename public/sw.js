@@ -1,5 +1,6 @@
-const CACHE_NAME = "second-brain-v3";
-const STATIC_ASSETS = ["/icons/icon-192.png", "/icons/icon-512.png"];
+const CACHE_NAME = "second-brain-v4";
+const OFFLINE_URL = "/offline.html";
+const STATIC_ASSETS = [OFFLINE_URL, "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -30,9 +31,17 @@ self.addEventListener("fetch", (event) => {
 
   // Navigation requests (HTML documents) — always network-first.
   // Cached HTML после деплоя приводит к рассинхрону bundle и UI; в кеш кладём
-  // только статические ассеты. При offline отдаём fallback из кеша если есть.
+  // только статические ассеты. Без сети — своя страница вместо «динозавра»:
+  // в установленном приложении браузерная ошибка выглядит как поломка.
   if (request.mode === "navigate") {
-    event.respondWith(fetch(request).catch(() => caches.match(request)));
+    event.respondWith(
+      fetch(request).catch(async () => {
+        const cached = await caches.match(request);
+        if (cached) return cached;
+        const offline = await caches.match(OFFLINE_URL);
+        return offline || Response.error();
+      })
+    );
     return;
   }
 
@@ -64,6 +73,9 @@ self.addEventListener("push", (event) => {
     icon: "/icons/icon-192.png",
     badge: "/icons/icon-192.png",
     tag: data.tag,
+    // Тег схлопывает уведомления по одной сущности; renotify возвращает звук и
+    // вибрацию, иначе замена происходила бы молча и её легко пропустить.
+    renotify: !!data.tag,
     data: { url: data.url || "/", itemId: data.itemId, action: data.action },
     requireInteraction: !!data.requireInteraction,
     actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : undefined,
@@ -96,23 +108,46 @@ self.addEventListener("notificationclick", (event) => {
     return;
   }
 
-  const targetUrl = event.notification.data?.url || "/";
-  event.waitUntil(
-    self.clients
-      .matchAll({ type: "window", includeUncontrolled: true })
-      .then((clientList) => {
-        // If app is already open in a tab — focus it and navigate.
-        for (const client of clientList) {
-          if ("focus" in client) {
-            client.focus();
-            if ("navigate" in client) client.navigate(targetUrl).catch(() => {});
-            return;
-          }
-        }
-        // Otherwise open a new tab.
-        if (self.clients.openWindow) {
-          return self.clients.openWindow(targetUrl);
-        }
-      })
-  );
+  event.waitUntil(openTarget(event.notification.data?.url || "/"));
 });
+
+function isMobileShellPath(pathname) {
+  return pathname === "/v2/m" || pathname.startsWith("/v2/m/");
+}
+
+/**
+ * Открывает адрес уведомления. Если приложение уже запущено — фокусируем его
+ * окно и передаём адрес сообщением: client.navigate() перезагружает страницу
+ * целиком (потерянный ввод, секунда белого экрана), а мобильная оболочка умеет
+ * перейти сама. Промис возвращается наружу — иначе браузер вправе усыпить
+ * service worker до того, как окно откроется.
+ */
+async function openTarget(targetUrl) {
+  const url = new URL(targetUrl, self.location.origin);
+  const clientList = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  const sameOrigin = clientList.filter((c) => {
+    try {
+      return new URL(c.url).origin === self.location.origin;
+    } catch {
+      return false;
+    }
+  });
+  // Предпочитаем окно, уже открытое на v2: там живёт обработчик сообщения.
+  const target =
+    sameOrigin.find((c) => isMobileShellPath(new URL(c.url).pathname)) ??
+    sameOrigin.find((c) => new URL(c.url).pathname.startsWith("/v2")) ??
+    sameOrigin[0];
+
+  if (target) {
+    await target.focus().catch(() => {});
+    if (isMobileShellPath(new URL(target.url).pathname)) {
+      target.postMessage({ type: "sb:navigate", url: url.href });
+      return;
+    }
+    if ("navigate" in target) {
+      await target.navigate(url.href).catch(() => {});
+      return;
+    }
+  }
+  if (self.clients.openWindow) await self.clients.openWindow(url.href);
+}

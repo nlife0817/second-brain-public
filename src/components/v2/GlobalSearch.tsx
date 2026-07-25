@@ -22,16 +22,21 @@ export function GlobalSearch({
   open,
   onOpenChange,
   onPickTask,
+  mobile = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onPickTask: (taskId: string) => void;
+  /** Переходы ведут на мобильные экраны: у /v2/m своя маршрутизация. */
+  mobile?: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* key сбрасывает состояние палитры при каждом открытии — без ручной
           очистки в эффекте и без риска показать результаты прошлого запроса. */}
-      {open && <SearchPalette key="palette" onOpenChange={onOpenChange} onPickTask={onPickTask} />}
+      {open && (
+        <SearchPalette key="palette" onOpenChange={onOpenChange} onPickTask={onPickTask} mobile={mobile} />
+      )}
     </Dialog>
   );
 }
@@ -39,9 +44,11 @@ export function GlobalSearch({
 function SearchPalette({
   onOpenChange,
   onPickTask,
+  mobile,
 }: {
   onOpenChange: (open: boolean) => void;
   onPickTask: (taskId: string) => void;
+  mobile: boolean;
 }) {
   const router = useRouter();
   const { orgId } = useV2Store();
@@ -78,8 +85,9 @@ function SearchPalette({
   function pick(hit: SearchHit) {
     onOpenChange(false);
     if (hit.type === "task") onPickTask(hit.id);
+    // Экрана клиентов на мобильном нет — ведём в полную версию.
     else if (hit.type === "client") router.push(`/v2/clients?client=${hit.id}`);
-    else router.push(`/v2/projects/${hit.id}`);
+    else router.push(mobile ? `/v2/m/projects/${hit.id}` : `/v2/projects/${hit.id}`);
   }
 
   return (

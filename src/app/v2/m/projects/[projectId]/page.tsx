@@ -9,6 +9,8 @@ import { ChevronLeft, Plus } from "lucide-react";
 import { CreateTaskDialog } from "@/components/v2/CreateTaskDialog";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { TaskSheet } from "@/components/v2/TaskSheet";
+import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
+import { useAppResume, useBackDismiss, useTaskDeepLink } from "@/components/v2/mobile/hooks";
 import { api } from "@/lib/core/client";
 import type {
   Project,
@@ -94,9 +96,15 @@ export default function MobileProjectPage({ params }: { params: Promise<{ projec
   useEffect(() => {
     void load();
   }, [load]);
+  useAppResume(load);
 
   const canEdit = project?.my_role === "admin" || project?.my_role === "editor";
   const openTask = useCallback((id: string) => setOpenTaskId(id), []);
+  const closeTask = useCallback(() => setOpenTaskId(null), []);
+  const closeCreate = useCallback(() => setCreateOpen(false), []);
+  useTaskDeepLink(setOpenTaskId);
+  useBackDismiss(!!openTaskId, closeTask);
+  useBackDismiss(createOpen, closeCreate);
 
   // Один проход по задачам, как на десктопной доске.
   const byStatus = useMemo(() => {
@@ -130,16 +138,23 @@ export default function MobileProjectPage({ params }: { params: Promise<{ projec
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
         <p className="text-sm text-destructive">{error}</p>
-        <Link href="/v2/m/projects" className="text-sm text-primary underline">
-          К списку проектов
-        </Link>
+        <div className="flex items-center gap-3">
+          <button onClick={() => void load()} className="text-sm font-medium text-primary underline">
+            Повторить
+          </button>
+          <Link href="/v2/m/projects" className="text-sm text-muted-foreground underline">
+            К списку проектов
+          </Link>
+        </div>
       </div>
     );
   }
   if (!project || (statuses.length === 0 && metaLoading)) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        Загрузка…
+      <div className="flex h-full flex-col gap-2 px-4 py-3" aria-hidden>
+        {[0, 1, 2, 3, 4].map((i) => (
+          <span key={i} className="h-14 animate-pulse rounded-lg bg-muted" />
+        ))}
       </div>
     );
   }
@@ -147,7 +162,7 @@ export default function MobileProjectPage({ params }: { params: Promise<{ projec
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 items-center gap-1.5 border-b border-border py-2 pl-1 pr-3">
-        <Link href="/v2/m/projects" className="p-2 text-muted-foreground" aria-label="Назад">
+        <Link href="/v2/m/projects" className="rounded-lg p-2 text-muted-foreground active:bg-muted" aria-label="Назад">
           <ChevronLeft className="size-5" />
         </Link>
         <span className="size-3 shrink-0 rounded" style={{ backgroundColor: project.color }} />
@@ -155,7 +170,7 @@ export default function MobileProjectPage({ params }: { params: Promise<{ projec
         {canEdit && (
           <button
             onClick={() => setCreateOpen(true)}
-            className="rounded-lg p-1.5 text-muted-foreground"
+            className="rounded-lg p-2 text-muted-foreground active:bg-muted"
             aria-label="Новая задача"
           >
             <Plus className="size-5" />
@@ -190,7 +205,7 @@ export default function MobileProjectPage({ params }: { params: Promise<{ projec
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3">
+      <PullToRefresh onRefresh={load} className="px-4 py-3">
         <div className="flex flex-col gap-4">
           {sections.map(({ status, tasks: sectionTasks }) => (
             <section key={status.id}>
@@ -215,11 +230,11 @@ export default function MobileProjectPage({ params }: { params: Promise<{ projec
             </p>
           )}
         </div>
-      </div>
+      </PullToRefresh>
 
       <TaskSheet
         taskId={openTaskId}
-        onClose={() => setOpenTaskId(null)}
+        onClose={closeTask}
         onChanged={() => {
           void load();
           void refreshProjects();
