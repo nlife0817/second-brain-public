@@ -1,9 +1,15 @@
 "use client";
 
 // Zustand-стор интерфейса v2: контекст организации + кэши справочников.
+//
+// Первичное наполнение приходит из серверного рендера (`hydrate`) — оболочка
+// больше не начинает жизнь с семи запросов. Клиентские методы остались для
+// обновления после мутаций и для смены организации.
 
 import { create } from "zustand";
 import { api } from "./client";
+import { invalidate } from "./query";
+import { ACTIVE_ORG_COOKIE, ACTIVE_ORG_COOKIE_MAX_AGE, ACTIVE_ORG_LEGACY_KEY } from "./keys";
 import type {
   CoreTag,
   CustomField,
@@ -20,7 +26,51 @@ interface MeResponse {
   orgs: OrgSummary[];
 }
 
-const ACTIVE_ORG_KEY = "sb.v2.orgId";
+/** Справочники организации одним ответом — зеркало `OrgMeta` из bootstrap.ts. */
+interface OrgMetaResponse {
+  projects: ProjectWithMeta[];
+  statuses: TaskStatus[];
+  tags: CoreTag[];
+  members: OrgMemberWithUser[];
+  fields: CustomField[];
+  unreadCount: number;
+}
+
+/** Состояние оболочки, посчитанное на сервере. */
+export interface V2InitialState extends OrgMetaResponse {
+  me: UserBrief;
+  orgs: OrgSummary[];
+  orgId: string;
+  orgName: string;
+  orgRole: OrgRole;
+}
+
+/** Сервер выбрал организацию — закрепляем выбор для следующих запросов. */
+export function writeActiveOrgCookie(orgId: string): void {
+  if (typeof document === "undefined") return;
+  document.cookie = `${ACTIVE_ORG_COOKIE}=${orgId}; path=/; max-age=${ACTIVE_ORG_COOKIE_MAX_AGE}; samesite=lax`;
+}
+
+export function readActiveOrgCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(?:^|; )${ACTIVE_ORG_COOKIE}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * Организация, выбранная до переезда на cookie. Читается ровно один раз —
+ * оболочка переносит значение и стирает ключ.
+ */
+export function takeLegacyActiveOrg(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const saved = window.localStorage.getItem(ACTIVE_ORG_LEGACY_KEY);
+    if (saved) window.localStorage.removeItem(ACTIVE_ORG_LEGACY_KEY);
+    return saved;
+  } catch {
+    return null;
+  }
+}
 
 interface V2State {
   ready: boolean;
@@ -41,6 +91,8 @@ interface V2State {
   fields: CustomField[];
   unreadCount: number;
 
+  /** Наполнение из серверного рендера — синхронно, без единого запроса. */
+  hydrate: (initial: V2InitialState) => void;
   bootstrap: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
   /** Справочники активной организации; вызывается из bootstrap и switchOrg. */
@@ -69,19 +121,24 @@ export const useV2Store = create<V2State>((set, get) => ({
   fields: [],
   unreadCount: 0,
 
+  hydrate: (initial) => {
+    // Повторная гидрация приходит при клиентской навигации: серверный рендер
+    // следующего экрана приносит свежие справочники, и перетирать ими стор —
+    // ровно то, что нужно. Сравнение по ссылке отсекло бы обновление счётчиков.
+    set({ ...initial, ready: true, metaLoading: false, needsOnboarding: false, error: null });
+  },
+
   bootstrap: async () => {
+    // Фолбэк: серверный рендер уже наполнил стор, сюда попадаем только если
+    // оболочка смонтировалась без начальных данных.
     try {
       const me = await api.get<MeResponse>("/me");
-      // Активная организация запоминается между визитами.
-      const savedId = typeof window !== "undefined" ? window.localStorage.getItem(ACTIVE_ORG_KEY) : null;
+      const savedId = readActiveOrgCookie() ?? takeLegacyActiveOrg();
       const org = me.orgs.find((o) => o.id === savedId) ?? me.orgs[0];
       if (!org) {
         set({ me: me.user, orgs: [], needsOnboarding: true, ready: true, error: null });
         return;
       }
-      // ready сразу после /me: оболочка и страница монтируются и грузят своё
-      // параллельно со справочниками. Раньше экран висел на «Загрузка…», пока
-      // не ответят все шесть запросов, и только потом страница начинала свой.
       set({
         me: me.user,
         orgs: me.orgs,
@@ -93,7 +150,7 @@ export const useV2Store = create<V2State>((set, get) => ({
         metaLoading: true,
         error: null,
       });
-      if (typeof window !== "undefined") window.localStorage.setItem(ACTIVE_ORG_KEY, org.id);
+      writeActiveOrgCookie(org.id);
       await get().loadOrgData();
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "Не удалось загрузить", ready: true });
@@ -103,7 +160,11 @@ export const useV2Store = create<V2State>((set, get) => ({
   switchOrg: async (orgId: string) => {
     const org = get().orgs.find((o) => o.id === orgId);
     if (!org) return;
-    if (typeof window !== "undefined") window.localStorage.setItem(ACTIVE_ORG_KEY, orgId);
+    writeActiveOrgCookie(orgId);
+    // Кэш запросов ключуется по пути с orgId, но данные страниц соседней
+    // организации всё равно чужие — чистим целиком, чтобы старые списки не
+    // мелькнули на новом контексте.
+    invalidate();
     set({
       orgId: org.id,
       orgName: org.name,
@@ -121,21 +182,19 @@ export const useV2Store = create<V2State>((set, get) => ({
   },
 
   loadOrgData: async () => {
-    // Проекты и справочники статусов критичны — без них нечего показывать;
-    // участники, поля и счётчик уведомлений могут не доехать без последствий,
-    // и ронять из-за них весь экран не нужно.
-    const [projects, meta] = await Promise.all([
-      get().refreshProjects().then(() => null).catch((e: unknown) => e),
-      get().refreshMeta().then(() => null).catch((e: unknown) => e),
-      get().refreshMembers().catch(() => {}),
-      get().refreshFields().catch(() => {}),
-      get().refreshUnread().catch(() => {}),
-    ]);
-    const failure = projects ?? meta;
-    set({
-      metaLoading: false,
-      error: failure instanceof Error ? failure.message : failure ? "Не удалось загрузить" : null,
-    });
+    const { orgId } = get();
+    if (!orgId) return;
+    try {
+      // Один запрос вместо шести: справочники собираются на сервере за один
+      // резолв авторизации (см. `loadOrgMeta` в bootstrap.ts).
+      const meta = await api.get<OrgMetaResponse>(`/orgs/${orgId}/meta`);
+      set({ ...meta, metaLoading: false, error: null });
+    } catch (e) {
+      set({
+        metaLoading: false,
+        error: e instanceof Error ? e.message : "Не удалось загрузить",
+      });
+    }
   },
 
   refreshProjects: async () => {
