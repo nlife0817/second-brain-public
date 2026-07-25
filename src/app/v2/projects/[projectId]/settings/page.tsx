@@ -1,18 +1,42 @@
-"use client";
-
-// Настройки проекта на десктопе: доступ сотрудников, параметры, секции, архив.
+// Настройки проекта: доступ сотрудников, параметры, секции, архив и удаление.
+// Данные считаются на сервере — как и на доске, экран открывается без единого
+// запроса из браузера.
 
 import Link from "next/link";
-import { use } from "react";
+import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
-import { ProjectSettings } from "@/components/v2/ProjectSettings";
 import { ProjectIcon } from "@/components/v2/project-icons";
-import { useV2Store } from "@/lib/core/ui-store";
+import { ProjectSettings } from "@/components/v2/ProjectSettings";
+import { getActiveOrgAuth } from "@/lib/core/bootstrap";
+import { isUuid } from "@/lib/core/http";
+import { canOrg, effectiveProjectRole } from "@/lib/core/policy";
+import { listProjectMembers, listSections, requireProject } from "@/lib/core/projects";
+import { listTeams } from "@/lib/core/teams";
 
-export default function ProjectSettingsPage({ params }: { params: Promise<{ projectId: string }> }) {
-  const { projectId } = use(params);
-  const { projects } = useV2Store();
-  const project = projects.find((p) => p.id === projectId);
+export default async function ProjectSettingsPage({
+  params,
+}: {
+  params: Promise<{ projectId: string }>;
+}) {
+  const { projectId } = await params;
+  const auth = await getActiveOrgAuth();
+  if (!auth) return null;
+  if (!isUuid(projectId)) notFound();
+
+  // Чужой или невидимый проект — 404: подтверждать существование закрытого нельзя.
+  let project;
+  try {
+    project = await requireProject(auth, projectId, "project.view");
+  } catch {
+    notFound();
+  }
+
+  const [sections, members, teams] = await Promise.all([
+    listSections(projectId),
+    listProjectMembers(projectId),
+    // Структура организации не для гостей — listTeams бросил бы PolicyError.
+    canOrg(auth, "clients.view") ? listTeams(auth) : Promise.resolve([]),
+  ]);
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -24,12 +48,20 @@ export default function ProjectSettingsPage({ params }: { params: Promise<{ proj
         >
           <ChevronLeft className="size-4" />
         </Link>
-        {project && <ProjectIcon name={project.icon} color={project.color} className="size-4" />}
-        <h1 className="text-base font-semibold">
-          {project ? `${project.name} · настройки` : "Настройки проекта"}
-        </h1>
+        <ProjectIcon name={project.icon} color={project.color} className="size-4" />
+        <h1 className="text-base font-semibold">{project.name} · настройки</h1>
       </header>
-      <ProjectSettings projectId={projectId} exitHref="/v2" />
+      <ProjectSettings
+        projectId={projectId}
+        initialProject={{
+          ...project,
+          my_role: effectiveProjectRole(auth, project),
+          sections,
+          members,
+        }}
+        teams={teams}
+        exitHref="/v2"
+      />
     </div>
   );
 }

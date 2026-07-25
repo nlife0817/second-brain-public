@@ -14,7 +14,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/core/client";
 import type { TaskDetail, TaskPriority, UserBrief } from "@/lib/core/types";
-import { useV2Store } from "@/lib/core/ui-store";
+import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { MemberPicker } from "./MemberPicker";
 import { PRIORITY_LABELS } from "./bits";
 
@@ -33,6 +33,7 @@ export function CreateTaskDialog({
   onCreated?: (task: TaskDetail) => void;
 }) {
   const { orgId, statuses } = useV2Store();
+  const storeApi = useV2StoreApi();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<TaskPriority>("none");
@@ -143,7 +144,7 @@ export function CreateTaskDialog({
               className="h-7 rounded-md border border-border bg-background px-2 text-sm"
             />
             <MemberPicker selected={assignees} onChange={(ids) => {
-              const { members } = useV2Store.getState();
+              const { members } = storeApi.getState();
               setAssignees(
                 ids
                   .map((id) => members.find((m) => m.user_id === id))

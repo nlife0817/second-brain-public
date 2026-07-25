@@ -5,7 +5,7 @@
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { ChevronRight, Plus } from "lucide-react";
-import { CreateProjectDialog } from "@/components/v2/CreateProjectDialog";
+import { CreateProjectDialog } from "@/components/v2/lazy";
 import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
 import { useAppResume, useBackDismiss } from "@/components/v2/mobile/hooks";
 import { useV2Store } from "@/lib/core/ui-store";

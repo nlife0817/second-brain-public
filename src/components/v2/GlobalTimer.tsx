@@ -13,17 +13,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Clock3, Loader2, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/core/client";
-import { useV2Store } from "@/lib/core/ui-store";
+import { useV2Store, useV2StoreApi, type ActiveTimer } from "@/lib/core/ui-store";
+import { usePollWhenVisible } from "@/lib/core/use-poll";
 import { cn } from "@/lib/utils";
-
-interface ActiveTimer {
-  id: string;
-  task_id: string | null;
-  started_at: string;
-  ended_at: string | null;
-  note: string;
-  task_title: string | null;
-}
 
 /** С какой паузы предлагать вычесть простой. Короткие отлучки — не простой. */
 const IDLE_THRESHOLD_MS = 5 * 60_000;
@@ -42,7 +34,17 @@ function formatElapsed(seconds: number): string {
 
 export function GlobalTimer() {
   const orgId = useV2Store((s) => s.orgId);
-  const [timer, setTimer] = useState<ActiveTimer | null>(null);
+  // Таймер приезжает вместе с оболочкой из серверного рендера — виджет больше
+  // не начинает жизнь с собственного запроса на каждом экране.
+  const timer = useV2Store((s) => s.activeTimer);
+  const storeApi = useV2StoreApi();
+  const setTimer = useCallback(
+    (next: ActiveTimer | null | ((prev: ActiveTimer | null) => ActiveTimer | null)) => {
+      const state = storeApi.getState();
+      state.setActiveTimer(typeof next === "function" ? next(state.activeTimer) : next);
+    },
+    [storeApi],
+  );
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   /**
@@ -60,17 +62,22 @@ export function GlobalTimer() {
   const sync = useCallback(async () => {
     if (!orgId) return;
     try {
-      setTimer(await api.get<ActiveTimer | null>(`/orgs/${orgId}/time/timer`));
+      // Ручка отвечает конвертом { active }. Прежний код клал в состояние весь
+      // ответ: объект всегда истинный, поэтому виджет висел на экране постоянно
+      // и показывал NaN вместо времени.
+      const res = await api.get<{ active: ActiveTimer | null }>(`/orgs/${orgId}/time/timer`);
+      setTimer(res.active);
     } catch {
       // Виджет фоновый: сеть мигнула — просто ждём следующей сверки.
     }
-  }, [orgId]);
+  }, [orgId, setTimer]);
 
-  useEffect(() => {
-    void sync();
-    const t = setInterval(() => void sync(), SYNC_MS);
-    return () => clearInterval(t);
-  }, [sync]);
+  // Первое значение пришло с сервера — на старте сверяться не с чем.
+  // В скрытой вкладке сверка молчит и возобновляется при возврате.
+  usePollWhenVisible(
+    useCallback(() => void sync(), [sync]),
+    SYNC_MS,
+  );
 
   /**
    * Активность — только настоящее действие руками. `focus` и
@@ -113,7 +120,7 @@ export function GlobalTimer() {
     } finally {
       setBusy(false);
     }
-  }, [orgId]);
+  }, [orgId, setTimer]);
 
   /** Вычесть простой: начало записи сдвигается вперёд на длительность паузы. */
   const discardIdle = useCallback(async () => {
@@ -133,7 +140,7 @@ export function GlobalTimer() {
     } finally {
       setBusy(false);
     }
-  }, [orgId, timer, pendingIdleMs]);
+  }, [orgId, timer, pendingIdleMs, setTimer]);
 
   if (!timer) return null;
 

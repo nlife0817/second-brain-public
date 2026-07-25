@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api, ApiError } from "@/lib/core/client";
+import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import type {
   Project,
   ProjectMemberWithUser,
@@ -32,13 +33,13 @@ import { ProjectAccessPicker, type ProjectAccessValue } from "./ProjectAccessPic
 import { ProjectMembersEditor } from "./ProjectMembersEditor";
 import { PROJECT_COLORS, PROJECT_ICON_NAMES, ProjectIcon } from "./project-icons";
 
-type ProjectDetail = Project & {
+export type ProjectDetail = Project & {
   my_role: ProjectRole | null;
   sections: Section[];
   members: ProjectMemberWithUser[];
 };
 
-interface Team {
+export interface Team {
   id: string;
   name: string;
 }
@@ -64,23 +65,32 @@ function Card({ title, hint, children }: { title: string; hint?: string; childre
 
 export function ProjectSettings({
   projectId,
+  initialProject,
+  teams,
   /** Куда возвращаться после удаления проекта: доска исчезнет вместе с ним. */
   exitHref,
 }: {
   projectId: string;
+  initialProject: ProjectDetail;
+  teams: Team[];
   exitHref: string;
 }) {
   const router = useRouter();
   const { orgId, orgRole, refreshProjects } = useV2Store();
-  const [project, setProject] = useState<ProjectDetail | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
+  const [project, setProject] = useState<ProjectDetail>(initialProject);
   const [tab, setTab] = useState<TabId>("general");
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // Черновик общих параметров: правки применяются кнопкой, доступ и секции —
   // сразу (там каждое действие самостоятельно и обратимо).
-  const [draft, setDraft] = useState({ name: "", description: "", color: "", icon: "", teamId: "" });
+  const [draft, setDraft] = useState({
+    name: initialProject.name,
+    description: initialProject.description,
+    color: initialProject.color,
+    icon: initialProject.icon,
+    teamId: initialProject.team_id ?? "",
+  });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [newSection, setNewSection] = useState("");
@@ -88,10 +98,20 @@ export function ProjectSettings({
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
 
+  const projectPath = orgId ? `/orgs/${orgId}/projects/${projectId}` : null;
+
+  // Серверные данные — в тот же кэш, что читает доска: вернувшись на неё, экран
+  // не пойдёт за проектом второй раз.
+  useEffect(() => {
+    if (projectPath) seed(projectPath, initialProject);
+  }, [projectPath, initialProject]);
+
   const load = useCallback(async () => {
-    if (!orgId) return;
+    if (!projectPath) return;
     try {
-      const p = await api.get<ProjectDetail>(`/orgs/${orgId}/projects/${projectId}`);
+      // force: экран настроек всегда показывает актуальное состояние доступа —
+      // после мутации кэшевая копия 30-секундной свежести здесь только вредит.
+      const p = await cachedGet<ProjectDetail>(projectPath, { force: true });
       setProject(p);
       setDraft({
         name: p.name,
@@ -104,30 +124,21 @@ export function ProjectSettings({
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Проект недоступен");
     }
-  }, [orgId, projectId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useEffect(() => {
-    // Структура организации закрыта для гостей (assertOrg «clients.view»),
-    // поэтому команды грузим только сотрудникам и молча переживаем отказ.
-    if (!orgId || !orgRole || orgRole === "guest") return;
-    void api
-      .get<Team[]>(`/orgs/${orgId}/teams`)
-      .then(setTeams)
-      .catch(() => setTeams([]));
-  }, [orgId, orgRole]);
+  }, [projectPath]);
 
   const canManage = project?.my_role === "admin";
   const canManageAccess = canManage && orgRole !== "guest";
   const canManageSections = project?.my_role === "admin" || project?.my_role === "editor";
 
+  /**
+   * Любая мутация здесь меняет и то, что показывает доска (секции, роль, доступ),
+   * поэтому кэш пути проекта сбрасывается вместе с перечитыванием.
+   */
   async function call(fn: () => Promise<unknown>, after: () => Promise<void> | void = load) {
     try {
       await fn();
       setError(null);
+      if (projectPath) invalidate(projectPath);
       await after();
     } catch (e) {
       setError(e instanceof ApiError || e instanceof Error ? e.message : "Ошибка");
@@ -135,7 +146,7 @@ export function ProjectSettings({
   }
 
   async function saveGeneral() {
-    if (!project || saving) return;
+    if (saving) return;
     setSaving(true);
     await call(
       () =>
@@ -157,7 +168,7 @@ export function ProjectSettings({
   }
 
   async function setAccess(value: ProjectAccessValue) {
-    if (!project || value === project.default_role) return;
+    if (value === project.default_role) return;
     // Список участников перечитываем целиком: закрытие проекта добавляет в него
     // исполнителей задач, иначе они потеряли бы доступ к своей работе.
     await call(() => api.patch(`/orgs/${orgId}/projects/${projectId}`, { default_role: value }), async () => {
@@ -167,7 +178,6 @@ export function ProjectSettings({
   }
 
   async function moveSection(section: Section, delta: -1 | 1) {
-    if (!project) return;
     const ordered = [...project.sections].sort((a, b) => a.position - b.position);
     const index = ordered.findIndex((s) => s.id === section.id);
     const neighbour = ordered[index + delta];
@@ -183,10 +193,13 @@ export function ProjectSettings({
   }
 
   async function removeProject() {
-    if (!project || deleting) return;
+    if (deleting) return;
     setDeleting(true);
     try {
       await api.del(`/orgs/${orgId}/projects/${projectId}`);
+      // Кэш сбрасывается целиком: задачи удалённого проекта разъехались по
+      // спискам «Мои задачи» и «Все задачи», а его карточка лежит в кэше доски.
+      invalidate();
       await refreshProjects();
       router.push(exitHref);
     } catch (e) {
@@ -197,15 +210,6 @@ export function ProjectSettings({
 
   if (loadError) {
     return <p className="px-4 py-10 text-center text-sm text-destructive">{loadError}</p>;
-  }
-  if (!project) {
-    return (
-      <div className="flex flex-col gap-3 px-4 py-4" aria-hidden>
-        {[0, 1, 2].map((i) => (
-          <span key={i} className="h-24 animate-pulse rounded-xl bg-muted" />
-        ))}
-      </div>
-    );
   }
 
   const dirty =

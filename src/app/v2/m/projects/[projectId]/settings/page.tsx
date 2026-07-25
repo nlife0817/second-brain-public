@@ -1,23 +1,39 @@
-"use client";
-
 // Настройки проекта на мобильном: тот же экран, что и на десктопе, — правила
 // доступа не должны выглядеть по-разному в двух оболочках.
 
 import Link from "next/link";
-import { use } from "react";
+import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
-import { ProjectSettings } from "@/components/v2/ProjectSettings";
 import { ProjectIcon } from "@/components/v2/project-icons";
-import { useV2Store } from "@/lib/core/ui-store";
+import { ProjectSettings } from "@/components/v2/ProjectSettings";
+import { getActiveOrgAuth } from "@/lib/core/bootstrap";
+import { isUuid } from "@/lib/core/http";
+import { canOrg, effectiveProjectRole } from "@/lib/core/policy";
+import { listProjectMembers, listSections, requireProject } from "@/lib/core/projects";
+import { listTeams } from "@/lib/core/teams";
 
-export default function MobileProjectSettingsPage({
+export default async function MobileProjectSettingsPage({
   params,
 }: {
   params: Promise<{ projectId: string }>;
 }) {
-  const { projectId } = use(params);
-  const { projects } = useV2Store();
-  const project = projects.find((p) => p.id === projectId);
+  const { projectId } = await params;
+  const auth = await getActiveOrgAuth();
+  if (!auth) return null;
+  if (!isUuid(projectId)) notFound();
+
+  let project;
+  try {
+    project = await requireProject(auth, projectId, "project.view");
+  } catch {
+    notFound();
+  }
+
+  const [sections, members, teams] = await Promise.all([
+    listSections(projectId),
+    listProjectMembers(projectId),
+    canOrg(auth, "clients.view") ? listTeams(auth) : Promise.resolve([]),
+  ]);
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -29,12 +45,20 @@ export default function MobileProjectSettingsPage({
         >
           <ChevronLeft className="size-5" />
         </Link>
-        {project && <ProjectIcon name={project.icon} color={project.color} className="size-4 shrink-0" />}
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold">
-          {project ? project.name : "Настройки проекта"}
-        </h1>
+        <ProjectIcon name={project.icon} color={project.color} className="size-4 shrink-0" />
+        <h1 className="min-w-0 flex-1 truncate text-base font-semibold">{project.name}</h1>
       </header>
-      <ProjectSettings projectId={projectId} exitHref="/v2/m/projects" />
+      <ProjectSettings
+        projectId={projectId}
+        initialProject={{
+          ...project,
+          my_role: effectiveProjectRole(auth, project),
+          sections,
+          members,
+        }}
+        teams={teams}
+        exitHref="/v2/m/projects"
+      />
     </div>
   );
 }
