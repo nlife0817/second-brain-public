@@ -13,6 +13,7 @@ import {
   Plus,
   Search,
   Settings,
+  Smartphone,
   Users,
 } from "lucide-react";
 import { CreateProjectDialog } from "@/components/v2/CreateProjectDialog";
@@ -267,6 +268,13 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
                 {orgRole === "owner" ? "Владелец" : orgRole === "admin" ? "Администратор" : orgRole === "member" ? "Сотрудник" : "Гость"}
               </p>
             </div>
+            <Link
+              href="/v2/m/my?mobile"
+              title="Мобильная версия"
+              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Smartphone className="size-4" />
+            </Link>
             <Link
               href="/"
               title="Старый интерфейс"

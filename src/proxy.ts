@@ -25,17 +25,33 @@ function mobileV2Target(url: URL): string | null {
   return null;
 }
 
+/** Липкий «режим полной версии»: сессионная cookie, ставится по ?desktop. */
+const DESKTOP_COOKIE = "sb_desktop";
+
 /** Общий для dev-байпаса и обычного пути редирект мобильных UA. */
 function mobileRedirect(request: NextRequest): NextResponse | null {
   const ua = request.headers.get("user-agent") ?? "";
   if (!isMobileUserAgent(ua)) return null;
+  // ?desktop действует на всю сессию браузера, а не на один переход: иначе
+  // администрирование в полной версии недостижимо с телефона — любой клик
+  // по сайдбару снова уводил бы на /v2/m/*.
   if (request.nextUrl.searchParams.has("desktop")) return null;
+  if (request.cookies.has(DESKTOP_COOKIE)) return null;
   if (request.nextUrl.pathname === "/") {
     return NextResponse.redirect(new URL("/m/tasks", request.url));
   }
   const v2 = mobileV2Target(request.nextUrl);
   if (v2) return NextResponse.redirect(new URL(v2, request.url));
   return null;
+}
+
+/** Проставляет/снимает cookie режима полной версии по ?desktop / ?mobile. */
+function applyDesktopModeCookie(request: NextRequest, response: NextResponse): void {
+  if (request.nextUrl.searchParams.has("desktop")) {
+    response.cookies.set(DESKTOP_COOKIE, "1", { path: "/", sameSite: "lax" });
+  } else if (request.nextUrl.searchParams.has("mobile")) {
+    response.cookies.delete(DESKTOP_COOKIE);
+  }
 }
 
 // /invite/* открыт до входа: страница сама показывает кнопку «Войти» с возвратом.
@@ -55,7 +71,10 @@ export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   if (DEV_BYPASS_ACTIVE) {
-    return mobileRedirect(request) ?? response;
+    const redirected = mobileRedirect(request);
+    if (redirected) return redirected;
+    applyDesktopModeCookie(request, response);
+    return response;
   }
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -93,12 +112,13 @@ export async function proxy(request: NextRequest) {
   }
 
   // Мобильные UA: корень v1 → /m/tasks, десктопные экраны v2 → /v2/m/*
-  // (только для авторизованных; обход — ?desktop).
+  // (только для авторизованных; обход — ?desktop, возврат — ?mobile).
   if (user) {
     const redirect = mobileRedirect(request);
     if (redirect) return redirect;
   }
 
+  applyDesktopModeCookie(request, response);
   return response;
 }
 

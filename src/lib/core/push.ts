@@ -36,6 +36,7 @@ type TargetRow = {
   endpoint: string;
   p256dh: string;
   auth: string;
+  user_agent: string | null;
 };
 
 /**
@@ -45,12 +46,16 @@ type TargetRow = {
  */
 async function listTargets(userId: string, email: string): Promise<TargetRow[]> {
   return prepare<TargetRow>(
-    `SELECT id::text AS id, 'core' AS src, endpoint, p256dh, auth
+    `SELECT id::text AS id, 'core' AS src, endpoint, p256dh, auth, user_agent
      FROM core.push_subscriptions WHERE user_id = ?
      UNION ALL
-     SELECT id, 'v1' AS src, endpoint, p256dh, auth
+     SELECT id, 'v1' AS src, endpoint, p256dh, auth, user_agent
      FROM public.push_subscriptions WHERE user_email = ?`,
   ).all(userId, email);
+}
+
+function isMobileUserAgent(ua: string | null): boolean {
+  return !!ua && /Mobile|Android|iPhone|iPad|iPod/i.test(ua);
 }
 
 async function dropTarget(target: TargetRow): Promise<void> {
@@ -61,17 +66,23 @@ async function dropTarget(target: TargetRow): Promise<void> {
   }
 }
 
-function buildPayload(row: PendingRow): PushPayload {
+/**
+ * Полезная нагрузка пуша. Мобильной подписке отдаём мобильный URL напрямую
+ * (без прыжка через UA-редирект в proxy — и мимо липкой cookie ?desktop),
+ * десктопной — обычный экран v2.
+ */
+function buildPayload(row: PendingRow, mobile: boolean): PushPayload {
   const body = [row.actor_name, row.entity_title && `«${row.entity_title}»`]
     .filter(Boolean)
     .join(" · ");
-  // URL десктопный: для мобильных UA proxy сам переводит его на /v2/m/*.
-  const url =
-    row.entity_type === "task" && row.entity_id
-      ? `/v2/my?task=${row.entity_id}`
-      : row.entity_type === "project" && row.entity_id
-        ? `/v2/projects/${row.entity_id}`
-        : "/v2/inbox";
+  let url: string;
+  if (row.entity_type === "task" && row.entity_id) {
+    url = mobile ? `/v2/m/my?task=${row.entity_id}` : `/v2/my?task=${row.entity_id}`;
+  } else if (row.entity_type === "project" && row.entity_id) {
+    url = mobile ? `/v2/m/projects/${row.entity_id}` : `/v2/projects/${row.entity_id}`;
+  } else {
+    url = mobile ? "/v2/m/inbox" : "/v2/inbox";
+  }
   return {
     title: KIND_TITLES[row.kind] ?? "Обновление",
     body: body || "Открыть задачу",
@@ -127,12 +138,12 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
   for (const row of rows) {
     try {
       const targets = await listTargets(row.user_id, row.email);
-      const payload = buildPayload(row);
       const seenEndpoints = new Set<string>();
       let delivered = 0;
       for (const target of targets) {
         if (seenEndpoints.has(target.endpoint)) continue;
         seenEndpoints.add(target.endpoint);
+        const payload = buildPayload(row, isMobileUserAgent(target.user_agent));
         const result = await sendWebPush(target, payload);
         if (result === "sent") delivered++;
         if (result === "dead") await dropTarget(target);
