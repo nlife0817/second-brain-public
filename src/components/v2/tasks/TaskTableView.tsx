@@ -70,7 +70,7 @@ function capture(task: TaskRow, payload: Record<string, unknown>): Record<string
   return before;
 }
 
-export async function runLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+async function runLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   let cursor = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     for (;;) {
