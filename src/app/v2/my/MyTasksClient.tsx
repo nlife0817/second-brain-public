@@ -14,6 +14,7 @@ import { TaskCard } from "@/components/v2/TaskCard";
 import { TaskSheet } from "@/components/v2/lazy";
 import { api } from "@/lib/core/client";
 import { invalidate, useQuery } from "@/lib/core/query";
+import { applyTaskChange } from "@/lib/core/task-change";
 import type { TaskListItem } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 
@@ -34,7 +35,7 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
 
   const path = orgId ? `/orgs/${orgId}/tasks${showDone ? "?done=1" : ""}` : null;
   // Серверный рендер считает список без завершённых — он и есть initial.
-  const { data, loading, error, refresh } = useQuery<TaskListItem[]>(path, {
+  const { data, loading, error, refresh, update } = useQuery<TaskListItem[]>(path, {
     initial: showDone ? undefined : initial,
   });
   const tasks = useMemo(() => data ?? [], [data]);
@@ -145,9 +146,18 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
       <TaskSheet
         taskId={openTaskId}
         onClose={() => setOpenTaskId(null)}
-        onChanged={() => {
-          void reload();
-          void refreshProjects();
+        onChanged={(change) => {
+          // Правку строки применяем на месте — полный перечит списка нужен
+          // только когда в нём появилась новая задача.
+          if (change.type === "reload") {
+            void reload();
+            void refreshProjects();
+            return;
+          }
+          update((prev) => applyTaskChange(prev, change) ?? prev);
+          // Счётчики проектов в сайдбаре — по подтверждённой правке, иначе
+          // запрос уходил бы дважды на каждое действие.
+          if (change.type === "deleted" || change.confirmed) void refreshProjects();
         }}
       />
     </div>

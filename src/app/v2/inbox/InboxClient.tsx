@@ -58,10 +58,20 @@ export function InboxClient({ initial }: { initial: CoreNotification[] }) {
 
   async function markAll() {
     if (!orgId) return;
+    const previous = items;
+    const readAt = new Date().toISOString();
+    // Список гасим сразу: ответ сервера ничего не добавляет к тому, что мы уже
+    // знаем, а ждать его — значит держать кнопку «думающей» лишнюю секунду.
+    const markAllRead = (list: CoreNotification[]) =>
+      list.map((x) => (x.read_at ? x : { ...x, read_at: readAt }));
+    setItems(markAllRead);
+    if (path) patch<{ items: CoreNotification[] }>(path, (prev) => ({ items: markAllRead(prev.items) }));
     try {
       await api.post(`/orgs/${orgId}/notifications`, { all: true });
-      await Promise.all([load({ force: true }), refreshUnread()]);
+      await refreshUnread();
     } catch (e) {
+      setItems(previous);
+      if (path) patch<{ items: CoreNotification[] }>(path, () => ({ items: previous }));
       setError(e instanceof Error ? e.message : "Не удалось отметить прочитанными");
     }
   }
@@ -70,19 +80,19 @@ export function InboxClient({ initial }: { initial: CoreNotification[] }) {
     if (!orgId) return;
     // Задачу открываем в любом случае: сбой отметки прочтения не должен блокировать.
     if (n.entity_type === "task" && n.entity_id) setOpenTaskId(n.entity_id);
-    if (!n.read_at) {
-      try {
-        await api.post(`/orgs/${orgId}/notifications`, { ids: [n.id] });
-        const readAt = new Date().toISOString();
-        const markRead = (list: CoreNotification[]) =>
-          list.map((x) => (x.id === n.id ? { ...x, read_at: readAt } : x));
-        setItems(markRead);
-        // Та же правка в кэше: иначе возврат на экран воскресит непрочитанное.
-        if (path) patch<{ items: CoreNotification[] }>(path, (prev) => ({ items: markRead(prev.items) }));
-        await refreshUnread();
-      } catch {
-        // молча: уведомление останется непрочитанным, попробуем в следующий раз
-      }
+    if (n.read_at) return;
+    const readAt = new Date().toISOString();
+    const markRead = (list: CoreNotification[]) =>
+      list.map((x) => (x.id === n.id ? { ...x, read_at: readAt } : x));
+    // Отметку ставим до запроса: она не зависит от ответа.
+    setItems(markRead);
+    // Та же правка в кэше: иначе возврат на экран воскресит непрочитанное.
+    if (path) patch<{ items: CoreNotification[] }>(path, (prev) => ({ items: markRead(prev.items) }));
+    try {
+      await api.post(`/orgs/${orgId}/notifications`, { ids: [n.id] });
+      await refreshUnread();
+    } catch {
+      // молча: уведомление останется непрочитанным, попробуем в следующий раз
     }
   }
 

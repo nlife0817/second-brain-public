@@ -32,19 +32,30 @@ export function RelationsList({
   entityType,
   entityId,
   canEdit,
+  initialRelations,
+  initialTypes,
 }: {
   entityType: RelationEntityType;
   entityId: string;
   canEdit: boolean;
+  /**
+   * Связи и справочник типов, уже загруженные родителем. Карточка задачи берёт
+   * их из общего ответа `/tasks/:id/bundle`, поэтому свои два запроса здесь не
+   * нужны. Когда пропсы не переданы (другие места использования) — грузим сами.
+   */
+  initialRelations?: RelationWithTarget[];
+  initialTypes?: RelationType[];
 }) {
   const orgId = useV2Store((s) => s.orgId);
-  const [relations, setRelations] = useState<RelationWithTarget[]>([]);
-  const [types, setTypes] = useState<RelationType[]>([]);
+  const [relations, setRelations] = useState<RelationWithTarget[]>(initialRelations ?? []);
+  const [types, setTypes] = useState<RelationType[]>(initialTypes ?? []);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searching, setSearching] = useState(false);
   const [typeId, setTypeId] = useState<string>("");
+
+  const provided = initialRelations !== undefined && initialTypes !== undefined;
 
   const load = useCallback(async () => {
     if (!orgId) return;
@@ -63,9 +74,17 @@ export function RelationsList({
     }
   }, [orgId, entityType, entityId]);
 
+  // Родитель прислал данные — переносим их в состояние при смене сущности.
   useEffect(() => {
+    if (!provided) return;
+    setRelations(initialRelations ?? []);
+    setTypes(initialTypes ?? []);
+  }, [provided, initialRelations, initialTypes]);
+
+  useEffect(() => {
+    if (provided) return;
     void load();
-  }, [load]);
+  }, [provided, load]);
 
   // Поиск с задержкой: строка меняется на каждый символ, а запрос нужен один.
   useEffect(() => {

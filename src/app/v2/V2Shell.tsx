@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
   Check,
@@ -39,6 +39,7 @@ import {
   useV2StoreApi,
   writeActiveOrgCookie,
 } from "@/lib/core/ui-store";
+import { usePollWhenVisible } from "@/lib/core/use-poll";
 import type { V2BootstrapResult } from "@/lib/core/bootstrap";
 import type { UserBrief } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
@@ -133,10 +134,10 @@ export function V2Shell({
     if (wanted !== orgId) router.refresh();
   }, [storeApi, router]);
 
-  useEffect(() => {
-    const t = setInterval(() => void storeApi.getState().refreshUnread(), 30_000);
-    return () => clearInterval(t);
-  }, [storeApi]);
+  usePollWhenVisible(
+    useCallback(() => void storeApi.getState().refreshUnread(), [storeApi]),
+    30_000,
+  );
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -364,7 +365,12 @@ export function V2Shell({
       <TaskSheet
         taskId={searchTaskId}
         onClose={() => setSearchTaskId(null)}
-        onChanged={() => void storeApi.getState().refreshProjects()}
+        onChanged={(change) => {
+          // Оболочка списка задач не держит — ей важны только счётчики, и то
+          // после подтверждения сервером.
+          if (change.type === "patched" && !change.confirmed) return;
+          void storeApi.getState().refreshProjects();
+        }}
       />
     </div>
   );

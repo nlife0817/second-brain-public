@@ -171,7 +171,15 @@ export function MobileInboxClient({ initial }: { initial: CoreNotification[] }) 
         ))}
       </PullToRefresh>
 
-      <TaskSheet taskId={openTaskId} onClose={closeTask} onChanged={() => void load({ force: true })} />
+      <TaskSheet
+        taskId={openTaskId}
+        onClose={closeTask}
+        // Экран показывает уведомления, а не задачи: правка поля его не меняет.
+        // Перечитываем только когда задач стало больше.
+        onChanged={(change) => {
+          if (change.type === "reload") void load({ force: true });
+        }}
+      />
     </div>
   );
 }

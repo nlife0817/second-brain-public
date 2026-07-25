@@ -13,6 +13,7 @@ import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
 import { useAppResume, useBackDismiss, useTaskDeepLink } from "@/components/v2/mobile/hooks";
 import { api } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
+import { applyTaskChange } from "@/lib/core/task-change";
 import type { TaskListItem } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
@@ -214,9 +215,17 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
       <TaskSheet
         taskId={openTaskId}
         onClose={closeTask}
-        onChanged={() => {
-          void reload();
-          void refreshProjects();
+        onChanged={(change) => {
+          if (change.type === "reload") {
+            void reload();
+            void refreshProjects();
+            return;
+          }
+          setTasks((prev) => applyTaskChange(prev, change) ?? prev);
+          if (change.type === "deleted" || change.confirmed) {
+            if (orgId) invalidate(`/orgs/${orgId}/tasks`);
+            void refreshProjects();
+          }
         }}
       />
       <GlobalSearch mobile open={searchOpen} onOpenChange={setSearchOpen} onPickTask={setOpenTaskId} />

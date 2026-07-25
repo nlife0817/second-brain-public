@@ -11,6 +11,7 @@ import { TaskCard } from "@/components/v2/TaskCard";
 import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
 import { useAppResume, useBackDismiss, useTaskDeepLink } from "@/components/v2/mobile/hooks";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
+import { applyTaskChange } from "@/lib/core/task-change";
 import type {
   Project,
   ProjectMemberWithUser,
@@ -256,9 +257,17 @@ export function MobileProjectClient({
       <TaskSheet
         taskId={openTaskId}
         onClose={closeTask}
-        onChanged={() => {
-          void reload();
-          void refreshProjects();
+        onChanged={(change) => {
+          if (change.type === "reload") {
+            void reload();
+            void refreshProjects();
+            return;
+          }
+          setTasks((prev) => applyTaskChange(prev, change) ?? prev);
+          if (change.type === "deleted" || change.confirmed) {
+            if (projectPath) invalidate(projectPath);
+            void refreshProjects();
+          }
         }}
       />
       <CreateTaskDialog

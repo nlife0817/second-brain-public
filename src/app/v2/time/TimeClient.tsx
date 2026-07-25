@@ -149,15 +149,28 @@ export function TimeClient({ initial }: { initial: TimeInitial }) {
     return Math.max(0, Math.floor((now - new Date(active.started_at).getTime()) / 1000));
   }, [active, now]);
 
-  async function call(fn: () => Promise<unknown>) {
+  /**
+   * Действие над записями времени.
+   *
+   * Видимое состояние меняем сразу (`optimistic`), а сверку списка и сводки
+   * отпускаем в фон: раньше «Стоп» ждал правку и два перечита подряд, и секунды
+   * продолжали тикать всё это время.
+   */
+  async function call(fn: () => Promise<unknown>, optimistic?: () => void) {
+    const prevActive = active;
+    optimistic?.();
     try {
       await fn();
+      setError(null);
       // Запись времени меняет и список, и сводку любого периода — кэш ветки
       // целиком устарел.
       if (orgId) invalidate(`/orgs/${orgId}/time`);
-      await load({ force: true });
-      setError(null);
+      void load({ force: true });
     } catch (e) {
+      if (optimistic) {
+        setActive(prevActive);
+        storeApi.getState().setActiveTimer(prevActive);
+      }
       setError(e instanceof Error ? e.message : "Ошибка");
     }
   }
@@ -175,7 +188,20 @@ export function TimeClient({ initial }: { initial: TimeInitial }) {
             <span className="max-w-48 truncate text-sm text-muted-foreground">
               {active.task_title || active.note || "Без задачи"}
             </span>
-            <Button size="sm" variant="secondary" onClick={() => void call(() => api.del(`/orgs/${orgId}/time/timer`))}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() =>
+                void call(
+                  () => api.del(`/orgs/${orgId}/time/timer`),
+                  () => {
+                    setActive(null);
+                    // И плавающий виджет: он читает таймер из стора.
+                    storeApi.getState().setActiveTimer(null);
+                  },
+                )
+              }
+            >
               <Pause className="size-4" />
               Стоп
             </Button>
@@ -190,12 +216,13 @@ export function TimeClient({ initial }: { initial: TimeInitial }) {
             />
             <Button
               size="sm"
-              onClick={() =>
-                void call(async () => {
-                  await api.post(`/orgs/${orgId}/time/timer`, { note });
-                  setNote("");
-                })
-              }
+              onClick={() => {
+                const started = note;
+                // Поле очищаем сразу — ждать ответа, чтобы убрать свой же
+                // текст, выглядит как залипшая кнопка.
+                setNote("");
+                void call(() => api.post(`/orgs/${orgId}/time/timer`, { note: started }));
+              }}
             >
               <Play className="size-4" />
               Старт

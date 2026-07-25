@@ -10,7 +10,7 @@ import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
 import { useAppResume } from "@/components/v2/mobile/hooks";
 import { api } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
-import { useV2Store } from "@/lib/core/ui-store";
+import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 
 interface TimeEntry {
@@ -62,6 +62,7 @@ export interface MobileTimeInitial {
 
 export function MobileTimeClient({ initial }: { initial: MobileTimeInitial }) {
   const { orgId } = useV2Store();
+  const storeApi = useV2StoreApi();
   const [entries, setEntries] = useState<TimeEntry[]>(initial.list.entries);
   const [active, setActive] = useState<TimeEntry | null>(initial.list.active);
   const [period, setPeriod] = useState<(typeof PERIODS)[number]["key"]>("today");
@@ -122,12 +123,19 @@ export function MobileTimeClient({ initial }: { initial: MobileTimeInitial }) {
     return Math.max(0, Math.floor((now - new Date(active.started_at).getTime()) / 1000));
   }, [active, now]);
 
-  async function call(fn: () => Promise<unknown>) {
+  /** См. TimeClient: видимое состояние сразу, сверка списка — в фоне. */
+  async function call(fn: () => Promise<unknown>, optimistic?: () => void) {
+    const prevActive = active;
+    optimistic?.();
     try {
       await fn();
-      await reload();
       setError(null);
+      void reload();
     } catch (e) {
+      if (optimistic) {
+        setActive(prevActive);
+        storeApi.getState().setActiveTimer(prevActive);
+      }
       setError(e instanceof Error ? e.message : "Ошибка");
     }
   }
@@ -161,7 +169,15 @@ export function MobileTimeClient({ initial }: { initial: MobileTimeInitial }) {
                 <Button
                   className="w-full"
                   variant="secondary"
-                  onClick={() => void call(() => api.del(`/orgs/${orgId}/time/timer`))}
+                  onClick={() =>
+                    void call(
+                      () => api.del(`/orgs/${orgId}/time/timer`),
+                      () => {
+                        setActive(null);
+                        storeApi.getState().setActiveTimer(null);
+                      },
+                    )
+                  }
                 >
                   <Pause className="size-4" />
                   Остановить
@@ -177,12 +193,11 @@ export function MobileTimeClient({ initial }: { initial: MobileTimeInitial }) {
                 />
                 <Button
                   className="w-full"
-                  onClick={() =>
-                    void call(async () => {
-                      await api.post(`/orgs/${orgId}/time/timer`, { note });
-                      setNote("");
-                    })
-                  }
+                  onClick={() => {
+                    const started = note;
+                    setNote("");
+                    void call(() => api.post(`/orgs/${orgId}/time/timer`, { note: started }));
+                  }}
                 >
                   <Play className="size-4" />
                   Старт

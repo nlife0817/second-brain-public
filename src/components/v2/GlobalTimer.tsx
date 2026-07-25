@@ -14,6 +14,7 @@ import { Clock3, Loader2, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/core/client";
 import { useV2Store, useV2StoreApi, type ActiveTimer } from "@/lib/core/ui-store";
+import { usePollWhenVisible } from "@/lib/core/use-poll";
 import { cn } from "@/lib/utils";
 
 /** С какой паузы предлагать вычесть простой. Короткие отлучки — не простой. */
@@ -72,10 +73,11 @@ export function GlobalTimer() {
   }, [orgId, setTimer]);
 
   // Первое значение пришло с сервера — на старте сверяться не с чем.
-  useEffect(() => {
-    const t = setInterval(() => void sync(), SYNC_MS);
-    return () => clearInterval(t);
-  }, [sync]);
+  // В скрытой вкладке сверка молчит и возобновляется при возврате.
+  usePollWhenVisible(
+    useCallback(() => void sync(), [sync]),
+    SYNC_MS,
+  );
 
   /**
    * Активность — только настоящее действие руками. `focus` и

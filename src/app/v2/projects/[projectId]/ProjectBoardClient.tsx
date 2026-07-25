@@ -24,6 +24,7 @@ import { CreateTaskDialog, ProjectMembersDialog, TaskSheet } from "@/components/
 import { TaskCard } from "@/components/v2/TaskCard";
 import { api } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
+import { applyTaskChange } from "@/lib/core/task-change";
 import type {
   Project,
   ProjectMemberWithUser,
@@ -372,9 +373,20 @@ export function ProjectBoardClient({
       <TaskSheet
         taskId={openTaskId}
         onClose={() => setOpenTaskId(null)}
-        onChanged={() => {
-          void reload();
-          void refreshProjects();
+        onChanged={(change) => {
+          // Перечитывать доску (сотни карточек) на каждую правку поля незачем —
+          // новое состояние строки пришло вместе с ответом.
+          if (change.type === "reload") {
+            void reload();
+            void refreshProjects();
+            return;
+          }
+          setTasks((prev) => applyTaskChange(prev, change) ?? prev);
+          if (change.type === "deleted" || change.confirmed) {
+            // Локально доска верна, но в кэше лежит расклад до правки.
+            if (projectPath) invalidate(projectPath);
+            void refreshProjects();
+          }
         }}
       />
       <CreateTaskDialog

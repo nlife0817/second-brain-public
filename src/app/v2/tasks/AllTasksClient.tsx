@@ -28,6 +28,7 @@ import {
 } from "@/components/v2/tasks/ViewControls";
 import { api } from "@/lib/core/client";
 import { cachedGet, invalidate, peek, seed } from "@/lib/core/query";
+import { applyTaskChange } from "@/lib/core/task-change";
 import type { AllTasksResult, TaskDetail, TaskPriority, TaskRow } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
@@ -688,9 +689,17 @@ export function AllTasksClient({ initial }: { initial: AllTasksResult }) {
       <TaskSheet
         taskId={openTaskId}
         onClose={() => setOpenTaskId(null)}
-        onChanged={() => {
-          void reload();
-          void refreshProjects();
+        onChanged={(change) => {
+          if (change.type === "reload") {
+            void reload();
+            void refreshProjects();
+            return;
+          }
+          setTasks((prev) => applyTaskChange(prev, change) ?? prev);
+          if (change.type === "deleted" || change.confirmed) {
+            if (orgId) invalidate(`/orgs/${orgId}/tasks`);
+            void refreshProjects();
+          }
         }}
       />
 
