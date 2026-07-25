@@ -15,7 +15,12 @@ import { TaskSheet } from "@/components/v2/TaskSheet";
 import { BulkBar } from "@/components/v2/tasks/BulkBar";
 import { FilterBuilder } from "@/components/v2/tasks/FilterBuilder";
 import { TaskTable, resolveColumns, type GroupLabel } from "@/components/v2/tasks/TaskTable";
-import { ColumnsPopover, GroupByPopover, SavedViewsMenu } from "@/components/v2/tasks/ViewControls";
+import {
+  ColumnsPopover,
+  GroupByPopover,
+  SavedViewsMenu,
+  SubtaskModePopover,
+} from "@/components/v2/tasks/ViewControls";
 import { api } from "@/lib/core/client";
 import type { AllTasksResult, TaskDetail, TaskPriority, TaskRow } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -86,6 +91,7 @@ export default function AllTasksPage() {
   const search = useViewStore((s) => s.search);
   const showDone = useViewStore((s) => s.showDone);
   const showArchivedProjects = useViewStore((s) => s.showArchivedProjects);
+  const subtaskMode = useViewStore((s) => s.subtaskMode);
   const collapsedList = useViewStore((s) => s.collapsed);
   const setSearch = useViewStore((s) => s.setSearch);
   const setShowDone = useViewStore((s) => s.setShowDone);
@@ -503,6 +509,7 @@ export default function AllTasksPage() {
         </Popover>
 
         <GroupByPopover />
+        <SubtaskModePopover />
         <ColumnsPopover customFields={fields} />
         <SavedViewsMenu />
 
@@ -593,6 +600,7 @@ export default function AllTasksPage() {
             ctx={cellCtx}
             groupBy={groupBy}
             matchCtx={matchCtx}
+            subtaskMode={subtaskMode}
             sort={sort}
             onToggleSort={toggleSort}
             onResize={setWidth}

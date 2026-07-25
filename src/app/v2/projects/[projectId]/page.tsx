@@ -16,6 +16,7 @@ import {
 } from "@dnd-kit/core";
 import { Plus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { CreateTaskDialog } from "@/components/v2/CreateTaskDialog";
 import { ProjectMembersDialog } from "@/components/v2/ProjectMembersDialog";
 import { TaskCard } from "@/components/v2/TaskCard";
@@ -278,6 +279,7 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
           <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">приватный</span>
         )}
         <span className="flex-1" />
+        <CardSettingsPopover />
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <input
             type="checkbox"

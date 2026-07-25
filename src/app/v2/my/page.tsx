@@ -5,6 +5,7 @@
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
+import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { TaskSheet } from "@/components/v2/TaskSheet";
 import { api } from "@/lib/core/client";
@@ -89,6 +90,7 @@ export default function MyTasksPage() {
       <header className="flex items-center gap-3 border-b border-border px-6 py-3.5">
         <h1 className="text-base font-semibold">Мои задачи</h1>
         <span className="flex-1" />
+        <CardSettingsPopover />
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <input
             type="checkbox"

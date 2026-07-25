@@ -7,7 +7,7 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { FilterGroup, GroupByConfig, SortState } from "./views";
+import type { FilterGroup, GroupByConfig, SortState, SubtaskMode } from "./views";
 
 export interface ColumnDef {
   id: string;
@@ -60,6 +60,7 @@ export interface ViewSnapshot {
   search: string;
   showDone: boolean;
   showArchivedProjects: boolean;
+  subtaskMode: SubtaskMode;
 }
 
 export interface SavedView extends ViewSnapshot {
@@ -81,6 +82,7 @@ interface ViewState extends ViewSnapshot {
   setSearch: (search: string) => void;
   setShowDone: (show: boolean) => void;
   setShowArchivedProjects: (show: boolean) => void;
+  setSubtaskMode: (mode: SubtaskMode) => void;
   toggleCollapsed: (key: string) => void;
 
   saveView: (name: string) => void;
@@ -99,6 +101,7 @@ const DEFAULT_SNAPSHOT: ViewSnapshot = {
   search: "",
   showDone: false,
   showArchivedProjects: false,
+  subtaskMode: "nested",
 };
 
 function snapshotOf(state: ViewSnapshot): ViewSnapshot {
@@ -111,6 +114,7 @@ function snapshotOf(state: ViewSnapshot): ViewSnapshot {
     search: state.search,
     showDone: state.showDone,
     showArchivedProjects: state.showArchivedProjects,
+    subtaskMode: state.subtaskMode,
   };
 }
 
@@ -160,6 +164,7 @@ export const useViewStore = create<ViewState>()(
       setSearch: (search) => set({ search }),
       setShowDone: (showDone) => set(edit({ showDone })),
       setShowArchivedProjects: (showArchivedProjects) => set(edit({ showArchivedProjects })),
+      setSubtaskMode: (subtaskMode) => set(edit({ subtaskMode })),
       toggleCollapsed: (key) =>
         set((s) => ({
           collapsed: s.collapsed.includes(key) ? s.collapsed.filter((k) => k !== key) : [...s.collapsed, key],
@@ -201,5 +206,57 @@ export const useViewStore = create<ViewState>()(
       }),
       version: 1,
     },
+  ),
+);
+
+// --- Карточка доски ---------------------------------------------------------------
+
+/** Поля, которые карточка задачи может показывать. Порядок = порядок отрисовки. */
+export const CARD_FIELDS = [
+  { id: "priority", label: "Приоритет" },
+  { id: "project", label: "Проект" },
+  { id: "tags", label: "Теги" },
+  { id: "due_date", label: "Дедлайн" },
+  { id: "estimated_minutes", label: "Оценка" },
+  { id: "subtasks", label: "Подзадачи" },
+  { id: "comments", label: "Комментарии" },
+  { id: "assignees", label: "Исполнители" },
+] as const;
+
+export type CardFieldId = (typeof CARD_FIELDS)[number]["id"];
+
+/** Значение по умолчанию — общая константа, иначе memo карточек ломается. */
+export const DEFAULT_CARD_FIELDS: CardFieldId[] = [
+  "priority",
+  "tags",
+  "due_date",
+  "subtasks",
+  "comments",
+  "assignees",
+];
+
+interface CardState {
+  cardFields: CardFieldId[];
+  setCardFields: (fields: CardFieldId[]) => void;
+  toggleCardField: (field: CardFieldId) => void;
+}
+
+export const useCardStore = create<CardState>()(
+  persist(
+    (set, get) => ({
+      cardFields: DEFAULT_CARD_FIELDS,
+      setCardFields: (cardFields) => set({ cardFields }),
+      toggleCardField: (field) => {
+        const current = get().cardFields;
+        set({
+          // Порядок фиксирован CARD_FIELDS: карточка должна выглядеть
+          // одинаково независимо от того, в каком порядке галки ставили.
+          cardFields: CARD_FIELDS.map((f) => f.id).filter((id) =>
+            id === field ? !current.includes(id) : current.includes(id),
+          ),
+        });
+      },
+    }),
+    { name: "sb.v2.cardFields", storage: createJSONStorage(() => localStorage), version: 1 },
   ),
 );

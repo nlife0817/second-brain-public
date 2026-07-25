@@ -373,6 +373,70 @@ export function dueBucket(due: string | null, ctx: MatchContext): string {
   return "later";
 }
 
+// --- Подзадачи в списке ------------------------------------------------------------
+
+/**
+ * Как список показывает подзадачи. Наследует три режима из v1
+ * (встроенные / аккордеон / отдельные), но в терминах, которые здесь значимы:
+ *  - flat: подзадача — обычная строка наравне с родителем;
+ *  - nested: подзадача с отступом сразу под своим родителем;
+ *  - hidden: подзадачи скрыты, если их родитель и так виден.
+ */
+export type SubtaskMode = "flat" | "nested" | "hidden";
+
+export const SUBTASK_MODE_LABELS: Record<SubtaskMode, string> = {
+  flat: "Отдельными строками",
+  nested: "Вложенными под родителя",
+  hidden: "Скрыть подзадачи",
+};
+
+export interface ArrangedRow {
+  task: TaskRow;
+  depth: number;
+}
+
+/**
+ * Раскладка строк с учётом режима подзадач. Порядок внутри уровня сохраняется
+ * тем, что задала сортировка. «Осиротевшую» подзадачу (родитель не попал в
+ * набор — отфильтрован или недоступен) всегда показываем как обычную строку:
+ * иначе она молча исчезла бы из списка.
+ */
+export function arrangeRows(tasks: TaskRow[], mode: SubtaskMode): ArrangedRow[] {
+  if (mode === "flat") return tasks.map((task) => ({ task, depth: 0 }));
+
+  const present = new Set(tasks.map((t) => t.id));
+  const hasVisibleParent = (t: TaskRow) => !!t.parent_task_id && present.has(t.parent_task_id);
+
+  if (mode === "hidden") {
+    return tasks.filter((t) => !hasVisibleParent(t)).map((task) => ({ task, depth: 0 }));
+  }
+
+  const childrenOf = new Map<string, TaskRow[]>();
+  for (const t of tasks) {
+    if (!hasVisibleParent(t)) continue;
+    const arr = childrenOf.get(t.parent_task_id!);
+    if (arr) arr.push(t);
+    else childrenOf.set(t.parent_task_id!, [t]);
+  }
+
+  const out: ArrangedRow[] = [];
+  const emitted = new Set<string>();
+  const MAX_DEPTH = 8;
+  const emit = (task: TaskRow, depth: number) => {
+    // Циклов в данных быть не должно, но защита дешевле, чем зависший рендер.
+    if (emitted.has(task.id) || depth > MAX_DEPTH) return;
+    emitted.add(task.id);
+    out.push({ task, depth });
+    for (const child of childrenOf.get(task.id) ?? []) emit(child, depth + 1);
+  };
+  for (const task of tasks) {
+    if (!hasVisibleParent(task)) emit(task, 0);
+  }
+  // Остаток — узлы, до которых обход не дошёл (например, взаимные ссылки).
+  for (const task of tasks) if (!emitted.has(task.id)) emit(task, 0);
+  return out;
+}
+
 /**
  * Ключи группы для задачи. Возвращается список: задача с несколькими проектами
  * (multi-homing), исполнителями или тегами попадает в каждую группу — иначе

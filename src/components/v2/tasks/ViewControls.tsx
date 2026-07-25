@@ -4,11 +4,11 @@
 // представления. Всё пишется в persist-стор — настройки переживают перезагрузку.
 
 import { useState } from "react";
-import { ArrowDown, ArrowUp, Bookmark, Check, Columns3, Group, RotateCcw, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Bookmark, Check, Columns3, Group, ListTree, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { BASE_COLUMNS, useViewStore, type SavedView } from "@/lib/core/view-store";
-import { GROUP_BY_LABELS, type GroupByField } from "@/lib/core/views";
+import { GROUP_BY_LABELS, SUBTASK_MODE_LABELS, type GroupByField, type SubtaskMode } from "@/lib/core/views";
 import { cn } from "@/lib/utils";
 
 const GROUP_FIELDS: GroupByField[] = [
@@ -73,6 +73,34 @@ export function GroupByPopover() {
             ))}
           </div>
         )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+const SUBTASK_MODES: SubtaskMode[] = ["nested", "flat", "hidden"];
+
+export function SubtaskModePopover() {
+  const subtaskMode = useViewStore((s) => s.subtaskMode);
+  const setSubtaskMode = useViewStore((s) => s.setSubtaskMode);
+
+  return (
+    <Popover>
+      <PopoverTrigger render={<Button variant="ghost" size="sm" className="gap-1.5 text-xs" />}>
+        <ListTree className="size-3.5" />
+        <span className="hidden lg:inline">Подзадачи</span>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-56 p-1">
+        {SUBTASK_MODES.map((mode) => (
+          <button
+            key={mode}
+            onClick={() => setSubtaskMode(mode)}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
+          >
+            <span className="flex-1 text-left">{SUBTASK_MODE_LABELS[mode]}</span>
+            {subtaskMode === mode && <Check className="size-3.5" />}
+          </button>
+        ))}
       </PopoverContent>
     </Popover>
   );

@@ -24,8 +24,8 @@ import {
 } from "./cells";
 import type { TaskRow } from "@/lib/core/types";
 import { BASE_COLUMNS, COLUMN_MAX_WIDTH, COLUMN_MIN_WIDTH, type ColumnDef } from "@/lib/core/view-store";
-import type { GroupByField, MatchContext, SortState } from "@/lib/core/views";
-import { groupKeys } from "@/lib/core/views";
+import type { GroupByField, MatchContext, SortState, SubtaskMode } from "@/lib/core/views";
+import { arrangeRows, groupKeys } from "@/lib/core/views";
 import { cn } from "@/lib/utils";
 
 /**
@@ -47,6 +47,7 @@ export interface TaskTableProps {
   ctx: CellContext;
   groupBy: [GroupByField, GroupByField];
   matchCtx: MatchContext;
+  subtaskMode: SubtaskMode;
   sort: SortState;
   onToggleSort: (column: string) => void;
   onResize: (columnId: string, width: number) => void;
@@ -307,6 +308,7 @@ function GroupBody({
   onToggleCollapsed,
   onOpen,
   grouped,
+  subtaskMode,
 }: {
   node: GroupNode;
   level: number;
@@ -320,10 +322,16 @@ function GroupBody({
   onToggleCollapsed: (key: string) => void;
   onOpen: (taskId: string) => void;
   grouped: boolean;
+  subtaskMode: SubtaskMode;
 }) {
   const [limit, setLimit] = useState(GROUP_PAGE);
   const isCollapsed = collapsed.has(node.path);
-  const rows = node.children.length === 0 ? node.tasks : [];
+  // Вложенность считается внутри группы: подзадача, попавшая в другую группу,
+  // становится там обычной строкой — иначе она бы просто пропала.
+  const rows = useMemo(
+    () => (node.children.length === 0 ? arrangeRows(node.tasks, subtaskMode) : []),
+    [node.children.length, node.tasks, subtaskMode],
+  );
   const shown = rows.length > limit ? rows.slice(0, limit) : rows;
   const rest = rows.length - shown.length;
   const allSelected = node.tasks.length > 0 && node.tasks.every((t) => selected.has(t.id));
@@ -382,16 +390,17 @@ function GroupBody({
               onToggleCollapsed={onToggleCollapsed}
               onOpen={onOpen}
               grouped
+              subtaskMode={subtaskMode}
             />
           ))}
-          {shown.map((task) => (
+          {shown.map(({ task, depth }) => (
             <Row
               key={task.id}
               task={task}
               columns={columns}
               widths={widths}
               ctx={ctx}
-              depth={0}
+              depth={depth}
               selected={selected.has(task.id)}
               onToggleSelected={onToggleSelected}
               onOpen={onOpen}
@@ -420,6 +429,7 @@ export function TaskTable(props: TaskTableProps) {
     ctx,
     groupBy,
     matchCtx,
+    subtaskMode,
     sort,
     onToggleSort,
     onResize,
@@ -489,6 +499,7 @@ export function TaskTable(props: TaskTableProps) {
             onToggleCollapsed={onToggleCollapsed}
             onOpen={onOpen}
             grouped={grouped}
+            subtaskMode={subtaskMode}
           />
         ))}
       </div>
