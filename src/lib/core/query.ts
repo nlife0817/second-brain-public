@@ -32,6 +32,12 @@ interface Entry {
 
 const entries = new Map<string, Entry>();
 const listeners = new Map<string, Set<() => void>>();
+/** Счётчик сбросов по пути — отсекает ответы запросов, начатых до мутации. */
+const generation = new Map<string, number>();
+
+function bumpGeneration(path: string): void {
+  generation.set(path, (generation.get(path) ?? 0) + 1);
+}
 
 function isBrowser(): boolean {
   return typeof window !== "undefined";
@@ -98,12 +104,16 @@ export function invalidate(prefix?: string): void {
   if (prefix === undefined) {
     const paths = [...entries.keys()];
     entries.clear();
-    for (const p of paths) notify(p);
+    for (const p of paths) {
+      bumpGeneration(p);
+      notify(p);
+    }
     return;
   }
   for (const path of [...entries.keys()]) {
     if (path.startsWith(prefix)) {
       entries.delete(path);
+      bumpGeneration(path);
       notify(path);
     }
   }
@@ -120,19 +130,29 @@ export function cachedGet<T>(path: string, opts: { force?: boolean } = {}): Prom
     return Promise.resolve(entry.data as T);
   }
 
+  // Поколение пути растёт на каждом сбросе кэша. Ответ запроса, начатого до
+  // мутации, приходит уже после неё — без этой отметки он вернул бы в кэш
+  // состояние «до», и возврат на экран показал бы отменённую правку.
+  const startedAt = generation.get(path) ?? 0;
+  const isCurrent = () => (generation.get(path) ?? 0) === startedAt;
+
   const inflight = api
     .get<T>(path)
     .then((data) => {
-      entries.set(path, { data, at: Date.now() });
-      notify(path);
+      if (isCurrent()) {
+        entries.set(path, { data, at: Date.now() });
+        notify(path);
+      }
       return data;
     })
     .catch((err: unknown) => {
       const message = err instanceof ApiError || err instanceof Error ? err.message : "Ошибка запроса";
-      // Прежние данные не выбрасываем: мигнувшая сеть не должна опустошать экран.
-      const prev = entries.get(path);
-      entries.set(path, { data: prev?.data, at: prev?.at ?? 0, error: message });
-      notify(path);
+      if (isCurrent()) {
+        // Прежние данные не выбрасываем: мигнувшая сеть не должна опустошать экран.
+        const prev = entries.get(path);
+        entries.set(path, { data: prev?.data, at: prev?.at ?? 0, error: message });
+        notify(path);
+      }
       throw err;
     });
 
