@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { prepare } from "@/lib/sql";
-import { jsonError, toHttpError } from "./http";
+import { isUuid, jsonError, toHttpError } from "./http";
 import {
   addMember,
   createUser,
@@ -81,7 +81,8 @@ export async function getCoreUser(): Promise<CoreUser | null> {
 }
 
 async function loadProjectRoles(orgId: string, userId: string): Promise<Map<string, ProjectRole>> {
-  // project_members появляется в миграции 0024 (Фаза 1); до неё — пустая карта.
+  // TODO(фаза 1, 0024): снять try/catch сразу после появления core.project_members —
+  // глушить ошибки БД здесь нельзя, это занижает права (гость теряет явные гранты).
   try {
     const rows = await prepare<{ project_id: string; role: ProjectRole }>(
       `SELECT pm.project_id, pm.role
@@ -101,7 +102,7 @@ export async function resolveOrgContext(
 ): Promise<{ auth: AuthContext } | { failure: NextResponse }> {
   const user = await getCoreUser();
   if (!user) return { failure: jsonError(401, "Unauthorized") };
-  if (!/^[0-9a-f-]{36}$/i.test(orgId)) return { failure: jsonError(404, "Not found") };
+  if (!isUuid(orgId)) return { failure: jsonError(404, "Not found") };
   const orgRole = await getMembershipRole(orgId, user.id);
   // 404, а не 403: не подтверждаем существование чужой организации.
   if (!orgRole) return { failure: jsonError(404, "Not found") };

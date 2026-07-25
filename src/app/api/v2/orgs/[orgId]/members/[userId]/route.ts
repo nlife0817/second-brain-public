@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withOrg } from "@/lib/core/context";
-import { jsonError, parseJson } from "@/lib/core/http";
+import { isUuid, jsonError, parseJson } from "@/lib/core/http";
 import {
   countOwners,
   getMembershipRole,
@@ -13,6 +13,7 @@ import { memberPatchSchema } from "@/lib/core/schemas";
 export const PATCH = withOrg(async (request, { params, auth }) => {
   assertOrg(auth, "org.members.manage");
   const { userId } = await params;
+  if (!isUuid(userId)) return jsonError(404, "Member not found");
   const [body, invalid] = await parseJson(request, memberPatchSchema);
   if (invalid) return invalid;
 
@@ -34,6 +35,7 @@ export const PATCH = withOrg(async (request, { params, auth }) => {
 
 export const DELETE = withOrg(async (_request, { params, auth }) => {
   const { userId } = await params;
+  if (!isUuid(userId)) return jsonError(404, "Member not found");
   const isSelf = userId === auth.user.id;
   // Выйти из организации можно самому; чужих удаляет только org.members.manage.
   if (!isSelf) assertOrg(auth, "org.members.manage");

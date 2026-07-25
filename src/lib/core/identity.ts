@@ -94,6 +94,9 @@ export async function addMember(orgId: string, userId: string, role: OrgRole): P
   ).run(orgId, userId, role);
 }
 
+// Известное упрощение: проверка "последний owner" не сериализована (нет FOR UPDATE);
+// при одновременных демоушенах теоретически возможна org без owner. Для ≤50
+// пользователей принято осознанно; при выходе в SaaS обернуть в транзакцию с блокировкой.
 export async function countOwners(orgId: string): Promise<number> {
   const row = await prepare<{ n: number }>(
     `SELECT count(*)::int AS n FROM core.org_members WHERE org_id = ? AND role = 'owner'`,
