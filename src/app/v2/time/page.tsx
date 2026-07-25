@@ -59,7 +59,9 @@ export default function TimePage() {
   const [from, setFrom] = useState(isoDaysAgo(7));
   const [to, setTo] = useState(isoDaysAgo(0));
   const [note, setNote] = useState("");
-  const [tick, setTick] = useState(0);
+  // Текущее время как состояние: чтение часов при рендере — недетерминированный
+  // побочный эффект, счётчик должен обновляться тиком таймера.
+  const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -90,15 +92,14 @@ export default function TimePage() {
   // Секундная стрелка активного таймера.
   useEffect(() => {
     if (!active) return;
-    const t = setInterval(() => setTick((v) => v + 1), 1000);
+    const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [active]);
 
   const activeSeconds = useMemo(() => {
     if (!active) return 0;
-    void tick;
-    return Math.max(0, Math.floor((Date.now() - new Date(active.started_at).getTime()) / 1000));
-  }, [active, tick]);
+    return Math.max(0, Math.floor((now - new Date(active.started_at).getTime()) / 1000));
+  }, [active, now]);
 
   async function call(fn: () => Promise<unknown>) {
     try {

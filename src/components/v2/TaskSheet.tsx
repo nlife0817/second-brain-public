@@ -75,7 +75,11 @@ export function TaskSheet({
   onChanged?: () => void;
 }) {
   const { orgId, statuses, tags, projects, me } = useV2Store();
-  const [task, setTask] = useState<TaskDetail | null>(null);
+  const [loaded, setLoaded] = useState<TaskDetail | null>(null);
+  // Пока грузится новая задача, старую не показываем — сравнение по id вместо
+  // сброса состояния в эффекте (тот вызывает каскадный ре-рендер).
+  const task = loaded && loaded.id === taskId ? loaded : null;
+  const setTask = setLoaded;
   const [comments, setComments] = useState<CoreComment[]>([]);
   const [feed, setFeed] = useState<CoreEvent[]>([]);
   const [subtasks, setSubtasks] = useState<TaskWithMeta[]>([]);
@@ -113,8 +117,6 @@ export function TaskSheet({
 
   useEffect(() => {
     currentTaskRef.current = taskId;
-    setTask(null);
-    setTab("comments");
     if (taskId) void load();
   }, [taskId, load]);
 

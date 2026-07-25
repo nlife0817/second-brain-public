@@ -27,28 +27,35 @@ export function GlobalSearch({
   onOpenChange: (open: boolean) => void;
   onPickTask: (taskId: string) => void;
 }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* key сбрасывает состояние палитры при каждом открытии — без ручной
+          очистки в эффекте и без риска показать результаты прошлого запроса. */}
+      {open && <SearchPalette key="palette" onOpenChange={onOpenChange} onPickTask={onPickTask} />}
+    </Dialog>
+  );
+}
+
+function SearchPalette({
+  onOpenChange,
+  onPickTask,
+}: {
+  onOpenChange: (open: boolean) => void;
+  onPickTask: (taskId: string) => void;
+}) {
   const router = useRouter();
   const { orgId } = useV2Store();
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [active, setActive] = useState(0);
   const seq = useRef(0);
+  const tooShort = query.trim().length < 2;
+  // Пока запрос короткий, результаты не показываем — без очистки состояния.
+  const visibleHits = tooShort ? [] : hits;
 
   useEffect(() => {
-    if (!open) {
-      // Инкремент отменяет ответы в полёте: иначе они дорисуют результаты
-      // прошлого запроса в уже очищенную палитру.
+    if (!orgId || tooShort) {
       seq.current++;
-      setQuery("");
-      setHits([]);
-      setActive(0);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!orgId || query.trim().length < 2) {
-      seq.current++;
-      setHits([]);
       return;
     }
     const mine = ++seq.current;
@@ -76,12 +83,11 @@ export function GlobalSearch({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        showCloseButton={false}
-        className="top-24 translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
-      >
-        <DialogTitle className="sr-only">Поиск</DialogTitle>
+    <DialogContent
+      showCloseButton={false}
+      className="top-24 translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
+    >
+      <DialogTitle className="sr-only">Поиск</DialogTitle>
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <Search className="size-4 shrink-0 text-muted-foreground" />
           <input
@@ -91,12 +97,12 @@ export function GlobalSearch({
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") {
                 e.preventDefault();
-                setActive((a) => Math.min(a + 1, hits.length - 1));
+                setActive((a) => Math.min(a + 1, visibleHits.length - 1));
               } else if (e.key === "ArrowUp") {
                 e.preventDefault();
                 setActive((a) => Math.max(a - 1, 0));
-              } else if (e.key === "Enter" && hits[active]) {
-                pick(hits[active]);
+              } else if (e.key === "Enter" && visibleHits[active]) {
+                pick(visibleHits[active]);
               }
             }}
             placeholder="Поиск задач и клиентов…"
@@ -104,10 +110,10 @@ export function GlobalSearch({
           />
         </div>
         <div className="max-h-80 overflow-y-auto p-1">
-          {query.trim().length >= 2 && hits.length === 0 && (
+          {!tooShort && visibleHits.length === 0 && (
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">Ничего не найдено</p>
           )}
-          {hits.map((h, i) => (
+          {visibleHits.map((h, i) => (
             <button
               key={`${h.type}-${h.id}`}
               onClick={() => pick(h)}
@@ -131,9 +137,8 @@ export function GlobalSearch({
                 {h.subtitle && <span className="block truncate text-xs text-muted-foreground">{h.subtitle}</span>}
               </span>
             </button>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
+        ))}
+      </div>
+    </DialogContent>
   );
 }

@@ -100,7 +100,11 @@ export async function listRules(ctx: AuthContext): Promise<RecurringRule[]> {
 
   return rows
     .filter((r) => r.created_by === ctx.user.id || (r.template?.project_id && visible.has(r.template.project_id)))
-    .map(({ created_by: _created_by, ...rule }) => rule);
+    .map((r) => {
+      const rule = { ...r } as RecurringRule & { created_by?: string | null };
+      delete rule.created_by;
+      return rule as RecurringRule;
+    });
 }
 
 export async function createRule(
