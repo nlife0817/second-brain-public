@@ -167,3 +167,88 @@ export const notificationsReadSchema = z.union([
   z.object({ ids: z.array(z.uuid()).min(1).max(500) }),
   z.object({ all: z.literal(true) }),
 ]);
+
+// --- CRM ------------------------------------------------------------------------------
+
+const contactFieldSchema = z.object({
+  type: z.enum(["email", "phone", "telegram", "note"]),
+  value: z.string().max(500),
+});
+
+const clientBaseShape = {
+  status_id: z.uuid().nullish(),
+  budget: z.string().max(200).optional(),
+  operators_per_shift: z.string().max(100).optional(),
+  operators_total: z.string().max(100).optional(),
+  calls_per_month: z.string().max(100).optional(),
+  monthly_revenue: z.number().finite().min(0).nullish(),
+  crm_system_ids: z.array(z.uuid()).max(50).optional(),
+  companies: z.array(z.object({ name: z.string().trim().max(300) })).max(50).optional(),
+  contacts: z
+    .array(
+      z.object({
+        name: z.string().trim().max(300),
+        fields: z.array(contactFieldSchema).max(20).optional(),
+      }),
+    )
+    .max(50)
+    .optional(),
+  links: z
+    .array(z.object({ url: z.string().url().max(2000), title: z.string().max(300) }))
+    .max(50)
+    .optional(),
+};
+
+export const clientCreateSchema = z.object({
+  name: z.string().trim().min(1).max(300),
+  ...clientBaseShape,
+});
+
+export const clientPatchSchema = z
+  .object({
+    name: z.string().trim().min(1).max(300).optional(),
+    position: z.number().finite().optional(),
+    ...clientBaseShape,
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
+export const clientNoteSchema = z.object({ text: z.string().trim().min(1).max(10_000) });
+
+export const clientMetaCreateSchema = z.object({
+  kind: z.enum(["status", "crm_system"]),
+  name: z.string().trim().min(1).max(200),
+  color: z.string().trim().max(32).optional(),
+});
+
+// --- Время ------------------------------------------------------------------------------
+
+export const timerStartSchema = z.object({
+  task_id: z.uuid().nullish(),
+  note: z.string().max(500).optional(),
+});
+
+export const manualTimeEntrySchema = z.object({
+  task_id: z.uuid().nullish(),
+  started_at: z.string().min(10).max(40),
+  ended_at: z.string().min(10).max(40),
+  note: z.string().max(500).optional(),
+});
+
+// --- Повторяющиеся задачи -------------------------------------------------------------
+
+export const recurringCreateSchema = z.object({
+  template: z.object({
+    title: z.string().trim().min(1).max(500),
+    description: z.string().max(20_000).optional(),
+    priority: prioritySchema.optional(),
+    status_id: z.uuid().nullish(),
+    project_id: z.uuid().nullish(),
+    assignee_ids: z.array(z.uuid()).max(20).optional(),
+  }),
+  freq: z.enum(["daily", "weekdays", "weekly", "monthly"]),
+  interval: z.number().int().min(1).max(365).optional(),
+  byweekday: z.array(z.number().int().min(0).max(6)).max(7).nullish(),
+  bymonthday: z.number().int().min(1).max(28).nullish(),
+  start_date: dateSchema,
+  until_date: dateSchema.nullish(),
+});

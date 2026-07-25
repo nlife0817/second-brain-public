@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Bell, CheckCircle2, FolderKanban, Plus, Settings } from "lucide-react";
+import { Bell, CheckCircle2, Clock, FolderKanban, Plus, Search, Settings, Users } from "lucide-react";
 import { CreateProjectDialog } from "@/components/v2/CreateProjectDialog";
+import { GlobalSearch } from "@/components/v2/GlobalSearch";
+import { TaskSheet } from "@/components/v2/TaskSheet";
 import { Avatar } from "@/components/v2/bits";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
@@ -45,6 +47,8 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { ready, error, me, orgName, orgRole, projects, unreadCount, bootstrap, refreshUnread } = useV2Store();
   const [createOpen, setCreateOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     void bootstrap();
@@ -54,6 +58,17 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
     const t = setInterval(() => void refreshUnread(), 30_000);
     return () => clearInterval(t);
   }, [refreshUnread]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   if (!ready) {
     return (
@@ -85,7 +100,18 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
           <span className="truncate text-sm font-semibold">{orgName}</span>
         </div>
 
-        <nav className="flex flex-col gap-0.5 px-2 py-2">
+        <div className="px-2 pb-1">
+          <button
+            onClick={() => setSearchOpen(true)}
+            className="flex w-full items-center gap-2 rounded-lg border border-border px-2.5 py-1.5 text-sm text-muted-foreground hover:bg-muted/60"
+          >
+            <Search className="size-4" />
+            <span className="flex-1 text-left">Поиск</span>
+            <kbd className="rounded border border-border px-1 text-[10px]">⌘K</kbd>
+          </button>
+        </div>
+
+        <nav className="flex flex-col gap-0.5 px-2 py-1">
           <NavLink
             href="/v2/my"
             icon={<CheckCircle2 className="size-4" />}
@@ -99,6 +125,20 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
             badge={unreadCount}
             active={pathname.startsWith("/v2/inbox")}
           />
+          <NavLink
+            href="/v2/time"
+            icon={<Clock className="size-4" />}
+            label="Время"
+            active={pathname.startsWith("/v2/time")}
+          />
+          {!isGuest && (
+            <NavLink
+              href="/v2/clients"
+              icon={<Users className="size-4" />}
+              label="Клиенты"
+              active={pathname.startsWith("/v2/clients")}
+            />
+          )}
           {!isGuest && (
             <NavLink
               href="/v2/settings"
@@ -166,6 +206,8 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
 
       <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} onPickTask={setSearchTaskId} />
+      <TaskSheet taskId={searchTaskId} onClose={() => setSearchTaskId(null)} />
     </div>
   );
 }

@@ -5,7 +5,8 @@ function isMobileUserAgent(ua: string): boolean {
   return /Mobile|Android|iPhone|iPad|iPod/i.test(ua);
 }
 
-const PUBLIC_PATHS = ["/login", "/auth/callback", "/mockup"];
+// /invite/* открыт до входа: страница сама показывает кнопку «Войти» с возвратом.
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/mockup", "/invite"];
 
 // Local-only dev bypass. Active iff both conditions hold:
 //   1) NODE_ENV !== "production"  (Vercel builds always set this to "production")
@@ -81,6 +82,8 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next|api/cron|api/notifications/dispatch|api/timing/watchdog|api/mcp|icons|favicon|manifest|sw\\.js).*)",
+    // api/v2/invitations исключён: GET показывает приглашение до входа, POST
+    // сам требует сессию через withUser.
+    "/((?!_next|api/cron|api/v2/cron|api/notifications/dispatch|api/timing/watchdog|api/mcp|api/v2/invitations|icons|favicon|manifest|sw\\.js).*)",
   ],
 };

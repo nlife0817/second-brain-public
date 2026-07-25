@@ -251,3 +251,83 @@ export async function revokeInvitation(orgId: string, invitationId: string): Pro
   ).run(invitationId, orgId);
   if (changed.changes === 0) throw new DomainError(404, "Invitation not found");
 }
+
+/** Публичный предпросмотр приглашения по сырому токену (до входа в систему). */
+export async function peekInvitation(
+  token: string,
+): Promise<{ org_name: string; email: string; org_role: OrgRole } | null> {
+  const row = await prepare<{ org_name: string; email: string; org_role: OrgRole }>(
+    `SELECT o.name AS org_name, i.email, i.org_role
+     FROM core.invitations i
+     JOIN core.organizations o ON o.id = i.org_id
+     WHERE i.token_hash = ? AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()`,
+  ).get(hashInviteToken(token));
+  return row ?? null;
+}
+
+/**
+ * Принятие приглашения. Токен «сгорает» атомарным UPDATE … RETURNING —
+ * повторный вызов и гонка двух вкладок не создадут второго членства.
+ * Email сессии обязан совпадать с адресом приглашения.
+ */
+export async function acceptInvitation(
+  token: string,
+  user: { id: string; email: string },
+): Promise<{ org_id: string; org_name: string; role: OrgRole }> {
+  return transaction(async (tx) => {
+    const invitation = await tx
+      .prepare<{
+        id: string;
+        org_id: string;
+        email: string;
+        org_role: OrgRole;
+        project_grants: ProjectGrant[];
+      }>(
+        `UPDATE core.invitations
+         SET accepted_at = now(), accepted_by = ?
+         WHERE token_hash = ?
+           AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+           AND email = ?
+         RETURNING id, org_id, email, org_role, project_grants`,
+      )
+      .get(user.id, hashInviteToken(token), user.email.toLowerCase().trim());
+
+    if (!invitation) {
+      // Не различаем «нет токена», «истёк» и «чужой email» — меньше информации атакующему.
+      throw new DomainError(404, "Приглашение недействительно или предназначено другому адресу");
+    }
+
+    await tx
+      .prepare(
+        `INSERT INTO core.org_members (org_id, user_id, role)
+         VALUES (?, ?, ?)
+         ON CONFLICT (org_id, user_id) DO NOTHING`,
+      )
+      .run(invitation.org_id, user.id, invitation.org_role);
+
+    for (const grant of invitation.project_grants) {
+      // Проект мог быть удалён или уехать в другую org за время жизни инвайта.
+      const project = await tx
+        .prepare<{ id: string }>(`SELECT id FROM core.projects WHERE id = ? AND org_id = ?`)
+        .get(grant.project_id, invitation.org_id);
+      if (!project) continue;
+      await tx
+        .prepare(
+          `INSERT INTO core.project_members (project_id, user_id, role)
+           VALUES (?, ?, ?)
+           ON CONFLICT (project_id, user_id) DO NOTHING`,
+        )
+        .run(grant.project_id, user.id, grant.role);
+    }
+
+    const org = await tx
+      .prepare<{ name: string }>(`SELECT name FROM core.organizations WHERE id = ?`)
+      .get(invitation.org_id);
+
+    return {
+      org_id: invitation.org_id,
+      org_name: org?.name ?? "",
+      role: invitation.org_role,
+    };
+  });
+}
