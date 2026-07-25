@@ -15,7 +15,7 @@
 // между организациями. Все записи идут либо из эффектов, либо под проверкой
 // `typeof window`.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { api, ApiError } from "./client";
 
 /** Сколько ответ считается свежим: в этом окне повторный заход не ходит в сеть. */
@@ -35,6 +35,14 @@ const listeners = new Map<string, Set<() => void>>();
 
 function isBrowser(): boolean {
   return typeof window !== "undefined";
+}
+
+/**
+ * Снимок для серверного рендера — всегда пустой и всегда одна и та же ссылка:
+ * кэш браузерный, а нестабильное значение здесь зациклило бы рендер.
+ */
+function getServerSnapshot(): Entry | undefined {
+  return undefined;
 }
 
 function notify(path: string): void {
@@ -163,40 +171,30 @@ export function useQuery<T>(
   opts: { initial?: T } = {},
 ): QueryResult<T> {
   const { initial } = opts;
-  // Первый рендер обязан совпасть с серверным: берём ровно то, что отдал сервер.
-  const [state, setState] = useState<{ data: T | undefined; error: string | null; loading: boolean }>(
-    () => ({ data: initial, error: null, loading: initial === undefined && path !== null }),
+
+  // Подписка на кэш — через useSyncExternalStore: он для того и есть, а
+  // связка «эффект + setState» дала бы лишний каскад рендеров на каждое
+  // изменение кэша.
+  const subscribeToPath = useCallback(
+    (onChange: () => void) => (path ? subscribe(path, onChange) : () => {}),
+    [path],
   );
+  const getSnapshot = useCallback(() => (path ? entries.get(path) : undefined), [path]);
+  // На сервере кэша нет — снимок пуст, и данные берутся из `initial` ниже.
+  // Первый рендер в браузере видит ровно то же: кэш наполняется эффектом.
+  const entry = useSyncExternalStore(subscribeToPath, getSnapshot, getServerSnapshot);
 
-  // Данные серверного рендера сажаем в кэш один раз на монтирование пути:
-  // повторно — только когда сервер прислал новый объект (клиентская навигация).
-  const seededFor = useRef<{ path: string | null; value: unknown }>({ path: null, value: undefined });
-  if (isBrowser() && path && initial !== undefined) {
-    const stamp = seededFor.current;
-    if (stamp.path !== path || stamp.value !== initial) {
-      seededFor.current = { path, value: initial };
-      entries.set(path, { data: initial, at: Date.now() });
-    }
-  }
-
-  const sync = useCallback(() => {
-    if (!path) return;
-    const entry = entries.get(path);
-    setState({
-      data: entry?.data as T | undefined,
-      error: entry?.error ?? null,
-      loading: entry?.data === undefined && entry?.error === undefined,
-    });
-  }, [path]);
+  const data = (entry?.data as T | undefined) ?? initial;
+  const error = entry?.error ?? null;
 
   useEffect(() => {
     if (!path) return;
-    const unsubscribe = subscribe(path, sync);
-    sync();
-    // Свежий кэш (в том числе только что посаженный `initial`) сети не требует.
+    // Данные серверного рендера — самые свежие на момент монтирования: сажаем
+    // их в кэш до `cachedGet`, и тот обходится без запроса. При клиентской
+    // навигации сервер присылает новый объект, эффект повторяется.
+    if (initial !== undefined) seed(path, initial);
     void cachedGet<T>(path).catch(() => {});
-    return unsubscribe;
-  }, [path, sync]);
+  }, [path, initial]);
 
   const refresh = useCallback(async () => {
     if (!path) return;
@@ -215,5 +213,5 @@ export function useQuery<T>(
     [path],
   );
 
-  return { data: state.data, loading: state.loading, error: state.error, refresh, update };
+  return { data, loading: data === undefined && error === null && path !== null, error, refresh, update };
 }

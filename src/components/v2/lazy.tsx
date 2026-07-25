@@ -12,7 +12,7 @@
 // сломается анимация закрытия.
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ComponentType } from "react";
 
 const TaskSheetImpl = dynamic(() => import("./TaskSheet").then((m) => m.TaskSheet), { ssr: false });
@@ -35,13 +35,15 @@ export { OrgOnboarding } from "./OrgOnboarding";
 /**
  * Монтирует слой начиная с первого открытия и больше не размонтирует.
  * `active` — признак «слой нужен» (открыт или анимирует открытие).
+ *
+ * Правка состояния прямо в рендере — тот самый случай, для которого React её и
+ * допускает: значение выводится из пропа и обновляется до коммита, а не эффектом
+ * после него. Через `useEffect` слой монтировался бы на кадр позже открытия.
  */
 function useMountOnDemand(active: boolean): boolean {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    if (active) setMounted(true);
-  }, [active]);
-  return mounted || active;
+  const [opened, setOpened] = useState(false);
+  if (active && !opened) setOpened(true);
+  return opened;
 }
 
 type PropsOf<T> = T extends ComponentType<infer P> ? P : never;

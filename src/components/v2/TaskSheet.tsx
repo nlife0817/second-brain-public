@@ -36,7 +36,7 @@ import type {
   TaskPriority,
   TaskListItem,
 } from "@/lib/core/types";
-import { useV2Store } from "@/lib/core/ui-store";
+import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, StatusPill } from "./bits";
 import { MemberPicker } from "./MemberPicker";
@@ -90,6 +90,7 @@ export function TaskSheet({
   // Кастомные поля — справочник организации из стора: раньше карточка тянула
   // /fields при каждом открытии.
   const { orgId, statuses, tags, projects, me, fields, orgRole } = useV2Store();
+  const storeApi = useV2StoreApi();
   // Гость связями не управляет; более тонкие права проверит сервер.
   const canEdit = orgRole !== null && orgRole !== "guest";
   const [loaded, setLoaded] = useState<TaskDetail | null>(null);
@@ -226,7 +227,7 @@ export function TaskSheet({
   /** Список исполнителей меняем оптимистично: иначе быстрый второй выбор
    *  посчитается от старого списка и снимет только что назначенного. */
   async function setAssignees(ids: string[]) {
-    const { members } = useV2Store.getState();
+    const { members } = storeApi.getState();
     const optimistic = ids
       .map((id) => members.find((m) => m.user_id === id))
       .filter((m): m is NonNullable<typeof m> => !!m)

@@ -36,10 +36,11 @@ import {
   readActiveOrgCookie,
   takeLegacyActiveOrg,
   useV2Store,
+  useV2StoreApi,
   writeActiveOrgCookie,
-  type V2InitialState,
 } from "@/lib/core/ui-store";
 import type { V2BootstrapResult } from "@/lib/core/bootstrap";
+import type { UserBrief } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -89,93 +90,53 @@ function NavLink({
   );
 }
 
-/**
- * Последнее наполнение стора. Модульная переменная, а не ref: гидрация обязана
- * произойти до первого чтения стора в этом же рендере, иначе клиент отрисует
- * пустой сайдбар поверх серверного и React сообщит о расхождении.
- */
-let hydratedWith: V2InitialState | null = null;
-
-function hydrateOnce(initial: V2InitialState | null): void {
-  if (typeof window === "undefined" || !initial) return;
-  if (hydratedWith === initial) return;
-  hydratedWith = initial;
-  useV2Store.getState().hydrate(initial);
-}
-
 export function V2Shell({
-  initial,
   state,
+  onboardingUser,
   children,
 }: {
-  initial: V2InitialState | null;
   state: V2BootstrapResult["state"];
+  onboardingUser: UserBrief | null;
   children: React.ReactNode;
 }) {
-  // Синхронно, до чтения стора ниже. На сервере — no-op: модульный стор общий
-  // для всех запросов, писать в него во время серверного рендера нельзя.
-  hydrateOnce(initial);
-
   const pathname = usePathname();
   const router = useRouter();
+  const storeApi = useV2StoreApi();
+  // Стор наполнен провайдером и на сервере, и в браузере — читаем напрямую.
   const store = useV2Store();
   const [createOpen, setCreateOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
   const migrated = useRef(false);
 
-  // Серверный рендер видит пустой стор (писать в модульный синглтон во время
-  // рендера сервера нельзя) — там источником служит `initial`. В браузере стор
-  // уже наполнен теми же данными, поэтому разметка совпадает.
-  const view: V2InitialState | null =
-    initial === null
-      ? null
-      : store.ready && store.me && store.orgId && store.orgRole
-        ? {
-            me: store.me,
-            orgs: store.orgs,
-            orgId: store.orgId,
-            orgName: store.orgName,
-            orgRole: store.orgRole,
-            projects: store.projects,
-            statuses: store.statuses,
-            tags: store.tags,
-            members: store.members,
-            fields: store.fields,
-            unreadCount: store.unreadCount,
-          }
-        : initial;
-
-  useEffect(() => {
-    hydrateOnce(initial);
-  }, [initial]);
-
   // Оболочка без серверных данных — редкость (гонка сессии), но экран в этом
   // случае должен наполниться сам, а не остаться пустым навсегда.
   useEffect(() => {
-    if (!initial && state === "anonymous" && !useV2Store.getState().ready) {
-      void useV2Store.getState().bootstrap();
+    if (state === "anonymous" && !storeApi.getState().ready) {
+      void storeApi.getState().bootstrap();
     }
-  }, [initial, state]);
+  }, [state, storeApi]);
 
   // Переезд активной организации из localStorage в cookie. Сервер выбрал
   // организацию по cookie; если её ещё нет, а в localStorage лежал другой
   // выбор — закрепляем его и перечитываем страницу уже для нужной организации.
   useEffect(() => {
-    if (migrated.current || !initial) return;
+    if (migrated.current) return;
+    const { orgId, orgs } = storeApi.getState();
+    if (!orgId) return;
     migrated.current = true;
     const cookie = readActiveOrgCookie();
     const legacy = takeLegacyActiveOrg();
-    if (cookie === initial.orgId) return;
-    const wanted = !cookie && legacy && initial.orgs.some((o) => o.id === legacy) ? legacy : initial.orgId;
+    if (cookie === orgId) return;
+    const wanted = !cookie && legacy && orgs.some((o) => o.id === legacy) ? legacy : orgId;
     writeActiveOrgCookie(wanted);
-    if (wanted !== initial.orgId) router.refresh();
-  }, [initial, router]);
+    if (wanted !== orgId) router.refresh();
+  }, [storeApi, router]);
 
   useEffect(() => {
-    const t = setInterval(() => void useV2Store.getState().refreshUnread(), 30_000);
+    const t = setInterval(() => void storeApi.getState().refreshUnread(), 30_000);
     return () => clearInterval(t);
-  }, []);
+  }, [storeApi]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -195,10 +156,12 @@ export function V2Shell({
     return <>{children}</>;
   }
 
-  if (state === "onboarding") {
-    return <OrgOnboarding />;
+  if (state === "onboarding" || store.needsOnboarding) {
+    return <OrgOnboarding user={onboardingUser} />;
   }
-  if (!view) {
+
+  const { me, orgs, orgId, orgName, orgRole, projects, unreadCount, metaLoading } = store;
+  if (!me || !orgId || !orgRole) {
     // Сессии нет или она разъехалась с базой. Клиентский bootstrap выше мог
     // успеть починить состояние — тогда показываем его ошибку, а не заглушку.
     if (!store.ready) {
@@ -208,7 +171,6 @@ export function V2Shell({
         </div>
       );
     }
-    if (store.needsOnboarding) return <OrgOnboarding />;
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-2">
         <p className="text-sm text-destructive">{store.error ?? "Нет доступа"}</p>
@@ -219,12 +181,10 @@ export function V2Shell({
     );
   }
 
-  const { me, orgs, orgId, orgName, orgRole, projects, unreadCount } = view;
   const isGuest = orgRole === "guest";
-  const metaLoading = store.ready ? store.metaLoading : false;
 
   async function onSwitchOrg(nextId: string) {
-    await useV2Store.getState().switchOrg(nextId);
+    await storeApi.getState().switchOrg(nextId);
     // Данные страницы считает сервер по cookie — без обновления серверного
     // рендера экран остался бы на задачах прежней организации.
     router.refresh();
@@ -404,7 +364,7 @@ export function V2Shell({
       <TaskSheet
         taskId={searchTaskId}
         onClose={() => setSearchTaskId(null)}
-        onChanged={() => void useV2Store.getState().refreshProjects()}
+        onChanged={() => void storeApi.getState().refreshProjects()}
       />
     </div>
   );

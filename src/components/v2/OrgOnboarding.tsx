@@ -2,14 +2,23 @@
 
 // Экран для пользователя без организаций: создать свою или ждать приглашения.
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/core/client";
+import type { UserBrief } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 
-export function OrgOnboarding() {
-  const { me, bootstrap } = useV2Store();
+/**
+ * `user` приходит из серверного рендера: у пользователя без организаций стор
+ * пуст (наполнять его нечем), а почту показать надо.
+ */
+export function OrgOnboarding({ user }: { user?: UserBrief | null }) {
+  const storeMe = useV2Store((s) => s.me);
+  const bootstrap = useV2Store((s) => s.bootstrap);
+  const me = storeMe ?? user ?? null;
+  const router = useRouter();
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,6 +30,9 @@ export function OrgOnboarding() {
     try {
       await api.post("/orgs", { name: name.trim() });
       await bootstrap();
+      // Данные экранов считает сервер — без обновления рендера первая страница
+      // осталась бы пустой до перезагрузки вручную.
+      router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось создать организацию");
       setSaving(false);

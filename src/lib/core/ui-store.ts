@@ -1,12 +1,16 @@
 "use client";
 
-// Zustand-стор интерфейса v2: контекст организации + кэши справочников.
+// Стор интерфейса v2: контекст организации + кэши справочников.
 //
-// Первичное наполнение приходит из серверного рендера (`hydrate`) — оболочка
-// больше не начинает жизнь с семи запросов. Клиентские методы остались для
-// обновления после мутаций и для смены организации.
+// Инстанс создаётся на запрос и раздаётся через React-контекст, а не живёт
+// модульным синглтоном. Причина — серверный рендер: модульный стор общий для
+// всех одновременных запросов сервера, и наполнить его данными пользователя
+// значило бы показать их соседнему. Пер-запросный инстанс снимает и вторую
+// проблему: экран, читающий стор при рендере, на сервере видит те же данные,
+// что и в браузере, — без расхождения гидрации.
 
-import { create } from "zustand";
+import { createContext, createElement, useContext, useEffect, useRef } from "react";
+import { createStore, useStore } from "zustand";
 import { api } from "./client";
 import { invalidate } from "./query";
 import { ACTIVE_ORG_COOKIE, ACTIVE_ORG_COOKIE_MAX_AGE, ACTIVE_ORG_LEGACY_KEY } from "./keys";
@@ -72,7 +76,7 @@ export function takeLegacyActiveOrg(): string | null {
   }
 }
 
-interface V2State {
+export interface V2State {
   ready: boolean;
   /** Справочники организации ещё грузятся — сайдбар показывает скелет, а не «пусто». */
   metaLoading: boolean;
@@ -93,6 +97,7 @@ interface V2State {
 
   /** Наполнение из серверного рендера — синхронно, без единого запроса. */
   hydrate: (initial: V2InitialState) => void;
+  setFields: (fields: CustomField[]) => void;
   bootstrap: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
   /** Справочники активной организации; вызывается из bootstrap и switchOrg. */
@@ -104,7 +109,7 @@ interface V2State {
   refreshUnread: () => Promise<void>;
 }
 
-export const useV2Store = create<V2State>((set, get) => ({
+const EMPTY = {
   ready: false,
   metaLoading: false,
   error: null,
@@ -120,122 +125,187 @@ export const useV2Store = create<V2State>((set, get) => ({
   members: [],
   fields: [],
   unreadCount: 0,
+} satisfies Omit<
+  V2State,
+  | "hydrate"
+  | "setFields"
+  | "bootstrap"
+  | "switchOrg"
+  | "loadOrgData"
+  | "refreshProjects"
+  | "refreshMeta"
+  | "refreshMembers"
+  | "refreshFields"
+  | "refreshUnread"
+>;
 
-  hydrate: (initial) => {
-    // Повторная гидрация приходит при клиентской навигации: серверный рендер
-    // следующего экрана приносит свежие справочники, и перетирать ими стор —
-    // ровно то, что нужно. Сравнение по ссылке отсекло бы обновление счётчиков.
-    set({ ...initial, ready: true, metaLoading: false, needsOnboarding: false, error: null });
-  },
+export function createV2Store(initial?: V2InitialState | null) {
+  return createStore<V2State>()((set, get) => ({
+    ...EMPTY,
+    ...(initial ? { ...initial, ready: true } : {}),
 
-  bootstrap: async () => {
-    // Фолбэк: серверный рендер уже наполнил стор, сюда попадаем только если
-    // оболочка смонтировалась без начальных данных.
-    try {
-      const me = await api.get<MeResponse>("/me");
-      const savedId = readActiveOrgCookie() ?? takeLegacyActiveOrg();
-      const org = me.orgs.find((o) => o.id === savedId) ?? me.orgs[0];
-      if (!org) {
-        set({ me: me.user, orgs: [], needsOnboarding: true, ready: true, error: null });
-        return;
+    hydrate: (next) => {
+      // Повторная гидрация приходит при клиентской навигации: серверный рендер
+      // следующего экрана приносит свежие справочники, и перетереть ими стор —
+      // ровно то, что нужно.
+      set({ ...next, ready: true, metaLoading: false, needsOnboarding: false, error: null });
+    },
+
+    setFields: (fields) => set({ fields }),
+
+    bootstrap: async () => {
+      // Фолбэк: серверный рендер уже наполнил стор, сюда попадаем только если
+      // оболочка смонтировалась без начальных данных.
+      try {
+        const me = await api.get<MeResponse>("/me");
+        const savedId = readActiveOrgCookie() ?? takeLegacyActiveOrg();
+        const org = me.orgs.find((o) => o.id === savedId) ?? me.orgs[0];
+        if (!org) {
+          set({ me: me.user, orgs: [], needsOnboarding: true, ready: true, error: null });
+          return;
+        }
+        set({
+          me: me.user,
+          orgs: me.orgs,
+          needsOnboarding: false,
+          orgId: org.id,
+          orgName: org.name,
+          orgRole: org.role,
+          ready: true,
+          metaLoading: true,
+          error: null,
+        });
+        writeActiveOrgCookie(org.id);
+        await get().loadOrgData();
+      } catch (e) {
+        set({ error: e instanceof Error ? e.message : "Не удалось загрузить", ready: true });
       }
+    },
+
+    switchOrg: async (orgId: string) => {
+      const org = get().orgs.find((o) => o.id === orgId);
+      if (!org) return;
+      writeActiveOrgCookie(orgId);
+      // Кэш запросов ключуется по пути с orgId, но данные экранов соседней
+      // организации всё равно чужие — чистим целиком, чтобы старые списки не
+      // мелькнули на новом контексте.
+      invalidate();
       set({
-        me: me.user,
-        orgs: me.orgs,
-        needsOnboarding: false,
         orgId: org.id,
         orgName: org.name,
         orgRole: org.role,
-        ready: true,
+        projects: [],
+        statuses: [],
+        tags: [],
+        members: [],
+        fields: [],
+        unreadCount: 0,
         metaLoading: true,
         error: null,
       });
-      writeActiveOrgCookie(org.id);
       await get().loadOrgData();
-    } catch (e) {
-      set({ error: e instanceof Error ? e.message : "Не удалось загрузить", ready: true });
-    }
-  },
+    },
 
-  switchOrg: async (orgId: string) => {
-    const org = get().orgs.find((o) => o.id === orgId);
-    if (!org) return;
-    writeActiveOrgCookie(orgId);
-    // Кэш запросов ключуется по пути с orgId, но данные страниц соседней
-    // организации всё равно чужие — чистим целиком, чтобы старые списки не
-    // мелькнули на новом контексте.
-    invalidate();
-    set({
-      orgId: org.id,
-      orgName: org.name,
-      orgRole: org.role,
-      projects: [],
-      statuses: [],
-      tags: [],
-      members: [],
-      fields: [],
-      unreadCount: 0,
-      metaLoading: true,
-      error: null,
-    });
-    await get().loadOrgData();
-  },
+    loadOrgData: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      try {
+        // Один запрос вместо шести: справочники собираются на сервере за один
+        // резолв авторизации (см. `loadOrgMeta` в bootstrap.ts).
+        const meta = await api.get<OrgMetaResponse>(`/orgs/${orgId}/meta`);
+        set({ ...meta, metaLoading: false, error: null });
+      } catch (e) {
+        set({
+          metaLoading: false,
+          error: e instanceof Error ? e.message : "Не удалось загрузить",
+        });
+      }
+    },
 
-  loadOrgData: async () => {
-    const { orgId } = get();
-    if (!orgId) return;
-    try {
-      // Один запрос вместо шести: справочники собираются на сервере за один
-      // резолв авторизации (см. `loadOrgMeta` в bootstrap.ts).
-      const meta = await api.get<OrgMetaResponse>(`/orgs/${orgId}/meta`);
-      set({ ...meta, metaLoading: false, error: null });
-    } catch (e) {
-      set({
-        metaLoading: false,
-        error: e instanceof Error ? e.message : "Не удалось загрузить",
-      });
-    }
-  },
+    refreshProjects: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      set({ projects: await api.get<ProjectWithMeta[]>(`/orgs/${orgId}/projects`) });
+    },
 
-  refreshProjects: async () => {
-    const { orgId } = get();
-    if (!orgId) return;
-    set({ projects: await api.get<ProjectWithMeta[]>(`/orgs/${orgId}/projects`) });
-  },
+    refreshMeta: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      const [statuses, tags] = await Promise.all([
+        api.get<TaskStatus[]>(`/orgs/${orgId}/statuses`),
+        api.get<CoreTag[]>(`/orgs/${orgId}/tags`),
+      ]);
+      set({ statuses, tags });
+    },
 
-  refreshMeta: async () => {
-    const { orgId } = get();
-    if (!orgId) return;
-    const [statuses, tags] = await Promise.all([
-      api.get<TaskStatus[]>(`/orgs/${orgId}/statuses`),
-      api.get<CoreTag[]>(`/orgs/${orgId}/tags`),
-    ]);
-    set({ statuses, tags });
-  },
+    refreshMembers: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      set({ members: await api.get<OrgMemberWithUser[]>(`/orgs/${orgId}/members`) });
+    },
 
-  refreshMembers: async () => {
-    const { orgId } = get();
-    if (!orgId) return;
-    set({ members: await api.get<OrgMemberWithUser[]>(`/orgs/${orgId}/members`) });
-  },
+    // Кастомные поля — справочник организации: держим в сторе, а не тянем
+    // заново при каждом открытии карточки задачи.
+    refreshFields: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      set({ fields: await api.get<CustomField[]>(`/orgs/${orgId}/fields`) });
+    },
 
-  // Кастомные поля — справочник организации: держим в сторе, а не тянем
-  // заново при каждом открытии карточки задачи.
-  refreshFields: async () => {
-    const { orgId } = get();
-    if (!orgId) return;
-    set({ fields: await api.get<CustomField[]>(`/orgs/${orgId}/fields`) });
-  },
+    refreshUnread: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      try {
+        // count=1 — только счётчик, без выборки самих уведомлений.
+        const res = await api.get<{ unread_count: number }>(`/orgs/${orgId}/notifications?count=1`);
+        set({ unreadCount: res.unread_count });
+      } catch {
+        // Периодический опрос: офлайн или мигнувший 500 не должны шуметь в консоль.
+      }
+    },
+  }));
+}
 
-  refreshUnread: async () => {
-    const { orgId } = get();
-    if (!orgId) return;
-    try {
-      // count=1 — только счётчик, без выборки самих уведомлений.
-      const res = await api.get<{ unread_count: number }>(`/orgs/${orgId}/notifications?count=1`);
-      set({ unreadCount: res.unread_count });
-    } catch {
-      // Периодический опрос: офлайн или мигнувший 500 не должны шуметь в консоль.
-    }
-  },
-}));
+export type V2StoreApi = ReturnType<typeof createV2Store>;
+
+const V2StoreContext = createContext<V2StoreApi | null>(null);
+
+/**
+ * Создаёт стор на запрос и раздаёт его дереву v2. В браузере инстанс один на
+ * всё время жизни вкладки; серверный рендер получает свой на каждый запрос.
+ */
+export function V2StoreProvider({
+  initial,
+  children,
+}: {
+  initial: V2InitialState | null;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<V2StoreApi | null>(null);
+  ref.current ??= createV2Store(initial);
+  const store = ref.current;
+
+  // Клиентская навигация приносит свежий серверный снимок — вливаем его в
+  // существующий стор, а не пересоздаём (иначе слетело бы всё состояние).
+  const applied = useRef(initial);
+  useEffect(() => {
+    if (!initial || applied.current === initial) return;
+    applied.current = initial;
+    store.getState().hydrate(initial);
+  }, [initial, store]);
+
+  return createElement(V2StoreContext.Provider, { value: store }, children);
+}
+
+export function useV2StoreApi(): V2StoreApi {
+  const store = useContext(V2StoreContext);
+  if (!store) throw new Error("useV2Store вне <V2StoreProvider> — стор v2 живёт в /v2/layout.tsx");
+  return store;
+}
+
+export function useV2Store(): V2State;
+export function useV2Store<T>(selector: (state: V2State) => T): T;
+export function useV2Store<T>(selector?: (state: V2State) => T) {
+  const store = useV2StoreApi();
+  return useStore(store, selector ?? ((state) => state as unknown as T));
+}

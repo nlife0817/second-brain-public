@@ -21,7 +21,7 @@ import type {
   OrgRole,
   ProjectRole,
 } from "@/lib/core/types";
-import { useV2Store } from "@/lib/core/ui-store";
+import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { Avatar } from "@/components/v2/bits";
 import { PushToggle } from "@/components/v2/PushToggle";
 
@@ -328,6 +328,7 @@ function AdminSection({ orgId, initial }: { orgId: string | null; initial: Admin
 
 export function SettingsClient({ initial }: { initial: SettingsInitial }) {
   const store = useV2Store();
+  const storeApi = useV2StoreApi();
   const { orgId, orgRole, me, members, statuses, tags, projects } = store;
   const isAdmin = orgRole === "owner" || orgRole === "admin";
   // Теги и кастомные поля org-уровня доступны сотрудникам, но не гостям.
@@ -357,8 +358,8 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
     ]);
     setFields(fs);
     setInvites(inv);
-    useV2Store.setState({ fields: fs });
-  }, [orgId, isAdmin]);
+    storeApi.getState().setFields(fs);
+  }, [orgId, isAdmin, storeApi]);
 
   // Поля и приглашения пришли с сервера — перечитываем только после правок и
   // при смене организации.
