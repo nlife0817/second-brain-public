@@ -283,7 +283,10 @@ export function TaskSheet({
       <SheetContent
         side="right"
         showCloseButton={false}
-        className="flex flex-col gap-0 overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-xl"
+        // На телефоне карточка занимает весь экран и рисуется поверх оболочки:
+        // без отступов безопасной зоны шапка уезжает под чёлку, а комментарии —
+        // под домашний индикатор.
+        className="flex flex-col gap-0 overflow-hidden p-0 pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] data-[side=right]:w-full data-[side=right]:sm:max-w-xl sm:pb-0 sm:pt-0"
       >
         {!task ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -291,11 +294,13 @@ export function TaskSheet({
           </div>
         ) : (
           <>
+            {/* Кнопки шапки на телефоне крупнее: 28 px мышью попадаются, пальцем — нет. */}
             <SheetHeader className="border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <Button
                   variant={isDone ? "secondary" : "outline"}
                   size="sm"
+                  className="h-9 sm:h-7"
                   onClick={() => {
                     const target = isDone ? reopenStatus() : doneStatus;
                     if (target) void patch({ status_id: target.id });
@@ -308,19 +313,32 @@ export function TaskSheet({
                 <Button
                   variant="outline"
                   size="sm"
+                  className="h-9 sm:h-7"
                   onClick={() => void startTimerHere()}
                   title="Начать отсчёт времени по этой задаче"
                 >
                   <Play className="size-4" />
                   Таймер
                 </Button>
-                <Button variant="ghost" size="icon-sm" onClick={() => void toggleFollow()} title={amFollower ? "Не следить" : "Следить"}>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-9 sm:size-7"
+                  onClick={() => void toggleFollow()}
+                  title={amFollower ? "Не следить" : "Следить"}
+                >
                   {amFollower ? <BellOff className="size-4" /> : <Bell className="size-4" />}
                 </Button>
-                <Button variant="ghost" size="icon-sm" onClick={() => void removeTask()} title="Удалить">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-9 sm:size-7"
+                  onClick={() => void removeTask()}
+                  title="Удалить"
+                >
                   <Trash2 className="size-4" />
                 </Button>
-                <Button variant="ghost" size="icon-sm" onClick={onClose}>
+                <Button variant="ghost" size="icon-sm" className="size-9 sm:size-7" onClick={onClose}>
                   <X className="size-4" />
                 </Button>
               </div>

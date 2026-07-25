@@ -6,6 +6,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bell, CheckCheck } from "lucide-react";
 import { TaskSheet } from "@/components/v2/TaskSheet";
+import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
+import { useAppResume, useBackDismiss, useTaskDeepLink } from "@/components/v2/mobile/hooks";
 import { api } from "@/lib/core/client";
 import type { CoreNotification } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -25,6 +27,7 @@ export default function MobileInboxPage() {
   const [items, setItems] = useState<CoreNotification[]>([]);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [marking, setMarking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -44,13 +47,29 @@ export default function MobileInboxPage() {
     void load();
   }, [load]);
 
+  const refreshAll = useCallback(async () => {
+    await Promise.all([load(), refreshUnread()]);
+  }, [load, refreshUnread]);
+
+  // Экран уведомлений — первое, куда приходят из пуша: обновляем при возврате.
+  useAppResume(refreshAll);
+
+  useTaskDeepLink(setOpenTaskId);
+  const closeTask = useCallback(() => setOpenTaskId(null), []);
+  useBackDismiss(!!openTaskId, closeTask);
+
+  const hasUnread = items.some((n) => !n.read_at);
+
   async function markAll() {
-    if (!orgId) return;
+    if (!orgId || marking || !hasUnread) return;
+    setMarking(true);
     try {
       await api.post(`/orgs/${orgId}/notifications`, { all: true });
       await Promise.all([load(), refreshUnread()]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось отметить прочитанными");
+    } finally {
+      setMarking(false);
     }
   }
 
@@ -75,28 +94,45 @@ export default function MobileInboxPage() {
         <h1 className="flex-1 text-base font-semibold">Уведомления</h1>
         <button
           onClick={() => void markAll()}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-muted-foreground"
+          disabled={!hasUnread || marking}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-2 text-xs text-muted-foreground active:bg-muted disabled:opacity-40"
         >
           <CheckCheck className="size-4" />
           Прочитать все
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain px-2 py-2">
-        {error && <p className="mx-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
-        {loading && <p className="px-3 py-2 text-sm text-muted-foreground">Загрузка…</p>}
-        {!loading && items.length === 0 && (
+      <PullToRefresh onRefresh={refreshAll} className="px-2 py-2">
+        {error && (
+          <div className="mx-2 flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <span className="min-w-0 flex-1">{error}</span>
+            <button onClick={() => void load()} className="shrink-0 font-medium underline">
+              Повторить
+            </button>
+          </div>
+        )}
+
+        {loading && (
+          <div className="flex flex-col gap-1 px-1" aria-hidden>
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <span key={i} className="h-14 animate-pulse rounded-xl bg-muted" />
+            ))}
+          </div>
+        )}
+
+        {!loading && items.length === 0 && !error && (
           <div className="flex flex-col items-center gap-2 py-16 text-muted-foreground">
             <Bell className="size-8" />
             <p className="text-sm">Уведомлений пока нет</p>
           </div>
         )}
+
         {items.map((n) => (
           <button
             key={n.id}
             onClick={() => void openNotification(n)}
             className={cn(
-              "flex w-full items-start gap-2.5 rounded-xl px-3 py-3 text-left",
+              "flex w-full items-start gap-2.5 rounded-xl px-3 py-3 text-left active:bg-muted/60",
               !n.read_at && "bg-muted/40",
             )}
           >
@@ -118,9 +154,9 @@ export default function MobileInboxPage() {
             </span>
           </button>
         ))}
-      </div>
+      </PullToRefresh>
 
-      <TaskSheet taskId={openTaskId} onClose={() => setOpenTaskId(null)} />
+      <TaskSheet taskId={openTaskId} onClose={closeTask} onChanged={() => void load()} />
     </div>
   );
 }

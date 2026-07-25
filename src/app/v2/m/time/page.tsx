@@ -6,6 +6,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pause, Play, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
+import { useAppResume } from "@/components/v2/mobile/hooks";
 import { api } from "@/lib/core/client";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
@@ -81,6 +83,9 @@ export default function MobileTimePage() {
     void load();
   }, [load]);
 
+  // Таймер мог остановиться с другого устройства, пока приложение было в фоне.
+  useAppResume(load);
+
   // Секундная стрелка активного таймера.
   useEffect(() => {
     if (!active) return;
@@ -111,9 +116,16 @@ export default function MobileTimePage() {
         <h1 className="text-base font-semibold">Время</h1>
       </header>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3">
+      <PullToRefresh onRefresh={load} className="px-4 py-3">
         <div className="flex flex-col gap-4">
-          {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+          {error && (
+            <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <span className="min-w-0 flex-1">{error}</span>
+              <button onClick={() => void load()} className="shrink-0 font-medium underline">
+                Повторить
+              </button>
+            </div>
+          )}
 
           <section className="rounded-2xl border border-border bg-card p-4">
             {active ? (
@@ -201,7 +213,7 @@ export default function MobileTimePage() {
                 {e.ended_at && (
                   <button
                     onClick={() => void call(() => api.del(`/orgs/${orgId}/time/${e.id}`))}
-                    className="p-1.5 text-muted-foreground"
+                    className="rounded-lg p-2 text-muted-foreground active:bg-muted"
                     aria-label="Удалить запись"
                   >
                     <Trash2 className="size-4" />
@@ -211,7 +223,7 @@ export default function MobileTimePage() {
             ))}
           </section>
         </div>
-      </div>
+      </PullToRefresh>
     </div>
   );
 }

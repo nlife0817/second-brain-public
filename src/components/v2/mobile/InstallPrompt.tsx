@@ -1,20 +1,23 @@
 "use client";
 
-// Подсказки установки приложения и включения пушей.
+// Установка приложения и включение пушей.
 //
-// InstallPrompt: в мобильном браузере предлагает поставить PWA — на Android
-// через перехваченный beforeinstallprompt (установка в один тап), на iOS
-// программной установки нет, показываем инструкцию для Safari. Внутри уже
-// установленного приложения баннер не рендерится.
+// Android: Chrome решает, что сайт устанавливаем, и присылает
+// beforeinstallprompt — иногда ещё до того, как React смонтирует слушатель.
+// Поэтому событие ловит и придерживает крохотный скрипт в layout мобильной
+// версии (см. install-capture.ts), а компоненты только читают отложенное
+// событие. Без этого баннер «Установить» на части телефонов не появлялся
+// вовсе — и выглядело это как отсутствие PWA.
 //
-// PushNudge: в установленном приложении мягко предлагает включить
-// уведомления, пока разрешение не спрошено. На iPhone Push API существует
-// только внутри установленного приложения — поэтому нудж живёт именно там.
+// iOS: программной установки нет ни в каком виде, показываем инструкцию для
+// Safari. Push API там существует только внутри установленного приложения —
+// поэтому предложение включить уведомления живёт именно там.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Bell, Share, SquarePlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { enablePushNotifications, getPushState } from "@/lib/notifications/client";
+import { useDismissFlag, useIos, useStandalone } from "./hooks";
 
 // Подписка v2 — авторизация по core-identity (см. PushToggle).
 const V2_PUSH = { subscribeUrl: "/api/v2/push/subscribe" };
@@ -28,80 +31,86 @@ type BeforeInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 };
 
-export function isStandalone(): boolean {
-  if (typeof window === "undefined") return false;
+declare global {
+  interface Window {
+    __sbInstallEvent?: BeforeInstallPromptEvent | null;
+  }
+}
+
+const INSTALL_EVENTS = ["sb:installable", "sb:installed", "beforeinstallprompt", "appinstalled"];
+
+function subscribeInstall(cb: () => void): () => void {
+  for (const name of INSTALL_EVENTS) window.addEventListener(name, cb);
+  return () => {
+    for (const name of INSTALL_EVENTS) window.removeEventListener(name, cb);
+  };
+}
+
+export interface InstallState {
+  /** Открыто с домашнего экрана — ставить уже нечего. */
+  standalone: boolean;
+  /** iOS: установка только руками, через «Поделиться». */
+  ios: boolean;
+  /** Браузер готов поставить приложение по нажатию. */
+  canInstall: boolean;
+  /** Показывает системный диалог установки; true — пользователь согласился. */
+  install: () => Promise<boolean>;
+}
+
+export function useInstallState(): InstallState {
+  const standalone = useStandalone();
+  const ios = useIos();
+  const canInstall = useSyncExternalStore(
+    subscribeInstall,
+    () => !!window.__sbInstallEvent,
+    () => false,
+  );
+
+  const install = useCallback(async () => {
+    const evt = window.__sbInstallEvent;
+    if (!evt) return false;
+    // Отложенное событие одноразовое: показали диалог — забываем его в любом
+    // случае, иначе кнопка останется висеть и вторым нажатием кинет ошибку.
+    window.__sbInstallEvent = null;
+    try {
+      await evt.prompt();
+      const choice = await evt.userChoice;
+      return choice.outcome === "accepted";
+    } catch {
+      return false;
+    } finally {
+      window.dispatchEvent(new Event("sb:installable"));
+    }
+  }, []);
+
+  return { standalone, ios, canInstall, install };
+}
+
+/** Инструкция для Safari: единственный способ установки на iPhone. */
+export function IosInstallSteps({ className }: { className?: string }) {
   return (
-    window.matchMedia("(display-mode: standalone)").matches ||
-    (navigator as Navigator & { standalone?: boolean }).standalone === true
+    <ol className={className ?? "flex flex-col gap-1.5 text-xs text-muted-foreground"}>
+      <li className="flex items-center gap-1.5">
+        1. Откройте сайт в Safari и нажмите «Поделиться»
+        <Share className="size-3.5 shrink-0" />
+      </li>
+      <li className="flex items-center gap-1.5">
+        2. Выберите «На экран “Домой”»
+        <SquarePlus className="size-3.5 shrink-0" />
+      </li>
+      <li>3. Откройте приложение с домашнего экрана и включите уведомления</li>
+    </ol>
   );
 }
 
-export function isIos(): boolean {
-  if (typeof navigator === "undefined") return false;
-  // iPadOS прикидывается макбуком, выдаёт себя мультитачем.
-  const iPadOs = navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
-  return /iPhone|iPad|iPod/i.test(navigator.userAgent) || iPadOs;
-}
-
-function dismissedRecently(key: string): boolean {
-  try {
-    const at = window.localStorage.getItem(key);
-    return !!at && Date.now() - Number(at) < DISMISS_TTL_MS;
-  } catch {
-    return false;
-  }
-}
-
-function markDismissed(key: string): void {
-  try {
-    window.localStorage.setItem(key, String(Date.now()));
-  } catch {
-    // приватный режим — просто покажем снова в следующий раз
-  }
-}
-
 export function InstallPrompt() {
-  // До эффектов ничего не показываем: SSR не знает ни платформу, ни standalone.
-  const [visible, setVisible] = useState(false);
-  const [ios, setIos] = useState(false);
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
+  const { standalone, ios, canInstall, install } = useInstallState();
+  const [dismissed, dismiss] = useDismissFlag(INSTALL_DISMISS_KEY, DISMISS_TTL_MS);
   const [showIosSteps, setShowIosSteps] = useState(false);
 
-  useEffect(() => {
-    if (isStandalone() || dismissedRecently(INSTALL_DISMISS_KEY)) return;
-    if (isIos()) {
-      // Отложенный тик: платформа читается из браузерного окружения, а рендер
-      // с setState прямо в теле эффекта каскадил бы гидрацию (см. правило линта).
-      const t = window.setTimeout(() => {
-        setIos(true);
-        setVisible(true);
-      }, 0);
-      return () => window.clearTimeout(t);
-    }
-    // Android/desktop Chrome: баннер только когда браузер готов ставить.
-    function onPrompt(e: Event) {
-      e.preventDefault();
-      setDeferred(e as BeforeInstallPromptEvent);
-      setVisible(true);
-    }
-    window.addEventListener("beforeinstallprompt", onPrompt);
-    return () => window.removeEventListener("beforeinstallprompt", onPrompt);
-  }, []);
-
-  if (!visible) return null;
-
-  async function install() {
-    if (!deferred) return;
-    await deferred.prompt();
-    const choice = await deferred.userChoice.catch(() => null);
-    if (choice?.outcome === "accepted") setVisible(false);
-    setDeferred(null);
-  }
-
-  function dismiss() {
-    markDismissed(INSTALL_DISMISS_KEY);
-    setVisible(false);
-  }
+  // Нечего предлагать: уже установлено, скрыто пользователем или браузер
+  // установку не поддерживает (десктоп, Firefox на Android и т.п.).
+  if (standalone || dismissed || (!ios && !canInstall)) return null;
 
   return (
     <div className="shrink-0 border-b border-border bg-muted/40 px-4 py-2.5">
@@ -120,63 +129,51 @@ export function InstallPrompt() {
             Установить
           </Button>
         )}
-        <button onClick={dismiss} className="p-1 text-muted-foreground" aria-label="Скрыть">
+        <button onClick={dismiss} className="-mr-1 p-2 text-muted-foreground" aria-label="Скрыть">
           <X className="size-4" />
         </button>
       </div>
-      {ios && showIosSteps && (
-        <ol className="mt-2 flex flex-col gap-1.5 text-xs text-muted-foreground">
-          <li className="flex items-center gap-1.5">
-            1. Откройте сайт в Safari и нажмите «Поделиться»
-            <Share className="size-3.5 shrink-0" />
-          </li>
-          <li className="flex items-center gap-1.5">
-            2. Выберите «На экран “Домой”»
-            <SquarePlus className="size-3.5 shrink-0" />
-          </li>
-          <li>3. Откройте установленное приложение и включите уведомления в «Настройках»</li>
-        </ol>
-      )}
+      {ios && showIosSteps && <IosInstallSteps className="mt-2 flex flex-col gap-1.5 text-xs text-muted-foreground" />}
     </div>
   );
 }
 
 export function PushNudge() {
-  const [visible, setVisible] = useState(false);
+  const standalone = useStandalone();
+  const [dismissed, dismiss] = useDismissFlag(NUDGE_DISMISS_KEY, DISMISS_TTL_MS);
+  const [askable, setAskable] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // Разрешение читается асинхронно: getPushState ждёт готовности service
+  // worker, синхронного снимка для useSyncExternalStore тут нет.
+  const active = standalone && !dismissed;
   useEffect(() => {
-    // Нудж — только внутри установленного приложения: в браузере включение
-    // живёт в настройках, а на iOS вне standalone Push API вовсе нет.
-    if (!isStandalone() || dismissedRecently(NUDGE_DISMISS_KEY)) return;
+    if (!active) return;
+    let cancelled = false;
     void getPushState()
       .then((state) => {
-        if (state.supported && state.permission === "default" && !state.subscribed) {
-          setVisible(true);
-        }
+        if (cancelled) return;
+        setAskable(state.supported && state.permission === "default" && !state.subscribed);
       })
       .catch(() => {});
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [active]);
 
-  if (!visible) return null;
+  if (!active || !askable) return null;
 
   async function enable() {
     setBusy(true);
     try {
       await enablePushNotifications(V2_PUSH);
-      setVisible(false);
+      setAskable(false);
     } catch {
       // Отказ в системном диалоге — не настаиваем, тумблер остаётся в настройках.
-      markDismissed(NUDGE_DISMISS_KEY);
-      setVisible(false);
+      dismiss();
     } finally {
       setBusy(false);
     }
-  }
-
-  function dismiss() {
-    markDismissed(NUDGE_DISMISS_KEY);
-    setVisible(false);
   }
 
   return (
@@ -188,7 +185,7 @@ export function PushNudge() {
       <Button size="sm" onClick={() => void enable()} disabled={busy}>
         Включить
       </Button>
-      <button onClick={dismiss} className="p-1 text-muted-foreground" aria-label="Скрыть">
+      <button onClick={dismiss} className="-mr-1 p-2 text-muted-foreground" aria-label="Скрыть">
         <X className="size-4" />
       </button>
     </div>
