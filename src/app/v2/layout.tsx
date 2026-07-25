@@ -10,6 +10,7 @@ import {
   ChevronsUpDown,
   Clock,
   FolderKanban,
+  ListChecks,
   Plus,
   Search,
   Settings,
@@ -184,6 +185,12 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
             icon={<CheckCircle2 className="size-4" />}
             label="Мои задачи"
             active={pathname.startsWith("/v2/my")}
+          />
+          <NavLink
+            href="/v2/tasks"
+            icon={<ListChecks className="size-4" />}
+            label="Все задачи"
+            active={pathname.startsWith("/v2/tasks")}
           />
           <NavLink
             href="/v2/inbox"

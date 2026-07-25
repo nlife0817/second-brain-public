@@ -14,6 +14,7 @@ import {
 } from "./policy";
 import { requireProject } from "./projects";
 import type {
+  AllTasksResult,
   AuthContext,
   CoreTag,
   CoreTask,
@@ -282,6 +283,113 @@ export async function listMyTasks(
      ORDER BY t.due_date NULLS LAST, t.created_at DESC`,
   ).all(ctx.user.id, ctx.orgId, ctx.user.id, opts.includeDone ?? false);
   return enrichTasks(rows);
+}
+
+/**
+ * Потолок сводного списка. Фильтрация, сортировка и группировка в «Все задачи»
+ * идут на клиенте (как в списке v1) — иначе счётчики групп врут при пагинации.
+ * Чтобы это оставалось честным, ответ ограничен и помечается `truncated`.
+ */
+const ALL_TASKS_CAP = 3000;
+
+/**
+ * Задачи всех доступных проектов организации + личные — для сводного экрана.
+ *
+ * Видимость повторяет `loadTaskAccess`, но пакетно:
+ *  - `up` поднимает каждую задачу по цепочке родителей (multi-homing наследуется);
+ *  - задача в проекте видна при роли в любом проекте цепочки, авторстве или
+ *    назначении где-то в цепочке;
+ *  - «свободная» задача (нет размещений во всей цепочке) — ещё и подписчику.
+ * Подписка на задачу В ПРОЕКТЕ доступа не даёт: см. правило 4 в CLAUDE.md ядра.
+ */
+export async function listAllTasks(
+  ctx: AuthContext,
+  opts: { includeDone?: boolean; includeArchivedProjects?: boolean } = {},
+): Promise<AllTasksResult> {
+  // Видимость проектов решает policy — единственный источник истины.
+  const projectRows = await prepare<{ id: string; org_id: string; visibility: "org" | "private" }>(
+    `SELECT id, org_id, visibility FROM core.projects
+     WHERE org_id = ? AND (?::boolean OR archived_at IS NULL)`,
+  ).all(ctx.orgId, opts.includeArchivedProjects ?? false);
+  const visibleProjectIds = projectRows.filter((p) => effectiveProjectRole(ctx, p) !== null).map((p) => p.id);
+
+  // Пустой IN (...) — синтаксическая ошибка, поэтому ветку убираем целиком.
+  const projectClause = visibleProjectIds.length
+    ? `EXISTS (SELECT 1 FROM placed pl WHERE pl.task_id = t.id
+                 AND pl.project_id IN (${visibleProjectIds.map(() => "?").join(",")}))`
+    : `FALSE`;
+
+  const rows = await prepare<Omit<CoreTask, "description">>(
+    `WITH RECURSIVE up AS (
+       SELECT t.id AS task_id, t.id AS node_id, t.parent_task_id, 0 AS depth
+       FROM core.tasks t WHERE t.org_id = ?
+       UNION ALL
+       SELECT u.task_id, p.id, p.parent_task_id, u.depth + 1
+       FROM up u JOIN core.tasks p ON p.id = u.parent_task_id
+       WHERE u.depth < 8
+     ),
+     placed AS (
+       SELECT DISTINCT u.task_id, tp.project_id
+       FROM up u JOIN core.task_projects tp ON tp.task_id = u.node_id
+     ),
+     mine AS (
+       SELECT DISTINCT u.task_id
+       FROM up u
+       JOIN core.tasks n ON n.id = u.node_id
+       LEFT JOIN core.task_assignees a ON a.task_id = u.node_id AND a.user_id = ?
+       WHERE n.created_by = ? OR a.user_id IS NOT NULL
+     ),
+     followed AS (
+       SELECT DISTINCT u.task_id
+       FROM up u JOIN core.task_followers f ON f.task_id = u.node_id AND f.user_id = ?
+     )
+     SELECT ${TASK_LIST_COLUMNS}
+     FROM core.tasks t
+     WHERE t.org_id = ?
+       AND (?::boolean OR t.completed_at IS NULL)
+       AND (
+         ${projectClause}
+         OR EXISTS (SELECT 1 FROM mine m WHERE m.task_id = t.id)
+         OR (NOT EXISTS (SELECT 1 FROM placed pl2 WHERE pl2.task_id = t.id)
+             AND EXISTS (SELECT 1 FROM followed f2 WHERE f2.task_id = t.id))
+       )
+     ORDER BY t.due_date NULLS LAST, t.created_at DESC
+     LIMIT ?`,
+    // Сначала параметры CTE, затем WHERE: порядок ?-плейсхолдеров в тексте.
+  ).all(
+    ctx.orgId,
+    ctx.user.id,
+    ctx.user.id,
+    ctx.user.id,
+    ctx.orgId,
+    opts.includeDone ?? false,
+    ...(visibleProjectIds.length ? [visibleProjectIds] : []),
+    ALL_TASKS_CAP + 1,
+  );
+
+  const truncated = rows.length > ALL_TASKS_CAP;
+  const page = truncated ? rows.slice(0, ALL_TASKS_CAP) : rows;
+  const enriched = await enrichTasks(page);
+
+  // Значения кастомных полей — одним запросом на весь экран: они играют роль
+  // колонок, которые в v1 были зашиты в схему (категория, этап, участники).
+  const valuesByTask = new Map<string, Record<string, unknown>>();
+  if (page.length > 0) {
+    const ph = page.map(() => "?").join(",");
+    const values = await prepare<{ task_id: string; field_id: string; value: unknown }>(
+      `SELECT task_id, field_id, value FROM core.task_field_values WHERE task_id IN (${ph})`,
+    ).all(page.map((t) => t.id));
+    for (const v of values) {
+      const bucket = valuesByTask.get(v.task_id) ?? {};
+      bucket[v.field_id] = v.value;
+      valuesByTask.set(v.task_id, bucket);
+    }
+  }
+
+  return {
+    tasks: enriched.map((t) => ({ ...t, field_values: valuesByTask.get(t.id) ?? {} })),
+    truncated,
+  };
 }
 
 export async function listSubtasks(ctx: AuthContext, parentTaskId: string): Promise<TaskListItem[]> {

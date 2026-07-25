@@ -204,6 +204,21 @@ export interface TaskMeta {
  */
 export interface TaskListItem extends Omit<CoreTask, "description">, TaskMeta {}
 
+/**
+ * Строка сводного списка «Все задачи»: элемент списка + значения кастомных
+ * полей. Поля нужны как колонки таблицы — в v1 их роль играли «категория»,
+ * «этап разработки» и «участники», зашитые в схему.
+ */
+export interface TaskRow extends TaskListItem {
+  field_values: Record<string, unknown>;
+}
+
+/** Ответ сводного списка: `truncated` честно сообщает об упёршемся лимите. */
+export interface AllTasksResult {
+  tasks: TaskRow[];
+  truncated: boolean;
+}
+
 export interface TaskWithMeta extends CoreTask, TaskMeta {}
 
 export interface TaskDetail extends TaskWithMeta {
