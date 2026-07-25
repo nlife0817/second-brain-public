@@ -7,8 +7,7 @@
 //   3) закрывает забытые таймеры (> лимита часов).
 
 import { NextRequest, NextResponse } from "next/server";
-import { prepare } from "@/lib/sql";
-import { sendPushToEmail } from "@/lib/notifications/push";
+import { dispatchPendingPush } from "@/lib/core/push";
 import { materializeDueRules } from "@/lib/core/recurring";
 import { deliverWebhooks } from "@/lib/core/saas";
 import { closeStaleTimers } from "@/lib/core/time";
@@ -24,77 +23,16 @@ function isAuthorized(req: NextRequest): boolean {
   return req.headers.get("authorization") === `Bearer ${expected}`;
 }
 
-const KIND_TITLES: Record<string, string> = {
-  assigned: "Вам назначили задачу",
-  comment: "Новый комментарий",
-  status_changed: "Статус изменён",
-  completed: "Задача завершена",
-  due_changed: "Срок изменён",
-  added_to_project: "Вас добавили в проект",
-};
-
-type PendingRow = {
-  id: string;
-  kind: string;
-  email: string;
-  actor_name: string | null;
-  entity_type: string | null;
-  entity_id: string | null;
-  entity_title: string | null;
-};
-
-async function dispatchPush(): Promise<{ sent: number; skipped: number }> {
-  const pending = await prepare<PendingRow>(
-    `SELECT n.id, n.kind, u.email, a.name AS actor_name,
-            e.entity_type, e.entity_id::text AS entity_id,
-            CASE
-              WHEN e.entity_type = 'task' THEN (SELECT t.title FROM core.tasks t WHERE t.id = e.entity_id)
-              WHEN e.entity_type = 'project' THEN (SELECT p.name FROM core.projects p WHERE p.id = e.entity_id)
-            END AS entity_title
-     FROM core.notifications n
-     JOIN core.users u ON u.id = n.user_id
-     LEFT JOIN core.events e ON e.id = n.event_id
-     LEFT JOIN core.users a ON a.id = e.actor_id
-     WHERE n.dispatched_at IS NULL
-       AND n.read_at IS NULL
-       AND n.created_at > now() - interval '2 days'
-     ORDER BY n.created_at
-     LIMIT 100`,
-  ).all();
-
-  let sent = 0;
-  let skipped = 0;
-  for (const row of pending) {
-    const title = KIND_TITLES[row.kind] ?? "Обновление";
-    const body = [row.actor_name, row.entity_title && `«${row.entity_title}»`]
-      .filter(Boolean)
-      .join(" · ");
-    try {
-      const res = await sendPushToEmail(row.email, {
-        title,
-        body: body || "Открыть задачу",
-        url: row.entity_type === "task" && row.entity_id ? `/v2/my?task=${row.entity_id}` : "/v2/inbox",
-        tag: `v2-${row.id}`,
-      });
-      if (res.sent > 0) sent++;
-      else skipped++;
-    } catch {
-      skipped++;
-    }
-    // Отметка ставится в любом случае: повторные попытки только копили бы очередь.
-    await prepare(`UPDATE core.notifications SET dispatched_at = now() WHERE id = ?`).run(row.id);
-  }
-  return { sent, skipped };
-}
-
 export async function POST(request: NextRequest) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const today = new Date().toISOString().slice(0, 10);
   // Шаги независимы: сбой одного не должен обнулять остальные и весь тик.
+  // Push здесь — страховка: основную доставку делает after() в withOrg/withUser
+  // сразу после мутации; cron добирает то, что не дошло (см. lib/core/push.ts).
   const [push, recurring, timers, webhooks] = await Promise.all([
-    dispatchPush().catch((e) => ({ error: String(e) })),
+    dispatchPendingPush().catch((e) => ({ error: String(e) })),
     materializeDueRules(today).catch((e) => ({ error: String(e) })),
     closeStaleTimers().catch((e) => ({ error: String(e) })),
     deliverWebhooks().catch((e) => ({ error: String(e) })),

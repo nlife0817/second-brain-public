@@ -44,6 +44,8 @@ export type PushPayload = {
   itemId?: string;
   requireInteraction?: boolean;
   actions?: PushAction[];
+  /** Непрочитанные уведомления получателя — бейдж на иконке приложения (setAppBadge). */
+  unread?: number;
 };
 
 type SubscriptionRow = {
@@ -53,6 +55,33 @@ type SubscriptionRow = {
   p256dh: string;
   auth: string;
 };
+
+/**
+ * Отправка в один endpoint. "dead" — подписка протухла (404/410): вызывающий
+ * обязан удалить её из своей таблицы, иначе очередь копит мёртвые адреса.
+ */
+export async function sendWebPush(
+  sub: { endpoint: string; p256dh: string; auth: string },
+  payload: PushPayload
+): Promise<"sent" | "dead" | "failed"> {
+  configure();
+  try {
+    await webpush.sendNotification(
+      {
+        endpoint: sub.endpoint,
+        keys: { p256dh: sub.p256dh, auth: sub.auth },
+      },
+      JSON.stringify(payload)
+    );
+    return "sent";
+  } catch (err: unknown) {
+    const statusCode = (err as { statusCode?: number })?.statusCode;
+    // 404 Not Found / 410 Gone → subscription is dead.
+    if (statusCode === 404 || statusCode === 410) return "dead";
+    console.error(`[push] send failed for ${sub.endpoint.slice(0, 60)}:`, err);
+    return "failed";
+  }
+}
 
 export async function sendPushToEmail(
   email: string,
@@ -67,24 +96,11 @@ export async function sendPushToEmail(
   let removed = 0;
 
   for (const sub of subs) {
-    try {
-      await webpush.sendNotification(
-        {
-          endpoint: sub.endpoint,
-          keys: { p256dh: sub.p256dh, auth: sub.auth },
-        },
-        JSON.stringify(payload)
-      );
-      sent++;
-    } catch (err: unknown) {
-      const statusCode = (err as { statusCode?: number })?.statusCode;
-      // 404 Not Found / 410 Gone → subscription is dead, drop it.
-      if (statusCode === 404 || statusCode === 410) {
-        await prepare("DELETE FROM push_subscriptions WHERE id = ?").run(sub.id);
-        removed++;
-      } else {
-        console.error(`[push] send failed for ${sub.endpoint.slice(0, 60)}:`, err);
-      }
+    const result = await sendWebPush(sub, payload);
+    if (result === "sent") sent++;
+    if (result === "dead") {
+      await prepare("DELETE FROM push_subscriptions WHERE id = ?").run(sub.id);
+      removed++;
     }
   }
   return { sent, removed };
@@ -102,23 +118,11 @@ export async function sendPushToAllSubscribers(
   let removed = 0;
 
   for (const sub of subs) {
-    try {
-      await webpush.sendNotification(
-        {
-          endpoint: sub.endpoint,
-          keys: { p256dh: sub.p256dh, auth: sub.auth },
-        },
-        JSON.stringify(payload)
-      );
-      sent++;
-    } catch (err: unknown) {
-      const statusCode = (err as { statusCode?: number })?.statusCode;
-      if (statusCode === 404 || statusCode === 410) {
-        await prepare("DELETE FROM push_subscriptions WHERE id = ?").run(sub.id);
-        removed++;
-      } else {
-        console.error(`[push] send failed for ${sub.endpoint.slice(0, 60)}:`, err);
-      }
+    const result = await sendWebPush(sub, payload);
+    if (result === "sent") sent++;
+    if (result === "dead") {
+      await prepare("DELETE FROM push_subscriptions WHERE id = ?").run(sub.id);
+      removed++;
     }
   }
   return { sent, removed };

@@ -7,9 +7,11 @@
 //      создаём core.users + членство в бутстрап-организации по маппингу ролей.
 
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/claims";
 import { prepare } from "@/lib/sql";
+import { dispatchPendingPush } from "./push";
 import { isUuid, jsonError, toHttpError } from "./http";
 import {
   addMember,
@@ -107,6 +109,22 @@ export async function resolveOrgContext(
   return { auth: { user, orgId, orgRole, projectRoles } };
 }
 
+/**
+ * Мутация могла разложить уведомления (fan-out в той же транзакции) — шлём
+ * push сразу после ответа, не дожидаясь 10-минутного cron-тика. Диспетчер
+ * идемпотентен и дёшев на пустой очереди, поэтому зовём после любой мутации.
+ */
+function schedulePushDispatch(method: string, status: number): void {
+  if (method === "GET" || method === "HEAD" || status >= 400) return;
+  after(async () => {
+    try {
+      await dispatchPendingPush();
+    } catch (err) {
+      console.error("[v2/push] мгновенная отправка не удалась:", err);
+    }
+  });
+}
+
 type OrgRouteContext = {
   params: Promise<Record<string, string>>;
   auth: AuthContext;
@@ -136,7 +154,9 @@ export function withOrg(handler: OrgHandler, opts?: { minOrgRole?: OrgRole }): R
           return jsonError(403, "Forbidden");
         }
       }
-      return await handler(request, { params: context.params, auth: resolved.auth });
+      const response = await handler(request, { params: context.params, auth: resolved.auth });
+      schedulePushDispatch(request.method, response.status);
+      return response;
     } catch (err) {
       return toHttpError(err);
     }
@@ -151,7 +171,10 @@ export function withUser(
     try {
       const user = await getCoreUser();
       if (!user) return jsonError(401, "Unauthorized");
-      return await handler(request, user);
+      // Принятие приглашения (withUser) тоже раскладывает уведомления.
+      const response = await handler(request, user);
+      schedulePushDispatch(request.method, response.status);
+      return response;
     } catch (err) {
       return toHttpError(err);
     }

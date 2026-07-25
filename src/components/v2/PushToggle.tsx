@@ -12,6 +12,10 @@ import {
   type PushState,
 } from "@/lib/notifications/client";
 
+// Подписка v2: авторизация по core-identity, а не по whitelist v1 — иначе
+// приглашённый участник получит 401 при попытке включить уведомления.
+const V2_PUSH = { subscribeUrl: "/api/v2/push/subscribe" };
+
 function describe(state: PushState): string {
   if (!state.supported) return "Браузер не поддерживает уведомления";
   if (state.permission === "denied") return "Уведомления заблокированы в настройках браузера";
@@ -40,8 +44,8 @@ export function PushToggle() {
     setBusy(true);
     setError(null);
     try {
-      if (state.subscribed) await disablePushNotifications();
-      else await enablePushNotifications();
+      if (state.subscribed) await disablePushNotifications(V2_PUSH);
+      else await enablePushNotifications(V2_PUSH);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось изменить подписку");
