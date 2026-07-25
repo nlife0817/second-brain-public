@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { getSessionUser } from "@/lib/supabase/claims";
 
 function isMobileUserAgent(ua: string): boolean {
   return /Mobile|Android|iPhone|iPad|iPod/i.test(ua);
@@ -54,8 +55,9 @@ export async function proxy(request: NextRequest) {
     },
   });
 
-  // Refresh session cookies.
-  const { data: { user } } = await supabase.auth.getUser();
+  // Обновление cookie сессии + проверка подписи (локально, без сетевого вызова
+  // к /auth/v1/user на каждый запрос — см. lib/supabase/claims.ts).
+  const user = await getSessionUser(supabase);
 
   const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 

@@ -6,6 +6,7 @@ import { create } from "zustand";
 import { api } from "./client";
 import type {
   CoreTag,
+  CustomField,
   OrgMemberWithUser,
   OrgRole,
   OrgSummary,
@@ -23,6 +24,8 @@ const ACTIVE_ORG_KEY = "sb.v2.orgId";
 
 interface V2State {
   ready: boolean;
+  /** Справочники организации ещё грузятся — сайдбар показывает скелет, а не «пусто». */
+  metaLoading: boolean;
   error: string | null;
   /** true, когда пользователь авторизован, но ещё не состоит ни в одной организации. */
   needsOnboarding: boolean;
@@ -35,18 +38,23 @@ interface V2State {
   statuses: TaskStatus[];
   tags: CoreTag[];
   members: OrgMemberWithUser[];
+  fields: CustomField[];
   unreadCount: number;
 
   bootstrap: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
+  /** Справочники активной организации; вызывается из bootstrap и switchOrg. */
+  loadOrgData: () => Promise<void>;
   refreshProjects: () => Promise<void>;
   refreshMeta: () => Promise<void>;
   refreshMembers: () => Promise<void>;
+  refreshFields: () => Promise<void>;
   refreshUnread: () => Promise<void>;
 }
 
 export const useV2Store = create<V2State>((set, get) => ({
   ready: false,
+  metaLoading: false,
   error: null,
   needsOnboarding: false,
   me: null,
@@ -58,6 +66,7 @@ export const useV2Store = create<V2State>((set, get) => ({
   statuses: [],
   tags: [],
   members: [],
+  fields: [],
   unreadCount: 0,
 
   bootstrap: async () => {
@@ -70,6 +79,9 @@ export const useV2Store = create<V2State>((set, get) => ({
         set({ me: me.user, orgs: [], needsOnboarding: true, ready: true, error: null });
         return;
       }
+      // ready сразу после /me: оболочка и страница монтируются и грузят своё
+      // параллельно со справочниками. Раньше экран висел на «Загрузка…», пока
+      // не ответят все шесть запросов, и только потом страница начинала свой.
       set({
         me: me.user,
         orgs: me.orgs,
@@ -77,15 +89,12 @@ export const useV2Store = create<V2State>((set, get) => ({
         orgId: org.id,
         orgName: org.name,
         orgRole: org.role,
+        ready: true,
+        metaLoading: true,
+        error: null,
       });
       if (typeof window !== "undefined") window.localStorage.setItem(ACTIVE_ORG_KEY, org.id);
-      await Promise.all([
-        get().refreshProjects(),
-        get().refreshMeta(),
-        get().refreshMembers(),
-        get().refreshUnread(),
-      ]);
-      set({ ready: true, error: null });
+      await get().loadOrgData();
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "Не удалось загрузить", ready: true });
     }
@@ -95,14 +104,30 @@ export const useV2Store = create<V2State>((set, get) => ({
     const org = get().orgs.find((o) => o.id === orgId);
     if (!org) return;
     if (typeof window !== "undefined") window.localStorage.setItem(ACTIVE_ORG_KEY, orgId);
-    set({ ready: false, orgId: org.id, orgName: org.name, orgRole: org.role, projects: [] });
+    set({
+      orgId: org.id,
+      orgName: org.name,
+      orgRole: org.role,
+      projects: [],
+      statuses: [],
+      tags: [],
+      members: [],
+      fields: [],
+      unreadCount: 0,
+      metaLoading: true,
+    });
+    await get().loadOrgData();
+  },
+
+  loadOrgData: async () => {
     await Promise.all([
       get().refreshProjects(),
       get().refreshMeta(),
       get().refreshMembers(),
+      get().refreshFields(),
       get().refreshUnread(),
-    ]);
-    set({ ready: true });
+    ]).catch(() => {});
+    set({ metaLoading: false });
   },
 
   refreshProjects: async () => {
@@ -127,11 +152,20 @@ export const useV2Store = create<V2State>((set, get) => ({
     set({ members: await api.get<OrgMemberWithUser[]>(`/orgs/${orgId}/members`) });
   },
 
+  // Кастомные поля — справочник организации: держим в сторе, а не тянем
+  // заново при каждом открытии карточки задачи.
+  refreshFields: async () => {
+    const { orgId } = get();
+    if (!orgId) return;
+    set({ fields: await api.get<CustomField[]>(`/orgs/${orgId}/fields`) });
+  },
+
   refreshUnread: async () => {
     const { orgId } = get();
     if (!orgId) return;
     try {
-      const res = await api.get<{ unread_count: number }>(`/orgs/${orgId}/notifications?unread=1`);
+      // count=1 — только счётчик, без выборки самих уведомлений.
+      const res = await api.get<{ unread_count: number }>(`/orgs/${orgId}/notifications?count=1`);
       set({ unreadCount: res.unread_count });
     } catch {
       // Периодический опрос: офлайн или мигнувший 500 не должны шуметь в консоль.

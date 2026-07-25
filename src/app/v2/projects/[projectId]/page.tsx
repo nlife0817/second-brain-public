@@ -2,7 +2,7 @@
 
 // Доска проекта: канбан по статусам, drag&drop карточек между колонками.
 
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, use, useCallback, useEffect, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -26,17 +26,28 @@ import type {
   ProjectMemberWithUser,
   ProjectRole,
   Section,
+  TaskDetail,
   TaskStatus,
-  TaskWithMeta,
+  TaskListItem,
 } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { AvatarStack } from "@/components/v2/bits";
+
+/** Общая пустая колонка: новый [] на каждый рендер ломал бы memo карточек. */
+const EMPTY_TASKS: TaskListItem[] = [];
 
 type ProjectDetail = Project & {
   my_role: ProjectRole | null;
   sections: Section[];
   members: ProjectMemberWithUser[];
 };
+
+/**
+ * Сколько карточек колонка отрисовывает сразу. В проекте бывают сотни задач, а
+ * каждая карточка на доске — ещё и draggable: без предела dnd-kit регистрирует
+ * их все и пересчитывает на каждое движение мыши.
+ */
+const COLUMN_PAGE = 50;
 
 function Column({
   status,
@@ -46,12 +57,15 @@ function Column({
   onAdd,
 }: {
   status: TaskStatus;
-  tasks: TaskWithMeta[];
+  tasks: TaskListItem[];
   canEdit: boolean;
   onOpenTask: (id: string) => void;
   onAdd: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `status:${status.id}` });
+  const [limit, setLimit] = useState(COLUMN_PAGE);
+  const shown = tasks.length > limit ? tasks.slice(0, limit) : tasks;
+  const rest = tasks.length - shown.length;
   return (
     <div className="flex w-72 shrink-0 flex-col rounded-xl bg-muted/40">
       <div className="flex items-center gap-2 px-3 pb-1 pt-2.5">
@@ -69,22 +83,30 @@ function Column({
         ref={setNodeRef}
         className={`flex min-h-24 flex-1 flex-col gap-1.5 overflow-y-auto p-2 transition-colors ${isOver ? "bg-muted/70" : ""}`}
       >
-        {tasks.map((t) => (
-          <DraggableCard key={t.id} task={t} disabled={!canEdit} onClick={() => onOpenTask(t.id)} />
+        {shown.map((t) => (
+          <DraggableCard key={t.id} task={t} disabled={!canEdit} onOpen={onOpenTask} />
         ))}
+        {rest > 0 && (
+          <button
+            onClick={() => setLimit((l) => l + COLUMN_PAGE)}
+            className="rounded-lg border border-dashed border-border py-1.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          >
+            Показать ещё {Math.min(COLUMN_PAGE, rest)} · осталось {rest}
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
-function DraggableCard({
+const DraggableCard = memo(function DraggableCard({
   task,
   disabled,
-  onClick,
+  onOpen,
 }: {
-  task: TaskWithMeta;
+  task: TaskListItem;
   disabled: boolean;
-  onClick: () => void;
+  onOpen: (id: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
@@ -92,21 +114,21 @@ function DraggableCard({
   });
   return (
     <div ref={setNodeRef} {...listeners} {...attributes} className={isDragging ? "opacity-40" : ""}>
-      <TaskCard task={task} onClick={onClick} />
+      <TaskCard task={task} onOpen={onOpen} />
     </div>
   );
-}
+});
 
 export default function ProjectBoardPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const { orgId, statuses, refreshProjects } = useV2Store();
   const [project, setProject] = useState<ProjectDetail | null>(null);
-  const [tasks, setTasks] = useState<TaskWithMeta[]>([]);
+  const [tasks, setTasks] = useState<TaskListItem[]>([]);
   const [showDone, setShowDone] = useState(false);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [createIn, setCreateIn] = useState<string | null | false>(false); // false = закрыт, null/statusId = открыт
   const [membersOpen, setMembersOpen] = useState(false);
-  const [dragTask, setDragTask] = useState<TaskWithMeta | null>(null);
+  const [dragTask, setDragTask] = useState<TaskListItem | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -116,7 +138,7 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
     try {
       const [p, ts] = await Promise.all([
         api.get<ProjectDetail>(`/orgs/${orgId}/projects/${projectId}`),
-        api.get<TaskWithMeta[]>(`/orgs/${orgId}/projects/${projectId}/tasks${showDone ? "?done=1" : ""}`),
+        api.get<TaskListItem[]>(`/orgs/${orgId}/projects/${projectId}/tasks${showDone ? "?done=1" : ""}`),
       ]);
       setProject(p);
       setTasks(ts);
@@ -132,21 +154,32 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
 
   const canEdit = project?.my_role === "admin" || project?.my_role === "editor";
 
+  // Раскладка по колонкам — один проход по задачам. Прежний вариант фильтровал
+  // весь массив заново для каждой колонки на каждый рендер: на 700 задачах и
+  // семи статусах это тысячи проходов за перетаскивание.
   const columns = useMemo(() => {
+    const known = new Set(statuses.map((s) => s.id));
+    const byStatus = new Map<string, TaskListItem[]>();
+    const noStatusTasks: TaskListItem[] = [];
+    for (const t of tasks) {
+      if (t.status_id && known.has(t.status_id)) {
+        const bucket = byStatus.get(t.status_id);
+        if (bucket) bucket.push(t);
+        else byStatus.set(t.status_id, [t]);
+      } else {
+        noStatusTasks.push(t);
+      }
+    }
     // Архивные колонки скрыты, пока в них нет задач — иначе задача, отправленная
     // в архив из карточки, пропала бы с доски без следа.
     const visible = statuses.filter(
-      (s) => showDone || s.kind !== "archived" || tasks.some((t) => t.status_id === s.id),
+      (s) => showDone || s.kind !== "archived" || (byStatus.get(s.id)?.length ?? 0) > 0,
     );
-    const noStatusTasks = tasks.filter(
-      (t) => !t.status_id || !statuses.some((s) => s.id === t.status_id),
-    );
-    return { visible, noStatusTasks };
+    return { visible, byStatus, noStatusTasks };
   }, [statuses, tasks, showDone]);
 
-  function tasksFor(statusId: string): TaskWithMeta[] {
-    return tasks.filter((t) => t.status_id === statusId);
-  }
+  // Стабильная ссылка: инлайновый [] ломал бы memo дочерних компонентов.
+  const openTask = useCallback((id: string) => setOpenTaskId(id), []);
 
   function onDragStart(e: DragStartEvent) {
     setDragTask(tasks.find((t) => t.id === e.active.id) ?? null);
@@ -160,21 +193,45 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
     const taskId = String(e.active.id);
     const task = tasks.find((t) => t.id === taskId);
     if (!task || task.status_id === statusId) return;
-    // Оптимистично двигаем карточку, при ошибке откатываем.
+    // Оптимистично двигаем карточку в конец массива — колонки рендерятся в его
+    // порядке, а на сервере задача тоже встаёт в конец (position = max + 1).
     const prev = tasks;
-    setTasks((cur) => cur.map((t) => (t.id === taskId ? { ...t, status_id: statusId } : t)));
+    setTasks((cur) => [
+      ...cur.filter((t) => t.id !== taskId),
+      { ...task, status_id: statusId },
+    ]);
     try {
-      await api.patch(`/orgs/${orgId}/tasks/${taskId}`, { status_id: statusId });
+      const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`, {
+        status_id: statusId,
+      });
       // Карточка встаёт в конец колонки, и этот порядок переживает перезагрузку:
       // список проекта сортируется по position.
-      const columnTail = tasks
+      const columnTail = prev
         .filter((t) => t.status_id === statusId && t.id !== taskId)
         .map((t) => t.placements.find((p) => p.project_id === projectId)?.position ?? 0);
+      const position = (columnTail.length > 0 ? Math.max(...columnTail) : 0) + 1;
       await api.post(`/orgs/${orgId}/tasks/${taskId}/placements`, {
         project_id: projectId,
-        position: (columnTail.length > 0 ? Math.max(...columnTail) : 0) + 1,
+        position,
       });
-      void load();
+      // Вместо перезагрузки всей доски (сотни задач на каждое перетаскивание)
+      // забираем из ответа то, что поменял сервер: перевод в «выполнено»
+      // проставляет completed_at.
+      setTasks((cur) =>
+        cur.map((t) =>
+          t.id === taskId
+            ? {
+                ...t,
+                status_id: updated.status_id,
+                completed_at: updated.completed_at,
+                placements: t.placements.map((p) =>
+                  p.project_id === projectId ? { ...p, position } : p,
+                ),
+              }
+            : t,
+        ),
+      );
+      // Счётчик открытых задач в сайдбаре меняется при переводе в «выполнено».
       void refreshProjects();
     } catch {
       setTasks(prev);
@@ -231,9 +288,9 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
               <Column
                 key={s.id}
                 status={s}
-                tasks={tasksFor(s.id)}
+                tasks={columns.byStatus.get(s.id) ?? EMPTY_TASKS}
                 canEdit={!!canEdit}
-                onOpenTask={setOpenTaskId}
+                onOpenTask={openTask}
                 onAdd={() => setCreateIn(s.id)}
               />
             ))}
@@ -242,7 +299,7 @@ export default function ProjectBoardPage({ params }: { params: Promise<{ project
                 <div className="px-3 pb-1 pt-2.5 text-sm font-medium text-muted-foreground">Без статуса</div>
                 <div className="flex flex-1 flex-col gap-1.5 overflow-y-auto p-2">
                   {columns.noStatusTasks.map((t) => (
-                    <TaskCard key={t.id} task={t} onClick={() => setOpenTaskId(t.id)} />
+                    <TaskCard key={t.id} task={t} onOpen={openTask} />
                   ))}
                 </div>
               </div>

@@ -187,7 +187,8 @@ export interface CoreTask {
   updated_at: string;
 }
 
-export interface TaskWithMeta extends CoreTask {
+/** Обвязка задачи, общая для списков и карточки. */
+export interface TaskMeta {
   assignees: UserBrief[];
   tags: CoreTag[];
   placements: TaskPlacement[];
@@ -195,6 +196,15 @@ export interface TaskWithMeta extends CoreTask {
   subtask_done_count: number;
   comment_count: number;
 }
+
+/**
+ * Элемент списка (доска, «Мои задачи», подзадачи). Без `description`: HTML
+ * описаний не рендерится ни на одной карточке, а в проекте на 700 задач это
+ * четверть трафика ответа.
+ */
+export interface TaskListItem extends Omit<CoreTask, "description">, TaskMeta {}
+
+export interface TaskWithMeta extends CoreTask, TaskMeta {}
 
 export interface TaskDetail extends TaskWithMeta {
   followers: UserBrief[];

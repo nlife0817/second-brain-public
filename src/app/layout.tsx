@@ -3,11 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
-import { RealtimeProvider } from "@/components/RealtimeProvider";
-import { TimingProvider } from "@/components/timing/TimingProvider";
-import { GlobalTimerWidget } from "@/components/timing/GlobalTimerWidget";
-import { IdleDialog } from "@/components/timing/IdleDialog";
-import { TimerUndoToast } from "@/components/timing/TimerUndoToast";
+import { LegacyRuntimeGate } from "@/components/LegacyRuntimeGate";
 import "./globals.css";
 
 const inter = Inter({
@@ -61,11 +57,8 @@ export default function RootLayout({
             {children}
           </TooltipProvider>
           <ServiceWorkerRegister />
-          <RealtimeProvider />
-          <TimingProvider />
-          <GlobalTimerWidget />
-          <IdleDialog />
-          <TimerUndoToast />
+          {/* Realtime и тайм-трекинг v1 — только на экранах v1 (см. гейт). */}
+          <LegacyRuntimeGate />
         </ErrorBoundary>
       </body>
     </html>

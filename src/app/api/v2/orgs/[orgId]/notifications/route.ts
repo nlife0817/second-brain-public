@@ -9,6 +9,13 @@ import { parseJson } from "@/lib/core/http";
 import { notificationsReadSchema } from "@/lib/core/schemas";
 
 export const GET = withOrg(async (request, { auth }) => {
+  // Бейдж в сайдбаре опрашивается раз в 30 секунд и берёт только счётчик:
+  // тянуть ради него сотню записей с подзапросами за названиями сущностей
+  // — лишняя работа базы на каждой открытой вкладке.
+  if (request.nextUrl.searchParams.get("count") === "1") {
+    const unread = await unreadNotificationCount(auth.orgId, auth.user.id);
+    return NextResponse.json({ items: [], unread_count: unread });
+  }
   const unreadOnly = request.nextUrl.searchParams.get("unread") === "1";
   const [items, unread] = await Promise.all([
     listNotifications(auth.orgId, auth.user.id, { unreadOnly }),

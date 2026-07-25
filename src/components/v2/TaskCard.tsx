@@ -1,24 +1,33 @@
 "use client";
 
+import { memo } from "react";
 import { CheckCircle2, MessageSquare, GitBranch } from "lucide-react";
 import { AvatarStack, PriorityDot, dueTone, formatDue } from "./bits";
-import type { TaskWithMeta } from "@/lib/core/types";
+import type { TaskListItem } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
 
-export function TaskCard({
+/**
+ * Карточка мемоизирована: на доске их сотни, и без этого любое изменение
+ * состояния страницы (а во время перетаскивания оно меняется на каждое
+ * движение мыши) перерисовывало бы весь список.
+ *
+ * Поэтому обработчик принимает id, а не замыкание: инлайновая стрелка в
+ * родителе создавалась бы заново на каждый рендер и сводила memo к нулю.
+ */
+export const TaskCard = memo(function TaskCard({
   task,
-  onClick,
+  onOpen,
   className,
 }: {
-  task: TaskWithMeta;
-  onClick?: () => void;
+  task: TaskListItem;
+  onOpen?: (taskId: string) => void;
   className?: string;
 }) {
   const completed = !!task.completed_at;
   const due = formatDue(task.due_date, task.due_time);
   return (
     <button
-      onClick={onClick}
+      onClick={onOpen ? () => onOpen(task.id) : undefined}
       className={cn(
         "group w-full rounded-lg border border-border bg-card p-2.5 text-left shadow-xs transition-colors hover:border-ring/40",
         className,
@@ -63,4 +72,4 @@ export function TaskCard({
       </div>
     </button>
   );
-}
+});

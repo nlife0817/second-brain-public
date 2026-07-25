@@ -3,6 +3,7 @@
 // Карточка задачи: поля, исполнители, проекты (multi-homing), кастомные поля,
 // подзадачи, комментарии и лента активности. Сохранение — по действию (PATCH).
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
@@ -33,13 +34,23 @@ import type {
   CustomField,
   TaskDetail,
   TaskPriority,
-  TaskWithMeta,
+  TaskListItem,
 } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, StatusPill } from "./bits";
 import { MemberPicker } from "./MemberPicker";
-import { RichText } from "./RichText";
+// Tiptap — самая тяжёлая зависимость интерфейса (≈370 КБ). Статический импорт
+// тянул её в бандл каждой страницы v2, хотя редактор нужен только когда открыта
+// карточка задачи. Грузим чанк при первом открытии.
+const RichText = dynamic(() => import("./RichText").then((m) => m.RichText), {
+  ssr: false,
+  loading: () => (
+    <div className="min-h-24 rounded-lg border border-border bg-background px-3 py-2 text-sm text-muted-foreground">
+      Загрузка редактора…
+    </div>
+  ),
+});
 
 const VERB_LABELS: Record<string, string> = {
   "task.created": "создал(а) задачу",
@@ -75,7 +86,9 @@ export function TaskSheet({
   onClose: () => void;
   onChanged?: () => void;
 }) {
-  const { orgId, statuses, tags, projects, me } = useV2Store();
+  // Кастомные поля — справочник организации из стора: раньше карточка тянула
+  // /fields при каждом открытии.
+  const { orgId, statuses, tags, projects, me, fields } = useV2Store();
   const [loaded, setLoaded] = useState<TaskDetail | null>(null);
   // Пока грузится новая задача, старую не показываем — сравнение по id вместо
   // сброса состояния в эффекте (тот вызывает каскадный ре-рендер).
@@ -83,8 +96,7 @@ export function TaskSheet({
   const setTask = setLoaded;
   const [comments, setComments] = useState<CoreComment[]>([]);
   const [feed, setFeed] = useState<CoreEvent[]>([]);
-  const [subtasks, setSubtasks] = useState<TaskWithMeta[]>([]);
-  const [fields, setFields] = useState<CustomField[]>([]);
+  const [subtasks, setSubtasks] = useState<TaskListItem[]>([]);
   const [tab, setTab] = useState<"comments" | "feed">("comments");
   const [commentText, setCommentText] = useState("");
   const [subtaskTitle, setSubtaskTitle] = useState("");
@@ -96,19 +108,17 @@ export function TaskSheet({
   const load = useCallback(async () => {
     if (!orgId || !taskId) return;
     try {
-      const [detail, cs, ev, subs, fs] = await Promise.all([
+      const [detail, cs, ev, subs] = await Promise.all([
         api.get<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`),
         api.get<CoreComment[]>(`/orgs/${orgId}/tasks/${taskId}/comments`),
         api.get<CoreEvent[]>(`/orgs/${orgId}/tasks/${taskId}/feed`),
-        api.get<TaskWithMeta[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`),
-        api.get<CustomField[]>(`/orgs/${orgId}/fields`),
+        api.get<TaskListItem[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`),
       ]);
       if (currentTaskRef.current !== taskId) return;
       setTask(detail);
       setComments(cs);
       setFeed(ev);
       setSubtasks(subs);
-      setFields(fs);
       setError(null);
     } catch (e) {
       if (currentTaskRef.current !== taskId) return;
@@ -168,12 +178,12 @@ export function TaskSheet({
     await run(async () => {
       await api.post(`/orgs/${orgId}/tasks`, { title: subtaskTitle.trim(), parent_task_id: taskId });
       setSubtaskTitle("");
-      setSubtasks(await api.get<TaskWithMeta[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`));
+      setSubtasks(await api.get<TaskListItem[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`));
       onChanged?.();
     });
   }
 
-  async function toggleSubtaskDone(sub: TaskWithMeta) {
+  async function toggleSubtaskDone(sub: TaskListItem) {
     if (!orgId) return;
     const doneStatus = statuses.find((s) => s.kind === "done");
     const openStatus = reopenStatus();
@@ -181,7 +191,7 @@ export function TaskSheet({
     if (!target) return;
     await run(async () => {
       await api.patch(`/orgs/${orgId}/tasks/${sub.id}`, { status_id: target.id });
-      setSubtasks(await api.get<TaskWithMeta[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`));
+      setSubtasks(await api.get<TaskListItem[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`));
       onChanged?.();
     });
   }

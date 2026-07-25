@@ -8,7 +8,7 @@ import { Plus } from "lucide-react";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { TaskSheet } from "@/components/v2/TaskSheet";
 import { api } from "@/lib/core/client";
-import type { TaskWithMeta } from "@/lib/core/types";
+import type { TaskListItem } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 
 function todayIso(): string {
@@ -20,7 +20,7 @@ export default function MyTasksPage() {
   const { orgId, refreshProjects } = useV2Store();
   // Push-уведомление ведёт на /v2/my?task=<id> — открываем карточку сразу.
   const deepLinkTaskId = useSearchParams().get("task");
-  const [tasks, setTasks] = useState<TaskWithMeta[]>([]);
+  const [tasks, setTasks] = useState<TaskListItem[]>([]);
   const [showDone, setShowDone] = useState(false);
   const [quickTitle, setQuickTitle] = useState("");
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
@@ -30,7 +30,7 @@ export default function MyTasksPage() {
   const load = useCallback(async () => {
     if (!orgId) return;
     try {
-      setTasks(await api.get<TaskWithMeta[]>(`/orgs/${orgId}/tasks${showDone ? "?done=1" : ""}`));
+      setTasks(await api.get<TaskListItem[]>(`/orgs/${orgId}/tasks${showDone ? "?done=1" : ""}`));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось загрузить задачи");
@@ -58,13 +58,16 @@ export default function MyTasksPage() {
     }
   }
 
+  // Стабильная ссылка — иначе memo на TaskCard не работает.
+  const openTask = useCallback((id: string) => setOpenTaskId(id), []);
+
   const groups = useMemo(() => {
     const today = todayIso();
-    const overdue: TaskWithMeta[] = [];
-    const dueToday: TaskWithMeta[] = [];
-    const upcoming: TaskWithMeta[] = [];
-    const noDate: TaskWithMeta[] = [];
-    const done: TaskWithMeta[] = [];
+    const overdue: TaskListItem[] = [];
+    const dueToday: TaskListItem[] = [];
+    const upcoming: TaskListItem[] = [];
+    const noDate: TaskListItem[] = [];
+    const done: TaskListItem[] = [];
     for (const t of tasks) {
       if (t.completed_at) done.push(t);
       else if (!t.due_date) noDate.push(t);
@@ -125,7 +128,7 @@ export default function MyTasksPage() {
               </h2>
               <div className="flex flex-col gap-1.5">
                 {g.items.map((t) => (
-                  <TaskCard key={t.id} task={t} onClick={() => setOpenTaskId(t.id)} />
+                  <TaskCard key={t.id} task={t} onOpen={openTask} />
                 ))}
               </div>
             </section>

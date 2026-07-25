@@ -12,7 +12,7 @@ import {
   effectiveProjectRole,
   PolicyError,
 } from "./policy";
-import { getProject, requireProject } from "./projects";
+import { requireProject } from "./projects";
 import type {
   AuthContext,
   CoreTag,
@@ -20,10 +20,11 @@ import type {
   Project,
   ProjectRole,
   TaskDetail,
+  TaskListItem,
+  TaskMeta,
   TaskPlacement,
   TaskPriority,
   TaskStatus,
-  TaskWithMeta,
   UserBrief,
 } from "./types";
 import { PROJECT_ROLE_RANK } from "./types";
@@ -43,10 +44,6 @@ export interface TaskAccess {
   canEditAllPlacements: boolean;
 }
 
-async function getTaskRow(taskId: string): Promise<CoreTask | undefined> {
-  return prepare<CoreTask>(`SELECT * FROM core.tasks WHERE id = ?`).get(taskId);
-}
-
 /**
  * Правила доступа (зеркало SQL core.can_view_task):
  *  - задача в проекте: доступ дают роль в проекте (своём или предка), назначение
@@ -58,33 +55,44 @@ async function getTaskRow(taskId: string): Promise<CoreTask | undefined> {
  *    на подзадачи) или назначение на саму задачу.
  */
 export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<TaskAccess | undefined> {
-  const task = await getTaskRow(taskId);
-  if (!task || task.org_id !== ctx.orgId) return undefined;
+  // Задача и её предки — одним запросом. Последовательный обход родителей давал
+  // до 8 round-trip к базе на каждую проверку доступа, а она предшествует любой
+  // мутации задачи.
+  const chainRows = await prepare<CoreTask>(
+    `WITH RECURSIVE chain AS (
+       SELECT t.*, 0 AS depth FROM core.tasks t WHERE t.id = ?
+       UNION ALL
+       SELECT p.*, c.depth + 1 FROM core.tasks p
+         JOIN chain c ON p.id = c.parent_task_id
+       WHERE c.depth < 8
+     )
+     SELECT id, org_id, title, description, status_id, priority, due_date, due_time,
+            estimated_minutes, completed_at, parent_task_id, source, created_by,
+            created_at, updated_at
+     FROM chain ORDER BY depth`,
+  ).all(taskId);
 
-  const chain: CoreTask[] = [task];
-  let cursor = task;
-  for (let depth = 0; depth < 8 && cursor.parent_task_id; depth++) {
-    const parent = await getTaskRow(cursor.parent_task_id);
-    if (!parent) break;
-    chain.push(parent);
-    cursor = parent;
-  }
+  // depth только упорядочивает выборку (корень первым) и наружу не отдаётся.
+  const task = chainRows[0];
+  if (!task || task.org_id !== ctx.orgId) return undefined;
+  const chain = chainRows;
   const chainIds = chain.map((t) => t.id);
   const ph = chainIds.map(() => "?").join(",");
 
-  const myLinks = await prepare<{ task_id: string; src: string }>(
-    `SELECT task_id, 'assignee' AS src FROM core.task_assignees WHERE user_id = ? AND task_id IN (${ph})
-     UNION ALL
-     SELECT task_id, 'follower' AS src FROM core.task_followers WHERE user_id = ? AND task_id IN (${ph})`,
-  ).all(ctx.user.id, chainIds, ctx.user.id, chainIds);
-
-  const chainPlacements = await prepare<{ task_id: string; project_id: string; section_id: string | null; position: number } & { p_org_id: string; p_visibility: "org" | "private" }>(
-    `SELECT tp.task_id, tp.project_id, tp.section_id, tp.position,
-            p.org_id AS p_org_id, p.visibility AS p_visibility
-     FROM core.task_projects tp
-     JOIN core.projects p ON p.id = tp.project_id
-     WHERE tp.task_id IN (${ph})`,
-  ).all(chainIds);
+  const [myLinks, chainPlacements] = await Promise.all([
+    prepare<{ task_id: string; src: string }>(
+      `SELECT task_id, 'assignee' AS src FROM core.task_assignees WHERE user_id = ? AND task_id IN (${ph})
+       UNION ALL
+       SELECT task_id, 'follower' AS src FROM core.task_followers WHERE user_id = ? AND task_id IN (${ph})`,
+    ).all(ctx.user.id, chainIds, ctx.user.id, chainIds),
+    prepare<{ task_id: string; project_id: string; section_id: string | null; position: number } & { p_org_id: string; p_visibility: "org" | "private" }>(
+      `SELECT tp.task_id, tp.project_id, tp.section_id, tp.position,
+              p.org_id AS p_org_id, p.visibility AS p_visibility
+       FROM core.task_projects tp
+       JOIN core.projects p ON p.id = tp.project_id
+       WHERE tp.task_id IN (${ph})`,
+    ).all(chainIds),
+  ]);
 
   const isCreator = chain.some((t) => t.created_by === ctx.user.id);
   const isDirectAssignee = myLinks.some((l) => l.src === "assignee" && l.task_id === task.id);
@@ -120,12 +128,15 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
 
   if (!canView) return undefined;
 
+  // Проекты размещений — одним запросом: цикл с getProject давал N+1.
+  const directProjectIds = [...new Set(directPlacementRows.map((pl) => pl.project_id))];
   const projectsById = new Map<string, Project>();
-  for (const pl of directPlacementRows) {
-    if (!projectsById.has(pl.project_id)) {
-      const p = await getProject(pl.project_id);
-      if (p) projectsById.set(pl.project_id, p);
-    }
+  if (directProjectIds.length > 0) {
+    const projectPh = directProjectIds.map(() => "?").join(",");
+    const projectRows = await prepare<Project>(
+      `SELECT * FROM core.projects WHERE id IN (${projectPh})`,
+    ).all(directProjectIds);
+    for (const p of projectRows) projectsById.set(p.id, p);
   }
 
   return {
@@ -160,7 +171,14 @@ export async function requireTaskAccess(
 
 // --- Обогащение списков -------------------------------------------------------------
 
-async function enrichTasks(rows: CoreTask[]): Promise<TaskWithMeta[]> {
+/**
+ * Колонки задачи без `description`: списки его не показывают, а на проекте в
+ * 700 задач HTML описаний — четверть веса ответа.
+ */
+const TASK_LIST_COLUMNS = `t.id, t.org_id, t.title, t.status_id, t.priority, t.due_date, t.due_time,
+   t.estimated_minutes, t.completed_at, t.parent_task_id, t.source, t.created_by, t.created_at, t.updated_at`;
+
+async function enrichTasks<T extends { id: string }>(rows: T[]): Promise<Array<T & TaskMeta>> {
   if (rows.length === 0) return [];
   const ids = rows.map((t) => t.id);
   const ph = ids.map(() => "?").join(",");
@@ -231,10 +249,10 @@ export async function listProjectTasks(
   ctx: AuthContext,
   projectId: string,
   opts: { includeDone?: boolean } = {},
-): Promise<TaskWithMeta[]> {
+): Promise<TaskListItem[]> {
   await requireProject(ctx, projectId, "project.view");
-  const rows = await prepare<CoreTask>(
-    `SELECT t.* FROM core.task_projects tp
+  const rows = await prepare<Omit<CoreTask, "description">>(
+    `SELECT ${TASK_LIST_COLUMNS} FROM core.task_projects tp
      JOIN core.tasks t ON t.id = tp.task_id
      WHERE tp.project_id = ?
        AND (?::boolean OR t.completed_at IS NULL OR t.completed_at > now() - interval '14 days')
@@ -246,9 +264,9 @@ export async function listProjectTasks(
 export async function listMyTasks(
   ctx: AuthContext,
   opts: { includeDone?: boolean } = {},
-): Promise<TaskWithMeta[]> {
-  const rows = await prepare<CoreTask>(
-    `SELECT DISTINCT t.* FROM core.tasks t
+): Promise<TaskListItem[]> {
+  const rows = await prepare<Omit<CoreTask, "description">>(
+    `SELECT DISTINCT ${TASK_LIST_COLUMNS} FROM core.tasks t
      LEFT JOIN core.task_assignees a ON a.task_id = t.id AND a.user_id = ?
      WHERE t.org_id = ?
        AND (
@@ -266,28 +284,31 @@ export async function listMyTasks(
   return enrichTasks(rows);
 }
 
-export async function listSubtasks(ctx: AuthContext, parentTaskId: string): Promise<TaskWithMeta[]> {
+export async function listSubtasks(ctx: AuthContext, parentTaskId: string): Promise<TaskListItem[]> {
   await requireTaskAccess(ctx, parentTaskId, "view");
-  const rows = await prepare<CoreTask>(
-    `SELECT * FROM core.tasks WHERE parent_task_id = ? ORDER BY created_at`,
+  const rows = await prepare<Omit<CoreTask, "description">>(
+    `SELECT ${TASK_LIST_COLUMNS} FROM core.tasks t WHERE t.parent_task_id = ? ORDER BY t.created_at`,
   ).all(parentTaskId);
   return enrichTasks(rows);
 }
 
 export async function getTaskDetail(ctx: AuthContext, taskId: string): Promise<TaskDetail> {
   const access = await requireTaskAccess(ctx, taskId, "view");
-  const [meta] = await enrichTasks([access.task]);
-  const followers = await prepare<UserBrief>(
-    `SELECT u.id, u.email, u.name, u.avatar_url
-     FROM core.task_followers f JOIN core.users u ON u.id = f.user_id
-     WHERE f.task_id = ? ORDER BY f.created_at`,
-  ).all(taskId);
-  const values = await prepare<{ field_id: string; value: unknown }>(
-    `SELECT field_id, value FROM core.task_field_values WHERE task_id = ?`,
-  ).all(taskId);
-  const creator = access.task.created_by
-    ? await prepare<UserBrief>(`SELECT id, email, name, avatar_url FROM core.users WHERE id = ?`).get(access.task.created_by)
-    : undefined;
+  // Обвязка, подписчики, значения полей и автор независимы — берём параллельно.
+  const [[meta], followers, values, creator] = await Promise.all([
+    enrichTasks([access.task]),
+    prepare<UserBrief>(
+      `SELECT u.id, u.email, u.name, u.avatar_url
+       FROM core.task_followers f JOIN core.users u ON u.id = f.user_id
+       WHERE f.task_id = ? ORDER BY f.created_at`,
+    ).all(taskId),
+    prepare<{ field_id: string; value: unknown }>(
+      `SELECT field_id, value FROM core.task_field_values WHERE task_id = ?`,
+    ).all(taskId),
+    access.task.created_by
+      ? prepare<UserBrief>(`SELECT id, email, name, avatar_url FROM core.users WHERE id = ?`).get(access.task.created_by)
+      : Promise.resolve(undefined),
+  ]);
   return {
     ...meta,
     followers,

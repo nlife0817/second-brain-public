@@ -65,6 +65,7 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const {
     ready,
+    metaLoading,
     error,
     needsOnboarding,
     me,
@@ -233,7 +234,16 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
                 active={pathname === `/v2/projects/${p.id}`}
               />
             ))}
-            {projects.length === 0 && (
+            {/* Оболочка появляется сразу после /me, справочники доезжают следом:
+                пока они в пути — скелет, а не «проектов нет». */}
+            {projects.length === 0 && metaLoading && (
+              <div className="flex flex-col gap-1 px-2.5 py-2" aria-hidden>
+                {[0, 1, 2].map((i) => (
+                  <span key={i} className="h-4 animate-pulse rounded bg-muted" />
+                ))}
+              </div>
+            )}
+            {projects.length === 0 && !metaLoading && (
               <p className="px-2.5 py-2 text-xs text-muted-foreground">
                 {isGuest ? "Вам ещё не открыли ни одного проекта" : "Пока нет проектов"}
               </p>

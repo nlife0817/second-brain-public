@@ -8,6 +8,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getSessionUser } from "@/lib/supabase/claims";
 import { prepare } from "@/lib/sql";
 import { isUuid, jsonError, toHttpError } from "./http";
 import {
@@ -59,8 +60,8 @@ export async function getCoreUser(): Promise<CoreUser | null> {
   }
 
   const supabase = await createSupabaseServerClient();
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (error || !user?.email) return null;
+  const user = await getSessionUser(supabase);
+  if (!user?.email) return null;
 
   const email = user.email.toLowerCase().trim();
 
@@ -73,14 +74,13 @@ export async function getCoreUser(): Promise<CoreUser | null> {
     return { ...byEmail, auth_user_id: user.id };
   }
 
-  const fullName = (user.user_metadata?.full_name as string | undefined) ?? "";
-  const provisioned = await provisionFromWhitelist(email, user.id, fullName);
+  const provisioned = await provisionFromWhitelist(email, user.id, user.fullName);
   if (provisioned) return provisioned;
 
   // Первый вход человека, которого нет ни в v1-whitelist, ни в core.users:
   // заводим запись identity. Доступ она НЕ даёт — его даёт только членство
   // в организации (org_members), которое появляется при принятии приглашения.
-  return createUser({ email, name: fullName, authUserId: user.id });
+  return createUser({ email, name: user.fullName, authUserId: user.id });
 }
 
 async function loadProjectRoles(orgId: string, userId: string): Promise<Map<string, ProjectRole>> {

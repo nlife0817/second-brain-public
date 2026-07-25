@@ -324,6 +324,8 @@ export default function SettingsPage() {
   const [newFieldOptions, setNewFieldOptions] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Поля живут в сторе (их читает карточка задачи) — правки отсюда должны
+  // обновлять именно его, иначе карточка покажет устаревший набор.
   const loadExtras = useCallback(async () => {
     if (!orgId) return;
     const [fs, inv] = await Promise.all([
@@ -332,6 +334,7 @@ export default function SettingsPage() {
     ]);
     setFields(fs);
     setInvites(inv);
+    useV2Store.setState({ fields: fs });
   }, [orgId, isAdmin]);
 
   useEffect(() => {
