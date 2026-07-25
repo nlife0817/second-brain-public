@@ -17,6 +17,7 @@ import { listProjects } from "./projects";
 import { listStatuses, listTags } from "./orgmeta";
 import { listFields } from "./fields";
 import { unreadNotificationCount } from "./events";
+import { getActiveTimer, type TimeEntryWithTask } from "./time";
 import { canOrg } from "./policy";
 import { ACTIVE_ORG_COOKIE } from "./keys";
 import type {
@@ -39,6 +40,8 @@ export interface OrgMeta {
   members: OrgMemberWithUser[];
   fields: CustomField[];
   unreadCount: number;
+  /** Плавающий виджет таймера висит на всех экранах и тянул это отдельно. */
+  activeTimer: TimeEntryWithTask | null;
 }
 
 export interface V2Bootstrap extends OrgMeta {
@@ -69,15 +72,16 @@ function toBrief(user: { id: string; email: string; name: string; avatar_url: st
  * данные, на которые право уже подтверждено членством.
  */
 export const loadOrgMeta = cache(async (auth: AuthContext): Promise<OrgMeta> => {
-  const [projects, statuses, tags, members, fields, unreadCount] = await Promise.all([
+  const [projects, statuses, tags, members, fields, unreadCount, activeTimer] = await Promise.all([
     listProjects(auth),
     listStatuses(auth),
     listTags(auth),
     canOrg(auth, "org.members.view") ? listOrgMembers(auth.orgId) : Promise.resolve([]),
     listFields(auth),
     unreadNotificationCount(auth.orgId, auth.user.id),
+    getActiveTimer(auth),
   ]);
-  return { projects, statuses, tags, members, fields, unreadCount };
+  return { projects, statuses, tags, members, fields, unreadCount, activeTimer };
 });
 
 /**

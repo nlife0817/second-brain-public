@@ -38,6 +38,17 @@ interface OrgMetaResponse {
   members: OrgMemberWithUser[];
   fields: CustomField[];
   unreadCount: number;
+  activeTimer: ActiveTimer | null;
+}
+
+/** Активный таймер пользователя — зеркало `TimeEntryWithTask`. */
+export interface ActiveTimer {
+  id: string;
+  task_id: string | null;
+  started_at: string;
+  ended_at: string | null;
+  note: string;
+  task_title: string | null;
 }
 
 /** Состояние оболочки, посчитанное на сервере. */
@@ -94,10 +105,12 @@ export interface V2State {
   members: OrgMemberWithUser[];
   fields: CustomField[];
   unreadCount: number;
+  activeTimer: ActiveTimer | null;
 
   /** Наполнение из серверного рендера — синхронно, без единого запроса. */
   hydrate: (initial: V2InitialState) => void;
   setFields: (fields: CustomField[]) => void;
+  setActiveTimer: (timer: ActiveTimer | null) => void;
   bootstrap: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
   /** Справочники активной организации; вызывается из bootstrap и switchOrg. */
@@ -125,10 +138,12 @@ const EMPTY = {
   members: [],
   fields: [],
   unreadCount: 0,
+  activeTimer: null,
 } satisfies Omit<
   V2State,
   | "hydrate"
   | "setFields"
+  | "setActiveTimer"
   | "bootstrap"
   | "switchOrg"
   | "loadOrgData"
@@ -143,6 +158,8 @@ export function createV2Store(initial?: V2InitialState | null) {
   return createStore<V2State>()((set, get) => ({
     ...EMPTY,
     ...(initial ? { ...initial, ready: true } : {}),
+
+    setActiveTimer: (activeTimer) => set({ activeTimer }),
 
     hydrate: (next) => {
       // Повторная гидрация приходит при клиентской навигации: серверный рендер
@@ -200,6 +217,7 @@ export function createV2Store(initial?: V2InitialState | null) {
         members: [],
         fields: [],
         unreadCount: 0,
+        activeTimer: null,
         metaLoading: true,
         error: null,
       });

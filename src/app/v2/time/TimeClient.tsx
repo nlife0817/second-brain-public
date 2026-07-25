@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
-import { useV2Store } from "@/lib/core/ui-store";
+import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 
 export interface TimeEntry {
   id: string;
@@ -67,6 +67,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function TimeClient({ initial }: { initial: TimeInitial }) {
   const { orgId, orgRole } = useV2Store();
+  const storeApi = useV2StoreApi();
   const isAdmin = orgRole === "owner" || orgRole === "admin";
   const [entries, setEntries] = useState<TimeEntry[]>(initial.list.entries);
   const [active, setActive] = useState<TimeEntry | null>(initial.list.active);
@@ -121,12 +122,15 @@ export function TimeClient({ initial }: { initial: TimeInitial }) {
         setEntries(list.entries);
         setActive(list.active);
         setSummaryRows(sum);
+        // Плавающий виджет читает таймер из стора: без этого он до минуты
+        // показывал бы остановленный отсюда таймер.
+        storeApi.getState().setActiveTimer(list.active);
         setError(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Не удалось загрузить записи");
       }
     },
-    [orgId, from, to, groupBy],
+    [orgId, from, to, groupBy, storeApi],
   );
 
   useEffect(() => {
