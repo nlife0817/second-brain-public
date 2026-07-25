@@ -12,6 +12,7 @@ import {
   FolderKanban,
   ListChecks,
   Plus,
+  Repeat,
   Search,
   Settings,
   Smartphone,
@@ -205,6 +206,14 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
             label="Время"
             active={pathname.startsWith("/v2/time")}
           />
+          {!isGuest && (
+            <NavLink
+              href="/v2/recurring"
+              icon={<Repeat className="size-4" />}
+              label="Повторы"
+              active={pathname.startsWith("/v2/recurring")}
+            />
+          )}
           {!isGuest && (
             <NavLink
               href="/v2/clients"

@@ -146,19 +146,107 @@ export async function createRule(
   return row;
 }
 
-/** Удалять правило вправе автор, админ проекта правила или админ организации. */
-export async function deleteRule(ctx: AuthContext, ruleId: string): Promise<void> {
+/** Права на правку и удаление совпадают: автор, админ проекта или админ организации. */
+async function requireRuleOwnership(ctx: AuthContext, ruleId: string): Promise<RecurringTemplate> {
   const rule = await prepare<{ created_by: string | null; template: RecurringTemplate }>(
     `SELECT created_by, template FROM core.recurring_rules WHERE id = ? AND org_id = ?`,
   ).get(ruleId, ctx.orgId);
   if (!rule) throw new DomainError(404, "Rule not found");
 
   if (rule.created_by !== ctx.user.id && !canOrg(ctx, "org.members.manage")) {
-    if (!rule.template?.project_id) throw new PolicyError("recurring.delete");
+    if (!rule.template?.project_id) throw new PolicyError("recurring.manage");
     await requireProject(ctx, rule.template.project_id, "project.update");
   }
+  return rule.template;
+}
 
+export async function deleteRule(ctx: AuthContext, ruleId: string): Promise<void> {
+  await requireRuleOwnership(ctx, ruleId);
   await prepare(`DELETE FROM core.recurring_rules WHERE id = ? AND org_id = ?`).run(ruleId, ctx.orgId);
+}
+
+/**
+ * Правка правила. Расписание меняется вместе с `next_run_date`: оставить
+ * старую дату — значит выпустить следующую задачу по отменённому расписанию.
+ * Пересчитываем от начала, но не раньше сегодняшнего дня.
+ */
+export async function updateRule(
+  ctx: AuthContext,
+  ruleId: string,
+  patch: {
+    template?: RecurringTemplate;
+    freq?: Freq;
+    interval?: number;
+    byweekday?: number[] | null;
+    bymonthday?: number | null;
+    start_date?: string;
+    until_date?: string | null;
+  },
+  today: string,
+): Promise<RecurringRule> {
+  const previous = await requireRuleOwnership(ctx, ruleId);
+
+  // Переезд правила в другой проект — это создание задач там: право нужно
+  // проверить по новому проекту, а не по старому.
+  const nextProjectId = patch.template ? patch.template.project_id : previous.project_id;
+  if (patch.template) {
+    if (nextProjectId) await requireProject(ctx, nextProjectId, "task.create");
+    else assertOrg(ctx, "task.create.personal");
+  }
+
+  const current = await prepare<RecurringRule>(
+    `SELECT id, org_id, template, freq, interval, byweekday, bymonthday,
+            start_date, until_date, next_run_date, created_at
+     FROM core.recurring_rules WHERE id = ? AND org_id = ?`,
+  ).get(ruleId, ctx.orgId);
+  if (!current) throw new DomainError(404, "Rule not found");
+
+  const merged = {
+    template: patch.template ?? current.template,
+    freq: patch.freq ?? current.freq,
+    interval: patch.interval ?? current.interval,
+    byweekday: patch.byweekday !== undefined ? patch.byweekday : current.byweekday,
+    bymonthday: patch.bymonthday !== undefined ? patch.bymonthday : current.bymonthday,
+    start_date: patch.start_date ?? current.start_date,
+    until_date: patch.until_date !== undefined ? patch.until_date : current.until_date,
+  };
+
+  const scheduleChanged =
+    merged.freq !== current.freq ||
+    merged.interval !== current.interval ||
+    JSON.stringify(merged.byweekday) !== JSON.stringify(current.byweekday) ||
+    merged.bymonthday !== current.bymonthday ||
+    merged.start_date !== current.start_date;
+
+  let nextRun = current.next_run_date;
+  if (scheduleChanged) {
+    nextRun = merged.start_date;
+    // Догонять пропущенное не нужно — доводим до первой даты не в прошлом.
+    let guard = 0;
+    while (nextRun < today && guard++ < 400) nextRun = nextOccurrence(merged, nextRun);
+  }
+
+  const row = await prepare<RecurringRule>(
+    `UPDATE core.recurring_rules
+     SET template = ?::jsonb, freq = ?, interval = ?, byweekday = ?::jsonb, bymonthday = ?,
+         start_date = ?::date, until_date = ?::date, next_run_date = ?::date
+     WHERE id = ? AND org_id = ?
+     RETURNING id, org_id, template, freq, interval, byweekday, bymonthday,
+               start_date, until_date, next_run_date, created_at`,
+  ).get(
+    JSON.stringify(merged.template),
+    merged.freq,
+    merged.interval,
+    merged.byweekday ? JSON.stringify(merged.byweekday) : null,
+    merged.bymonthday,
+    merged.start_date,
+    merged.until_date,
+    nextRun,
+    ruleId,
+    ctx.orgId,
+  );
+  if (!row) throw new DomainError(404, "Rule not found");
+  return row;
 }
 
 /**

@@ -307,3 +307,24 @@ export const recurringCreateSchema = z.object({
   start_date: dateSchema,
   until_date: dateSchema.nullish(),
 });
+
+export const recurringPatchSchema = z
+  .object({
+    template: z
+      .object({
+        title: z.string().trim().min(1).max(500),
+        description: z.string().max(20_000).optional(),
+        priority: prioritySchema.optional(),
+        status_id: z.uuid().nullish(),
+        project_id: z.uuid().nullish(),
+        assignee_ids: z.array(z.uuid()).max(20).optional(),
+      })
+      .optional(),
+    freq: z.enum(["daily", "weekdays", "weekly", "monthly"]).optional(),
+    interval: z.number().int().min(1).max(365).optional(),
+    byweekday: z.array(z.number().int().min(0).max(6)).max(7).nullish(),
+    bymonthday: z.number().int().min(1).max(28).nullish(),
+    start_date: dateSchema.optional(),
+    until_date: dateSchema.nullish(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
