@@ -10,6 +10,15 @@
 
 Команды: `npm run dev` · `npm run build` · `npm run lint`
 
+# Две версии приложения
+
+В репозитории живут одновременно:
+
+- **v1** (наследие) — персональный «второй мозг»: `/` и `/m/*`, таблицы в схеме `public`, доступ через [src/lib/db.ts](src/lib/db.ts), whitelist-авторизация в [src/lib/auth.ts](src/lib/auth.ts).
+- **v2** (командный трекер) — мультитенантное ядро: `/v2/*`, схема `core`, API `/api/v2/**`, доменный слой [src/lib/core/](src/lib/core/) с единым policy-слоем. Правила и конвенции — в [src/lib/core/CLAUDE.md](src/lib/core/CLAUDE.md).
+
+Экран целиком принадлежит одной версии — смешивать v1 и v2 в одном компоненте нельзя. Новые командные фичи делаем в v2.
+
 # Структура и ключевые модули
 
 - [src/app/](src/app/) — App Router. Корень `/` — десктоп; `/m/*` (tasks/notes/inbox/settings) — мобильный UI; `/planning/` — недельное планирование; `/login/`, `/auth/callback/` — auth
