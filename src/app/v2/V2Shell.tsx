@@ -26,6 +26,7 @@ import {
 import { CreateProjectDialog, GlobalSearch, OrgOnboarding, TaskSheet } from "@/components/v2/lazy";
 import { GlobalTimer } from "@/components/v2/GlobalTimer";
 import { Avatar } from "@/components/v2/bits";
+import { ProjectIcon } from "@/components/v2/project-icons";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -306,10 +307,10 @@ export function V2Shell({
               <NavLink
                 key={p.id}
                 href={`/v2/projects/${p.id}`}
-                icon={<span className="size-2.5 rounded-sm" style={{ backgroundColor: p.color }} />}
+                icon={<ProjectIcon name={p.icon} color={p.color} className="size-3.5" />}
                 label={p.name}
                 badge={p.open_task_count}
-                active={pathname === `/v2/projects/${p.id}`}
+                active={pathname.startsWith(`/v2/projects/${p.id}`)}
               />
             ))}
             {/* Справочники доезжают заново только при смене организации: пока

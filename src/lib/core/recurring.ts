@@ -91,7 +91,7 @@ export async function listRules(ctx: AuthContext): Promise<RecurringRule[]> {
   if (projectIds.length > 0) {
     const ph = projectIds.map(() => "?").join(",");
     const projects = await prepare<PolicyProject>(
-      `SELECT id, org_id, visibility FROM core.projects WHERE id IN (${ph})`,
+      `SELECT id, org_id, default_role FROM core.projects WHERE id IN (${ph})`,
     ).all(projectIds);
     for (const p of projects) {
       if (effectiveProjectRole(ctx, p) !== null) visible.add(p.id);

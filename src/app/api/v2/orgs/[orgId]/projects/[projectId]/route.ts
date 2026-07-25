@@ -3,6 +3,7 @@ import { withOrg } from "@/lib/core/context";
 import { isUuid, jsonError, parseJson } from "@/lib/core/http";
 import { effectiveProjectRole } from "@/lib/core/policy";
 import {
+  deleteProject,
   listProjectMembers,
   listSections,
   requireProject,
@@ -45,4 +46,11 @@ export const PATCH = withOrg(async (request, { params, auth }) => {
       ? await updateProject(auth, projectId, patch)
       : await requireProject(auth, projectId, "project.view");
   return NextResponse.json({ ...project, my_role: effectiveProjectRole(auth, project) });
+});
+
+export const DELETE = withOrg(async (_request, { params, auth }) => {
+  const { projectId } = await params;
+  if (!isUuid(projectId)) return jsonError(404, "Project not found");
+  await deleteProject(auth, projectId);
+  return NextResponse.json({ ok: true });
 });

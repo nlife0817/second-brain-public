@@ -28,12 +28,18 @@ export const invitationCreateSchema = z.object({
 
 // --- Проекты и секции -------------------------------------------------------------
 
+/**
+ * Базовая роль сотрудников организации в проекте; `null` — закрытый проект.
+ * Источник истины доступа (см. core.projects.default_role и policy.ts).
+ */
+const projectDefaultRoleSchema = z.enum(["viewer", "commenter", "editor"]).nullable();
+
 export const projectCreateSchema = z.object({
   name: z.string().trim().min(1).max(200),
   description: z.string().max(4000).optional(),
   color: z.string().trim().max(32).optional(),
   icon: z.string().trim().max(64).optional(),
-  visibility: z.enum(["org", "private"]).optional(),
+  default_role: projectDefaultRoleSchema.optional(),
 });
 
 export const projectPatchSchema = z
@@ -42,7 +48,7 @@ export const projectPatchSchema = z
     description: z.string().max(4000).optional(),
     color: z.string().trim().max(32).optional(),
     icon: z.string().trim().max(64).optional(),
-    visibility: z.enum(["org", "private"]).optional(),
+    default_role: projectDefaultRoleSchema.optional(),
     position: z.number().finite().optional(),
     archived: z.boolean().optional(),
     team_id: z.uuid().nullable().optional(),

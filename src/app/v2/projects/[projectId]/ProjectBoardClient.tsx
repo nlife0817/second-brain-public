@@ -12,11 +12,14 @@
 // пары запросов после гидрации. Дальше список живёт в клиентском кэше.
 
 import { useCallback, useEffect, useState } from "react";
-import { KanbanSquare, Plus, Table2, Users } from "lucide-react";
+import Link from "next/link";
+import { KanbanSquare, Plus, Settings, Table2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AvatarStack } from "@/components/v2/bits";
 import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { CreateTaskDialog, ProjectMembersDialog, TaskSheet } from "@/components/v2/lazy";
+import { accessLabel } from "@/components/v2/ProjectAccessPicker";
+import { ProjectIcon } from "@/components/v2/project-icons";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
 import { api } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
@@ -165,11 +168,11 @@ function ProjectScreen({
 
   const title = (
     <>
-      <span className="size-3 shrink-0 rounded" style={{ backgroundColor: project.color }} />
+      <ProjectIcon name={project.icon} color={project.color} className="size-4" />
       <h1 className="text-base font-semibold">{project.name}</h1>
-      {project.visibility === "private" && (
-        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">приватный</span>
-      )}
+      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+        {accessLabel(project.default_role)}
+      </span>
     </>
   );
 
@@ -196,6 +199,16 @@ function ProjectScreen({
       />
       <Users className="size-4 text-muted-foreground" />
     </button>
+  );
+
+  const settingsLink = canEdit && (
+    <Link
+      href={`/v2/projects/${projectId}/settings`}
+      className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+      title="Настройки проекта"
+    >
+      <Settings className="size-4" />
+    </Link>
   );
 
   const addButton = canEdit && (
@@ -241,6 +254,7 @@ function ProjectScreen({
         onOpenChange={setMembersOpen}
         project={project}
         onChanged={() => void reload()}
+        settingsHref={`/v2/projects/${projectId}/settings`}
       />
     </>
   );
@@ -263,6 +277,7 @@ function ProjectScreen({
               <ViewSwitch />
               {doneToggle}
               {membersButton}
+              {settingsLink}
               {addButton}
             </>
           }
@@ -281,6 +296,7 @@ function ProjectScreen({
         <CardSettingsPopover />
         {doneToggle}
         {membersButton}
+        {settingsLink}
         {addButton}
       </header>
 

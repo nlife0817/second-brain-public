@@ -31,7 +31,7 @@ function ctx(orgRole: OrgRole, projectRoles: Record<string, ProjectRole> = {}): 
 }
 
 function project(overrides: Partial<PolicyProject> = {}): PolicyProject {
-  return { id: "p1", org_id: ORG, visibility: "org", ...overrides };
+  return { id: "p1", org_id: ORG, default_role: "editor", ...overrides };
 }
 
 describe("canOrg: матрица org-ролей", () => {
@@ -62,37 +62,42 @@ describe("canOrg: матрица org-ролей", () => {
 });
 
 describe("effectiveProjectRole", () => {
-  it("owner и admin — admin в org-видимых проектах", () => {
+  it("owner и admin — admin в проектах с доступом организации", () => {
     expect(effectiveProjectRole(ctx("owner"), project())).toBe("admin");
     expect(effectiveProjectRole(ctx("admin"), project())).toBe("admin");
+    expect(effectiveProjectRole(ctx("owner"), project({ default_role: "viewer" }))).toBe("admin");
   });
 
-  it("приватный проект закрыт даже для owner/admin без явного членства (личный контур)", () => {
-    expect(effectiveProjectRole(ctx("owner"), project({ visibility: "private" }))).toBeNull();
-    expect(effectiveProjectRole(ctx("admin"), project({ visibility: "private" }))).toBeNull();
+  it("закрытый проект недоступен даже owner/admin без явного членства (личный контур)", () => {
+    expect(effectiveProjectRole(ctx("owner"), project({ default_role: null }))).toBeNull();
+    expect(effectiveProjectRole(ctx("admin"), project({ default_role: null }))).toBeNull();
   });
 
-  it("приватный проект: явная запись действует для любой org-роли", () => {
-    expect(effectiveProjectRole(ctx("owner", { p1: "viewer" }), project({ visibility: "private" }))).toBe("viewer");
-    expect(effectiveProjectRole(ctx("member", { p1: "admin" }), project({ visibility: "private" }))).toBe("admin");
+  it("закрытый проект: явная запись действует для любой org-роли", () => {
+    expect(effectiveProjectRole(ctx("owner", { p1: "viewer" }), project({ default_role: null }))).toBe("viewer");
+    expect(effectiveProjectRole(ctx("member", { p1: "admin" }), project({ default_role: null }))).toBe("admin");
   });
 
-  it("member: editor по умолчанию в org-видимом проекте", () => {
+  it("member получает ровно базовую роль проекта", () => {
     expect(effectiveProjectRole(ctx("member"), project())).toBe("editor");
+    expect(effectiveProjectRole(ctx("member"), project({ default_role: "viewer" }))).toBe("viewer");
+    expect(effectiveProjectRole(ctx("member"), project({ default_role: "commenter" }))).toBe("commenter");
   });
 
-  it("member: нет доступа в приватный проект без явной записи", () => {
-    expect(effectiveProjectRole(ctx("member"), project({ visibility: "private" }))).toBeNull();
+  it("member: нет доступа в закрытый проект без явной записи", () => {
+    expect(effectiveProjectRole(ctx("member"), project({ default_role: null }))).toBeNull();
   });
 
-  it("member: явная запись выигрывает в обе стороны", () => {
+  it("member: явная запись выигрывает у базовой роли в обе стороны", () => {
     expect(effectiveProjectRole(ctx("member", { p1: "viewer" }), project())).toBe("viewer");
     expect(effectiveProjectRole(ctx("member", { p1: "admin" }), project())).toBe("admin");
+    expect(effectiveProjectRole(ctx("member", { p1: "editor" }), project({ default_role: "viewer" }))).toBe("editor");
   });
 
-  it("guest: только явная запись, org-видимость не помогает", () => {
+  it("guest: только явная запись, базовая роль на него не распространяется", () => {
     expect(effectiveProjectRole(ctx("guest"), project())).toBeNull();
-    expect(effectiveProjectRole(ctx("guest", { p1: "commenter" }), project({ visibility: "private" }))).toBe("commenter");
+    expect(effectiveProjectRole(ctx("guest"), project({ default_role: "viewer" }))).toBeNull();
+    expect(effectiveProjectRole(ctx("guest", { p1: "commenter" }), project({ default_role: null }))).toBe("commenter");
   });
 
   it("проект чужой организации — всегда null", () => {
@@ -111,13 +116,14 @@ describe("canProject: пороги проектных ролей", () => {
     ["field.value.edit",        { viewer: false, commenter: false, editor: true,  admin: true }],
     ["project.update",          { viewer: false, commenter: false, editor: false, admin: true }],
     ["project.archive",         { viewer: false, commenter: false, editor: false, admin: true }],
+    ["project.delete",          { viewer: false, commenter: false, editor: false, admin: true }],
     ["project.members.manage",  { viewer: false, commenter: false, editor: false, admin: true }],
   ];
 
   for (const [action, expected] of matrix) {
     for (const role of Object.keys(expected) as ProjectRole[]) {
       it(`${action} для guest с ролью ${role} → ${expected[role]}`, () => {
-        expect(canProject(ctx("guest", { p1: role }), action, project({ visibility: "private" }))).toBe(
+        expect(canProject(ctx("guest", { p1: role }), action, project({ default_role: null }))).toBe(
           expected[role],
         );
       });
@@ -126,19 +132,19 @@ describe("canProject: пороги проектных ролей", () => {
 
   it("без эффективной роли всё запрещено", () => {
     expect(canProject(ctx("guest"), "project.view", project())).toBe(false);
-    expect(canProject(ctx("member"), "project.view", project({ visibility: "private" }))).toBe(false);
+    expect(canProject(ctx("member"), "project.view", project({ default_role: null }))).toBe(false);
   });
 
-  it("гость не меняет видимость проекта даже будучи его админом", () => {
-    // Иначе гость делает org-проект приватным и запирает в нём организацию.
-    expect(canProject(ctx("guest", { p1: "admin" }), "project.visibility", project())).toBe(false);
+  it("гость не меняет доступ сотрудников даже будучи админом проекта", () => {
+    // Иначе гость закрывает проект организации и запирает в нём её сотрудников.
+    expect(canProject(ctx("guest", { p1: "admin" }), "project.access", project())).toBe(false);
     expect(canProject(ctx("guest", { p1: "admin" }), "project.update", project())).toBe(true);
   });
 
-  it("видимость меняют project admin из числа сотрудников", () => {
-    expect(canProject(ctx("member", { p1: "admin" }), "project.visibility", project())).toBe(true);
-    expect(canProject(ctx("owner"), "project.visibility", project())).toBe(true);
-    expect(canProject(ctx("member", { p1: "editor" }), "project.visibility", project())).toBe(false);
+  it("базовую роль меняют project admin из числа сотрудников", () => {
+    expect(canProject(ctx("member", { p1: "admin" }), "project.access", project())).toBe(true);
+    expect(canProject(ctx("owner"), "project.access", project())).toBe(true);
+    expect(canProject(ctx("member", { p1: "editor" }), "project.access", project())).toBe(false);
   });
 });
 

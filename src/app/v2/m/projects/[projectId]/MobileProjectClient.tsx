@@ -12,9 +12,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, Plus, RefreshCw } from "lucide-react";
+import { ChevronLeft, Plus, RefreshCw, Settings } from "lucide-react";
 import { CreateTaskDialog, TaskSheet } from "@/components/v2/lazy";
 import { useAppResume, useBackDismiss, useTaskDeepLink } from "@/components/v2/mobile/hooks";
+import { ProjectIcon } from "@/components/v2/project-icons";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import { applyTaskChange } from "@/lib/core/task-change";
@@ -153,7 +154,7 @@ function MobileProjectScreen({
             >
               <ChevronLeft className="size-5" />
             </Link>
-            <span className="size-3 shrink-0 rounded" style={{ backgroundColor: project.color }} />
+            <ProjectIcon name={project.icon} color={project.color} className="size-4 shrink-0" />
             <h1 className="max-w-[40vw] truncate text-base font-semibold">{project.name}</h1>
           </>
         }
@@ -166,6 +167,15 @@ function MobileProjectScreen({
             >
               <RefreshCw className="size-4" />
             </button>
+            {canEdit && (
+              <Link
+                href={`/v2/m/projects/${projectId}/settings`}
+                className="rounded-lg p-2 text-muted-foreground active:bg-muted"
+                aria-label="Настройки проекта"
+              >
+                <Settings className="size-5" />
+              </Link>
+            )}
             {canEdit && (
               <button
                 onClick={() => setCreateOpen(true)}

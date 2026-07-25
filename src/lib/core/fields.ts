@@ -38,7 +38,7 @@ export async function listFields(ctx: AuthContext, projectId?: string): Promise<
   if (projectIds.length === 0) return rows;
   const ph = projectIds.map(() => "?").join(",");
   const projects = await prepare<PolicyProject>(
-    `SELECT id, org_id, visibility FROM core.projects WHERE id IN (${ph})`,
+    `SELECT id, org_id, default_role FROM core.projects WHERE id IN (${ph})`,
   ).all(projectIds);
   const visible = new Set(
     projects.filter((p) => effectiveProjectRole(ctx, p) !== null).map((p) => p.id),

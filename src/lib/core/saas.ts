@@ -107,7 +107,7 @@ export async function listOrgAudit(
   if (projectIds.length > 0) {
     const ph = projectIds.map(() => "?").join(",");
     const projects = await prepare<PolicyProject>(
-      `SELECT id, org_id, visibility FROM core.projects WHERE id IN (${ph})`,
+      `SELECT id, org_id, default_role FROM core.projects WHERE id IN (${ph})`,
     ).all(projectIds);
     for (const p of projects) {
       if (effectiveProjectRole(ctx, p) !== null) visibleProjects.add(p.id);
@@ -128,7 +128,7 @@ export async function listOrgAudit(
     if (projectsOfTasks.length > 0) {
       const ph2 = projectsOfTasks.map(() => "?").join(",");
       const projects = await prepare<PolicyProject>(
-        `SELECT id, org_id, visibility FROM core.projects WHERE id IN (${ph2})`,
+        `SELECT id, org_id, default_role FROM core.projects WHERE id IN (${ph2})`,
       ).all(projectsOfTasks);
       for (const p of projects) {
         if (effectiveProjectRole(ctx, p) !== null) visibleProjects.add(p.id);
@@ -350,9 +350,15 @@ export async function exportOrg(ctx: AuthContext): Promise<Record<string, unknow
   assertOrg(ctx, "org.update");
 
   const allProjects = await prepare<
-    PolicyProject & { name: string; description: string; archived_at: string | null; created_at: string }
+    PolicyProject & {
+      visibility: string;
+      name: string;
+      description: string;
+      archived_at: string | null;
+      created_at: string;
+    }
   >(
-    `SELECT id, org_id, visibility, name, description, archived_at, created_at
+    `SELECT id, org_id, default_role, visibility, name, description, archived_at, created_at
      FROM core.projects WHERE org_id = ?`,
   ).all(ctx.orgId);
   const visibleProjectIds = allProjects
@@ -411,6 +417,7 @@ export async function exportOrg(ctx: AuthContext): Promise<Record<string, unknow
       name: p.name,
       description: visibleProjectIds.includes(p.id) ? p.description : null,
       visibility: p.visibility,
+      default_role: p.default_role,
       archived_at: p.archived_at,
       created_at: p.created_at,
       exported_content: visibleProjectIds.includes(p.id),

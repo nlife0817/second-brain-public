@@ -98,7 +98,7 @@ async function requireEntity(
     return;
   }
   const project = await prepare<PolicyProject>(
-    `SELECT id, org_id, visibility FROM core.projects WHERE id = ? AND org_id = ?`,
+    `SELECT id, org_id, default_role FROM core.projects WHERE id = ? AND org_id = ?`,
   ).get(id, ctx.orgId);
   // 404, а не 403: существование чужого приватного проекта не подтверждаем.
   if (!project) throw new DomainError(404, "Project not found");
@@ -139,7 +139,7 @@ async function keepVisible(
     filterVisibleTaskIds(ctx, taskIds),
     projectIds.length
       ? prepare<PolicyProject>(
-          `SELECT id, org_id, visibility FROM core.projects
+          `SELECT id, org_id, default_role FROM core.projects
            WHERE org_id = ? AND id IN (${projectIds.map(() => "?").join(",")})`,
         ).all(ctx.orgId, projectIds)
       : Promise.resolve([]),
