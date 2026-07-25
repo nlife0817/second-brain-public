@@ -40,6 +40,7 @@ import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, StatusPill } from "./bits";
 import { MemberPicker } from "./MemberPicker";
+import { RelationsList } from "./RelationsList";
 // Tiptap — самая тяжёлая зависимость интерфейса (≈370 КБ). Статический импорт
 // тянул её в бандл каждой страницы v2, хотя редактор нужен только когда открыта
 // карточка задачи. Грузим чанк при первом открытии.
@@ -88,7 +89,9 @@ export function TaskSheet({
 }) {
   // Кастомные поля — справочник организации из стора: раньше карточка тянула
   // /fields при каждом открытии.
-  const { orgId, statuses, tags, projects, me, fields } = useV2Store();
+  const { orgId, statuses, tags, projects, me, fields, orgRole } = useV2Store();
+  // Гость связями не управляет; более тонкие права проверит сервер.
+  const canEdit = orgRole !== null && orgRole !== "guest";
   const [loaded, setLoaded] = useState<TaskDetail | null>(null);
   // Пока грузится новая задача, старую не показываем — сравнение по id вместо
   // сброса состояния в эффекте (тот вызывает каскадный ре-рендер).
@@ -531,6 +534,8 @@ export function TaskSheet({
                     </div>
                   </div>
                 </div>
+
+                <RelationsList entityType="task" entityId={task.id} canEdit={canEdit} />
               </div>
 
               <div className="border-t border-border">

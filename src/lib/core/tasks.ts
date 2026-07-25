@@ -292,35 +292,37 @@ export async function listMyTasks(
  */
 const ALL_TASKS_CAP = 3000;
 
-/**
- * Задачи всех доступных проектов организации + личные — для сводного экрана.
- *
- * Видимость повторяет `loadTaskAccess`, но пакетно:
- *  - `up` поднимает каждую задачу по цепочке родителей (multi-homing наследуется);
- *  - задача в проекте видна при роли в любом проекте цепочки, авторстве или
- *    назначении где-то в цепочке;
- *  - «свободная» задача (нет размещений во всей цепочке) — ещё и подписчику.
- * Подписка на задачу В ПРОЕКТЕ доступа не даёт: см. правило 4 в CLAUDE.md ядра.
- */
-export async function listAllTasks(
+/** Проекты организации, которые пользователь вправе видеть (решает policy). */
+export async function visibleProjectIds(
   ctx: AuthContext,
-  opts: { includeDone?: boolean; includeArchivedProjects?: boolean } = {},
-): Promise<AllTasksResult> {
-  // Видимость проектов решает policy — единственный источник истины.
-  const projectRows = await prepare<{ id: string; org_id: string; visibility: "org" | "private" }>(
+  opts: { includeArchived?: boolean } = {},
+): Promise<string[]> {
+  const rows = await prepare<{ id: string; org_id: string; visibility: "org" | "private" }>(
     `SELECT id, org_id, visibility FROM core.projects
      WHERE org_id = ? AND (?::boolean OR archived_at IS NULL)`,
-  ).all(ctx.orgId, opts.includeArchivedProjects ?? false);
-  const visibleProjectIds = projectRows.filter((p) => effectiveProjectRole(ctx, p) !== null).map((p) => p.id);
+  ).all(ctx.orgId, opts.includeArchived ?? false);
+  return rows.filter((p) => effectiveProjectRole(ctx, p) !== null).map((p) => p.id);
+}
 
-  // Пустой IN (...) — синтаксическая ошибка, поэтому ветку убираем целиком.
-  const projectClause = visibleProjectIds.length
+/**
+ * Пакетная версия правил из `loadTaskAccess` — одним SQL вместо запроса на
+ * задачу. Возвращает готовые куски запроса, чтобы правило видимости жило в
+ * одном месте: разъехавшиеся копии этой логики и есть класс ошибок, ради
+ * которого policy сделан единственным источником истины.
+ *
+ * Параметры отдаются в порядке появления `?` в тексте: сперва `cteParams`
+ * (CTE идёт первым), затем — там, где вставлен `clause`, его `clauseParams`.
+ */
+function taskVisibility(
+  ctx: AuthContext,
+  projectIds: string[],
+): { cte: string; cteParams: unknown[]; clause: string; clauseParams: unknown[] } {
+  const projectClause = projectIds.length
     ? `EXISTS (SELECT 1 FROM placed pl WHERE pl.task_id = t.id
-                 AND pl.project_id IN (${visibleProjectIds.map(() => "?").join(",")}))`
+                 AND pl.project_id IN (${projectIds.map(() => "?").join(",")}))`
     : `FALSE`;
-
-  const rows = await prepare<Omit<CoreTask, "description">>(
-    `WITH RECURSIVE up AS (
+  return {
+    cte: `WITH RECURSIVE up AS (
        SELECT t.id AS task_id, t.id AS node_id, t.parent_task_id, 0 AS depth
        FROM core.tasks t WHERE t.org_id = ?
        UNION ALL
@@ -342,28 +344,68 @@ export async function listAllTasks(
      followed AS (
        SELECT DISTINCT u.task_id
        FROM up u JOIN core.task_followers f ON f.task_id = u.node_id AND f.user_id = ?
-     )
-     SELECT ${TASK_LIST_COLUMNS}
-     FROM core.tasks t
-     WHERE t.org_id = ?
-       AND (?::boolean OR t.completed_at IS NULL)
-       AND (
+     )`,
+    cteParams: [ctx.orgId, ctx.user.id, ctx.user.id, ctx.user.id],
+    // Подписка на задачу В ПРОЕКТЕ доступа не даёт (правило 4 в CLAUDE.md ядра):
+    // иначе исключённый из проекта сохранял бы доступ через самоподписку.
+    clause: `(
          ${projectClause}
          OR EXISTS (SELECT 1 FROM mine m WHERE m.task_id = t.id)
          OR (NOT EXISTS (SELECT 1 FROM placed pl2 WHERE pl2.task_id = t.id)
              AND EXISTS (SELECT 1 FROM followed f2 WHERE f2.task_id = t.id))
-       )
+       )`,
+    clauseParams: projectIds.length ? [projectIds] : [],
+  };
+}
+
+/**
+ * Отсев недоступных задач из готового списка id. Нужен каналам, которые
+ * ссылаются на задачи в обход обычной проверки — например связям.
+ */
+export async function filterVisibleTaskIds(ctx: AuthContext, ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const projects = await visibleProjectIds(ctx, { includeArchived: true });
+  const vis = taskVisibility(ctx, projects);
+  const rows = await prepare<{ id: string }>(
+    `${vis.cte}
+     SELECT t.id FROM core.tasks t
+     WHERE t.org_id = ? AND t.id IN (${ids.map(() => "?").join(",")}) AND ${vis.clause}`,
+  ).all(...vis.cteParams, ctx.orgId, ids, ...vis.clauseParams);
+  return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * Задачи всех доступных проектов организации + личные — для сводного экрана.
+ *
+ * Видимость повторяет `loadTaskAccess`, но пакетно:
+ *  - `up` поднимает каждую задачу по цепочке родителей (multi-homing наследуется);
+ *  - задача в проекте видна при роли в любом проекте цепочки, авторстве или
+ *    назначении где-то в цепочке;
+ *  - «свободная» задача (нет размещений во всей цепочке) — ещё и подписчику.
+ * Подписка на задачу В ПРОЕКТЕ доступа не даёт: см. правило 4 в CLAUDE.md ядра.
+ */
+export async function listAllTasks(
+  ctx: AuthContext,
+  opts: { includeDone?: boolean; includeArchivedProjects?: boolean } = {},
+): Promise<AllTasksResult> {
+  const projects = await visibleProjectIds(ctx, { includeArchived: opts.includeArchivedProjects });
+  const vis = taskVisibility(ctx, projects);
+
+  const rows = await prepare<Omit<CoreTask, "description">>(
+    `${vis.cte}
+     SELECT ${TASK_LIST_COLUMNS}
+     FROM core.tasks t
+     WHERE t.org_id = ?
+       AND (?::boolean OR t.completed_at IS NULL)
+       AND ${vis.clause}
      ORDER BY t.due_date NULLS LAST, t.created_at DESC
      LIMIT ?`,
-    // Сначала параметры CTE, затем WHERE: порядок ?-плейсхолдеров в тексте.
+    // Параметры — строго в порядке появления `?` в тексте запроса.
   ).all(
-    ctx.orgId,
-    ctx.user.id,
-    ctx.user.id,
-    ctx.user.id,
+    ...vis.cteParams,
     ctx.orgId,
     opts.includeDone ?? false,
-    ...(visibleProjectIds.length ? [visibleProjectIds] : []),
+    ...vis.clauseParams,
     ALL_TASKS_CAP + 1,
   );
 

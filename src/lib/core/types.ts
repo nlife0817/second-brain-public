@@ -227,6 +227,32 @@ export interface TaskDetail extends TaskWithMeta {
   creator: UserBrief | null;
 }
 
+// --- Связи между сущностями ------------------------------------------------------
+
+export type RelationEntityType = "task" | "client" | "project";
+
+export interface RelationType {
+  id: string;
+  org_id: string;
+  name: string;
+  color: string;
+  icon: string;
+  position: number;
+}
+
+/** Связь глазами конкретной карточки: «дальняя» сторона уже разрешена. */
+export interface RelationWithTarget {
+  id: string;
+  relation_type_id: string | null;
+  /** outgoing — связь заведена из этой карточки, incoming — на неё сослались. */
+  direction: "outgoing" | "incoming";
+  entity_type: RelationEntityType;
+  entity_id: string;
+  title: string;
+  color: string | null;
+  created_at: string;
+}
+
 export interface CoreComment {
   id: string;
   org_id: string;

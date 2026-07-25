@@ -141,6 +141,37 @@ export const tagPatchSchema = z
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
+// --- Связи между сущностями ------------------------------------------------------
+
+const relationEntitySchema = z.enum(["task", "client", "project"]);
+
+export const relationCreateSchema = z.object({
+  source_type: relationEntitySchema,
+  source_id: z.uuid(),
+  target_type: relationEntitySchema,
+  target_id: z.uuid(),
+  relation_type_id: z.uuid().nullish(),
+});
+
+export const relationQuerySchema = z.object({
+  entity_type: relationEntitySchema,
+  entity_id: z.uuid(),
+});
+
+export const relationTypeCreateSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  color: z.string().trim().max(32).optional(),
+  icon: z.string().trim().max(64).optional(),
+});
+export const relationTypePatchSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    color: z.string().trim().max(32).optional(),
+    icon: z.string().trim().max(64).optional(),
+    position: z.number().finite().optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
 export const fieldOptionSchema = z.object({
   id: z.string().max(64).optional(),
   label: z.string().trim().min(1).max(200),
