@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prepare } from "@/lib/sql";
 import { sendPushToEmail } from "@/lib/notifications/push";
 import { materializeDueRules } from "@/lib/core/recurring";
+import { deliverWebhooks } from "@/lib/core/saas";
 import { closeStaleTimers } from "@/lib/core/time";
 
 export const maxDuration = 60;
@@ -91,16 +92,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const today = new Date().toISOString().slice(0, 10);
-  const [push, recurring, timers] = await Promise.all([
-    dispatchPush(),
-    materializeDueRules(today),
-    closeStaleTimers(),
+  // Шаги независимы: сбой одного не должен обнулять остальные и весь тик.
+  const [push, recurring, timers, webhooks] = await Promise.all([
+    dispatchPush().catch((e) => ({ error: String(e) })),
+    materializeDueRules(today).catch((e) => ({ error: String(e) })),
+    closeStaleTimers().catch((e) => ({ error: String(e) })),
+    deliverWebhooks().catch((e) => ({ error: String(e) })),
   ]);
-  return NextResponse.json({
-    push,
-    recurring_created: recurring.created,
-    timers_closed: timers,
-  });
+  return NextResponse.json({ push, recurring, timers, webhooks });
 }
 
 export const GET = POST;

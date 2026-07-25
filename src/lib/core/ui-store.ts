@@ -19,10 +19,15 @@ interface MeResponse {
   orgs: OrgSummary[];
 }
 
+const ACTIVE_ORG_KEY = "sb.v2.orgId";
+
 interface V2State {
   ready: boolean;
   error: string | null;
+  /** true, когда пользователь авторизован, но ещё не состоит ни в одной организации. */
+  needsOnboarding: boolean;
   me: UserBrief | null;
+  orgs: OrgSummary[];
   orgId: string | null;
   orgName: string;
   orgRole: OrgRole | null;
@@ -33,6 +38,7 @@ interface V2State {
   unreadCount: number;
 
   bootstrap: () => Promise<void>;
+  switchOrg: (orgId: string) => Promise<void>;
   refreshProjects: () => Promise<void>;
   refreshMeta: () => Promise<void>;
   refreshMembers: () => Promise<void>;
@@ -42,7 +48,9 @@ interface V2State {
 export const useV2Store = create<V2State>((set, get) => ({
   ready: false,
   error: null,
+  needsOnboarding: false,
   me: null,
+  orgs: [],
   orgId: null,
   orgName: "",
   orgRole: null,
@@ -55,12 +63,22 @@ export const useV2Store = create<V2State>((set, get) => ({
   bootstrap: async () => {
     try {
       const me = await api.get<MeResponse>("/me");
-      const org = me.orgs[0];
+      // Активная организация запоминается между визитами.
+      const savedId = typeof window !== "undefined" ? window.localStorage.getItem(ACTIVE_ORG_KEY) : null;
+      const org = me.orgs.find((o) => o.id === savedId) ?? me.orgs[0];
       if (!org) {
-        set({ me: me.user, error: "Нет доступных организаций", ready: true });
+        set({ me: me.user, orgs: [], needsOnboarding: true, ready: true, error: null });
         return;
       }
-      set({ me: me.user, orgId: org.id, orgName: org.name, orgRole: org.role });
+      set({
+        me: me.user,
+        orgs: me.orgs,
+        needsOnboarding: false,
+        orgId: org.id,
+        orgName: org.name,
+        orgRole: org.role,
+      });
+      if (typeof window !== "undefined") window.localStorage.setItem(ACTIVE_ORG_KEY, org.id);
       await Promise.all([
         get().refreshProjects(),
         get().refreshMeta(),
@@ -71,6 +89,20 @@ export const useV2Store = create<V2State>((set, get) => ({
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "Не удалось загрузить", ready: true });
     }
+  },
+
+  switchOrg: async (orgId: string) => {
+    const org = get().orgs.find((o) => o.id === orgId);
+    if (!org) return;
+    if (typeof window !== "undefined") window.localStorage.setItem(ACTIVE_ORG_KEY, orgId);
+    set({ ready: false, orgId: org.id, orgName: org.name, orgRole: org.role, projects: [] });
+    await Promise.all([
+      get().refreshProjects(),
+      get().refreshMeta(),
+      get().refreshMembers(),
+      get().refreshUnread(),
+    ]);
+    set({ ready: true });
   },
 
   refreshProjects: async () => {

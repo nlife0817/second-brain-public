@@ -58,6 +58,250 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+interface Usage {
+  plan: string;
+  limits: { members: number; projects: number; guests: number; webhooks: number };
+  usage: { members: number; projects: number; guests: number; webhooks: number };
+}
+
+interface Webhook {
+  id: string;
+  url: string;
+  events: string[];
+  enabled: boolean;
+  last_error: string | null;
+}
+
+interface Team {
+  id: string;
+  name: string;
+  project_count: number;
+}
+
+interface AuditEvent {
+  id: number;
+  verb: string;
+  created_at: string;
+  actor: { name: string; email: string } | null;
+  payload: Record<string, unknown>;
+}
+
+const PLAN_LABELS: Record<string, string> = {
+  free: "Бесплатный",
+  team: "Командный",
+  business: "Бизнес",
+};
+
+/** Администрирование организации: тариф, вебхуки, команды, аудит, экспорт. */
+function AdminSection({ orgId }: { orgId: string | null }) {
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [webhooks, setWebhooks] = useState<Webhook[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [audit, setAudit] = useState<AuditEvent[]>([]);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [newSecret, setNewSecret] = useState<string | null>(null);
+  const [teamName, setTeamName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!orgId) return;
+    try {
+      const [u, w, t, a] = await Promise.all([
+        api.get<Usage>(`/orgs/${orgId}/usage`),
+        api.get<Webhook[]>(`/orgs/${orgId}/webhooks`),
+        api.get<Team[]>(`/orgs/${orgId}/teams`),
+        api.get<AuditEvent[]>(`/orgs/${orgId}/audit`),
+      ]);
+      setUsage(u);
+      setWebhooks(w);
+      setTeams(t);
+      setAudit(a.slice(0, 15));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось загрузить настройки организации");
+    }
+  }, [orgId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function run(fn: () => Promise<unknown>) {
+    try {
+      await fn();
+      setError(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка");
+    }
+  }
+
+  return (
+    <>
+      <Section title="Тариф и лимиты">
+        {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
+        {usage && (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm">
+              План: <span className="font-medium">{PLAN_LABELS[usage.plan] ?? usage.plan}</span>
+            </p>
+            {(["members", "guests", "projects", "webhooks"] as const).map((key) => {
+              const labels = {
+                members: "Участники",
+                guests: "Гости",
+                projects: "Проекты",
+                webhooks: "Вебхуки",
+              };
+              const used = usage.usage[key];
+              const limit = usage.limits[key];
+              return (
+                <div key={key} className="flex items-center gap-3 text-sm">
+                  <span className="w-28 text-muted-foreground">{labels[key]}</span>
+                  <div className="h-1.5 w-40 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className={`h-full rounded-full ${used >= limit ? "bg-destructive" : "bg-primary"}`}
+                      style={{ width: `${limit ? Math.min(100, (used / limit) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <span className="tabular-nums text-muted-foreground">
+                    {used} / {limit}
+                  </span>
+                </div>
+              );
+            })}
+            <a
+              href={`/api/v2/orgs/${orgId}/export`}
+              className="mt-1 w-fit text-sm text-primary underline"
+              download
+            >
+              Выгрузить все данные организации (JSON)
+            </a>
+          </div>
+        )}
+      </Section>
+
+      <Section title="Команды">
+        <div className="flex flex-col gap-1.5">
+          {teams.map((t) => (
+            <div key={t.id} className="flex items-center gap-2 text-sm">
+              <span className="flex-1">{t.name}</span>
+              <span className="text-xs text-muted-foreground">{t.project_count} проектов</span>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => void run(() => api.del(`/orgs/${orgId}/teams/${t.id}`))}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </div>
+          ))}
+          <div className="mt-1 flex items-center gap-2">
+            <Input
+              value={teamName}
+              onChange={(e) => setTeamName(e.target.value)}
+              placeholder="Новая команда"
+              className="h-8 w-56"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!teamName.trim()}
+              onClick={() =>
+                void run(async () => {
+                  await api.post(`/orgs/${orgId}/teams`, { name: teamName.trim() });
+                  setTeamName("");
+                })
+              }
+            >
+              Добавить
+            </Button>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Вебхуки">
+        <div className="flex flex-col gap-2">
+          {webhooks.map((w) => (
+            <div key={w.id} className="flex items-center gap-2 text-sm">
+              <span className="min-w-0 flex-1 truncate">{w.url}</span>
+              <span className="text-xs text-muted-foreground">
+                {w.events.length === 0 ? "все события" : w.events.join(", ")}
+              </span>
+              {w.last_error && (
+                <span className="max-w-40 truncate text-xs text-destructive" title={w.last_error}>
+                  {w.last_error}
+                </span>
+              )}
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => void run(() => api.del(`/orgs/${orgId}/webhooks/${w.id}`))}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </div>
+          ))}
+          {newSecret && (
+            <div className="rounded-lg bg-muted px-3 py-2">
+              <p className="text-xs text-muted-foreground">
+                Секрет для проверки подписи (показывается один раз):
+              </p>
+              <code className="text-xs break-all">{newSecret}</code>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <Input
+              value={webhookUrl}
+              onChange={(e) => setWebhookUrl(e.target.value)}
+              placeholder="https://example.com/hook"
+              className="h-8 flex-1"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!webhookUrl.startsWith("https://")}
+              onClick={() =>
+                void run(async () => {
+                  const res = await api.post<{ secret: string }>(`/orgs/${orgId}/webhooks`, {
+                    url: webhookUrl,
+                    events: [],
+                  });
+                  setNewSecret(res.secret);
+                  setWebhookUrl("");
+                })
+              }
+            >
+              Добавить
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Каждое событие отправляется POST-запросом с подписью в заголовке X-SecondBrain-Signature
+            (HMAC-SHA256 от тела запроса).
+          </p>
+        </div>
+      </Section>
+
+      <Section title="Журнал действий">
+        <div className="flex flex-col gap-1">
+          {audit.map((e) => (
+            <p key={e.id} className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{e.actor?.name || e.actor?.email || "Система"}</span>{" "}
+              {e.verb} ·{" "}
+              {new Date(e.created_at).toLocaleString("ru-RU", {
+                day: "numeric",
+                month: "short",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </p>
+          ))}
+          {audit.length === 0 && <p className="text-sm text-muted-foreground">Записей нет</p>}
+        </div>
+      </Section>
+    </>
+  );
+}
+
 export default function SettingsPage() {
   const store = useV2Store();
   const { orgId, orgRole, me, members, statuses, tags, projects } = store;
@@ -285,6 +529,8 @@ export default function SettingsPage() {
               </p>
             </Section>
           )}
+
+          {isAdmin && <AdminSection orgId={orgId} />}
 
           <Section title="Статусы задач">
             <div className="flex flex-col gap-1.5">

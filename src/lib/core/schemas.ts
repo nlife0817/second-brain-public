@@ -236,6 +236,19 @@ export const manualTimeEntrySchema = z.object({
 
 // --- Повторяющиеся задачи -------------------------------------------------------------
 
+// --- SaaS: команды, вебхуки ---------------------------------------------------------
+
+export const teamCreateSchema = z.object({ name: z.string().trim().min(1).max(200) });
+
+export const webhookCreateSchema = z.object({
+  url: z.string().url().max(2000).refine((u) => u.startsWith("https://"), {
+    message: "Только https-адреса",
+  }),
+  events: z.array(z.string().max(64)).max(50).default([]),
+});
+
+export const projectTeamSchema = z.object({ team_id: z.uuid().nullable() });
+
 export const recurringCreateSchema = z.object({
   template: z.object({
     title: z.string().trim().min(1).max(500),

@@ -10,6 +10,7 @@ import {
   PolicyError,
   type ProjectAction,
 } from "./policy";
+import { assertWithinLimit } from "./saas";
 import type {
   AuthContext,
   PolicyProject,
@@ -77,6 +78,7 @@ export async function createProject(
   input: { name: string; description?: string; color?: string; icon?: string; visibility?: "org" | "private" },
 ): Promise<ProjectWithMeta> {
   assertOrg(ctx, "project.create");
+  await assertWithinLimit(ctx, "projects");
   const project = await transaction(async (tx) => {
     const row = await tx
       .prepare<Project>(

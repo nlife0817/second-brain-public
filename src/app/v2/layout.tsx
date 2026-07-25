@@ -3,11 +3,29 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Bell, CheckCircle2, Clock, FolderKanban, Plus, Search, Settings, Users } from "lucide-react";
+import {
+  Bell,
+  Check,
+  CheckCircle2,
+  ChevronsUpDown,
+  Clock,
+  FolderKanban,
+  Plus,
+  Search,
+  Settings,
+  Users,
+} from "lucide-react";
 import { CreateProjectDialog } from "@/components/v2/CreateProjectDialog";
 import { GlobalSearch } from "@/components/v2/GlobalSearch";
+import { OrgOnboarding } from "@/components/v2/OrgOnboarding";
 import { TaskSheet } from "@/components/v2/TaskSheet";
 import { Avatar } from "@/components/v2/bits";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 
@@ -45,8 +63,22 @@ function NavLink({
 
 export default function V2Layout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { ready, error, me, orgName, orgRole, projects, unreadCount, bootstrap, refreshUnread, refreshProjects } =
-    useV2Store();
+  const {
+    ready,
+    error,
+    needsOnboarding,
+    me,
+    orgs,
+    orgId,
+    orgName,
+    orgRole,
+    projects,
+    unreadCount,
+    bootstrap,
+    switchOrg,
+    refreshUnread,
+    refreshProjects,
+  } = useV2Store();
   const [createOpen, setCreateOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
@@ -78,6 +110,9 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
+  if (needsOnboarding && me) {
+    return <OrgOnboarding />;
+  }
   if (error || !me) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-2">
@@ -94,11 +129,33 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-sidebar">
-        <div className="flex items-center gap-2 px-4 pb-2 pt-4">
-          <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">
-            {orgName.slice(0, 1).toUpperCase()}
-          </span>
-          <span className="truncate text-sm font-semibold">{orgName}</span>
+        <div className="px-2 pb-2 pt-3">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <button className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-muted/60">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">
+                    {orgName.slice(0, 1).toUpperCase()}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-left text-sm font-semibold">{orgName}</span>
+                  <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
+                </button>
+              }
+            />
+            <DropdownMenuContent className="w-56">
+              {orgs.map((o) => (
+                <DropdownMenuItem
+                  key={o.id}
+                  onClick={() => {
+                    if (o.id !== orgId) void switchOrg(o.id);
+                  }}
+                >
+                  <span className="min-w-0 flex-1 truncate">{o.name}</span>
+                  {o.id === orgId && <Check className="size-4" />}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         <div className="px-2 pb-1">

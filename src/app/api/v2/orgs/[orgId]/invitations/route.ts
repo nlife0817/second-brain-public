@@ -4,6 +4,7 @@ import { parseJson } from "@/lib/core/http";
 import { createInvitation, listInvitations } from "@/lib/core/identity";
 import { assertOrg } from "@/lib/core/policy";
 import { requireProject } from "@/lib/core/projects";
+import { assertWithinLimit } from "@/lib/core/saas";
 import { invitationCreateSchema } from "@/lib/core/schemas";
 
 export const GET = withOrg(async (_request, { auth }) => {
@@ -21,6 +22,9 @@ export const POST = withOrg(async (request, { auth }) => {
   for (const grant of body.project_grants) {
     await requireProject(auth, grant.project_id, "project.members.manage");
   }
+
+  // Приглашение — это будущее место в организации, поэтому лимит проверяем здесь.
+  await assertWithinLimit(auth, body.org_role === "guest" ? "guests" : "members");
 
   const { invitation, token } = await createInvitation({
     orgId: auth.orgId,
