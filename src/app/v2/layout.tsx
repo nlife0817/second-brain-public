@@ -104,6 +104,13 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Мобильные роуты /v2/m/* рисуют собственную оболочку (MobileShell, нижний
+  // таб-бар) — десктопный сайдбар им не нужен. Хуки выше уже отработали:
+  // bootstrap и опрос непрочитанного общие для обеих оболочек.
+  if (pathname === "/v2/m" || pathname.startsWith("/v2/m/")) {
+    return <>{children}</>;
+  }
+
   if (!ready) {
     return (
       <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">
