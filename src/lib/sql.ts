@@ -1,5 +1,37 @@
 import postgres from "postgres";
 
+/**
+ * Типы, которые база отдаёт строками, а не объектами `Date`.
+ *
+ * Типы в TypeScript объявляют колонки дат и отметок времени как `string`, и код
+ * обращается с ними соответственно (`localeCompare`, `slice(0, 10)`, сравнение
+ * `<`). По умолчанию pg.js разбирает 1082/1114/1184 в `Date` — и любая такая
+ * операция падает с TypeError.
+ *
+ * Сопоставление идёт по OID, а не по имени ключа: перечислять нужно каждый
+ * OID отдельно, иначе builtin-обработчик pg.js остаётся в силе для остальных.
+ */
+export const PG_TYPES: Record<string, postgres.PostgresType<string>> = {
+  // DATE (1082) — «2026-01-01», день без времени и зоны.
+  date: {
+    to: 1082,
+    from: [1082],
+    serialize: (x: unknown) => (x instanceof Date ? x.toISOString().slice(0, 10) : String(x)),
+    parse: (x: string) => x,
+  },
+  // TIMESTAMPTZ (1184). Пока данные ходили только через JSON API, Date здесь
+  // был незаметен: `JSON.stringify` превращал его в ту же ISO-строку. Серверный
+  // рендер отдаёт результат выборки прямо в компонент, и `created_at` приезжал
+  // объектом туда, где типы обещают строку. Формат намеренно совпадает с
+  // `JSON.stringify(Date)` — ответы API от этого не меняются.
+  timestamptz: {
+    to: 1184,
+    from: [1184],
+    serialize: (x: unknown) => (x instanceof Date ? x : new Date(x as string)).toISOString(),
+    parse: (x: string) => new Date(x).toISOString(),
+  },
+} as const;
+
 let client: postgres.Sql | null = null;
 
 function getClient(): postgres.Sql {
@@ -12,19 +44,7 @@ function getClient(): postgres.Sql {
       prepare: false,
       idle_timeout: 20,
       max: 10,
-      types: {
-        // DATE (OID 1082) — keep as ISO string ("2026-01-01"), not JS Date.
-        // The TS types declare these columns as `string`; code does .localeCompare,
-        // .slice(0,10) etc on them. Without this override pg.js returns Date and
-        // serverside sorts/comparisons crash with TypeError.
-        date: {
-          to: 1082,
-          from: [1082],
-          serialize: (x: unknown) =>
-            x instanceof Date ? x.toISOString().slice(0, 10) : String(x),
-          parse: (x: string) => x,
-        },
-      },
+      types: PG_TYPES,
     });
   }
   return client;
