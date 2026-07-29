@@ -8,7 +8,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { Check, CornerDownRight, MessageSquare, Pencil, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarStack, PRIORITY_LABELS, PriorityDot, chipStyle, dueTone, formatDue } from "@/components/v2/bits";
-import { DuePicker } from "@/components/v2/DuePicker";
+import { DatePicker, DuePicker } from "@/components/v2/DuePicker";
 import { assigneeChoice } from "@/lib/core/assignable";
 import type {
   CoreTag,
@@ -393,6 +393,26 @@ export const TagsCell = memo(function TagsCell({ task, ctx }: { task: TaskRow; c
         {ctx.tags.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">Тегов пока нет</p>}
       </PopoverContent>
     </Popover>
+  );
+});
+
+// --- Начало ---------------------------------------------------------------------------
+
+export const StartCell = memo(function StartCell({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
+  const label = task.start_date ? (
+    <span className="truncate text-xs tabular-nums">{formatShortDate(task.start_date)}</span>
+  ) : null;
+
+  if (!ctx.canEdit) return <ReadOnly>{label}</ReadOnly>;
+
+  return (
+    <DatePicker
+      date={task.start_date}
+      triggerClassName={CELL_BUTTON}
+      onCommit={(start_date) => ctx.onPatch(task.id, { start_date })}
+    >
+      {label}
+    </DatePicker>
   );
 });
 

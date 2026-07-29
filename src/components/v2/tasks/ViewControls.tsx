@@ -62,6 +62,13 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Group }[] = [
 /** Что из настроек умеет доска: колонок, группировки и подзадач у неё нет. */
 export const BOARD_SECTIONS: SectionId[] = ["views", "open"];
 
+/**
+ * Гант раскладывает строки той же группировкой и тем же режимом подзадач, что и
+ * таблица, — им он управляется. Колонок у него нет: слева одна колонка с
+ * названием, а всё остальное место занимает полотно.
+ */
+export const GANTT_SECTIONS: SectionId[] = ["group", "subtasks", "views", "open"];
+
 const SUBHEAD = "px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground";
 
 /**

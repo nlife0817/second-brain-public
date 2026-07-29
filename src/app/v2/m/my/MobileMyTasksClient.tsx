@@ -6,8 +6,8 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowUp, Eye, EyeOff, Plus, Search } from "lucide-react";
-import { GlobalSearch, TaskSheet } from "@/components/v2/lazy";
+import { ArrowUp, Eye, EyeOff, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { CreateTaskSheet, GlobalSearch, TaskSheet } from "@/components/v2/lazy";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
 import { useAppResume, useBackDismiss, useTaskDeepLink } from "@/components/v2/mobile/hooks";
@@ -32,6 +32,7 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
   const [adding, setAdding] = useState(false);
   const [openTaskId, setOpenTaskId] = useState<string | null>(deepLinkTaskId);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,9 +86,11 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
 
   const closeTask = useCallback(() => setOpenTaskId(null), []);
   const closeSearch = useCallback(() => setSearchOpen(false), []);
+  const closeCreate = useCallback(() => setCreateOpen(false), []);
   // «Назад» на Android закрывает верхний слой, а не уводит с экрана.
   useBackDismiss(!!openTaskId, closeTask);
   useBackDismiss(searchOpen, closeSearch);
+  useBackDismiss(createOpen, closeCreate);
 
   async function quickAdd() {
     if (!orgId || !quickTitle.trim() || adding) return;
@@ -168,6 +171,18 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
               placeholder="Быстро добавить задачу…"
               className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
             />
+            {/* Лист создания открывается с уже набранным названием: параметры —
+                продолжение того же ввода, а не отдельная форма. */}
+            <button
+              onClick={() => setCreateOpen(true)}
+              aria-label="Задача с параметрами"
+              className={cn(
+                "-my-1 rounded-lg p-1.5 text-muted-foreground active:bg-muted",
+                quickTitle.trim() && "text-primary",
+              )}
+            >
+              <SlidersHorizontal className="size-4" />
+            </button>
             {/* Экранная клавиатура не всегда показывает Enter — нужна кнопка. */}
             {quickTitle.trim() && (
               <button
@@ -238,6 +253,16 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
         }}
       />
       <GlobalSearch mobile open={searchOpen} onOpenChange={setSearchOpen} onPickTask={setOpenTaskId} />
+      <CreateTaskSheet
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        initialTitle={quickTitle}
+        onCreated={() => {
+          setQuickTitle("");
+          void reload();
+          void refreshProjects();
+        }}
+      />
     </div>
   );
 }

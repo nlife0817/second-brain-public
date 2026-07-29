@@ -16,6 +16,7 @@ import {
   PlainDateCell,
   PriorityCell,
   ProjectCell,
+  StartCell,
   StatusCell,
   SubtasksCell,
   TagsCell,
@@ -24,8 +25,16 @@ import {
 } from "./cells";
 import type { TaskRow } from "@/lib/core/types";
 import { BASE_COLUMNS, COLUMN_MAX_WIDTH, COLUMN_MIN_WIDTH, type ColumnDef } from "@/lib/core/view-store";
-import type { GroupByField, MatchContext, SortState, SubtaskMode } from "@/lib/core/views";
-import { arrangeGroupRows, buildForest, groupKeys, type TaskForest } from "@/lib/core/views";
+import type {
+  GroupByField,
+  GroupNaming,
+  GroupNode,
+  MatchContext,
+  SortState,
+  SubtaskMode,
+  TaskForest,
+} from "@/lib/core/views";
+import { arrangeGroupRows, buildForest, buildGroups } from "@/lib/core/views";
 import { cn } from "@/lib/utils";
 
 /**
@@ -57,11 +66,6 @@ const GROUP_HEADER_TEXT: Record<number, string> = {
   2: "text-xs text-muted-foreground",
 };
 
-export interface GroupLabel {
-  text: string;
-  color?: string;
-}
-
 export interface TaskTableProps {
   tasks: TaskRow[];
   columns: ColumnDef[];
@@ -78,9 +82,8 @@ export interface TaskTableProps {
   collapsed: ReadonlySet<string>;
   onToggleCollapsed: (key: string) => void;
   onOpen: (taskId: string) => void;
-  labelForGroup: (field: GroupByField, key: string) => GroupLabel;
-  /** Порядок ключей группы: справочники имеют свой (позиция статуса и т.п.). */
-  groupOrder: (field: GroupByField, keys: string[]) => string[];
+  labelForGroup: GroupNaming["labelForGroup"];
+  groupOrder: GroupNaming["groupOrder"];
   /**
    * Строка создания задачи. Живёт внутри таблицы, а не над ней: только так её
    * поля стоят ровно под своими колонками и едут вместе с ними при
@@ -89,73 +92,6 @@ export interface TaskTableProps {
   composer?: React.ReactNode;
   /** Что показать вместо строк, когда показывать нечего. */
   emptyState?: React.ReactNode;
-}
-
-interface GroupNode {
-  key: string;
-  path: string;
-  label: GroupLabel;
-  tasks: TaskRow[];
-  children: GroupNode[];
-}
-
-function buildGroups(
-  tasks: TaskRow[],
-  fields: [GroupByField, GroupByField],
-  matchCtx: MatchContext,
-  labelForGroup: TaskTableProps["labelForGroup"],
-  groupOrder: TaskTableProps["groupOrder"],
-  forest: TaskForest | null,
-): GroupNode[] {
-  const [first, second] = fields;
-  // В режимах «вложенными» и «скрыть» по корзинам раскладываются ТОЛЬКО корни:
-  // подзадача едет под родителем, в его группу, а не отдельной строкой в свою.
-  // Раскладка всех подряд и была причиной, по которой вложенность разваливалась
-  // при любой активной группировке — а по умолчанию она включена.
-  const source = forest ? forest.roots : tasks;
-  if (first === "none") {
-    return [{ key: "__all__", path: "__all__", label: { text: "" }, tasks: source, children: [] }];
-  }
-
-  const buckets = new Map<string, TaskRow[]>();
-  for (const task of source) {
-    // Задача с несколькими проектами/исполнителями/тегами попадает в каждую
-    // группу — иначе список молча теряет часть её принадлежностей.
-    for (const key of groupKeys(task, first, matchCtx)) {
-      const arr = buckets.get(key);
-      if (arr) arr.push(task);
-      else buckets.set(key, [task]);
-    }
-  }
-
-  return groupOrder(first, [...buckets.keys()]).map((key) => {
-    const rows = buckets.get(key) ?? [];
-    const path = `${first}:${key}`;
-    if (second === "none") {
-      return { key, path, label: labelForGroup(first, key), tasks: rows, children: [] };
-    }
-    const sub = new Map<string, TaskRow[]>();
-    for (const task of rows) {
-      for (const subKey of groupKeys(task, second, matchCtx)) {
-        const arr = sub.get(subKey);
-        if (arr) arr.push(task);
-        else sub.set(subKey, [task]);
-      }
-    }
-    return {
-      key,
-      path,
-      label: labelForGroup(first, key),
-      tasks: rows,
-      children: groupOrder(second, [...sub.keys()]).map((subKey) => ({
-        key: subKey,
-        path: `${path}/${second}:${subKey}`,
-        label: labelForGroup(second, subKey),
-        tasks: sub.get(subKey) ?? [],
-        children: [],
-      })),
-    };
-  });
 }
 
 // --- Шапка ------------------------------------------------------------------------
@@ -315,6 +251,8 @@ function Cell({
       return <AssigneesCell task={task} ctx={ctx} />;
     case "tags":
       return <TagsCell task={task} ctx={ctx} />;
+    case "start_date":
+      return <StartCell task={task} ctx={ctx} />;
     case "due_date":
       return <DueCell task={task} ctx={ctx} />;
     case "estimated_minutes":
@@ -513,7 +451,7 @@ export function TaskTable(props: TaskTableProps) {
   );
 
   const nodes = useMemo(
-    () => buildGroups(tasks, groupBy, matchCtx, labelForGroup, groupOrder, forest),
+    () => buildGroups(tasks, groupBy, matchCtx, { labelForGroup, groupOrder }, forest),
     [tasks, groupBy, matchCtx, labelForGroup, groupOrder, forest],
   );
 

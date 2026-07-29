@@ -10,11 +10,13 @@ import {
   Bell,
   BellOff,
   Calendar,
+  CalendarRange,
   Check,
   CheckCircle2,
   Clock,
   CornerLeftUp,
   Link2,
+  MoreVertical,
   Play,
   Plus,
   Square,
@@ -60,7 +62,7 @@ import { useLoad } from "@/lib/core/use-load";
 import { useTaskOpenStore } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, chipStyle, dueTone, formatDue } from "./bits";
-import { DuePicker } from "./DuePicker";
+import { DatePicker, DuePicker } from "./DuePicker";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
 import { SidePanel, useWideViewport } from "./SidePanel";
@@ -361,6 +363,7 @@ export function TaskSheet({
     if (typeof body.title === "string") next.title = body.title;
     if (typeof body.description === "string") next.description = body.description;
     if (typeof body.priority === "string") next.priority = body.priority as TaskPriority;
+    if ("start_date" in body) next.start_date = body.start_date as string | null;
     if ("due_date" in body) next.due_date = body.due_date as string | null;
     if ("due_time" in body) next.due_time = body.due_time as string | null;
     if ("estimated_minutes" in body) {
@@ -828,6 +831,17 @@ export function TaskSheet({
       )}
     </>
   );
+  const startLabelContent = task && (
+    <>
+      <CalendarRange className="size-4 shrink-0 text-muted-foreground" />
+      {task.start_date ? (
+        <span className="tabular-nums">{formatDue(task.start_date, null)}</span>
+      ) : (
+        <span className="text-muted-foreground">Указать начало</span>
+      )}
+    </>
+  );
+
   /**
    * Статус и приоритет — ряды кнопок во всю ширину под заголовком, а не строки
    * в сетке свойств: это самые частые действия в карточке, и прятать их в
@@ -875,6 +889,22 @@ export function TaskSheet({
       {/* Статуса и приоритета здесь больше нет: они переехали под заголовок
           задачи рядами кнопок (`flowRows`). Два способа поменять одно и то же
           поле — это два места, которые разъедутся. */}
+
+      {/* Начало стоит перед сроком: слева направо читается как отрезок, тем же
+          порядком, каким полоса лежит на ганте. */}
+      <span className={propLabel}>Начало</span>
+      {canEdit ? (
+        <DatePicker
+          date={task.start_date}
+          triggerClassName="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+          onCommit={(start_date) => void patch({ start_date })}
+        >
+          {startLabelContent}
+        </DatePicker>
+      ) : (
+        <span className="flex items-center gap-2">{startLabelContent}</span>
+      )}
+
       <span className={propLabel}>Срок</span>
       {canEdit ? (
         // Календарь с быстрыми датами и временем вместо двух нативных полей;
@@ -1176,7 +1206,7 @@ export function TaskSheet({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="size-9 sm:size-7"
+                className="size-9 max-sm:hidden sm:size-7"
                 onClick={() => void copyLink()}
                 title={linkCopied ? "Ссылка скопирована" : "Скопировать ссылку на задачу"}
                 aria-label="Скопировать ссылку на задачу"
@@ -1186,7 +1216,7 @@ export function TaskSheet({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="size-9 sm:size-7"
+                className="size-9 max-sm:hidden sm:size-7"
                 onClick={() => void toggleFollow()}
                 title={amFollower ? "Не следить" : "Следить"}
               >
@@ -1195,12 +1225,59 @@ export function TaskSheet({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="size-9 sm:size-7"
+                className="size-9 max-sm:hidden sm:size-7"
                 onClick={() => void removeTask()}
                 title="Удалить"
               >
                 <Trash2 className="size-4" />
               </Button>
+              {/* На телефоне редкие действия собраны в одно меню: шесть иконок
+                  подряд в узкой шапке — это промахи пальцем по соседней. */}
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="size-9 sm:hidden"
+                      aria-label="Ещё действия"
+                    />
+                  }
+                >
+                  <MoreVertical className="size-4" />
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-56 p-1">
+                  <button
+                    onClick={() => void copyLink()}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm hover:bg-muted"
+                  >
+                    {linkCopied ? (
+                      <Check className="size-4 shrink-0 text-emerald-500" />
+                    ) : (
+                      <Link2 className="size-4 shrink-0 text-muted-foreground" />
+                    )}
+                    {linkCopied ? "Ссылка скопирована" : "Скопировать ссылку"}
+                  </button>
+                  <button
+                    onClick={() => void toggleFollow()}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm hover:bg-muted"
+                  >
+                    {amFollower ? (
+                      <BellOff className="size-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <Bell className="size-4 shrink-0 text-muted-foreground" />
+                    )}
+                    {amFollower ? "Не следить" : "Следить"}
+                  </button>
+                  <button
+                    onClick={() => void removeTask()}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 className="size-4 shrink-0" />
+                    Удалить задачу
+                  </button>
+                </PopoverContent>
+              </Popover>
               <Button variant="ghost" size="icon-sm" className="size-9 sm:size-7" onClick={closeSheet}>
                 <X className="size-4" />
               </Button>

@@ -20,7 +20,7 @@ import {
   dueTone,
   formatDue,
 } from "@/components/v2/bits";
-import { DuePicker } from "@/components/v2/DuePicker";
+import { DatePicker, DuePicker } from "@/components/v2/DuePicker";
 import { defaultStatus } from "@/lib/core/status-model";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField } from "@/lib/core/types";
@@ -227,6 +227,8 @@ function DraftCell({
       return <AssigneesDraftCell draft={draft} patch={patch} />;
     case "tags":
       return <TagsDraftCell draft={draft} patch={patch} />;
+    case "start_date":
+      return <StartDraftCell draft={draft} patch={patch} />;
     case "due_date":
       return <DueDraftCell draft={draft} patch={patch} />;
     case "estimated_minutes":
@@ -382,6 +384,22 @@ function TagsDraftCell({ draft, patch }: CellProps) {
         <TagsMenu value={draft.tag_ids} onChange={(tag_ids) => patch({ tag_ids })} />
       </PopoverContent>
     </Popover>
+  );
+}
+
+function StartDraftCell({ draft, patch }: CellProps) {
+  return (
+    <DatePicker
+      date={draft.start_date}
+      triggerClassName={CELL}
+      onCommit={(start_date) => patch({ start_date })}
+    >
+      {draft.start_date ? (
+        <span className="truncate text-xs tabular-nums">{formatDue(draft.start_date, null)}</span>
+      ) : (
+        <span className={PLACEHOLDER}>Начало</span>
+      )}
+    </DatePicker>
   );
 }
 
