@@ -178,7 +178,7 @@ export function ProjectBoard({
     // Колонку убираем только у архива. «Готово» — конец рабочего потока: без
     // него карточку на доске нечем завершить, а перетащенная туда задача просто
     // уходит с доски вместе с остальными завершёнными.
-    const visible = statuses.filter((s) => s.kind !== "archived" || !hidden.has(s.id));
+    const visible = statuses.filter((s) => s.category !== "archived" || !hidden.has(s.id));
     return { visible, byStatus, noStatusTasks };
   }, [statuses, tasks, filterGroups]);
 

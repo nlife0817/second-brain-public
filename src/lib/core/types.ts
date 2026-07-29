@@ -88,7 +88,15 @@ export interface PolicyProject {
 // --- Задачи и проекты -----------------------------------------------------------
 
 export type TaskPriority = "urgent" | "high" | "medium" | "low" | "none";
-export type StatusKind = "open" | "done" | "archived";
+
+/**
+ * Категория статуса. Задаёт и поведение (`done` проставляет completed_at,
+ * `archived` прячет задачу из списков), и раскладку справочника в настройках.
+ * Пришла на смену колонке `kind`, которая до следующего выката остаётся в БД
+ * живым зеркалом под триггером ради уже загруженных вкладок — см.
+ * 0041_core_status_categories.sql.
+ */
+export type StatusCategory = "backlog" | "in_progress" | "done" | "archived";
 export type FieldType =
   | "text" | "number" | "select" | "multi_select" | "date" | "user" | "checkbox" | "url";
 
@@ -150,7 +158,9 @@ export interface TaskStatus {
   org_id: string;
   name: string;
   color: string;
-  kind: StatusKind;
+  category: StatusCategory;
+  /** Статус новой задачи. Ровно один на организацию, удалить его нельзя. */
+  is_default: boolean;
   position: number;
 }
 

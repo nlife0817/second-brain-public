@@ -5,13 +5,13 @@
 import { describe, expect, it } from "vitest";
 import { HIDE_VALUE, SHOW_VALUE, hiddenStatusIds, showsDone } from "../views";
 import type { FilterGroup } from "../views";
-import type { StatusKind } from "../types";
+import type { StatusCategory } from "../types";
 
-const STATUSES: Array<{ id: string; kind: StatusKind }> = [
-  { id: "s-inbox", kind: "open" },
-  { id: "s-doing", kind: "open" },
-  { id: "s-done", kind: "done" },
-  { id: "s-archive", kind: "archived" },
+const STATUSES: Array<{ id: string; category: StatusCategory }> = [
+  { id: "s-inbox", category: "backlog" },
+  { id: "s-doing", category: "in_progress" },
+  { id: "s-done", category: "done" },
+  { id: "s-archive", category: "archived" },
 ];
 
 function group(...conditions: Array<[field: string, operator: string, value: string]>): FilterGroup {

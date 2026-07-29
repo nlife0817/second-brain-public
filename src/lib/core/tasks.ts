@@ -12,6 +12,7 @@ import {
   effectiveProjectRole,
   PolicyError,
 } from "./policy";
+import { getDefaultStatus } from "./orgmeta";
 import { requireProject } from "./projects";
 import type {
   AllTasksResult,
@@ -507,12 +508,26 @@ export async function getTaskDetail(ctx: AuthContext, taskId: string): Promise<T
 
 // --- Вспомогательное для мутаций -------------------------------------------------------
 
+const STATUS_COLUMNS = `id, org_id, name, color, category, is_default, position`;
+
 async function getOrgStatus(ctx: AuthContext, statusId: string): Promise<TaskStatus> {
   const status = await prepare<TaskStatus>(
-    `SELECT id, org_id, name, color, kind, position FROM core.task_statuses WHERE id = ? AND org_id = ?`,
+    `SELECT ${STATUS_COLUMNS} FROM core.task_statuses WHERE id = ? AND org_id = ?`,
   ).get(statusId, ctx.orgId);
   if (!status) throw new DomainError(422, "Unknown status");
   return status;
+}
+
+/**
+ * Статус, с которым рождается задача. Пустого статуса больше не бывает:
+ * `status_id` без значения приходил из быстрого ввода и из повторов, и задача
+ * молча оседала в группе «Без статуса».
+ */
+async function resolveNewStatus(ctx: AuthContext, statusId: string | null | undefined): Promise<TaskStatus> {
+  if (statusId) return getOrgStatus(ctx, statusId);
+  const fallback = await getDefaultStatus(ctx.orgId);
+  if (!fallback) throw new DomainError(422, "В организации нет ни одного статуса задач");
+  return fallback;
 }
 
 async function assertOrgUsers(ctx: AuthContext, userIds: string[]): Promise<void> {
@@ -675,7 +690,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
   ]);
   const tagIds = [...new Set(input.tag_ids ?? [])];
   await assertOrgTags(ctx, tagIds);
-  const status = input.status_id ? await getOrgStatus(ctx, input.status_id) : null;
+  const status = await resolveNewStatus(ctx, input.status_id);
 
   const taskId = await transaction(async (tx) => {
     const row = await tx
@@ -690,7 +705,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         ctx.orgId,
         input.title.trim(),
         sanitizeRichText(input.description ?? ""),
-        status?.id ?? null,
+        status.id,
         input.priority ?? "none",
         input.due_date ?? null,
         input.due_time ?? null,
@@ -698,7 +713,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         input.parent_task_id ?? null,
         input.source ?? "app",
         ctx.user.id,
-        status?.kind === "done" ? new Date().toISOString() : null,
+        status.category === "done" ? new Date().toISOString() : null,
       );
     if (!row) throw new DomainError(500, "Failed to create task");
     const id = row.id;
@@ -795,10 +810,12 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
     }
   }
 
+  // null в патче — «вернуть статус по умолчанию»: пустого статуса больше нет,
+  // но вкладка со старым бандлом всё ещё умеет жать «Снять статус».
   const nextStatus =
-    patch.status_id !== undefined && patch.status_id !== null ? await getOrgStatus(ctx, patch.status_id) : null;
+    patch.status_id !== undefined ? await resolveNewStatus(ctx, patch.status_id) : null;
   const prevStatus = task.status_id
-    ? await prepare<TaskStatus>(`SELECT id, org_id, name, color, kind, position FROM core.task_statuses WHERE id = ?`).get(task.status_id)
+    ? await prepare<TaskStatus>(`SELECT ${STATUS_COLUMNS} FROM core.task_statuses WHERE id = ?`).get(task.status_id)
     : undefined;
 
   if (patch.assignee_ids) {
@@ -852,11 +869,11 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
       changedFields.push("parent_task_id");
     }
 
-    const statusChanged = patch.status_id !== undefined && patch.status_id !== task.status_id;
+    const statusChanged = nextStatus !== null && nextStatus.id !== task.status_id;
     if (statusChanged) {
-      scalar.status_id = patch.status_id;
-      const becameDone = nextStatus?.kind === "done";
-      const wasDone = prevStatus?.kind === "done";
+      scalar.status_id = nextStatus.id;
+      const becameDone = nextStatus.category === "done";
+      const wasDone = prevStatus?.category === "done";
       if (becameDone && !wasDone) scalar.completed_at = new Date().toISOString();
       if (!becameDone && wasDone) scalar.completed_at = null;
     }
@@ -895,7 +912,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
         actorId: ctx.user.id,
         entityType: "task",
         entityId: taskId,
-        verb: nextStatus?.kind === "done" ? "task.completed" : "task.status_changed",
+        verb: nextStatus.category === "done" ? "task.completed" : "task.status_changed",
         payload: {
           from: prevStatus?.name ?? null,
           to: nextStatus?.name ?? null,
@@ -904,7 +921,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
       await notifyUsers(tx, {
         orgId: ctx.orgId,
         eventId,
-        kind: nextStatus?.kind === "done" ? "completed" : "status_changed",
+        kind: nextStatus.category === "done" ? "completed" : "status_changed",
         userIds: audience,
         excludeUserId: ctx.user.id,
         taskId,

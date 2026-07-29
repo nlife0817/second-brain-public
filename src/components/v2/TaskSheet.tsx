@@ -31,8 +31,11 @@ import {
 } from "@/components/ui/select";
 import { SheetHeader } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { PRIORITY_ORDER } from "@/components/v2/tasks/draft-controls";
+import { SegmentedPicker } from "@/components/v2/tasks/SegmentedPicker";
 import { SubtaskSection } from "@/components/v2/tasks/SubtaskSection";
 import { api } from "@/lib/core/client";
+import { cardStatuses } from "@/lib/core/status-model";
 import type { TaskChange } from "@/lib/core/task-change";
 import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type {
@@ -50,7 +53,7 @@ import { useV2Store, useV2StoreApi, type ActiveTimer } from "@/lib/core/ui-store
 import { useLoad } from "@/lib/core/use-load";
 import { useTaskOpenStore } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
-import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle, dueTone, formatDue } from "./bits";
+import { Avatar, PRIORITY_LABELS, chipStyle, dueTone, formatDue } from "./bits";
 import { DuePicker } from "./DuePicker";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
@@ -72,6 +75,17 @@ const RichText = dynamic(() => import("./RichText").then((m) => m.RichText), {
 const DocEditor = dynamic(() => import("./editor/DocEditor").then((m) => m.DocEditor), {
   ssr: false,
 });
+
+/**
+ * Высота поля названия по содержимому. Ref-колбэк, а не эффект: правило
+ * `set-state-in-effect` считает нарушением любую правку состояния в эффекте, а
+ * здесь состояния и нет — только стиль узла, который уже в DOM.
+ */
+function autoGrow(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
 
 const VERB_LABELS: Record<string, string> = {
   "task.created": "создал(а) задачу",
@@ -294,9 +308,11 @@ export function TaskSheet({
     if ("due_time" in body) next.due_time = body.due_time as string | null;
     if (typeof body.status_id === "string") {
       next.status_id = body.status_id;
-      const kind = statuses.find((s) => s.id === body.status_id)?.kind;
-      if (kind === "done") next.completed_at = prev.completed_at ?? new Date().toISOString();
-      else if (kind === "open") next.completed_at = null;
+      // Предсказание обязано повторять сервер (updateTask): разойдутся — и
+      // карточка мигнёт, получив ответ.
+      const category = statuses.find((s) => s.id === body.status_id)?.category;
+      if (category === "done") next.completed_at = prev.completed_at ?? new Date().toISOString();
+      else if (category) next.completed_at = null;
     }
     if (Array.isArray(body.tag_ids)) {
       const ids = body.tag_ids as string[];
@@ -455,7 +471,7 @@ export function TaskSheet({
 
   async function toggleSubtaskDone(sub: TaskListItem) {
     if (!orgId) return;
-    const doneStatus = statuses.find((s) => s.kind === "done");
+    const doneStatus = statuses.find((s) => s.category === "done");
     const openStatus = reopenStatus();
     const target = sub.completed_at ? openStatus : doneStatus;
     if (!target) return;
@@ -565,8 +581,8 @@ export function TaskSheet({
    * снятая галочка отбрасывает задачу в начало процесса.
    */
   function reopenStatus() {
-    const open = statuses.filter((s) => s.kind === "open");
-    return open.length > 0 ? open[open.length - 1] : undefined;
+    const working = statuses.filter((s) => s.category === "backlog" || s.category === "in_progress");
+    return working.length > 0 ? working[working.length - 1] : undefined;
   }
 
   /** Учёт времени начинается там, где идёт работа — в карточке задачи. */
@@ -635,7 +651,7 @@ export function TaskSheet({
     }
   }
 
-  const doneStatus = statuses.find((s) => s.kind === "done");
+  const doneStatus = statuses.find((s) => s.category === "done");
   const isDone = !!task?.completed_at;
   const visibleFields = fields.filter(
     (f) => !f.project_id || task?.placements.some((p) => p.project_id === f.project_id),
@@ -698,6 +714,41 @@ export function TaskSheet({
       )}
     </>
   );
+  /**
+   * Статус и приоритет — ряды кнопок во всю ширину под заголовком, а не строки
+   * в сетке свойств: это самые частые действия в карточке, и прятать их в
+   * выпадающий список значит два клика вместо одного каждый раз.
+   *
+   * Архивные статусы в ряд не входят (архивирование — не следующий шаг работы),
+   * кроме случая, когда задача уже в архиве: иначе из него было бы не выйти.
+   */
+  const flowRows = task && (
+    <div className="flex flex-col gap-1.5">
+      <SegmentedPicker
+        ariaLabel="Статус задачи"
+        options={cardStatuses(statuses, task.status_id).map((s) => ({
+          value: s.id,
+          label: s.name,
+          color: s.color,
+        }))}
+        value={task.status_id}
+        disabled={!canEdit}
+        onChange={(id) => void patch({ status_id: id })}
+      />
+      <SegmentedPicker
+        ariaLabel="Приоритет задачи"
+        options={PRIORITY_ORDER.map((p) => ({
+          value: p,
+          label: PRIORITY_LABELS[p].label,
+          dotClass: PRIORITY_LABELS[p].dot,
+        }))}
+        value={task.priority}
+        disabled={!canEdit}
+        onChange={(p) => void patch({ priority: p })}
+      />
+    </div>
+  );
+
   const propsGrid = task && (
     <div
       className={cn(
@@ -707,42 +758,9 @@ export function TaskSheet({
           : "grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2.5",
       )}
     >
-      <span className={propLabel}>Статус</span>
-      <Select
-        value={task.status_id ?? ""}
-        onValueChange={(v) => v && void patch({ status_id: v })}
-      >
-        <SelectTrigger size="sm" className="w-fit min-w-36">
-          <SelectValue placeholder="Без статуса">
-            <StatusPill status={statuses.find((s) => s.id === task.status_id)} />
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {statuses.map((s) => (
-            <SelectItem key={s.id} value={s.id}>
-              {s.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <span className={propLabel}>Приоритет</span>
-      <Select
-        value={task.priority}
-        onValueChange={(v) => v && void patch({ priority: v as TaskPriority })}
-      >
-        <SelectTrigger size="sm" className="w-fit min-w-36">
-          <SelectValue>{PRIORITY_LABELS[task.priority].label}</SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {(Object.keys(PRIORITY_LABELS) as TaskPriority[]).map((p) => (
-            <SelectItem key={p} value={p}>
-              {PRIORITY_LABELS[p].label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
+      {/* Статуса и приоритета здесь больше нет: они переехали под заголовок
+          задачи рядами кнопок (`flowRows`). Два способа поменять одно и то же
+          поле — это два места, которые разъедутся. */}
       <span className={propLabel}>Срок</span>
       {canEdit ? (
         // Календарь с быстрыми датами и временем вместо двух нативных полей;
@@ -1038,15 +1056,31 @@ export function TaskSheet({
                 </button>
               )}
 
-              <Input
+              {/* Textarea, а не Input: длинное название в поле ввода уезжает за
+                  правый край без единого признака, что текст продолжается.
+                  Высота подгоняется по содержимому, Enter не переносит строку —
+                  название однострочное по смыслу, перенос только визуальный. */}
+              <textarea
                 key={`title-${task.id}`}
+                ref={autoGrow}
+                rows={1}
                 defaultValue={task.title}
-                className="border-none px-0 font-heading text-lg font-semibold tracking-tight shadow-none focus-visible:ring-0 md:text-lg"
+                onInput={(e) => autoGrow(e.currentTarget)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                  }
+                }}
+                className="resize-none border-none bg-transparent p-0 font-heading text-lg font-semibold leading-snug tracking-tight outline-none"
                 onBlur={(e) => {
                   const v = e.target.value.trim();
                   if (v && v !== task.title) void patch({ title: v });
+                  else if (!v) e.target.value = task.title;
                 }}
               />
+
+              {flowRows}
 
               {!twoCol && propsGrid}
 

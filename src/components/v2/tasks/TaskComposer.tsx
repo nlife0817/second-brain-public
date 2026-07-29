@@ -21,6 +21,7 @@ import {
   formatDue,
 } from "@/components/v2/bits";
 import { DuePicker } from "@/components/v2/DuePicker";
+import { defaultStatus } from "@/lib/core/status-model";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -266,7 +267,9 @@ function PriorityDraftCell({ draft, patch }: CellProps) {
 
 function StatusDraftCell({ draft, patch }: CellProps) {
   const statuses = useV2Store((s) => s.statuses);
-  const status = statuses.find((s) => s.id === draft.status_id);
+  // Черновик хранит null, пока статус не выбрали, но показать надо тот, с
+  // которым задача родится, — иначе строка врёт про будущий результат.
+  const status = statuses.find((s) => s.id === draft.status_id) ?? defaultStatus(statuses);
 
   return (
     <Popover>

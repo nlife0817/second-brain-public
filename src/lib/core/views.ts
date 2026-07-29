@@ -6,7 +6,7 @@
 // Форма фильтров — `FilterGroup[]`: группы соединяются через И, условия
 // внутри группы через И/ИЛИ.
 
-import type { CustomField, StatusKind, TaskPriority, TaskRow } from "./types";
+import type { CustomField, StatusCategory, TaskPriority, TaskRow } from "./types";
 
 // --- Фильтры ------------------------------------------------------------------
 
@@ -71,9 +71,9 @@ export const HIDE_VALUE = "hide";
  * Каждому соответствует вид статуса, задачи которого по умолчанию не видны.
  */
 export const VISIBILITY_FIELDS = [
-  { field: "archive", label: "Архив", statusKind: "archived" },
-  { field: "done", label: "Готово", statusKind: "done" },
-] as const satisfies ReadonlyArray<{ field: FilterField; label: string; statusKind: StatusKind }>;
+  { field: "archive", label: "Архив", statusCategory: "archived" },
+  { field: "done", label: "Готово", statusCategory: "done" },
+] as const satisfies ReadonlyArray<{ field: FilterField; label: string; statusCategory: StatusCategory }>;
 
 /** Быстрая проверка «это переключатель, а не условие на строку». */
 const VISIBILITY_FIELD_SET: ReadonlySet<FilterField> = new Set(VISIBILITY_FIELDS.map((f) => f.field));
@@ -270,12 +270,12 @@ export function showsDone(groups: FilterGroup[]): boolean {
  */
 export function hiddenStatusIds(
   groups: FilterGroup[],
-  statuses: ReadonlyArray<{ id: string; kind: StatusKind }>,
+  statuses: ReadonlyArray<{ id: string; category: StatusCategory }>,
 ): Set<string> {
-  const hiddenKinds = new Set<StatusKind>(
-    VISIBILITY_FIELDS.filter((f) => !showsField(groups, f.field)).map((f) => f.statusKind),
+  const hidden = new Set<StatusCategory>(
+    VISIBILITY_FIELDS.filter((f) => !showsField(groups, f.field)).map((f) => f.statusCategory),
   );
-  return new Set(statuses.filter((s) => hiddenKinds.has(s.kind)).map((s) => s.id));
+  return new Set(statuses.filter((s) => hidden.has(s.category)).map((s) => s.id));
 }
 
 /** Группы объединяются через И, условия внутри группы — по её `logic`. */

@@ -227,12 +227,8 @@ export const StatusCell = memo(function StatusCell({ task, ctx }: { task: TaskRo
             {task.status_id === s.id && <Check className="size-3.5 shrink-0" />}
           </button>
         ))}
-        <button
-          onClick={() => ctx.onPatch(task.id, { status_id: null })}
-          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted"
-        >
-          <X className="size-3.5" /> Снять статус
-        </button>
+        {/* «Снять статус» здесь больше нет: пустого статуса у задачи не бывает,
+            новая встаёт в статус организации по умолчанию. */}
       </PopoverContent>
     </Popover>
   );

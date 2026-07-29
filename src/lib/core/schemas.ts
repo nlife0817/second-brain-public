@@ -109,6 +109,9 @@ export const taskPatchSchema = z
   .object({
     title: z.string().trim().min(1).max(500).optional(),
     description: z.string().max(500_000).optional(),
+    // null трактуется сервисом как «вернуть статус по умолчанию»: пустого
+    // статуса у задачи больше не бывает, но вкладка со старым бандлом всё ещё
+    // умеет жать «Снять статус», и отвечать ей 400 незачем.
     status_id: z.uuid().nullable().optional(),
     priority: prioritySchema.optional(),
     due_date: dateSchema.nullable().optional(),
@@ -149,16 +152,22 @@ export const docThreadResolveSchema = z.object({ resolved: z.boolean() });
 
 // --- Справочники и поля ---------------------------------------------------------------
 
+const statusCategorySchema = z.enum(["backlog", "in_progress", "done", "archived"]);
+
+// Схемы не strict намеренно: вкладка со старым бандлом ещё шлёт `kind`, и
+// правильный ответ на него — молча отбросить поле, а не 400.
 export const statusCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
   color: z.string().trim().max(32).optional(),
-  kind: z.enum(["open", "done", "archived"]).optional(),
+  category: statusCategorySchema.optional(),
 });
 export const statusPatchSchema = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),
     color: z.string().trim().max(32).optional(),
-    kind: z.enum(["open", "done", "archived"]).optional(),
+    category: statusCategorySchema.optional(),
+    /** Только true: дефолт не снимают, его переносят на другой статус. */
+    is_default: z.literal(true).optional(),
     position: z.number().finite().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });

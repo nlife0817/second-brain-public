@@ -42,6 +42,7 @@ import {
   formatDue,
 } from "@/components/v2/bits";
 import { DuePicker } from "@/components/v2/DuePicker";
+import { defaultStatus } from "@/lib/core/status-model";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField, TaskListItem } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -433,7 +434,8 @@ function PriorityChip({ draft, patch }: DraftProps) {
 
 function StatusChip({ draft, patch }: DraftProps) {
   const statuses = useV2Store((s) => s.statuses);
-  const status = statuses.find((s) => s.id === draft.status_id);
+  // Как и в строке создания: показываем статус, с которым подзадача родится.
+  const status = statuses.find((s) => s.id === draft.status_id) ?? defaultStatus(statuses);
   return (
     <Popover>
       <PopoverTrigger

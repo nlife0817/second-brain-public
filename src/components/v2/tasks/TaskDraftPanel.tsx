@@ -19,6 +19,7 @@ import {
 import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle } from "@/components/v2/bits";
 import { MemberPicker } from "@/components/v2/MemberPicker";
 import { SidePanel } from "@/components/v2/SidePanel";
+import { defaultStatus } from "@/lib/core/status-model";
 import type { TaskDraft } from "@/lib/core/task-draft";
 import type { TaskPriority } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -95,12 +96,16 @@ export function TaskDraftPanel({
           <div className="grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2.5 text-sm">
             <span className="text-muted-foreground">Статус</span>
             <Select
-              value={draft.status_id ?? ""}
-              onValueChange={(v) => onChange({ status_id: v || null })}
+              value={draft.status_id ?? defaultStatus(statuses)?.id ?? ""}
+              onValueChange={(v) => v && onChange({ status_id: v })}
             >
               <SelectTrigger size="sm" className="w-fit min-w-36">
-                <SelectValue placeholder="Без статуса">
-                  <StatusPill status={statuses.find((s) => s.id === draft.status_id)} />
+                {/* Правило 10 ядра: children у SelectValue обязателен, иначе
+                    Base UI отрисует в триггере сырой uuid. */}
+                <SelectValue placeholder="Статус">
+                  <StatusPill
+                    status={statuses.find((s) => s.id === draft.status_id) ?? defaultStatus(statuses)}
+                  />
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>

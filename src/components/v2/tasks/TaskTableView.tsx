@@ -184,12 +184,12 @@ export function TaskTableView({
           (next as unknown as Record<string, unknown>)[key] = value;
         }
       }
-      // completed_at выводится из вида статуса — иначе строка «завершена»
+      // completed_at выводится из категории статуса — иначе строка «завершена»
       // осталась бы прежней до перезагрузки.
       if ("status_id" in payload) {
-        const kind = statuses.find((s) => s.id === payload.status_id)?.kind;
-        if (kind === "done" && !task.completed_at) next.completed_at = new Date().toISOString();
-        if (kind !== "done" && task.completed_at) next.completed_at = null;
+        const category = statuses.find((s) => s.id === payload.status_id)?.category;
+        if (category === "done" && !task.completed_at) next.completed_at = new Date().toISOString();
+        if (category !== "done" && task.completed_at) next.completed_at = null;
       }
       return next;
     },

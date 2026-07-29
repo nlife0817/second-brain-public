@@ -29,6 +29,14 @@ import {
   SETTINGS_SECTIONS,
   type SettingsSectionId,
 } from "@/lib/core/settings-sections";
+import {
+  CATEGORY_LABELS,
+  deleteBlockMessage,
+  fallbackStatusId,
+  groupByCategory,
+  isWorkingCategory,
+  statusDeleteBlock,
+} from "@/lib/core/status-model";
 import { ORG_ROLE_RANK } from "@/lib/core/types";
 import type {
   CoreEvent,
@@ -37,6 +45,7 @@ import type {
   Invitation,
   OrgRole,
   ProjectRole,
+  StatusCategory,
 } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { useLoad } from "@/lib/core/use-load";
@@ -128,7 +137,9 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
   const [webhookUrl, setWebhookUrl] = useState("");
   const [newSecret, setNewSecret] = useState<string | null>(null);
   const [fields, setFields] = useState<CustomField[]>(initial.fields);
-  const [newStatus, setNewStatus] = useState("");
+  // Своё поле на категорию: одна строка ввода на весь справочник не даёт
+  // выбрать, куда именно добавляется статус.
+  const [newStatus, setNewStatus] = useState<Partial<Record<StatusCategory, string>>>({});
   const [newTag, setNewTag] = useState("");
   const [newField, setNewField] = useState("");
   const [newFieldType, setNewFieldType] = useState<FieldType>("text");
@@ -444,52 +455,103 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
 
           {has("statuses") && (
             <Section title="Статусы задач">
-              <div className="flex flex-col gap-1.5">
-                {statuses.map((s) => (
-                  <div key={s.id} className="flex items-center gap-2">
-                    <span className="size-2.5 rounded-full" style={{ backgroundColor: s.color }} />
-                    <span className="flex-1 text-sm">{s.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {s.kind === "done" ? "завершает" : s.kind === "archived" ? "архив" : ""}
-                    </span>
+              <div className="flex flex-col gap-4">
+                {groupByCategory(statuses).map(({ category, statuses: inCategory }) => (
+                  <div key={category} className="flex flex-col gap-1.5">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        {CATEGORY_LABELS[category]}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground/70">
+                        {category === "archived"
+                          ? "может пустовать; в карточке задачи такие статусы не показываются"
+                          : category === "done"
+                            ? "проставляет отметку о завершении"
+                            : ""}
+                      </span>
+                    </div>
+
+                    {inCategory.map((s) => {
+                      const block = statusDeleteBlock(statuses, s.id);
+                      return (
+                        <div key={s.id} className="flex items-center gap-2">
+                          <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: s.color }} />
+                          <span className="min-w-0 flex-1 truncate text-sm">{s.name}</span>
+                          {s.is_default && (
+                            <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
+                              по умолчанию
+                            </span>
+                          )}
+                          {isAdmin && !s.is_default && isWorkingCategory(s.category) && (
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className="shrink-0 text-xs text-muted-foreground"
+                              title="Новые задачи будут попадать в этот статус"
+                              onClick={() =>
+                                void call(
+                                  () => api.patch(`/orgs/${orgId}/statuses/${s.id}`, { is_default: true }),
+                                  store.refreshMeta,
+                                )
+                              }
+                            >
+                              Сделать основным
+                            </Button>
+                          )}
+                          {isAdmin && (
+                            // Кнопка не исчезает, а гаснет с объяснением: пропавшая
+                            // кнопка читается как поломка, а не как правило.
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              className="shrink-0"
+                              disabled={!!block}
+                              title={block ? deleteBlockMessage(block, s.category) : "Удалить статус"}
+                              onClick={() => {
+                                const target = statuses.find(
+                                  (x) => x.id === fallbackStatusId(statuses, s.id),
+                                );
+                                const where = target ? `«${target.name}»` : "статус по умолчанию";
+                                if (window.confirm(`Удалить статус «${s.name}»? Задачи переедут в ${where}.`)) {
+                                  void call(() => api.del(`/orgs/${orgId}/statuses/${s.id}`), store.refreshMeta);
+                                }
+                              }}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+
                     {isAdmin && (
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() => {
-                          if (window.confirm(`Удалить статус «${s.name}»? Задачи останутся без статуса.`)) {
-                            void call(() => api.del(`/orgs/${orgId}/statuses/${s.id}`), store.refreshMeta);
+                      <div className="flex items-center gap-2">
+                        <Input
+                          placeholder={`Новый статус в «${CATEGORY_LABELS[category]}»`}
+                          value={newStatus[category] ?? ""}
+                          onChange={(e) => setNewStatus((prev) => ({ ...prev, [category]: e.target.value }))}
+                          className="h-8 w-64"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!(newStatus[category] ?? "").trim()}
+                          onClick={() =>
+                            void call(async () => {
+                              await api.post(`/orgs/${orgId}/statuses`, {
+                                name: (newStatus[category] ?? "").trim(),
+                                category,
+                              });
+                              setNewStatus((prev) => ({ ...prev, [category]: "" }));
+                            }, store.refreshMeta)
                           }
-                        }}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                        >
+                          Добавить
+                        </Button>
+                      </div>
                     )}
                   </div>
                 ))}
-                {isAdmin && (
-                  <div className="mt-1 flex items-center gap-2">
-                    <Input
-                      placeholder="Новый статус"
-                      value={newStatus}
-                      onChange={(e) => setNewStatus(e.target.value)}
-                      className="h-8 w-56"
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!newStatus.trim()}
-                      onClick={() =>
-                        void call(async () => {
-                          await api.post(`/orgs/${orgId}/statuses`, { name: newStatus.trim() });
-                          setNewStatus("");
-                        }, store.refreshMeta)
-                      }
-                    >
-                      Добавить
-                    </Button>
-                  </div>
-                )}
               </div>
             </Section>
           )}
