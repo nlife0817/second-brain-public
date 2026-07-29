@@ -689,7 +689,10 @@
      задачи (text-sm) попадали под это правило браузера. */
   [data-mobile-v2] input,
   [data-mobile-v2] textarea,
-  [data-mobile-v2] select {
+  [data-mobile-v2] select,
+  /* Редактор описания и поле комментария — не textarea, а contenteditable:
+     под перечисление выше они не попадали, и фокус в них зумил экран так же. */
+  [data-mobile-v2] [contenteditable="true"] {
     font-size: 16px;
   }
 }
