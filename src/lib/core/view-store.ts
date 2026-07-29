@@ -29,7 +29,7 @@ export const BASE_COLUMNS: ColumnDef[] = [
   { id: "priority", label: "Приоритет", headerLabel: "P", width: 44, sortable: true, editable: true },
   { id: "title", label: "Название", width: 380, sortable: true, editable: true },
   { id: "status", label: "Статус", width: 132, sortable: true, editable: true },
-  { id: "project", label: "Проект", width: 150, sortable: true, editable: false },
+  { id: "project", label: "Проект", width: 150, sortable: true, editable: true },
   { id: "assignees", label: "Исполнители", width: 116, sortable: false, editable: true },
   { id: "tags", label: "Теги", width: 150, sortable: false, editable: true },
   { id: "due_date", label: "Дедлайн", width: 116, sortable: true, editable: true },

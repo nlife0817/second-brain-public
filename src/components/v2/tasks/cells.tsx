@@ -19,6 +19,7 @@ import type {
   TaskStatus,
 } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
+import { ProjectsMenu, WIDE_MENU_POPOVER } from "./draft-controls";
 
 export interface CellContext {
   statuses: TaskStatus[];
@@ -29,6 +30,8 @@ export interface CellContext {
   /** Название переносится на следующую строку (до трёх), а не обрезается. */
   wrapTitle: boolean;
   onPatch: (taskId: string, payload: Record<string, unknown>) => void;
+  /** Полный список проектов задачи: размещения PATCH не принимает. */
+  onPlacements: (taskId: string, projectIds: string[]) => void;
 }
 
 /** 90 → «1 ч 30 м». Пустая оценка отображается прочерком, а не нулём. */
@@ -237,25 +240,42 @@ export const StatusCell = memo(function StatusCell({ task, ctx }: { task: TaskRo
 // --- Проекты (multi-homing) ------------------------------------------------------
 
 export const ProjectCell = memo(function ProjectCell({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
-  if (task.placements.length === 0) {
-    return <ReadOnly className="text-xs text-muted-foreground">Личная</ReadOnly>;
-  }
+  const label =
+    task.placements.length === 0 ? (
+      // Задача без размещений видна только своим — «Личная» честнее прочерка.
+      <span className="text-xs text-muted-foreground">Личная</span>
+    ) : (
+      <span className="flex gap-1 overflow-hidden">
+        {task.placements.map((p) => {
+          const project = ctx.projectsById.get(p.project_id);
+          return (
+            <span
+              key={p.project_id}
+              className={cn(CELL_CHIP, "rounded")}
+              style={chipStyle(project?.color)}
+              title={project?.name ?? "Недоступный проект"}
+            >
+              <span className="truncate">{project?.name ?? "—"}</span>
+            </span>
+          );
+        })}
+      </span>
+    );
+
+  if (!ctx.canEdit) return <ReadOnly className="overflow-hidden">{label}</ReadOnly>;
+
+  // Список тот же, что в строке создания задачи: правило «куда можно положить»
+  // одно на всё приложение, и второй его копии здесь взяться неоткуда.
   return (
-    <ReadOnly className="gap-1 overflow-hidden">
-      {task.placements.map((p) => {
-        const project = ctx.projectsById.get(p.project_id);
-        return (
-          <span
-            key={p.project_id}
-            className={cn(CELL_CHIP, "rounded")}
-            style={chipStyle(project?.color)}
-            title={project?.name ?? "Недоступный проект"}
-          >
-            <span className="truncate">{project?.name ?? "—"}</span>
-          </span>
-        );
-      })}
-    </ReadOnly>
+    <Popover>
+      <PopoverTrigger render={<button className={CELL_BUTTON} />}>{label}</PopoverTrigger>
+      <PopoverContent align="start" className={WIDE_MENU_POPOVER}>
+        <ProjectsMenu
+          value={task.placements.map((p) => p.project_id)}
+          onChange={(ids) => ctx.onPlacements(task.id, ids)}
+        />
+      </PopoverContent>
+    </Popover>
   );
 });
 

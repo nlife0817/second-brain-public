@@ -62,6 +62,9 @@ function capture(task: TaskRow, payload: Record<string, unknown>): Record<string
       case "tag_ids":
         before.tag_ids = task.tags.map((t) => t.id);
         break;
+      case "project_ids":
+        before.project_ids = task.placements.map((p) => p.project_id);
+        break;
       default:
         before[key] = (task as unknown as Record<string, unknown>)[key] ?? null;
     }
@@ -180,6 +183,17 @@ export function TaskTableView({
         } else if (key === "tag_ids") {
           const ids = new Set(value as string[]);
           next.tags = tags.filter((t) => ids.has(t.id));
+        } else if (key === "project_ids") {
+          // Секция и позиция внутри проекта у прежних размещений сохраняются:
+          // правка из таблицы меняет состав проектов, а не место на доске.
+          next.placements = (value as string[]).map(
+            (projectId) =>
+              task.placements.find((p) => p.project_id === projectId) ?? {
+                project_id: projectId,
+                section_id: null,
+                position: 0,
+              },
+          );
         } else {
           (next as unknown as Record<string, unknown>)[key] = value;
         }
@@ -196,6 +210,34 @@ export function TaskTableView({
     [members, tags, statuses],
   );
 
+  /**
+   * Отправка одного патча. `project_ids` — виртуальное поле, как `assignee_ids`
+   * и `tag_ids`: состав проектов PATCH задачи не принимает, его задаёт
+   * отдельный PUT размещений. Держим его в общем конвейере — иначе правка
+   * проекта выпадает и из истории Ctrl+Z, и из общей обработки ошибок.
+   */
+  const sendPatch = useCallback(
+    async (taskId: string, payload: Record<string, unknown>): Promise<TaskDetail | null> => {
+      const { project_ids: projectIds, ...rest } = payload;
+      let updated: TaskDetail | null = null;
+      if (Array.isArray(projectIds)) {
+        // Секцию прежнего размещения переносим как есть: пустая секция в теле
+        // означала бы «перенести в начало доски без секции».
+        const current = tasksRef.current.find((t) => t.id === taskId);
+        const placements = (projectIds as string[]).map((projectId) => ({
+          project_id: projectId,
+          section_id: current?.placements.find((p) => p.project_id === projectId)?.section_id ?? null,
+        }));
+        updated = await api.put<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}/placements`, { placements });
+      }
+      if (Object.keys(rest).length > 0) {
+        updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`, rest);
+      }
+      return updated;
+    },
+    [orgId],
+  );
+
   /** Патч без записи в историю — общий шаг для правки, отмены и повтора. */
   const applyPatches = useCallback(
     async (patches: Array<{ id: string; payload: Record<string, unknown> }>) => {
@@ -208,7 +250,10 @@ export function TaskTableView({
       const failures: string[] = [];
       await runLimited(patches, BULK_CONCURRENCY, async ({ id, payload }) => {
         try {
-          const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${id}`, payload);
+          const updated = await sendPatch(id, payload);
+          // Пустой патч уходить наружу не должен, но если ушёл — сливать в
+          // строку нечего.
+          if (!updated) return;
           setTasks((prev) =>
             prev.map((t) =>
               t.id === id
@@ -245,7 +290,7 @@ export function TaskTableView({
         if (invalidateKey) invalidate(invalidateKey);
       }
     },
-    [applyLocal, orgId, reload, setTasks, invalidateKey],
+    [applyLocal, sendPatch, reload, setTasks, invalidateKey],
   );
 
   const patchTasks = useCallback(
@@ -272,6 +317,13 @@ export function TaskTableView({
   const patchOne = useCallback(
     (taskId: string, payload: Record<string, unknown>) => {
       void patchTasks([{ id: taskId, payload }]);
+    },
+    [patchTasks],
+  );
+
+  const setPlacements = useCallback(
+    (taskId: string, projectIds: string[]) => {
+      void patchTasks([{ id: taskId, payload: { project_ids: projectIds } }]);
     },
     [patchTasks],
   );
@@ -346,8 +398,17 @@ export function TaskTableView({
   const canEdit = useV2Store((s) => s.orgRole !== "guest" && s.orgRole !== null);
 
   const cellCtx = useMemo(
-    () => ({ statuses, tags, members, projectsById, canEdit, wrapTitle, onPatch: patchOne }),
-    [statuses, tags, members, projectsById, canEdit, wrapTitle, patchOne],
+    () => ({
+      statuses,
+      tags,
+      members,
+      projectsById,
+      canEdit,
+      wrapTitle,
+      onPatch: patchOne,
+      onPlacements: setPlacements,
+    }),
+    [statuses, tags, members, projectsById, canEdit, wrapTitle, patchOne, setPlacements],
   );
 
   const labelForGroup = useCallback(
