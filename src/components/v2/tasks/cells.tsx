@@ -8,6 +8,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { Check, MessageSquare, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarStack, PRIORITY_LABELS, PriorityDot, dueTone, formatDue } from "@/components/v2/bits";
+import { DuePicker } from "@/components/v2/DuePicker";
 import type {
   CoreTag,
   OrgMemberWithUser,
@@ -355,38 +356,14 @@ export const DueCell = memo(function DueCell({ task, ctx }: { task: TaskRow; ctx
   if (!ctx.canEdit) return <ReadOnly>{label}</ReadOnly>;
 
   return (
-    <Popover>
-      <PopoverTrigger render={<button className={CELL_BUTTON} />}>{label}</PopoverTrigger>
-      <PopoverContent align="start" className="w-60 gap-2 p-2.5">
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Дата
-          <input
-            type="date"
-            value={task.due_date ?? ""}
-            onChange={(e) => ctx.onPatch(task.id, { due_date: e.target.value || null })}
-            className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Время
-          <input
-            type="time"
-            value={task.due_time?.slice(0, 5) ?? ""}
-            disabled={!task.due_date}
-            onChange={(e) => ctx.onPatch(task.id, { due_time: e.target.value || null })}
-            className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring disabled:opacity-50"
-          />
-        </label>
-        {task.due_date && (
-          <button
-            onClick={() => ctx.onPatch(task.id, { due_date: null, due_time: null })}
-            className="flex items-center gap-1.5 rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <X className="size-3.5" /> Убрать срок
-          </button>
-        )}
-      </PopoverContent>
-    </Popover>
+    <DuePicker
+      date={task.due_date}
+      time={task.due_time}
+      triggerClassName={CELL_BUTTON}
+      onCommit={(next) => ctx.onPatch(task.id, next)}
+    >
+      {label}
+    </DuePicker>
   );
 });
 
