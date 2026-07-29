@@ -83,8 +83,8 @@ export interface ViewSnapshot {
   groupBy: GroupByConfig;
   groups: FilterGroup[];
   search: string;
+  /** Завершённые в выборке. Переключатель остался только у экрана проекта. */
   showDone: boolean;
-  showArchivedProjects: boolean;
   subtaskMode: SubtaskMode;
 }
 
@@ -109,7 +109,6 @@ export interface ViewState extends ViewSnapshot {
   setGroups: (groups: FilterGroup[]) => void;
   setSearch: (search: string) => void;
   setShowDone: (show: boolean) => void;
-  setShowArchivedProjects: (show: boolean) => void;
   setSubtaskMode: (mode: SubtaskMode) => void;
   toggleCollapsed: (key: string) => void;
 
@@ -128,7 +127,6 @@ const DEFAULT_SNAPSHOT: ViewSnapshot = {
   groups: [],
   search: "",
   showDone: false,
-  showArchivedProjects: false,
   subtaskMode: "nested",
 };
 
@@ -149,7 +147,6 @@ function snapshotOf(state: ViewSnapshot): ViewSnapshot {
     groups: state.groups,
     search: state.search,
     showDone: state.showDone,
-    showArchivedProjects: state.showArchivedProjects,
     subtaskMode: state.subtaskMode,
   };
 }
@@ -203,7 +200,6 @@ function createViewStore(scope: ViewScope) {
         setGroups: (groups) => set(edit({ groups })),
         setSearch: (search) => set({ search }),
         setShowDone: (showDone) => set(edit({ showDone })),
-        setShowArchivedProjects: (showArchivedProjects) => set(edit({ showArchivedProjects })),
         setSubtaskMode: (subtaskMode) => set(edit({ subtaskMode })),
         toggleCollapsed: (key) =>
           set((s) => ({
@@ -284,6 +280,36 @@ export function useViewStore<T>(selector: (state: ViewState) => T): T {
   if (!store) throw new Error("useViewStore вне <ViewStoreProvider>");
   return useStore(store, selector);
 }
+
+// --- Как открывается карточка задачи ------------------------------------------------
+
+/** Боковая панель справа или модальное окно по центру. */
+export type TaskOpenMode = "sheet" | "modal";
+
+export const TASK_OPEN_MODE_LABELS: Record<TaskOpenMode, string> = {
+  sheet: "Через боковую панель",
+  modal: "Модальное окно",
+};
+
+interface TaskOpenState {
+  mode: TaskOpenMode;
+  setMode: (mode: TaskOpenMode) => void;
+}
+
+/**
+ * Стор один на приложение, а не по областям: способ открытия карточки — привычка
+ * пользователя, а не часть рабочего среза. Иначе переход в проект молча менял бы
+ * поведение, к которому человек привык на сводном списке.
+ */
+export const useTaskOpenStore = create<TaskOpenState>()(
+  persist(
+    (set) => ({
+      mode: "sheet",
+      setMode: (mode) => set({ mode }),
+    }),
+    { name: "sb.v2.taskOpenMode", storage: createJSONStorage(() => localStorage), version: 1 },
+  ),
+);
 
 // --- Карточка доски ---------------------------------------------------------------
 
