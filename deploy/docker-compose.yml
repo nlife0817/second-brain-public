@@ -38,6 +38,12 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # Дублирует build-аргумент намеренно: в бандл значение вшивается при
+      # сборке, но серверный код (redirect_uri для Google в lib/auth/oauth-state.ts)
+      # читает ту же переменную в рантайме. Без неё origin взялся бы из заголовка
+      # Host, где за Caddy стоит внутреннее имя контейнера, и Google отверг бы
+      # redirect_uri как несовпадающий.
+      NEXT_PUBLIC_APP_URL: ${APP_URL}
     depends_on:
       db:
         condition: service_healthy
