@@ -21,8 +21,9 @@ const MAX_ITEMS = 8;
 const FLIP_THRESHOLD = 260;
 const PANEL_WIDTH = 256;
 
-function place(element: HTMLElement, rect: DOMRect | null | undefined) {
-  if (!rect) return;
+/** Спрятан ли список из-за того, что каретка уехала за пределы экрана. */
+function place(element: HTMLElement, rect: DOMRect | null | undefined): boolean {
+  if (!rect) return false;
   element.style.position = "fixed";
   // Выше слоя развёрнутого документа (z-60) и всплывающего меню (z-70).
   element.style.zIndex = "80";
@@ -38,6 +39,7 @@ function place(element: HTMLElement, rect: DOMRect | null | undefined) {
     element.style.bottom = "auto";
     element.style.top = `${rect.bottom + 6}px`;
   }
+  return offscreen;
 }
 
 /**
@@ -71,6 +73,11 @@ export function createMention(getItems: () => MentionItem[]) {
         // suggestion сам её не выключает. Показываем обратно, как только запрос
         // изменился — то есть человек продолжил набирать.
         let dismissed = false;
+        // Каретка уехала за край экрана — список спрятан. Клавиши в него
+        // отдавать нельзя: Enter вставил бы упоминание в позицию, которой не
+        // видно. Это клавиатурный близнец того же отказа, что и клик по
+        // зависшей панели, ради которого делалась подводка.
+        let offscreen = false;
         // Откуда брать координаты каретки между транзакциями редактора: сам
         // плагин зовёт нас только на них, а прокрутка транзакции не порождает.
         let rectOf: (() => DOMRect | null) | null = null;
@@ -88,7 +95,7 @@ export function createMention(getItems: () => MentionItem[]) {
          * контейнеров до window не всплывают.
          */
         const reposition = () => {
-          if (renderer && rectOf) place(renderer.element as HTMLElement, rectOf());
+          if (renderer && rectOf) offscreen = place(renderer.element as HTMLElement, rectOf());
         };
 
         return {
@@ -100,7 +107,7 @@ export function createMention(getItems: () => MentionItem[]) {
               editor: props.editor,
             });
             document.body.appendChild(renderer.element);
-            place(renderer.element as HTMLElement, props.clientRect?.());
+            offscreen = place(renderer.element as HTMLElement, props.clientRect?.());
             window.addEventListener("scroll", reposition, true);
             window.addEventListener("resize", reposition);
           },
@@ -109,7 +116,7 @@ export function createMention(getItems: () => MentionItem[]) {
             rectOf = props.clientRect ?? null;
             show(true);
             renderer?.updateProps({ items: props.items, command: props.command });
-            if (renderer) place(renderer.element as HTMLElement, props.clientRect?.());
+            if (renderer) offscreen = place(renderer.element as HTMLElement, props.clientRect?.());
           },
           onKeyDown: (props) => {
             if (props.event.key === "Escape") {
@@ -117,14 +124,16 @@ export function createMention(getItems: () => MentionItem[]) {
               // сам развёрнутый документ. Раньше клавиша съедалась всегда,
               // список оставался на экране, а документ схлопывался первым же
               // нажатием, потому что обработчик на document её всё равно видел.
-              if (dismissed) return false;
+              if (dismissed || offscreen) return false;
               dismissed = true;
               show(false);
               props.event.preventDefault();
               props.event.stopPropagation();
               return true;
             }
-            if (dismissed) return false;
+            // Спрятанный список клавиш не получает: Enter в нём вставил бы
+            // упоминание в позицию, которой сейчас не видно.
+            if (dismissed || offscreen) return false;
             return renderer?.ref?.onKeyDown(props.event) ?? false;
           },
           onExit: () => {
@@ -135,6 +144,7 @@ export function createMention(getItems: () => MentionItem[]) {
             renderer = null;
             rectOf = null;
             dismissed = false;
+            offscreen = false;
           },
         };
       },
