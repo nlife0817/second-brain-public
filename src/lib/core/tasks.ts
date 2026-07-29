@@ -754,6 +754,19 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         taskId: id,
       });
     }
+    // Задачу заводят вместе с описанием (развёрнутый черновик, форма создания),
+    // и упоминание в нём — такое же упоминание. Без этого оно не доходило
+    // никогда: notifyMentions стоял только на правке.
+    const description = sanitizeRichText(input.description ?? "");
+    if (description) {
+      await notifyMentions(tx, {
+        orgId: ctx.orgId,
+        eventId,
+        taskId: id,
+        actorId: ctx.user.id,
+        html: description,
+      });
+    }
     return id;
   });
 

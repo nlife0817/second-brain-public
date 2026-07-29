@@ -11,7 +11,10 @@ import type { TxContext } from "@/lib/sql";
 import { notifyUsers } from "./events";
 
 const SPAN_TAG = /<span\b[^>]*>/gi;
-const MENTION_ID = /data-id="([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"/;
+// `\sdata-id=` с обязательным пробелом перед именем: без него совпал бы и хвост
+// чужого атрибута (`data-comment-id="…"`), и упоминание уехало бы не тому.
+const MENTION_ID =
+  /\sdata-id="([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"/;
 
 /**
  * Кого упомянули в разметке. Разбор идёт по уже очищенному санитайзером HTML:
@@ -129,7 +132,13 @@ export async function notifyMentions(
   );
   if (allowed.length === 0) return new Set();
 
-  await notifyUsers(tx, {
+  // Возвращаем тех, кому уведомление РЕАЛЬНО записано, а не тех, кого мы
+  // хотели уведомить. Разница существенна: у кого выключен тип «Упоминание»
+  // или заглушён проект, тот отсеивается внутри notifyUsers — и, попади он в
+  // это множество, его вычли бы ещё и из аудитории комментария. Человек не
+  // получил бы ничего вообще, хотя обычное уведомление о комментарии у него
+  // включено.
+  const notified = await notifyUsers(tx, {
     orgId: input.orgId,
     eventId: input.eventId,
     kind: "mention",
@@ -137,5 +146,5 @@ export async function notifyMentions(
     excludeUserId: input.actorId,
     taskId: input.taskId,
   });
-  return new Set(allowed);
+  return new Set(notified);
 }

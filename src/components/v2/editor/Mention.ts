@@ -63,9 +63,19 @@ export function createMention(getItems: () => MentionItem[]) {
       },
       render: () => {
         let renderer: ReactRenderer<MentionListHandle> | null = null;
+        // Escape прячет список, но подсказка остаётся активной: плагин
+        // suggestion сам её не выключает. Показываем обратно, как только запрос
+        // изменился — то есть человек продолжил набирать.
+        let dismissed = false;
+
+        const show = (visible: boolean) => {
+          const el = renderer?.element as HTMLElement | undefined;
+          if (el) el.style.display = visible ? "" : "none";
+        };
 
         return {
           onStart: (props) => {
+            dismissed = false;
             renderer = new ReactRenderer(MentionList, {
               props: { items: props.items, command: props.command },
               editor: props.editor,
@@ -74,17 +84,32 @@ export function createMention(getItems: () => MentionItem[]) {
             place(renderer.element as HTMLElement, props.clientRect?.());
           },
           onUpdate: (props) => {
+            dismissed = false;
+            show(true);
             renderer?.updateProps({ items: props.items, command: props.command });
             if (renderer) place(renderer.element as HTMLElement, props.clientRect?.());
           },
           onKeyDown: (props) => {
-            if (props.event.key === "Escape") return true;
+            if (props.event.key === "Escape") {
+              // Уже спрятан — отдаём Escape дальше: вторым нажатием закрывают
+              // сам развёрнутый документ. Раньше клавиша съедалась всегда,
+              // список оставался на экране, а документ схлопывался первым же
+              // нажатием, потому что обработчик на document её всё равно видел.
+              if (dismissed) return false;
+              dismissed = true;
+              show(false);
+              props.event.preventDefault();
+              props.event.stopPropagation();
+              return true;
+            }
+            if (dismissed) return false;
             return renderer?.ref?.onKeyDown(props.event) ?? false;
           },
           onExit: () => {
             renderer?.element.remove();
             renderer?.destroy();
             renderer = null;
+            dismissed = false;
           },
         };
       },

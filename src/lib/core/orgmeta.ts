@@ -95,7 +95,33 @@ export async function updateStatus(
   }
 
   const next = { ...current, ...patch, category: nextCategory };
+  const becameDone = nextCategory === "done" && current.category !== "done";
+  const leftDone = current.category === "done" && nextCategory !== "done";
+
   return transaction(async (t) => {
+    // Категория идёт ПЕРВОЙ: CHECK разрешает дефолт только рабочей категории, и
+    // совместный патч {category: 'backlog', is_default: true} на завершающем
+    // статусе падал бы на 23514, если сначала выставить флаг.
+    await t
+      .prepare(
+        `UPDATE core.task_statuses SET name = ?, color = ?, category = ?, position = ? WHERE id = ?`,
+      )
+      .run(next.name, next.color, next.category, next.position, statusId);
+
+    // Отметка о завершении выводится из категории, поэтому смена категории
+    // обязана пересчитать её у задач в этом статусе — иначе задачи в статусе,
+    // переехавшем в «Завершено», остаются незавершёнными везде, кроме названия
+    // категории (и наоборот). Так же поступает deleteStatus при переносе задач.
+    if (becameDone || leftDone) {
+      await t
+        .prepare(
+          `UPDATE core.tasks
+              SET completed_at = CASE WHEN ?::boolean THEN COALESCE(completed_at, now()) ELSE NULL END
+            WHERE org_id = ? AND status_id = ?`,
+        )
+        .run(becameDone, ctx.orgId, statusId);
+    }
+
     if (patch.is_default && !current.is_default) {
       // Двумя шагами, а не одним UPDATE по организации: частичный уникальный
       // индекс не откладываемый, и промежуточное состояние с двумя дефолтами
@@ -108,12 +134,10 @@ export async function updateStatus(
         ctx.orgId,
       );
     }
+
     const row = await t
-      .prepare<TaskStatus>(
-        `UPDATE core.task_statuses SET name = ?, color = ?, category = ?, position = ?
-         WHERE id = ? RETURNING ${STATUS_SELECT}`,
-      )
-      .get(next.name, next.color, next.category, next.position, statusId);
+      .prepare<TaskStatus>(`SELECT ${STATUS_SELECT} FROM core.task_statuses WHERE id = ?`)
+      .get(statusId);
     if (!row) throw new DomainError(500, "Failed to update status");
     return row;
   });

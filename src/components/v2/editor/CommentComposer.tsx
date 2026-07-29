@@ -31,17 +31,27 @@ export function CommentComposer({
   autoFocus?: boolean;
   submitLabel?: string;
   busy?: boolean;
-  onSubmit: (html: string) => void | Promise<void>;
+  /**
+   * Вернуть `false`, если отправка не удалась — тогда набранное останется в
+   * поле. Экраны ловят ошибки своими обёртками (`run`, `guard`) и наружу их не
+   * бросают, поэтому «промис резолвнулся» успехом считать нельзя: человек
+   * терял бы длинный комментарий на любой сетевой ошибке.
+   */
+  onSubmit: (html: string) => boolean | void | Promise<boolean | void>;
   onCancel?: () => void;
   className?: string;
 }) {
   const [empty, setEmpty] = useState(!value.trim());
+  const [sending, setSending] = useState(false);
   const mentionItems = useMentionItems();
 
   // Обработчики клавиш живут внутри редактора и создаются один раз, а отправка
   // меняется вместе с пропами — держим её в ref, иначе Ctrl+Enter звал бы
   // колбэк первого рендера (та же причина, что у uploadFiles в useDocEditor).
   const submitRef = useRef<() => void>(() => {});
+  // Зеркало для повторного входа: между кликом и setSending проходит рендер, а
+  // зажатый Ctrl+Enter шлёт десятки keydown подряд.
+  const sendingRef = useRef(false);
 
   const editor = useEditor({
     extensions: commentExtensions({ placeholder, mentionItems }),
@@ -67,14 +77,26 @@ export function CommentComposer({
 
   useEffect(() => {
     submitRef.current = () => {
-      if (!editor || editor.isEmpty || busy) return;
+      if (!editor || editor.isEmpty || busy || sendingRef.current) return;
+      sendingRef.current = true;
+      setSending(true);
       const html = editor.getHTML();
-      void Promise.resolve(onSubmit(html)).then(() => {
-        editor.commands.clearContent(true);
-        setEmpty(true);
-      });
+      void Promise.resolve(onSubmit(html))
+        .then((ok) => {
+          // Поле очищаем только при успехе: иначе отказ сервера стирал бы
+          // набранное, и восстановить его было бы нечем.
+          if (ok === false) return;
+          editor.commands.clearContent(true);
+          setEmpty(true);
+        })
+        .finally(() => {
+          sendingRef.current = false;
+          setSending(false);
+        });
     };
   }, [editor, busy, onSubmit]);
+
+  const disabled = empty || busy || sending;
 
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
@@ -82,11 +104,11 @@ export function CommentComposer({
         <EditorContent editor={editor} />
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
-        <Button size="xs" disabled={empty || busy} onClick={() => submitRef.current()}>
-          {busy ? "Отправка…" : submitLabel}
+        <Button size="xs" disabled={disabled} onClick={() => submitRef.current()}>
+          {busy || sending ? "Отправка…" : submitLabel}
         </Button>
         {onCancel && (
-          <Button size="xs" variant="ghost" onClick={onCancel} disabled={busy}>
+          <Button size="xs" variant="ghost" onClick={onCancel} disabled={busy || sending}>
             Отмена
           </Button>
         )}

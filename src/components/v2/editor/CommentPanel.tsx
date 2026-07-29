@@ -30,13 +30,17 @@ export interface CommentPanelProps {
   canComment: boolean;
   canResolveAll: boolean;
   onSelect: (threadId: string) => void;
-  onReply: (threadId: string, text: string) => Promise<void>;
-  onEdit: (commentId: string, text: string) => Promise<void>;
+  /**
+   * Отправители возвращают признак успеха: композер по нему решает, стирать ли
+   * набранное. Ошибку они не бросают — её ловит `guard` в DocEditor.
+   */
+  onReply: (threadId: string, html: string) => Promise<boolean>;
+  onEdit: (commentId: string, html: string) => Promise<boolean>;
   onDelete: (commentId: string) => Promise<void>;
   onResolve: (threadId: string, resolved: boolean) => Promise<void>;
   /** Черновик нового треда: выделение уже сделано, текста ещё нет. */
   draftQuote: string | null;
-  onSubmitDraft: (text: string) => Promise<void>;
+  onSubmitDraft: (html: string) => Promise<boolean>;
   onCancelDraft: () => void;
 }
 
@@ -92,7 +96,7 @@ function DraftCard({
   onCancel,
 }: {
   quote: string;
-  onSubmit: (text: string) => Promise<void>;
+  onSubmit: (html: string) => Promise<boolean>;
   onCancel: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -111,7 +115,7 @@ function DraftCard({
         onSubmit={async (html) => {
           setBusy(true);
           try {
-            await onSubmit(html);
+            return await onSubmit(html);
           } finally {
             setBusy(false);
           }
@@ -155,11 +159,12 @@ function ThreadCard({
   const mine = !!me && root?.author_id === me.id;
   const orphan = !isAnchored(thread.id);
 
-  async function guard(fn: () => Promise<void>) {
-    if (busy) return;
+  /** Признак успеха пробрасывается наружу: по нему композер решает, стирать ли текст. */
+  async function guard(fn: () => Promise<boolean | void>): Promise<boolean> {
+    if (busy) return false;
     setBusy(true);
     try {
-      await fn();
+      return (await fn()) !== false;
     } finally {
       setBusy(false);
     }
@@ -207,8 +212,11 @@ function ThreadCard({
               onCancel={() => setReplying(false)}
               onSubmit={(html) =>
                 guard(async () => {
-                  await onReply(thread.id, html);
-                  setReplying(false);
+                  // Поле ответа закрываем только при успехе — иначе набранный
+                  // текст исчезнет вместе с ним.
+                  const ok = await onReply(thread.id, html);
+                  if (ok) setReplying(false);
+                  return ok;
                 })
               }
             />

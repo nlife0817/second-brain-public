@@ -34,6 +34,16 @@ describe("extractMentionIds", () => {
   it("data-id не-uuid игнорируется: подставить туда можно что угодно", () => {
     expect(extractMentionIds('<p><span data-type="mention" data-id="admin">@admin</span></p>')).toEqual([]);
   });
+
+  it("чужой атрибут с похожим хвостом имени за упоминание не считается", () => {
+    const html = `<p><span data-type="mention" data-comment-id="${ANNA}" data-id="${IVAN}">@Иван</span></p>`;
+    expect(extractMentionIds(html)).toEqual([IVAN]);
+  });
+
+  it("упоминание без собственного data-id не подхватывает соседний атрибут", () => {
+    const html = `<p><span data-type="mention" data-comment-id="${ANNA}">@Кто-то</span></p>`;
+    expect(extractMentionIds(html)).toEqual([]);
+  });
 });
 
 describe("newMentionIds", () => {

@@ -335,13 +335,19 @@ export function TaskSheet({
   }, [taskId, load]);
   useLoad(loadTask);
 
-  /** Единая точка вызова API: показывает ошибку вместо тихого падения. */
-  async function run(fn: () => Promise<void>) {
+  /**
+   * Единая точка вызова API: показывает ошибку вместо тихого падения.
+   * Возвращает признак успеха — вызывающему иногда нужно знать, что не вышло
+   * (композер комментария по этому признаку решает, стирать ли набранное).
+   */
+  async function run(fn: () => Promise<void>): Promise<boolean> {
     try {
       await fn();
       setError(null);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+      return false;
     }
   }
 
@@ -414,9 +420,9 @@ export function TaskSheet({
    * `parentId` — корень обсуждения; ответ на ответ сервер приведёт к тому же
    * корню, поэтому здесь достаточно передать, на что нажали.
    */
-  async function addComment(html: string, parentId: string | null = null) {
-    if (!orgId || !taskId) return;
-    await run(async () => {
+  async function addComment(html: string, parentId: string | null = null): Promise<boolean> {
+    if (!orgId || !taskId) return false;
+    return run(async () => {
       const comment = await api.post<CoreComment>(`/orgs/${orgId}/tasks/${taskId}/comments`, {
         body: html,
         parent_id: parentId,

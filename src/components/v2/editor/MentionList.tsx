@@ -25,9 +25,14 @@ export const MentionList = forwardRef<
   { items: MentionItem[]; command: (item: { id: string; label: string }) => void }
 >(function MentionList({ items, command }, ref) {
   const [active, setActive] = useState(0);
+  // Список сужается по мере набора запроса, а выбранный индекс остаётся прежним.
+  // Без зажима Enter после «@ив» → стрелка вниз → «ан» попадал бы в items[5]
+  // несуществующего элемента и не вставлял ничего, а клавишу список уже съел.
+  // Зажим в рендере, а не сбросом состояния в эффекте — лишнего прохода нет.
+  const index = items.length === 0 ? 0 : Math.min(active, items.length - 1);
 
-  function pick(index: number) {
-    const item = items[index];
+  function pick(at: number) {
+    const item = items[at];
     if (item) command({ id: item.id, label: item.label });
   }
 
@@ -35,15 +40,15 @@ export const MentionList = forwardRef<
     onKeyDown: (event) => {
       if (items.length === 0) return false;
       if (event.key === "ArrowUp") {
-        setActive((i) => (i + items.length - 1) % items.length);
+        setActive((index + items.length - 1) % items.length);
         return true;
       }
       if (event.key === "ArrowDown") {
-        setActive((i) => (i + 1) % items.length);
+        setActive((index + 1) % items.length);
         return true;
       }
       if (event.key === "Enter" || event.key === "Tab") {
-        pick(active);
+        pick(index);
         return true;
       }
       return false;
@@ -73,7 +78,7 @@ export const MentionList = forwardRef<
           onMouseEnter={() => setActive(i)}
           className={cn(
             "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm",
-            i === active ? "bg-muted" : "hover:bg-muted/60",
+            i === index ? "bg-muted" : "hover:bg-muted/60",
           )}
         >
           <Avatar user={{ id: m.id, email: m.email, name: m.label, avatar_url: m.avatar_url }} size="xs" />

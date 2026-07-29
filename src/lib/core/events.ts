@@ -51,7 +51,14 @@ export async function notifyUsers(
      */
     taskId?: string;
   },
-): Promise<void> {
+  /**
+   * Кому уведомление действительно записано — после отсева заглушённых проектов
+   * и выключенных типов. Нужен вызывающему, который шлёт два уведомления об
+   * одном событии и вычитает одно из другого (упоминание из комментария):
+   * вычитать намеренных получателей нельзя, а вот отсеянных — тем более, иначе
+   * человек не получит НИ ОДНОГО.
+   */
+): Promise<string[]> {
   const candidates = [...new Set(input.userIds)].filter((id) => id && id !== input.excludeUserId);
   const allowed = input.taskId
     ? await filterByProjectMute(tx, input.taskId, candidates)
@@ -64,6 +71,7 @@ export async function notifyUsers(
       )
       .run(input.orgId, userId, input.eventId, input.kind);
   }
+  return targets;
 }
 
 /** Аудитория задачи: создатель + исполнители + подписчики. */

@@ -166,40 +166,48 @@ export function DocEditor({
 
   // Панель отдаёт готовую разметку: комментарии набирают в редакторе, потому что
   // в них живут @-упоминания, и заворачивать текст в <p> вручную больше нечего.
-  async function submitDraft(html: string) {
-    if (!orgId || !taskId || !draft || !editor) return;
+  //
+  // Признак успеха возвращается наружу: `guard` ошибку не бросает, и без него
+  // композер считал бы отказ сервера успехом и стирал набранное.
+  async function submitDraft(html: string): Promise<boolean> {
+    if (!orgId || !taskId || !draft || !editor) return false;
     const created = await guard(() =>
       api.post<DocCommentThread>(`/orgs/${orgId}/tasks/${taskId}/doc-comments`, {
         body: html,
         quote: draft.quote,
       }),
     );
-    if (!created) return;
+    if (!created) return false;
     upsertThread(created);
     // Якорь ставится только после ответа сервера: id треда придумывает он, и
     // пометить текст раньше нечем. Правка документа уйдёт автосохранением.
     markSelectionAsThread(editor, created.id, { from: draft.from, to: draft.to });
     doc.flush();
     setDraft(null);
+    return true;
   }
 
-  async function reply(threadId: string, html: string) {
-    if (!orgId || !taskId) return;
+  async function reply(threadId: string, html: string): Promise<boolean> {
+    if (!orgId || !taskId) return false;
     const updated = await guard(() =>
       api.post<DocCommentThread>(
         `/orgs/${orgId}/tasks/${taskId}/doc-comments?thread=${threadId}`,
         { body: html, quote: "" },
       ),
     );
-    if (updated) upsertThread(updated);
+    if (!updated) return false;
+    upsertThread(updated);
+    return true;
   }
 
-  async function editMessage(commentId: string, html: string) {
-    if (!orgId) return;
+  async function editMessage(commentId: string, html: string): Promise<boolean> {
+    if (!orgId) return false;
     const updated = await guard(() =>
       api.patch<DocCommentThread>(`/orgs/${orgId}/doc-comments/${commentId}`, { body: html }),
     );
-    if (updated) upsertThread(updated);
+    if (!updated) return false;
+    upsertThread(updated);
+    return true;
   }
 
   async function removeMessage(commentId: string) {

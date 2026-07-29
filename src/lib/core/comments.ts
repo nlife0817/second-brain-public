@@ -43,10 +43,16 @@ function mapComment(r: CommentRow): CoreComment {
 
 export async function listTaskComments(ctx: AuthContext, taskId: string): Promise<CoreComment[]> {
   await requireTaskAccess(ctx, taskId, "view");
+  // Сортировка идёт по времени КОРНЯ обсуждения, а не по его id: id — это
+  // gen_random_uuid(), Postgres сравнивает его побайтово, и лента выстраивалась
+  // в случайном порядке. Ключи: когда начали обсуждение → какое именно
+  // обсуждение (развести два корня, созданных в одну миллисекунду, чтобы их
+  // ответы не перемешались) → время внутри обсуждения (корень раньше ответов).
   const rows = await prepare<CommentRow>(
     `${COMMENT_SELECT}
+     LEFT JOIN core.comments root ON root.id = c.parent_id
      WHERE c.entity_type = 'task' AND c.entity_id = ? AND c.deleted_at IS NULL
-     ORDER BY coalesce(c.parent_id, c.id), c.created_at`,
+     ORDER BY coalesce(root.created_at, c.created_at), coalesce(c.parent_id, c.id), c.created_at`,
   ).all(taskId);
   return rows.map(mapComment);
 }
