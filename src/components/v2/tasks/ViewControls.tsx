@@ -7,16 +7,16 @@
 //
 // Значения пишутся в persist-стор — настройки переживают перезагрузку.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
-  ArrowDown,
-  ArrowUp,
   Bookmark,
   Check,
   Columns3,
+  GripVertical,
   Group,
   ListTree,
   PanelRight,
+  Plus,
   RotateCcw,
   Settings2,
   Square,
@@ -176,9 +176,35 @@ function SubtaskModeSection() {
 
 // --- Колонки -------------------------------------------------------------------------
 
+/** Высота строки списка колонок. Держать синхронно с классом `h-8` ниже. */
+const ROW_HEIGHT = 32;
+
+/**
+ * Что происходит с списком прямо сейчас: `from` — откуда взяли строку, `to` —
+ * куда она встанет при отпускании, `dy` — насколько увели палец от места
+ * нажатия.
+ */
+interface ColumnDrag {
+  id: string;
+  from: number;
+  to: number;
+  dy: number;
+  step: number;
+}
+
 function ColumnsSection({ customFields }: { customFields: { id: string; name: string }[] }) {
   const columns = useViewStore((s) => s.columns);
   const setColumns = useViewStore((s) => s.setColumns);
+  const [drag, setDrag] = useState<ColumnDrag | null>(null);
+  const grabbedAt = useRef(0);
+  // Зеркало состояния для обработчиков: события указателя приходят пачками, и
+  // читать из них замыкание рендера — значит терять те, что пришли до перерисовки.
+  const dragRef = useRef<ColumnDrag | null>(null);
+
+  function setDragState(next: ColumnDrag | null) {
+    dragRef.current = next;
+    setDrag(next);
+  }
 
   const available = [
     ...BASE_COLUMNS.map((c) => ({ id: c.id, label: c.label })),
@@ -197,48 +223,141 @@ function ColumnsSection({ customFields }: { customFields: { id: string; name: st
     setColumns(columns.includes(id) ? columns.filter((c) => c !== id) : [...columns, id]);
   }
 
+  /**
+   * Новый порядок по перестановке среди видимых. В `columns` могут лежать id
+   * полей, которых уже нет в справочнике: их позиции не трогаем — иначе правка
+   * порядка молча выкидывала бы колонку, которая вернётся вместе с полем.
+   */
+  function reorder(from: number, to: number) {
+    if (from === to) return;
+    const ids = visible.map((c) => c.id);
+    const [moved] = ids.splice(from, 1);
+    ids.splice(to, 0, moved);
+    const slots = visible.map((c) => columns.indexOf(c.id));
+    const next = [...columns];
+    slots.forEach((slot, i) => {
+      next[slot] = ids[i];
+    });
+    setColumns(next);
+  }
+
   function move(id: string, delta: number) {
-    const idx = columns.indexOf(id);
-    const next = idx + delta;
-    if (idx < 0 || next < 0 || next >= columns.length) return;
-    const copy = [...columns];
-    [copy[idx], copy[next]] = [copy[next], copy[idx]];
-    setColumns(copy);
+    const from = visible.findIndex((c) => c.id === id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= visible.length) return;
+    reorder(from, to);
+  }
+
+  function beginDrag(e: React.PointerEvent<HTMLButtonElement>, index: number, id: string) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const row = e.currentTarget.parentElement;
+    grabbedAt.current = e.clientY;
+    // Захват указателя обязателен: без него палец, ушедший с ручки, перестаёт
+    // слать события. Отказ (указатель уже отпущен) не повод ронять обработчик.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* перетаскивание всё равно отработает, пока курсор над ручкой */
+    }
+    setDragState({ id, from: index, to: index, dy: 0, step: row?.getBoundingClientRect().height || ROW_HEIGHT });
+  }
+
+  function trackDrag(e: React.PointerEvent<HTMLButtonElement>) {
+    const current = dragRef.current;
+    if (!current) return;
+    const dy = e.clientY - grabbedAt.current;
+    // Куда встанет строка — чистая функция от смещения: так место вставки не
+    // «дребезжит» на границе соседей.
+    const to = Math.max(0, Math.min(visible.length - 1, current.from + Math.round(dy / current.step)));
+    setDragState({ ...current, dy, to });
+  }
+
+  /**
+   * Порядок записывается в стор ровно в тот момент, когда сбрасывается drag:
+   * следующий кадр рисует строки уже в новом порядке и с нулевыми сдвигами —
+   * то есть ровно там, где они были под пальцем. Отсюда и отсутствие рывка.
+   */
+  function endDrag() {
+    const current = dragRef.current;
+    if (!current) return;
+    reorder(current.from, current.to);
+    setDragState(null);
+  }
+
+  /** Сдвиг строки во время перетаскивания. */
+  function shiftOf(index: number): number {
+    if (!drag) return 0;
+    if (index === drag.from) {
+      // Не отпускаем строку за пределы списка: иначе она уезжает в никуда и
+      // тянет за собой полосу прокрутки поповера.
+      const up = -drag.from * drag.step;
+      const down = (visible.length - 1 - drag.from) * drag.step;
+      return Math.max(up, Math.min(down, drag.dy));
+    }
+    if (drag.from < drag.to && index > drag.from && index <= drag.to) return -drag.step;
+    if (drag.to < drag.from && index >= drag.to && index < drag.from) return drag.step;
+    return 0;
   }
 
   return (
     <>
       <span className={SUBHEAD}>Показаны</span>
-      <div className="flex flex-col">
-        {visible.map((c, i) => (
-          <div key={c.id} className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-muted">
-            <button
-              onClick={() => toggle(c.id)}
-              disabled={c.id === "title"}
-              className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm disabled:opacity-60"
+      <div className="flex select-none flex-col">
+        {visible.map((c, i) => {
+          const dragging = drag?.id === c.id;
+          return (
+            <div
+              key={c.id}
+              style={{ transform: `translate3d(0, ${shiftOf(i)}px, 0)`, zIndex: dragging ? 10 : undefined }}
+              className={cn(
+                "relative flex h-8 items-center gap-1 rounded px-1",
+                !drag && "hover:bg-muted",
+                dragging && "bg-background shadow-md ring-1 ring-ring",
+                // Соседи расступаются плавно — но переход живёт только на время
+                // перетаскивания. Оставить его включённым к моменту отпускания
+                // значит проиграть возврат из уже применённого сдвига: это и
+                // есть тот рывок, ради которого всё затевалось. Заодно соседи не
+                // ловят наведение, чтобы подсветка не бежала за курсором.
+                drag && !dragging && "pointer-events-none transition-transform duration-150 ease-out",
+              )}
             >
-              <Check className="size-3.5 shrink-0 text-primary" />
-              <span className="truncate">{c.label}</span>
-            </button>
-            <button
-              onClick={() => move(c.id, -1)}
-              disabled={i === 0}
-              className="rounded p-0.5 text-muted-foreground hover:bg-background disabled:opacity-30"
-              title="Выше"
-            >
-              <ArrowUp className="size-3" />
-            </button>
-            <button
-              onClick={() => move(c.id, 1)}
-              disabled={i === visible.length - 1}
-              className="rounded p-0.5 text-muted-foreground hover:bg-background disabled:opacity-30"
-              title="Ниже"
-            >
-              <ArrowDown className="size-3" />
-            </button>
-          </div>
-        ))}
+              <button
+                onPointerDown={(e) => beginDrag(e, i, c.id)}
+                onPointerMove={trackDrag}
+                onPointerUp={endDrag}
+                onPointerCancel={() => setDragState(null)}
+                onKeyDown={(e) => {
+                  if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                  e.preventDefault();
+                  move(c.id, e.key === "ArrowUp" ? -1 : 1);
+                }}
+                // touch-none обязателен: без него палец на телефоне прокручивает
+                // поповер вместо перетаскивания.
+                className={cn(
+                  "shrink-0 touch-none rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground",
+                  dragging ? "cursor-grabbing" : "cursor-grab",
+                )}
+                title="Перетащите, чтобы изменить порядок (или ↑/↓)"
+                aria-label={`Переместить колонку «${c.label}»`}
+              >
+                <GripVertical className="size-3.5" />
+              </button>
+              <button
+                onClick={() => toggle(c.id)}
+                disabled={c.id === "title"}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm disabled:opacity-60"
+                title={c.id === "title" ? "Без названия строка нечитаема" : "Скрыть колонку"}
+              >
+                <Check className="size-3.5 shrink-0 text-primary" />
+                <span className="truncate">{c.label}</span>
+              </button>
+            </div>
+          );
+        })}
       </div>
+      <p className="px-1 text-[11px] text-muted-foreground">
+        Порядок — перетаскиванием за ручку слева. Клик по названию убирает колонку.
+      </p>
 
       {hidden.length > 0 && (
         <>
@@ -248,9 +367,9 @@ function ColumnsSection({ customFields }: { customFields: { id: string; name: st
               <button
                 key={c.id}
                 onClick={() => toggle(c.id)}
-                className="flex items-center gap-2 rounded px-1 py-1 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="flex h-8 items-center gap-2 rounded px-1 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
               >
-                <span className="size-3.5 shrink-0" />
+                <Plus className="size-3.5 shrink-0 opacity-60" />
                 <span className="truncate">{c.label}</span>
               </button>
             ))}
