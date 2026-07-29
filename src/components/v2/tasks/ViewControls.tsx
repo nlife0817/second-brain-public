@@ -49,7 +49,7 @@ const GROUP_FIELDS: GroupByField[] = [
 
 const SUBTASK_MODES: SubtaskMode[] = ["nested", "flat", "hidden"];
 
-type SectionId = "group" | "subtasks" | "columns" | "views" | "open";
+export type SectionId = "group" | "subtasks" | "columns" | "views" | "open";
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof Group }[] = [
   { id: "group", label: "Группировка", icon: Group },
@@ -59,14 +59,31 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Group }[] = [
   { id: "open", label: "Открытие задачи", icon: PanelRight },
 ];
 
+/** Что из настроек умеет доска: колонок, группировки и подзадач у неё нет. */
+export const BOARD_SECTIONS: SectionId[] = ["views", "open"];
+
 const SUBHEAD = "px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground";
 
-/** Единственная кнопка настроек таблицы. */
-export function ViewSettingsPopover({ customFields }: { customFields: { id: string; name: string }[] }) {
-  const [section, setSection] = useState<SectionId>("group");
+/**
+ * Единственная кнопка настроек списка. `sections` сужает состав: доска
+ * показывает только то, на что она реагирует — раздел, не влияющий на экран,
+ * хуже отсутствующего, потому что выглядит сломанным.
+ */
+export function ViewSettingsPopover({
+  customFields,
+  sections = SECTIONS.map((s) => s.id),
+}: {
+  customFields: { id: string; name: string }[];
+  sections?: SectionId[];
+}) {
+  const shown = SECTIONS.filter((s) => sections.includes(s.id));
+  const [section, setSection] = useState<SectionId>(shown[0]?.id ?? "group");
   const activeViewId = useViewStore((s) => s.activeViewId);
   const savedViews = useViewStore((s) => s.savedViews);
   const activeView = savedViews.find((v) => v.id === activeViewId);
+  // Список разделов задаёт экран и не меняет по ходу жизни — но если выбранный
+  // всё же выпал, показываем первый доступный вместо пустой правой половины.
+  const current = shown.some((s) => s.id === section) ? section : (shown[0]?.id ?? "group");
 
   return (
     <Popover>
@@ -81,13 +98,13 @@ export function ViewSettingsPopover({ customFields }: { customFields: { id: stri
       <PopoverContent align="end" className="w-[min(92vw,460px)] gap-0 p-0">
         <div className="flex max-h-[70vh] min-h-0">
           <nav className="flex w-40 shrink-0 flex-col gap-0.5 border-r border-border p-1.5">
-            {SECTIONS.map(({ id, label, icon: Icon }) => (
+            {shown.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
                 onClick={() => setSection(id)}
                 className={cn(
                   "flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs",
-                  section === id
+                  current === id
                     ? "bg-muted font-medium text-foreground"
                     : "text-muted-foreground hover:bg-muted/60",
                 )}
@@ -98,11 +115,11 @@ export function ViewSettingsPopover({ customFields }: { customFields: { id: stri
             ))}
           </nav>
           <div className="flex min-w-0 flex-1 flex-col gap-2 overflow-y-auto p-2.5">
-            {section === "group" && <GroupBySection />}
-            {section === "subtasks" && <SubtaskModeSection />}
-            {section === "columns" && <ColumnsSection customFields={customFields} />}
-            {section === "views" && <SavedViewsSection />}
-            {section === "open" && <TaskOpenModeSection />}
+            {current === "group" && <GroupBySection />}
+            {current === "subtasks" && <SubtaskModeSection />}
+            {current === "columns" && <ColumnsSection customFields={customFields} />}
+            {current === "views" && <SavedViewsSection />}
+            {current === "open" && <TaskOpenModeSection />}
           </div>
         </div>
       </PopoverContent>

@@ -12,7 +12,9 @@ import {
   Calendar,
   Check,
   CheckCircle2,
+  Clock,
   CornerLeftUp,
+  Link2,
   Play,
   Plus,
   Square,
@@ -30,7 +32,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SheetHeader } from "@/components/ui/sheet";
-import { PRIORITY_ORDER } from "@/components/v2/tasks/draft-controls";
+import { formatEstimate } from "@/components/v2/tasks/cells";
+import {
+  ESTIMATE_POPOVER,
+  EstimateForm,
+  PRIORITY_ORDER,
+} from "@/components/v2/tasks/draft-controls";
 import { SegmentedPicker } from "@/components/v2/tasks/SegmentedPicker";
 import { SubtaskSection } from "@/components/v2/tasks/SubtaskSection";
 import { api } from "@/lib/core/client";
@@ -239,6 +246,29 @@ export function TaskSheet({
     if (savedTimer.current) clearTimeout(savedTimer.current);
   }, []);
 
+  // Ссылка на задачу. Копируем адрес роута /v2/tasks/<id>, а не текущий URL:
+  // тот зависит от того, откуда карточку открыли, и после пересылки увёл бы
+  // получателя на чужой экран (или на «Мои задачи», где этой задачи нет).
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (copiedTimer.current) clearTimeout(copiedTimer.current);
+  }, []);
+
+  const copyLink = useCallback(async () => {
+    if (!taskId) return;
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/v2/tasks/${taskId}`);
+      setLinkCopied(true);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setLinkCopied(false), 1600);
+    } catch {
+      // Буфер обмена закрыт настройками браузера — молчать нельзя, иначе
+      // кнопка выглядит сработавшей.
+      setError("Не удалось скопировать ссылку — браузер не дал доступ к буферу обмена");
+    }
+  }, [taskId]);
+
   // Раскладка: в широком модальном окне свойства уходят в правую колонку —
   // описание и обсуждение получают всю ширину. Панель остаётся одноколоночной.
   const openMode = useTaskOpenStore((s) => s.mode);
@@ -327,11 +357,15 @@ export function TaskSheet({
     if (typeof body.priority === "string") next.priority = body.priority as TaskPriority;
     if ("due_date" in body) next.due_date = body.due_date as string | null;
     if ("due_time" in body) next.due_time = body.due_time as string | null;
+    if ("estimated_minutes" in body) {
+      next.estimated_minutes = body.estimated_minutes as number | null;
+    }
     if (typeof body.status_id === "string") {
       next.status_id = body.status_id;
-      // Предсказание обязано повторять сервер (updateTask): разойдутся — и
-      // карточка мигнёт, получив ответ.
       const category = statuses.find((s) => s.id === body.status_id)?.category;
+      // Снимает метку любая категория кроме `done`, а не только «рабочая»:
+      // ровно так считает сервер (`becameDone`) и таблица (`applyLocal`).
+      // Проверка на «открытый» пропускала архив — карточка мигала ответом.
       if (category === "done") next.completed_at = prev.completed_at ?? new Date().toISOString();
       else if (category) next.completed_at = null;
     }
@@ -519,6 +553,58 @@ export function TaskSheet({
     } catch (e) {
       setSubtasks(previous);
       bumpSubtaskCounters(0, wasDone ? 1 : -1);
+      setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+    }
+  }
+
+  /**
+   * Предсказание для строки подзадачи. Правила те же, что у таблицы
+   * (`applyLocal` в `TaskTableView`) и у сервера: метку завершения снимает
+   * любой статус не вида `done`.
+   */
+  function previewSubtask(prev: TaskListItem, body: Record<string, unknown>): TaskListItem {
+    const { members } = storeApi.getState();
+    const next: TaskListItem = { ...prev };
+    for (const [key, value] of Object.entries(body)) {
+      if (key === "assignee_ids") {
+        const ids = new Set(value as string[]);
+        next.assignees = members
+          .filter((m) => ids.has(m.user_id))
+          .map((m) => ({ id: m.user_id, email: m.email, name: m.name, avatar_url: m.avatar_url }));
+      } else {
+        (next as unknown as Record<string, unknown>)[key] = value;
+      }
+    }
+    if ("status_id" in body) {
+      const category = statuses.find((s) => s.id === body.status_id)?.category;
+      if (category === "done" && !prev.completed_at) next.completed_at = new Date().toISOString();
+      if (category && category !== "done" && prev.completed_at) next.completed_at = null;
+    }
+    return next;
+  }
+
+  /**
+   * Правка поля подзадачи прямо в её строке — не открывая карточку. Счётчики
+   * родителя двигаем только когда метка завершения действительно поменялась:
+   * иначе колонка «Подзадачи» в списке за карточкой начнёт врать.
+   */
+  async function patchSubtask(sub: TaskListItem, body: Record<string, unknown>) {
+    if (!orgId) return;
+    const previous = subtasks;
+    const optimistic = previewSubtask(sub, body);
+    const deltaDone = (optimistic.completed_at ? 1 : 0) - (sub.completed_at ? 1 : 0);
+    setSubtasks((prev) => prev.map((s) => (s.id === sub.id ? optimistic : s)));
+    if (deltaDone !== 0) bumpSubtaskCounters(0, deltaDone, false);
+    try {
+      const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${sub.id}`, body);
+      if (currentTaskRef.current !== taskId) return;
+      setSubtasks((prev) => prev.map((s) => (s.id === sub.id ? { ...s, ...updated } : s)));
+      // Строка подзадачи живёт и в списке за карточкой — отдаём ей ответ сервера.
+      onChanged?.({ type: "patched", task: updated, confirmed: true });
+      setError(null);
+    } catch (e) {
+      setSubtasks(previous);
+      if (deltaDone !== 0) bumpSubtaskCounters(0, -deltaDone);
       setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
     }
   }
@@ -803,6 +889,44 @@ export function TaskSheet({
         <span className="flex items-center gap-2">{dueLabelContent}</span>
       )}
 
+      {/* Оценку правит и таблица, и черновик, и строка подзадачи — а в самой
+          карточке её не было вовсе. */}
+      <span className={propLabel}>Оценка</span>
+      {canEdit ? (
+        <Popover>
+          <PopoverTrigger
+            render={
+              <button
+                className="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+                title="Оценка"
+              />
+            }
+          >
+            <Clock className="size-4 shrink-0 text-muted-foreground" />
+            {task.estimated_minutes != null ? (
+              <span className="tabular-nums">{formatEstimate(task.estimated_minutes)}</span>
+            ) : (
+              <span className="text-muted-foreground">Указать оценку</span>
+            )}
+          </PopoverTrigger>
+          <PopoverContent align="start" className={ESTIMATE_POPOVER}>
+            <EstimateForm
+              value={task.estimated_minutes}
+              onChange={(estimated_minutes) => void patch({ estimated_minutes })}
+            />
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <span className="flex items-center gap-2">
+          <Clock className="size-4 shrink-0 text-muted-foreground" />
+          {task.estimated_minutes != null ? (
+            <span className="tabular-nums">{formatEstimate(task.estimated_minutes)}</span>
+          ) : (
+            <span className="text-muted-foreground">Не задана</span>
+          )}
+        </span>
+      )}
+
       {/* Повтор — свойство самой задачи: отдельного экрана правил больше нет,
           копия рождается из её текущего состояния. */}
       <span className={propLabel}>Повтор</span>
@@ -1051,6 +1175,16 @@ export function TaskSheet({
                 variant="ghost"
                 size="icon-sm"
                 className="size-9 sm:size-7"
+                onClick={() => void copyLink()}
+                title={linkCopied ? "Ссылка скопирована" : "Скопировать ссылку на задачу"}
+                aria-label="Скопировать ссылку на задачу"
+              >
+                {linkCopied ? <Check className="size-4 text-emerald-500" /> : <Link2 className="size-4" />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="size-9 sm:size-7"
                 onClick={() => void toggleFollow()}
                 title={amFollower ? "Не следить" : "Следить"}
               >
@@ -1130,6 +1264,7 @@ export function TaskSheet({
                   editable={canEdit}
                   onExpand={() => setExpandedTaskId(task.id)}
                   threadCount={docThreads.filter((t) => !t.resolved_at).length}
+                  collapsible
                 />
               )}
 
@@ -1137,9 +1272,11 @@ export function TaskSheet({
                 subtasks={subtasks}
                 canEdit={canEdit}
                 defaults={subtaskDefaults}
+                chainProjectIds={task.chain_project_ids}
                 onCreate={addSubtask}
                 onToggleDone={(s) => void toggleSubtaskDone(s)}
                 onOpen={openNested}
+                onPatch={(s, body) => void patchSubtask(s, body)}
                 onDelete={(s) => void deleteSubtask(s)}
                 onDetach={(s) => void detachSubtask(s)}
               />

@@ -12,12 +12,15 @@
 // пары запросов после гидрации. Дальше список живёт в клиентском кэше.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { KanbanSquare, Table2 } from "lucide-react";
 import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { CreateTaskDialog, TaskSheet } from "@/components/v2/lazy";
 import { accessLabel } from "@/components/v2/ProjectAccessPicker";
 import { ProjectIcon } from "@/components/v2/project-icons";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
+import { BOARD_SECTIONS, ViewSettingsPopover } from "@/components/v2/tasks/ViewControls";
+import { FilterButton, TaskCount, TaskSearch } from "@/components/v2/tasks/ViewToolbar";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import { useLoad } from "@/lib/core/use-load";
 import { applyTaskChange } from "@/lib/core/task-change";
@@ -31,7 +34,7 @@ import type {
 } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { ViewStoreProvider, projectScope, useViewStore } from "@/lib/core/view-store";
-import { showsDone } from "@/lib/core/views";
+import { filterTasks, makeMatchContext, showsDone, visiblePool } from "@/lib/core/views";
 import { cn } from "@/lib/utils";
 import { ProjectBoard } from "./ProjectBoard";
 
@@ -89,16 +92,21 @@ function ProjectScreen({
   initialProject: ProjectDetail;
   initialTasks: TaskRow[];
 }) {
-  const { orgId, statuses, metaLoading, refreshProjects } = useV2Store();
+  const { orgId, statuses, fields, me, metaLoading, refreshProjects } = useV2Store();
   const mode = useViewStore((s) => s.mode);
+  const filterGroups = useViewStore((s) => s.groups);
+  const search = useViewStore((s) => s.search);
   // Завершённые тянем с сервера только когда их просят показать: условие
   // «Готово = Показать» в «Фильтрах» — единственный переключатель, общий у
   // таблицы, доски и сводного списка.
-  const withDone = showsDone(useViewStore((s) => s.groups));
+  const withDone = showsDone(filterGroups);
+  // Ссылка вида /v2/tasks/<id> приводит сюда с ?task=<id> — карточку открываем
+  // сразу, как это делают «Мои задачи» для ссылок из push-уведомлений.
+  const deepLinkTaskId = useSearchParams().get("task");
 
   const [project, setProject] = useState<ProjectDetail | null>(initialProject);
   const [tasks, setTasks] = useState<TaskRow[]>(initialTasks);
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(deepLinkTaskId);
   const [createIn, setCreateIn] = useState<string | null | false>(false); // false = закрыт, null/statusId = открыт
   const [error, setError] = useState<string | null>(null);
   // Отдельно от `error`: тот означает «экран показать нечем» и подменяет собой
@@ -107,6 +115,15 @@ function ProjectScreen({
 
   const projectPath = orgId ? `/orgs/${orgId}/projects/${projectId}` : null;
   const tasksPath = projectPath ? `${projectPath}/tasks${withDone ? "?done=1" : ""}` : null;
+
+  // Ссылка сменилась при уже открытом экране (переход по другой ссылке на
+  // задачу) — открываем новую. Правка состояния в рендере, а не в эффекте: см.
+  // тот же приём в «Моих задачах».
+  const [seenDeepLink, setSeenDeepLink] = useState(deepLinkTaskId);
+  if (deepLinkTaskId !== seenDeepLink) {
+    setSeenDeepLink(deepLinkTaskId);
+    if (deepLinkTaskId) setOpenTaskId(deepLinkTaskId);
+  }
 
   // Серверные данные — в кэш: переход на соседний экран и назад обойдётся без
   // повторной пары запросов.
@@ -151,6 +168,19 @@ function ProjectScreen({
   // и уехавшая в личный инбокс, тут же пропала бы из списка. Стабильная ссылка —
   // иначе черновик сбрасывался бы на каждый ре-рендер экрана.
   const draftDefaults = useMemo(() => ({ project_ids: [projectId] }), [projectId]);
+
+  // Счётчик доски считает ровно то, что доска показывает: раскладка по колонкам
+  // отсеивает задачи теми же функциями. Таблица считает его у себя — там в
+  // знаменателе тот же пул до фильтра.
+  const matchCtx = useMemo(() => makeMatchContext(me?.id ?? null), [me?.id]);
+  const boardPool = useMemo(
+    () => visiblePool(tasks, filterGroups, statuses),
+    [tasks, filterGroups, statuses],
+  );
+  const boardShown = useMemo(
+    () => filterTasks(boardPool, filterGroups, search, matchCtx).length,
+    [boardPool, filterGroups, search, matchCtx],
+  );
 
   const createTask = useCallback(
     async (draft: TaskDraft) => {
@@ -249,11 +279,21 @@ function ProjectScreen({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b border-border px-6 py-3.5">
+      {/* Шапка доски повторяет шапку таблицы: те же поиск, фильтры и счётчик,
+          потому что настройки у обоих видов общие. Отличие одно — в настройках
+          представления доске отданы только применимые разделы. */}
+      <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
         {title}
+        <TaskCount shown={boardShown} total={boardPool.length} />
+        <TaskSearch />
+        <FilterButton />
         <span className="flex-1" />
         <ViewSwitch />
         <CardSettingsPopover />
+        {/* Участники, настройки проекта и «+ Задача» отсюда убраны: настройки
+            открываются карандашом из сайдбара, участники видны на вкладке
+            «Доступ», задачу заводят кнопкой «+» в колонке. */}
+        <ViewSettingsPopover customFields={fields} sections={BOARD_SECTIONS} />
       </header>
 
       <ProjectBoard

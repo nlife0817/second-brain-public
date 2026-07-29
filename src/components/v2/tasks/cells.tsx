@@ -5,7 +5,7 @@
 // саму мутацию делает страница.
 
 import { memo, useEffect, useRef, useState } from "react";
-import { Check, MessageSquare, Pencil, X } from "lucide-react";
+import { Check, CornerDownRight, MessageSquare, Pencil, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarStack, PRIORITY_LABELS, PriorityDot, chipStyle, dueTone, formatDue } from "@/components/v2/bits";
 import { DuePicker } from "@/components/v2/DuePicker";
@@ -171,6 +171,16 @@ export const TitleCell = memo(function TitleCell({
       className={cn("group/title flex w-full min-w-0 gap-1", ctx.wrapTitle ? "items-start py-1" : "h-full items-center")}
       style={{ paddingLeft: depth * 16 + 6 }}
     >
+      {/* При группировке подзадача едет в группу родителя и её собственный
+          статус в колонке отличается от заголовка группы. Без явного знака
+          вложенности такая строка читается как ошибка списка; на телефоне
+          отступ в 16 px — и вовсе единственный признак. */}
+      {depth > 0 && (
+        <CornerDownRight
+          aria-label="Подзадача"
+          className={cn("size-3 shrink-0 text-muted-foreground/60", ctx.wrapTitle && "mt-1")}
+        />
+      )}
       <button
         onClick={() => onOpen(task.id)}
         className={cn(

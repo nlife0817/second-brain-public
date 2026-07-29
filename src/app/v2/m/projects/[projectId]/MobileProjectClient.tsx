@@ -11,6 +11,7 @@
 // автоматическое обновление при возврате в приложение.
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ChevronLeft, Plus, RefreshCw, Settings } from "lucide-react";
 import { CreateTaskDialog, TaskSheet } from "@/components/v2/lazy";
@@ -61,12 +62,23 @@ function MobileProjectScreen({
   const { orgId, statuses, metaLoading, refreshProjects } = useV2Store();
   // Завершённые приходят только по условию «Готово = Показать» в «Фильтрах».
   const withDone = showsDone(useViewStore((s) => s.groups));
+  // Ссылка на задачу (/v2/tasks/<id>) приводит в проект с ?task=<id>; proxy
+  // переносит параметр на мобильный адрес.
+  const deepLinkTaskId = useSearchParams().get("task");
 
   const [project, setProject] = useState<ProjectDetail | null>(initialProject);
   const [tasks, setTasks] = useState<TaskRow[]>(initialTasks);
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(deepLinkTaskId);
   const [createOpen, setCreateOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Подстройка под сменившуюся ссылку — в рендере: эффект дал бы лишний проход
+  // до отрисовки (см. то же в «Моих задачах»).
+  const [seenDeepLink, setSeenDeepLink] = useState(deepLinkTaskId);
+  if (deepLinkTaskId !== seenDeepLink) {
+    setSeenDeepLink(deepLinkTaskId);
+    if (deepLinkTaskId) setOpenTaskId(deepLinkTaskId);
+  }
 
   const projectPath = orgId ? `/orgs/${orgId}/projects/${projectId}` : null;
   const tasksPath = projectPath ? `${projectPath}/tasks${withDone ? "?done=1" : ""}` : null;

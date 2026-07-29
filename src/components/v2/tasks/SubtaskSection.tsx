@@ -10,7 +10,7 @@
 // поверх карточки это на телефоне давало бы две наложенные шторки.
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
   ChevronDown,
@@ -44,7 +44,7 @@ import {
 import { DuePicker } from "@/components/v2/DuePicker";
 import { defaultStatus } from "@/lib/core/status-model";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
-import type { CustomField, TaskListItem } from "@/lib/core/types";
+import type { CustomField, TaskListItem, TaskPriority } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { formatEstimate } from "./cells";
@@ -77,13 +77,28 @@ const CHIP =
 const CHIP_EMPTY = "text-muted-foreground/70";
 const CHIP_SET = "text-foreground";
 
+/**
+ * Незаполненный параметр подзадачи: строка не должна шуметь пятью пустыми
+ * плейсхолдерами, поэтому такой чип проявляется по наведению.
+ *
+ * `data-[popup-open]` обязателен — иначе уведённая с строки мышь гасит чип
+ * вместе с его открытым меню. На телефоне наведения не существует, а карточку
+ * там открывают три экрана: под `[data-mobile-v2]` (атрибут стоит на `<html>`)
+ * пустые чипы видны всегда, иначе параметры подзадачи недостижимы вовсе.
+ */
+const CHIP_ON_HOVER =
+  "opacity-0 transition-opacity focus-visible:opacity-100 data-[popup-open]:opacity-100 " +
+  "group-hover/sub:opacity-100 group-focus-within/sub:opacity-100 [[data-mobile-v2]_&]:opacity-100";
+
 export function SubtaskSection({
   subtasks,
   canEdit,
   defaults,
+  chainProjectIds,
   onCreate,
   onToggleDone,
   onOpen,
+  onPatch,
   onDelete,
   onDetach,
 }: {
@@ -91,9 +106,12 @@ export function SubtaskSection({
   canEdit: boolean;
   /** Что карточка проставляет в черновик подзадачи — проекты родителя и т.п. */
   defaults: Partial<TaskDraft>;
+  /** Проекты цепочки родителя: по ним сужается выбор исполнителей подзадачи. */
+  chainProjectIds: string[];
   onCreate: (draft: TaskDraft) => Promise<void>;
   onToggleDone: (sub: TaskListItem) => void;
   onOpen: (taskId: string) => void;
+  onPatch: (sub: TaskListItem, body: Record<string, unknown>) => void;
   onDelete: (sub: TaskListItem) => void;
   onDetach: (sub: TaskListItem) => void;
 }) {
@@ -124,8 +142,10 @@ export function SubtaskSection({
             key={s.id}
             sub={s}
             canEdit={canEdit}
+            chainProjectIds={chainProjectIds}
             onToggleDone={onToggleDone}
             onOpen={onOpen}
+            onPatch={onPatch}
             onDelete={onDelete}
             onDetach={onDetach}
           />
@@ -141,57 +161,121 @@ export function SubtaskSection({
 function SubtaskRow({
   sub,
   canEdit,
+  chainProjectIds,
   onToggleDone,
   onOpen,
+  onPatch,
   onDelete,
   onDetach,
 }: {
   sub: TaskListItem;
   canEdit: boolean;
+  /** Проекты цепочки родителя — см. `projectIds` ниже. */
+  chainProjectIds: string[];
   onToggleDone: (sub: TaskListItem) => void;
   onOpen: (taskId: string) => void;
+  onPatch: (sub: TaskListItem, body: Record<string, unknown>) => void;
   onDelete: (sub: TaskListItem) => void;
   onDetach: (sub: TaskListItem) => void;
 }) {
   const isDone = !!sub.completed_at;
   const due = formatDue(sub.due_date, sub.due_time);
 
+  // Состав исполнителей закрытого проекта сервер сужает по всей цепочке
+  // (`access.chainProjectIds`), а собственных размещений у подзадачи может не
+  // быть вовсе. По одним её `placements` список вышел бы на всю организацию —
+  // и сохранение закончилось бы отказом.
+  const projectIds = useMemo(
+    () => Array.from(new Set([...sub.placements.map((p) => p.project_id), ...chainProjectIds])),
+    [sub.placements, chainProjectIds],
+  );
+
+  const mark = isDone ? (
+    <CheckCircle2 className="size-4 text-emerald-500" />
+  ) : (
+    <Circle className="size-4 text-muted-foreground" />
+  );
+
   return (
-    <div className="flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-muted/50">
-      <button
-        onClick={() => onToggleDone(sub)}
-        title={isDone ? "Вернуть в работу" : "Завершить"}
-        className="shrink-0"
-      >
-        {isDone ? (
-          <CheckCircle2 className="size-4 text-emerald-500" />
-        ) : (
-          <Circle className="size-4 text-muted-foreground" />
-        )}
-      </button>
+    <div className="group/sub flex items-center gap-0.5 rounded-md px-1 py-0.5 hover:bg-muted/50">
+      {/* Гостю кружок не кликабелен: сервер такую правку всё равно отвергнет. */}
+      {canEdit ? (
+        <button
+          onClick={() => onToggleDone(sub)}
+          title={isDone ? "Вернуть в работу" : "Завершить"}
+          className="shrink-0"
+        >
+          {mark}
+        </button>
+      ) : (
+        <span className="shrink-0" title={isDone ? "Завершена" : "В работе"}>
+          {mark}
+        </span>
+      )}
       {/* Название открывает карточку подзадачи: она такая же задача, и все её
           поля правятся там же, где у обычной. */}
       <button
         onClick={() => onOpen(sub.id)}
         className={cn(
-          "min-w-0 flex-1 truncate py-0.5 text-left text-sm hover:underline",
+          "mx-1 min-w-0 flex-1 truncate py-0.5 text-left text-sm hover:underline",
           isDone && "text-muted-foreground line-through",
         )}
         title={sub.title}
       >
         {sub.title}
       </button>
-      {sub.priority !== "none" && (
-        <span title={PRIORITY_LABELS[sub.priority].label}>
-          <PriorityDot priority={sub.priority} />
-        </span>
+
+      {/* Те же параметры, что задаются в момент создания подзадачи. Проекты,
+          теги и кастомные поля сюда не выносим: они и в строке создания спрятаны
+          под «развернуть», а правятся отдельными эндпоинтами. */}
+      {canEdit ? (
+        <>
+          <PriorityChip
+            value={sub.priority}
+            onChange={(priority) => onPatch(sub, { priority })}
+            className={sub.priority === "none" ? CHIP_ON_HOVER : undefined}
+          />
+          <StatusChip
+            value={sub.status_id}
+            onChange={(status_id) => onPatch(sub, { status_id })}
+            className={cn("max-w-28", !sub.status_id && CHIP_ON_HOVER)}
+          />
+          <AssigneesChip
+            value={sub.assignees.map((a) => a.id)}
+            projectIds={projectIds}
+            onChange={(assignee_ids) => onPatch(sub, { assignee_ids })}
+            className={sub.assignees.length === 0 ? CHIP_ON_HOVER : undefined}
+          />
+          <DueChip
+            date={sub.due_date}
+            time={sub.due_time}
+            done={isDone}
+            onChange={(next) => onPatch(sub, next)}
+            className={sub.due_date ? undefined : CHIP_ON_HOVER}
+          />
+          <EstimateChip
+            value={sub.estimated_minutes}
+            onChange={(estimated_minutes) => onPatch(sub, { estimated_minutes })}
+            className={sub.estimated_minutes == null ? CHIP_ON_HOVER : undefined}
+          />
+        </>
+      ) : (
+        <>
+          {sub.priority !== "none" && (
+            <span title={PRIORITY_LABELS[sub.priority].label}>
+              <PriorityDot priority={sub.priority} />
+            </span>
+          )}
+          {due && (
+            <span
+              className={cn("shrink-0 px-1 text-[11px] tabular-nums", dueTone(sub.due_date, isDone))}
+            >
+              {due}
+            </span>
+          )}
+          {sub.assignees.length > 0 && <AvatarStack users={sub.assignees} max={2} />}
+        </>
       )}
-      {due && (
-        <span className={cn("shrink-0 text-[11px] tabular-nums", dueTone(sub.due_date, isDone))}>
-          {due}
-        </span>
-      )}
-      {sub.assignees.length > 0 && <AvatarStack users={sub.assignees} max={2} />}
       {canEdit && (
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -291,11 +375,18 @@ function SubtaskComposer({
           placeholder="Новая подзадача…"
           className="h-7 min-w-32 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"
         />
-        <PriorityChip draft={draft} patch={patch} />
-        <StatusChip draft={draft} patch={patch} />
-        <AssigneesChip draft={draft} patch={patch} />
-        <DueChip draft={draft} patch={patch} />
-        <EstimateChip draft={draft} patch={patch} />
+        <PriorityChip value={draft.priority} onChange={(priority) => patch({ priority })} />
+        <StatusChip value={draft.status_id} onChange={(status_id) => patch({ status_id })} />
+        <AssigneesChip
+          value={draft.assignee_ids}
+          projectIds={draft.project_ids}
+          onChange={(assignee_ids) => patch({ assignee_ids })}
+        />
+        <DueChip date={draft.due_date} time={draft.due_time} onChange={(next) => patch(next)} />
+        <EstimateChip
+          value={draft.estimated_minutes}
+          onChange={(estimated_minutes) => patch({ estimated_minutes })}
+        />
         <button
           onClick={() => setExpanded((v) => !v)}
           className={cn(CHIP, CHIP_EMPTY)}
@@ -402,47 +493,68 @@ function SubtaskDraftDetails({ draft, patch }: DraftProps) {
 
 // --- Чипы редакторов ----------------------------------------------------------------
 
+// Чипы работают парой {value, onChange}, а не черновиком целиком: те же самые
+// контролы обслуживают и строку создания, и строку существующей подзадачи —
+// у второй никакого `TaskDraft` нет, есть задача и PATCH.
+
 interface DraftProps {
   draft: TaskDraft;
   patch: (change: Partial<TaskDraft>) => void;
 }
 
-function PriorityChip({ draft, patch }: DraftProps) {
-  const set = draft.priority !== "none";
+function PriorityChip({
+  value,
+  onChange,
+  className,
+}: {
+  value: TaskPriority;
+  onChange: (priority: TaskPriority) => void;
+  className?: string;
+}) {
+  const set = value !== "none";
   return (
     <Popover>
       <PopoverTrigger
         render={
           <button
-            className={cn(CHIP, set ? CHIP_SET : CHIP_EMPTY)}
-            title={`Приоритет: ${PRIORITY_LABELS[draft.priority].label}`}
+            className={cn(CHIP, set ? CHIP_SET : CHIP_EMPTY, className)}
+            title={`Приоритет: ${PRIORITY_LABELS[value].label}`}
           />
         }
       >
         {set ? (
-          <PriorityDot priority={draft.priority} />
+          <PriorityDot priority={value} />
         ) : (
           <span className="size-2 rounded-full border border-dashed border-muted-foreground/60" />
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className={PRIORITY_POPOVER}>
-        <PriorityMenu value={draft.priority} onChange={(priority) => patch({ priority })} />
+        <PriorityMenu value={value} onChange={onChange} />
       </PopoverContent>
     </Popover>
   );
 }
 
-function StatusChip({ draft, patch }: DraftProps) {
+function StatusChip({
+  value,
+  onChange,
+  className,
+}: {
+  value: string | null;
+  onChange: (statusId: string | null) => void;
+  className?: string;
+}) {
   const statuses = useV2Store((s) => s.statuses);
-  // Как и в строке создания: показываем статус, с которым подзадача родится.
-  const status = statuses.find((s) => s.id === draft.status_id) ?? defaultStatus(statuses);
+  // Пока статус не выбран, показываем тот, с которым подзадача родится, —
+  // иначе чип врёт про будущий результат.
+  const status = statuses.find((s) => s.id === value) ?? defaultStatus(statuses);
   return (
     <Popover>
       <PopoverTrigger
         render={
           <button
-            className={cn(CHIP, "max-w-32", status ? CHIP_SET : CHIP_EMPTY)}
-            title="Статус"
+            className={cn(CHIP, "max-w-32", status ? CHIP_SET : CHIP_EMPTY, className)}
+            title={status ? `Статус: ${status.name}` : "Статус"}
           />
         }
       >
@@ -459,21 +571,31 @@ function StatusChip({ draft, patch }: DraftProps) {
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className={MENU_POPOVER}>
-        <StatusMenu value={draft.status_id} onChange={(status_id) => patch({ status_id })} />
+        <StatusMenu value={value} onChange={onChange} />
       </PopoverContent>
     </Popover>
   );
 }
 
-function AssigneesChip({ draft, patch }: DraftProps) {
+function AssigneesChip({
+  value,
+  projectIds,
+  onChange,
+  className,
+}: {
+  value: string[];
+  projectIds: string[];
+  onChange: (userIds: string[]) => void;
+  className?: string;
+}) {
   const members = useV2Store((s) => s.members);
-  const selected = members.filter((m) => draft.assignee_ids.includes(m.user_id));
+  const selected = members.filter((m) => value.includes(m.user_id));
   return (
     <Popover>
       <PopoverTrigger
         render={
           <button
-            className={cn(CHIP, selected.length > 0 ? CHIP_SET : CHIP_EMPTY)}
+            className={cn(CHIP, selected.length > 0 ? CHIP_SET : CHIP_EMPTY, className)}
             title="Исполнители"
           />
         }
@@ -493,28 +615,37 @@ function AssigneesChip({ draft, patch }: DraftProps) {
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className={WIDE_MENU_POPOVER}>
-        <AssigneesMenu
-          value={draft.assignee_ids}
-          projectIds={draft.project_ids}
-          onChange={(assignee_ids) => patch({ assignee_ids })}
-        />
+        <AssigneesMenu value={value} projectIds={projectIds} onChange={onChange} />
       </PopoverContent>
     </Popover>
   );
 }
 
-function DueChip({ draft, patch }: DraftProps) {
-  const text = formatDue(draft.due_date, draft.due_time);
+function DueChip({
+  date,
+  time,
+  done = false,
+  onChange,
+  className,
+}: {
+  date: string | null;
+  time: string | null;
+  /** Просроченный срок у завершённой задачи красным не подсвечиваем. */
+  done?: boolean;
+  onChange: (next: { due_date: string | null; due_time: string | null }) => void;
+  className?: string;
+}) {
+  const text = formatDue(date, time);
   return (
     <DuePicker
-      date={draft.due_date}
-      time={draft.due_time}
-      triggerClassName={cn(CHIP, text ? CHIP_SET : CHIP_EMPTY)}
-      onCommit={(next) => patch(next)}
+      date={date}
+      time={time}
+      triggerClassName={cn(CHIP, text ? CHIP_SET : CHIP_EMPTY, className)}
+      onCommit={onChange}
     >
       {/* Подпись на самом триггере: DuePicker пробрасывает наружу только класс. */}
       {text ? (
-        <span className={cn("tabular-nums", dueTone(draft.due_date, false))} title="Срок">
+        <span className={cn("tabular-nums", dueTone(date, done))} title="Срок">
           {text}
         </span>
       ) : (
@@ -524,24 +655,31 @@ function DueChip({ draft, patch }: DraftProps) {
   );
 }
 
-function EstimateChip({ draft, patch }: DraftProps) {
-  const set = draft.estimated_minutes != null;
+function EstimateChip({
+  value,
+  onChange,
+  className,
+}: {
+  value: number | null;
+  onChange: (minutes: number | null) => void;
+  className?: string;
+}) {
+  const set = value != null;
   return (
     <Popover>
       <PopoverTrigger
-        render={<button className={cn(CHIP, set ? CHIP_SET : CHIP_EMPTY)} title="Оценка" />}
+        render={
+          <button className={cn(CHIP, set ? CHIP_SET : CHIP_EMPTY, className)} title="Оценка" />
+        }
       >
         {set ? (
-          <span className="tabular-nums">{formatEstimate(draft.estimated_minutes!)}</span>
+          <span className="tabular-nums">{formatEstimate(value)}</span>
         ) : (
           <Clock className="size-3.5" />
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className={ESTIMATE_POPOVER}>
-        <EstimateForm
-          value={draft.estimated_minutes}
-          onChange={(estimated_minutes) => patch({ estimated_minutes })}
-        />
+        <EstimateForm value={value} onChange={onChange} />
       </PopoverContent>
     </Popover>
   );

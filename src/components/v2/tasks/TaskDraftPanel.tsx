@@ -9,6 +9,7 @@ import dynamic from "next/dynamic";
 import { Calendar, ChevronsRight, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -16,13 +17,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle } from "@/components/v2/bits";
+import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle, formatDue } from "@/components/v2/bits";
+import { DuePicker } from "@/components/v2/DuePicker";
 import { MemberPicker } from "@/components/v2/MemberPicker";
 import { SidePanel } from "@/components/v2/SidePanel";
 import { defaultStatus } from "@/lib/core/status-model";
 import type { TaskDraft } from "@/lib/core/task-draft";
 import type { TaskPriority } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
+import { MENU_POPOVER, TagsMenu } from "./draft-controls";
 import { DraftFieldControl } from "./draft-fields";
 
 const RichText = dynamic(() => import("@/components/v2/RichText").then((m) => m.RichText), {
@@ -61,6 +64,9 @@ export function TaskDraftPanel({
     .map((id) => members.find((m) => m.user_id === id))
     .filter((m): m is NonNullable<typeof m> => !!m)
     .map((m) => ({ id: m.user_id, email: m.email, name: m.name, avatar_url: m.avatar_url }));
+
+  const selectedTags = tags.filter((t) => draft.tag_ids.includes(t.id));
+  const dueText = formatDue(draft.due_date, draft.due_time);
 
   // Поле проекта показываем только если задача в этот проект и правда попадёт.
   const visibleFields = fields.filter(
@@ -135,28 +141,22 @@ export function TaskDraftPanel({
             </Select>
 
             <span className="text-muted-foreground">Срок</span>
-            <div className="flex items-center gap-2">
-              <Calendar className="size-4 text-muted-foreground" />
-              <input
-                type="date"
-                value={draft.due_date ?? ""}
-                onChange={(e) =>
-                  onChange({
-                    due_date: e.target.value || null,
-                    // Время без даты сервер не примет.
-                    due_time: e.target.value ? draft.due_time : null,
-                  })
-                }
-                className="rounded-md border border-border bg-background px-2 py-1 text-sm"
-              />
-              <input
-                type="time"
-                value={draft.due_time?.slice(0, 5) ?? ""}
-                disabled={!draft.due_date}
-                onChange={(e) => onChange({ due_time: e.target.value || null })}
-                className="rounded-md border border-border bg-background px-2 py-1 text-sm disabled:opacity-50"
-              />
-            </div>
+            {/* Тот же календарь с быстрыми датами, что и в карточке, вместо пары
+                нативных полей: «Развернуть» должно показывать задачу такой, какой
+                она будет после сохранения. Время без даты DuePicker снимает сам. */}
+            <DuePicker
+              date={draft.due_date}
+              time={draft.due_time}
+              triggerClassName="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+              onCommit={(next) => onChange(next)}
+            >
+              <Calendar className="size-4 shrink-0 text-muted-foreground" />
+              {dueText ? (
+                <span className="tabular-nums">{dueText}</span>
+              ) : (
+                <span className="text-muted-foreground">Указать срок</span>
+              )}
+            </DuePicker>
 
             <span className="text-muted-foreground">Оценка</span>
             <div className="flex items-center gap-2">
@@ -181,12 +181,13 @@ export function TaskDraftPanel({
               {assignees.map((a) => (
                 <span
                   key={a.id}
-                  className="inline-flex items-center gap-1 rounded-full bg-muted py-0.5 pl-0.5 pr-2 text-xs"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card py-0.5 pl-0.5 pr-2 text-xs shadow-xs"
                 >
                   <Avatar user={a} size="xs" />
                   {a.name || a.email}
                   <button
-                    className="text-muted-foreground hover:text-foreground"
+                    className="text-muted-foreground hover:text-destructive"
+                    title="Снять исполнителя"
                     onClick={() =>
                       onChange({ assignee_ids: draft.assignee_ids.filter((x) => x !== a.id) })
                     }
@@ -203,30 +204,41 @@ export function TaskDraftPanel({
             </div>
 
             <span className="text-muted-foreground">Теги</span>
+            {/* Как в карточке: только надетые теги, добавление — через «+ тег».
+                Полный список организации полупрозрачными чипами превращал панель
+                в кашу ровно так же, как когда-то карточку. */}
             <div className="flex flex-wrap items-center gap-1.5">
-              {tags.map((t) => {
-                const active = draft.tag_ids.includes(t.id);
-                return (
+              {selectedTags.map((t) => (
+                <span
+                  key={t.id}
+                  className="tinted-chip inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                  style={chipStyle(t.color)}
+                >
+                  {t.name}
                   <button
-                    key={t.id}
-                    onClick={() =>
-                      onChange({
-                        tag_ids: active
-                          ? draft.tag_ids.filter((x) => x !== t.id)
-                          : [...draft.tag_ids, t.id],
-                      })
-                    }
-                    className={
-                      "tinted-chip rounded-full px-2 py-0.5 text-[11px] font-medium transition-opacity " +
-                      (active ? "" : "opacity-40 hover:opacity-80")
-                    }
-                    style={chipStyle(t.color)}
+                    className="opacity-55 transition-opacity hover:opacity-100"
+                    title="Снять тег"
+                    onClick={() => onChange({ tag_ids: draft.tag_ids.filter((x) => x !== t.id) })}
                   >
-                    {t.name}
+                    <X className="size-3" />
                   </button>
-                );
-              })}
-              {tags.length === 0 && <span className="text-xs text-muted-foreground">Нет тегов</span>}
+                </span>
+              ))}
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <button
+                      className="flex h-6 items-center gap-1 rounded-full border border-dashed border-border px-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary"
+                      title="Добавить тег"
+                    />
+                  }
+                >
+                  <Plus className="size-3" /> тег
+                </PopoverTrigger>
+                <PopoverContent align="start" className={MENU_POPOVER}>
+                  <TagsMenu value={draft.tag_ids} onChange={(tag_ids) => onChange({ tag_ids })} />
+                </PopoverContent>
+              </Popover>
             </div>
 
             <span className="text-muted-foreground">Проекты</span>
