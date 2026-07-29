@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Экран · CRM — воронка продаж</title>
+<link rel="stylesheet" href="sb.css">
+<script src="sb.js" defer></script>
+<style>
+/* ── Специфика CRM — поверх sb.css ── */
+
+/* Вкладки экрана */
+.seg { display: flex; border: 1.5px solid var(--border-input); border-radius: 9px; overflow: hidden; background: var(--surface); }
+.seg button {
+  border: none; background: none; padding: 6px 13px;
+  font-size: 12.5px; font-weight: 500; cursor: pointer;
+  font-family: var(--font-main); color: var(--text-secondary);
+}
+.seg button.is-on { background: var(--text-primary); color: #fff; font-weight: 600; }
+
+/* Доска сделок */
+.k-col__head .sum { margin-left: auto; font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.k-col--won .sum { color: var(--success-text); }
+.k-card .amount { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; margin-top: 5px; }
+.k-card .contact { font-size: 11.5px; color: var(--text-secondary); margin-top: 3px; }
+.age { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-family: var(--font-mono); color: var(--text-muted); white-space: nowrap; }
+.age svg { width: 11px; height: 11px; }
+.age--warn { color: var(--warning-text); font-weight: 600; }
+.next-step { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-secondary); min-width: 0; }
+.next-step svg { width: 11px; height: 11px; flex: none; }
+.next-step span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.no-step { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--danger); }
+.no-step svg { width: 11px; height: 11px; }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; animation: pu 1.8s infinite; }
+@keyframes pu {
+  0% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  70% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.fresh { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--accent-text); font-family: var(--font-mono); }
+
+/* Карточка сделки */
+.stagebar { display: flex; gap: 4px; }
+.stagebar button {
+  flex: 1; border: none; border-radius: 7px; padding: 5px 4px 4px;
+  font-family: var(--font-main); font-size: 10.5px; font-weight: 600;
+  background: rgba(28,25,18,.05); color: var(--text-muted);
+  cursor: pointer; transition: .15s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.stagebar button.is-done { background: var(--accent-soft); color: var(--accent-text); }
+.stagebar button.is-current { background: var(--accent); color: #fff; box-shadow: var(--shadow-accent); }
+.stagebar button:hover:not(.is-current) { background: rgba(28,25,18,.09); color: var(--text-primary); }
+.attr {
+  background: var(--bg); border: 1px solid var(--border-divider);
+  border-radius: 12px; padding: 11px 13px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.attr__row { display: flex; align-items: baseline; gap: 10px; font-size: 12px; }
+.attr__row .k { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; width: 108px; flex: none; }
+.attr__row .v { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); word-break: break-all; }
+.tl { display: flex; flex-direction: column; gap: 11px; }
+.tl-item { display: flex; gap: 10px; font-size: 12.5px; line-height: 1.45; }
+.tl-item .t { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted); width: 92px; flex: none; padding-top: 2px; text-align: right; }
+.tl-item .note {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 11px; box-shadow: var(--shadow-xs); margin-top: 3px;
+}
+.task-row {
+  display: flex; align-items: center; gap: 9px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 11px; font-size: 13px; box-shadow: var(--shadow-xs);
+}
+.task-row .due { margin-left: auto; font-family: var(--font-mono); font-size: 11.5px; color: var(--warning-text); }
+.sec-label { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+
+/* Аналитика */
+.ana { padding: 18px 20px 48px; display: flex; flex-direction: column; gap: 14px; max-width: 1040px; }
+.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 13px 16px; box-shadow: var(--shadow-sm); }
+.kpi .lbl { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+.kpi .val { font-size: 22px; font-weight: 700; letter-spacing: -0.4px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.kpi .sub { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.ana-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow-sm); }
+.ana-card > h3 { font-size: 13.5px; font-weight: 700; letter-spacing: -0.1px; }
+.ana-card > .hint { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.fun { margin-top: 14px; display: flex; flex-direction: column; }
+.fun-row { display: grid; grid-template-columns: 128px 1fr 120px; align-items: center; gap: 12px; }
+.fun-row .lbl { font-size: 12.5px; font-weight: 600; text-align: right; }
+.fun-bar { height: 26px; border-radius: 7px; background: linear-gradient(90deg, var(--accent), #f59e6c); min-width: 3px; }
+.fun-bar--won { background: linear-gradient(90deg, #10b981, #34d399); }
+.fun-row .num { font-size: 12px; font-family: var(--font-mono); color: var(--text-secondary); white-space: nowrap; }
+.fun-conv { display: grid; grid-template-columns: 128px 1fr; gap: 12px; padding: 3px 0; }
+.fun-conv span { grid-column: 2; font-size: 10.5px; font-family: var(--font-mono); color: var(--text-muted); padding-left: 2px; }
+.mini-table { margin-top: 10px; }
+.mini-table .t-head, .mini-table .t-row { padding: 0 6px; }
+.mini-table .t-row { height: 38px; }
+.num-cell { font-family: var(--font-mono); font-size: 12px; justify-content: flex-end; }
+
+/* Панель решений (только для ревью) */
+.ux-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 60;
+  display: inline-flex; align-items: center; gap: 8px;
+  border: none; border-radius: 12px; padding: 10px 15px;
+  background: var(--dark); color: #fff; font-family: var(--font-main);
+  font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: var(--shadow-lg);
+}
+.ux-fab svg { width: 15px; height: 15px; color: #fbbf24; }
+.ux-pane {
+  position: fixed; right: 20px; bottom: 66px; width: 316px; z-index: 60;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: var(--shadow-lg); overflow: hidden;
+  max-height: min(560px, calc(100vh - 120px));
+  display: none; flex-direction: column;
+}
+.ux-pane.is-open { display: flex; }
+.ux-pane__head { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border-divider); font-size: 12.5px; font-weight: 700; }
+.ux-pane__body { overflow-y: auto; padding: 6px; }
+.ux-item {
+  display: flex; gap: 9px; padding: 8px 9px; border-radius: 10px; cursor: pointer;
+  font-size: 12px; line-height: 1.45; color: var(--text-secondary); transition: .15s;
+}
+.ux-item:hover { background: var(--accent-soft); color: var(--text-primary); }
+.ux-item b { color: var(--text-primary); display: block; font-size: 12px; }
+.ux-item .n {
+  width: 18px; height: 18px; border-radius: 6px; flex: none;
+  background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700;
+  display: grid; place-items: center; margin-top: 1px;
+}
+.ux-hl { outline: 2px solid var(--accent) !important; outline-offset: 3px; border-radius: 8px; }
+</style>
+</head>
+<body>
+<nav class="proto-nav">
+  <span class="proto-nav__brand"><span class="dot"></span>Second Brain · Оранж</span>
+  <a href="index.html">Обзор</a>
+  <a href="foundations.html">Основы</a>
+  <a href="controls.html">Элементы</a>
+  <a href="overlays.html">Окна и слои</a>
+  <a href="task-card.html">Карточка задачи</a>
+  <a href="screen-tasks.html">Таблица</a>
+  <a href="screen-board.html">Доска</a>
+  <a href="screen-crm.html" class="is-current">CRM</a>
+  <a href="screen-my.html">Мои задачи</a>
+  <a href="screen-settings.html">Настройки</a>
+  <a href="screen-login.html">Вход</a>
+</nav>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="sidebar__org">
+      <span class="sidebar__org-badge">D</span>
+      <span class="sidebar__org-name">DreamUnion</span>
+    </div>
+    <button class="side-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      Поиск <kbd>⌘K</kbd>
+    </button>
+    <a class="nav-item" href="screen-my.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>Мои задачи</a>
+    <a class="nav-item" href="screen-tasks.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>Все задачи</a>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>Уведомления<span class="count">3</span></button>
+    <button class="nav-item is-active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>CRM<span class="count">3</span></button>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Время</button>
+    <a class="nav-item" href="screen-settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>Настройки</a>
+    <div class="side-label">Проекты <button title="Новый проект"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+    <a class="nav-item" href="screen-board.html"><span class="proj-dot" style="background:#3b82f6"></span>Сторонние проекты<span class="count count--muted">5</span></a>
+    <button class="nav-item"><span class="proj-dot" style="background:#8b5cf6"></span>Заметки<span class="count count--muted">2</span></button>
+    <button class="nav-item"><span class="proj-dot" style="background:#f59e0b"></span>Идеи<span class="count count--muted">9</span></button>
+    <div style="flex:1"></div>
+  </aside>
+
+  <main class="main" style="background:var(--bg)">
+    <header class="page-header" style="background:var(--surface)">
+      <h1>CRM</h1>
+      <div class="seg">
+        <button class="is-on" data-tab="board" onclick="switchTab('board')">Доска</button>
+        <button data-tab="deals" onclick="switchTab('deals')">Сделки</button>
+        <button data-tab="clients" onclick="switchTab('clients')">Клиенты</button>
+        <button data-tab="ana" onclick="switchTab('ana')">Аналитика</button>
+      </div>
+      <span class="spacer"></span>
+      <select class="select select--sm" id="pipeSelect" style="width:auto" title="Воронка">
+        <option>Продажи новым клиентам</option>
+        <option>Продление и возвраты</option>
+      </select>
+      <button class="btn btn--primary btn--sm" onclick="openSheet('deal')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Сделка</button>
+    </header>
+
+    <!-- ═══════════ Вкладка «Доска» ═══════════ -->
+    <div class="page-body" data-pane="board">
+      <div class="board">
+
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#94a3b8;border-radius:50%"></span>Неразобранное <span class="count-pill">3</span><span class="sum">—</span></div>
+          <div class="k-col__body">
+            <button class="k-card" id="cardFresh" onclick="openSheet('deal')">
+              <div class="name">Математика · подготовка к ЕГЭ</div>
+              <div class="contact">Ирина · +7 900 000-00-11</div>
+              <div class="chips">
+                <span class="tinted-chip" style="--chip-color:#e8734a">Сайт · форма</span>
+                <span class="tinted-chip" style="--chip-color:#64748b">yandex / cpc</span>
+              </div>
+              <div class="meta"><span class="fresh"><span class="pulse"></span>4 мин</span><span class="spacer"></span></div>
+            </button>
+            <button class="k-card" onclick="openSheet('deal')">
+              <div class="name">Английский · ребёнок, 8 лет</div>
+              <div class="contact">Ольга · +7 900 000-00-12</div>
+              <div class="chips">
+                <span class="tinted-chip" style="--chip-color:#e8734a">Сайт · форма</span>
+                <span class="tinted-chip" style="--chip-color:#64748b">vk / target</span>
+              </div>
+              <div class="meta"><span class="age">38 мин</span><span class="spacer"></span></div>
+            </button>
+            <button class="k-card" onclick="openSheet('deal')">
+              <div class="name">Физика · олимпиадная подготовка</div>
+              <div class="contact">Сергей · +7 900 000-00-13</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#0ea5e9">Авито</span></div>
+              <div class="meta"><span class="age">2 ч</span><span class="spacer"></span></div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#3b82f6;border-radius:50%"></span>Квалификация <span class="count-pill">2</span><span class="sum" id="sumQual">54 000 ₽</span></div>
+          <div class="k-col__body">
+            <button class="k-card" onclick="openSheet('deal')">
+              <div class="name">Русский язык · ОГЭ</div>
+              <div class="amount">18 000 ₽</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#eab308">Директ · brand</span></div>
+              <div class="meta">
+                <span class="age"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>1 дн</span>
+                <span class="next-step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg><span>звонок сегодня</span></span>
+                <span class="spacer"></span><span class="avatar avatar--orange">ПБ</span>
+              </div>
+            </button>
+            <button class="k-card" onclick="openSheet('deal')">
+              <div class="name">Химия · ЕГЭ, интенсив</div>
+              <div class="amount">36 000 ₽</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#e8734a">Сайт · форма</span></div>
+              <div class="meta">
+                <span class="age"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>2 дн</span>
+                <span class="next-step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg><span>пробное завтра</span></span>
+                <span class="spacer"></span><span class="avatar avatar--orange">ПБ</span>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#8b5cf6;border-radius:50%"></span>Пробное занятие <span class="count-pill">2</span><span class="sum">45 000 ₽</span></div>
+          <div class="k-col__body">
+            <button class="k-card" id="cardStuck" onclick="openSheet('deal')">
+              <div class="name">Информатика · ЕГЭ</div>
+              <div class="amount">24 000 ₽</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#10b981">Рекомендация</span></div>
+              <div class="meta">
+                <span class="age age--warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>8 дн на этапе</span>
+                <span class="no-step" id="cardNoStep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>нет шага</span>
+                <span class="spacer"></span><span class="avatar avatar--green">ДУ</span>
+              </div>
+            </button>
+            <button class="k-card" onclick="openSheet('deal')">
+              <div class="name">Математика · 7 класс</div>
+              <div class="amount">21 000 ₽</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#64748b">google / cpc</span></div>
+              <div class="meta">
+                <span class="age"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>3 дн</span>
+                <span class="next-step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg><span>пробное в чт</span></span>
+                <span class="spacer"></span><span class="avatar avatar--green">ДУ</span>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#f59e0b;border-radius:50%"></span>Оплата <span class="count-pill">1</span><span class="sum">28 000 ₽</span></div>
+          <div class="k-col__body">
+            <button class="k-card" onclick="openSheet('deal')">
+              <div class="name">Английский · разговорный, взрослый</div>
+              <div class="amount">28 000 ₽</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#eab308">Директ · retarget</span></div>
+              <div class="meta">
+                <span class="age"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>1 дн</span>
+                <span class="next-step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg><span>счёт отправлен</span></span>
+                <span class="spacer"></span><span class="avatar avatar--orange">ПБ</span>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col k-col--won" style="width:240px">
+          <div class="k-col__head"><span class="proj-dot" style="background:#10b981;border-radius:50%"></span>Выиграно <span class="count-pill">2</span><span class="sum">48 000 ₽</span></div>
+          <div class="k-col__body">
+            <button class="k-card" style="opacity:.8" onclick="openSheet('deal')">
+              <div class="name">Биология · ЕГЭ</div>
+              <div class="amount" style="color:var(--success-text)">32 000 ₽</div>
+              <div class="meta"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg><span class="age">12 июл</span><span class="spacer"></span><span class="avatar avatar--orange">ПБ</span></div>
+            </button>
+            <button class="k-card" style="opacity:.8" onclick="openSheet('deal')">
+              <div class="name">Математика · ОГЭ</div>
+              <div class="amount" style="color:var(--success-text)">16 000 ₽</div>
+              <div class="meta"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg><span class="age">8 июл</span><span class="spacer"></span><span class="avatar avatar--green">ДУ</span></div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col" id="colLost" style="width:240px">
+          <div class="k-col__head"><span class="proj-dot" style="background:#dc2626;border-radius:50%"></span>Проиграно <span class="count-pill">1</span><span class="sum">—</span></div>
+          <div class="k-col__body">
+            <button class="k-card" style="opacity:.65" onclick="openSheet('deal')">
+              <div class="name" style="color:var(--text-muted)">История · ЕГЭ</div>
+              <div class="amount" style="color:var(--text-muted);text-decoration:line-through">40 000 ₽</div>
+              <div class="chips"><span class="badge badge--danger" style="font-size:10.5px;padding:1.5px 7px">Дорого</span></div>
+              <div class="meta"><span class="age">5 июл</span><span class="spacer"></span><span class="avatar avatar--green">ДУ</span></div>
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ═══════════ Вкладка «Сделки» (таблица) ═══════════ -->
+    <div class="page-body" data-pane="deals" style="display:none">
+      <div style="padding:14px 20px 0;font-size:12.5px;color:var(--text-secondary)">
+        Таблица наследует механику задач: колонки, фильтры, сортировка, сохранённые представления, массовые действия.
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;margin:12px 20px 24px;overflow:hidden;box-shadow:var(--shadow-sm)">
+        <div class="t-head" style="padding:0 16px">
+          <div class="t-cell t-cell--grow">Сделка</div>
+          <div class="t-cell" style="width:130px">Этап</div>
+          <div class="t-cell" style="width:90px;justify-content:flex-end">Сумма</div>
+          <div class="t-cell" style="width:140px;padding-left:16px">Источник</div>
+          <div class="t-cell" style="width:60px">Отв.</div>
+          <div class="t-cell" style="width:80px">Возраст</div>
+        </div>
+        <div class="t-row" style="padding:0 16px" onclick="openSheet('deal')">
+          <div class="t-cell t-cell--grow"><span class="title">Химия · ЕГЭ, интенсив</span></div>
+          <div class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#3b82f6">Квалификация</span></div>
+          <div class="t-cell num-cell" style="width:90px">36 000 ₽</div>
+          <div class="t-cell" style="width:140px;padding-left:16px"><span class="tinted-chip" style="--chip-color:#e8734a">Сайт · форма</span></div>
+          <div class="t-cell" style="width:60px"><span class="avatar">ПБ</span></div>
+          <div class="t-cell" style="width:80px"><span class="due">2 дн</span></div>
+        </div>
+        <div class="t-row" style="padding:0 16px" onclick="openSheet('deal')">
+          <div class="t-cell t-cell--grow"><span class="title">Информатика · ЕГЭ</span></div>
+          <div class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#8b5cf6">Пробное</span></div>
+          <div class="t-cell num-cell" style="width:90px">24 000 ₽</div>
+          <div class="t-cell" style="width:140px;padding-left:16px"><span class="tinted-chip" style="--chip-color:#10b981">Рекомендация</span></div>
+          <div class="t-cell" style="width:60px"><span class="avatar avatar--green">ДУ</span></div>
+          <div class="t-cell" style="width:80px"><span class="due due--over">8 дн</span></div>
+        </div>
+        <div class="t-row" style="padding:0 16px" onclick="openSheet('deal')">
+          <div class="t-cell t-cell--grow"><span class="title">Английский · разговорный, взрослый</span></div>
+          <div class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#f59e0b">Оплата</span></div>
+          <div class="t-cell num-cell" style="width:90px">28 000 ₽</div>
+          <div class="t-cell" style="width:140px;padding-left:16px"><span class="tinted-chip" style="--chip-color:#eab308">Директ</span></div>
+          <div class="t-cell" style="width:60px"><span class="avatar">ПБ</span></div>
+          <div class="t-cell" style="width:80px"><span class="due">1 дн</span></div>
+        </div>
+        <div class="t-row is-done" style="padding:0 16px" onclick="openSheet('deal')">
+          <div class="t-cell t-cell--grow"><span class="title">Биология · ЕГЭ</span></div>
+          <div class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#10b981">Выиграно</span></div>
+          <div class="t-cell num-cell" style="width:90px;color:var(--success-text)">32 000 ₽</div>
+          <div class="t-cell" style="width:140px;padding-left:16px"><span class="tinted-chip" style="--chip-color:#eab308">Директ · brand</span></div>
+          <div class="t-cell" style="width:60px"><span class="avatar">ПБ</span></div>
+          <div class="t-cell" style="width:80px"><span class="due">12 июл</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ Вкладка «Клиенты» ═══════════ -->
+    <div class="page-body" data-pane="clients" style="display:none">
+      <div style="padding:14px 20px 0;font-size:12.5px;color:var(--text-secondary)">
+        Клиент — аккаунт: контакты, заметки и история сделок. Спец-поля колл-центра и статусы клиента удалены — этапы живут на сделках.
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;margin:12px 20px 24px;overflow:hidden;box-shadow:var(--shadow-sm)">
+        <div class="t-head" style="padding:0 16px">
+          <div class="t-cell t-cell--grow">Клиент</div>
+          <div class="t-cell" style="width:90px">Сделок</div>
+          <div class="t-cell" style="width:110px;justify-content:flex-end">Выиграно</div>
+          <div class="t-cell" style="width:150px;padding-left:16px">Последняя активность</div>
+        </div>
+        <div class="t-row" style="padding:0 16px;height:40px">
+          <div class="t-cell t-cell--grow"><span class="avatar avatar--pink">НС</span><span class="title" style="margin-left:4px">Наталья Смирнова</span></div>
+          <div class="t-cell" style="width:90px">2</div>
+          <div class="t-cell num-cell" style="width:110px">36 000 ₽</div>
+          <div class="t-cell" style="width:150px;padding-left:16px"><span class="due">сегодня</span></div>
+        </div>
+        <div class="t-row" style="padding:0 16px;height:40px">
+          <div class="t-cell t-cell--grow"><span class="avatar avatar--indigo">ПР</span><span class="title" style="margin-left:4px">ООО «Прогресс» (корпоративное обучение)</span></div>
+          <div class="t-cell" style="width:90px">3</div>
+          <div class="t-cell num-cell" style="width:110px">210 000 ₽</div>
+          <div class="t-cell" style="width:150px;padding-left:16px"><span class="due">вчера</span></div>
+        </div>
+        <div class="t-row" style="padding:0 16px;height:40px">
+          <div class="t-cell t-cell--grow"><span class="avatar avatar--slate">ИВ</span><span class="title" style="margin-left:4px">Игорь Ватутин</span></div>
+          <div class="t-cell" style="width:90px">1</div>
+          <div class="t-cell num-cell" style="width:110px">32 000 ₽</div>
+          <div class="t-cell" style="width:150px;padding-left:16px"><span class="due">12 июл</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ Вкладка «Аналитика» ═══════════ -->
+    <div class="page-body" data-pane="ana" style="display:none">
+      <div class="ana">
+        <div class="kpi-row">
+          <div class="kpi"><div class="lbl">Новые лиды · июль</div><div class="val">128</div><div class="sub"><span style="color:var(--success-text);font-weight:600">+18%</span> к июню</div></div>
+          <div class="kpi"><div class="lbl">Конверсия в оплату</div><div class="val">23%</div><div class="sub">сквозная, лид → выиграно</div></div>
+          <div class="kpi"><div class="lbl">Выручка по выигранным</div><div class="val">683 000 ₽</div><div class="sub">29 сделок</div></div>
+          <div class="kpi"><div class="lbl">Медиана отклика на лид</div><div class="val">24 мин</div><div class="sub">цель — до 15 мин</div></div>
+        </div>
+
+        <div class="ana-card" id="funnelCard">
+          <h3>Воронка · Продажи новым клиентам</h3>
+          <div class="hint">Считается по истории этапов за период: сколько сделок входило в этап, а не снимок «сейчас».</div>
+          <div class="fun">
+            <div class="fun-row"><div class="lbl">Неразобранное</div><div class="fun-bar" style="width:100%"></div><div class="num">128 · 100%</div></div>
+            <div class="fun-conv"><span>→ 75%</span></div>
+            <div class="fun-row"><div class="lbl">Квалификация</div><div class="fun-bar" style="width:75%"></div><div class="num">96 · 75%</div></div>
+            <div class="fun-conv"><span>→ 56%</span></div>
+            <div class="fun-row"><div class="lbl">Пробное занятие</div><div class="fun-bar" style="width:42%"></div><div class="num">54 · 42%</div></div>
+            <div class="fun-conv"><span>→ 70%</span></div>
+            <div class="fun-row"><div class="lbl">Оплата</div><div class="fun-bar" style="width:30%"></div><div class="num">38 · 30%</div></div>
+            <div class="fun-conv"><span>→ 76%</span></div>
+            <div class="fun-row"><div class="lbl">Выиграно</div><div class="fun-bar fun-bar--won" style="width:23%"></div><div class="num">29 · 23%</div></div>
+          </div>
+        </div>
+
+        <div class="ana-card">
+          <h3>Источники и кампании</h3>
+          <div class="hint">Атрибуция по UTM первого визита и справочнику источников. Здесь видно, какая реклама приводит деньги.</div>
+          <div class="mini-table">
+            <div class="t-head">
+              <div class="t-cell t-cell--grow">Источник · кампания</div>
+              <div class="t-cell num-cell" style="width:70px">Лиды</div>
+              <div class="t-cell num-cell" style="width:90px">Выиграно</div>
+              <div class="t-cell" style="width:80px;justify-content:flex-end">CR</div>
+              <div class="t-cell num-cell" style="width:110px">Выручка</div>
+            </div>
+            <div class="t-row"><div class="t-cell t-cell--grow"><span class="tinted-chip" style="--chip-color:#eab308">Директ</span><span style="font-family:var(--font-mono);font-size:11.5px;color:var(--text-secondary)">ege_intensiv</span></div><div class="t-cell num-cell" style="width:70px">34</div><div class="t-cell num-cell" style="width:90px">11</div><div class="t-cell" style="width:80px;justify-content:flex-end"><span class="badge badge--success">32%</span></div><div class="t-cell num-cell" style="width:110px">264 000 ₽</div></div>
+            <div class="t-row"><div class="t-cell t-cell--grow"><span class="tinted-chip" style="--chip-color:#10b981">Рекомендации</span></div><div class="t-cell num-cell" style="width:70px">14</div><div class="t-cell num-cell" style="width:90px">5</div><div class="t-cell" style="width:80px;justify-content:flex-end"><span class="badge badge--success">36%</span></div><div class="t-cell num-cell" style="width:110px">129 000 ₽</div></div>
+            <div class="t-row"><div class="t-cell t-cell--grow"><span class="tinted-chip" style="--chip-color:#64748b">Google Ads</span><span style="font-family:var(--font-mono);font-size:11.5px;color:var(--text-secondary)">brand</span></div><div class="t-cell num-cell" style="width:70px">28</div><div class="t-cell num-cell" style="width:90px">6</div><div class="t-cell" style="width:80px;justify-content:flex-end"><span class="badge badge--neutral">21%</span></div><div class="t-cell num-cell" style="width:110px">148 000 ₽</div></div>
+            <div class="t-row"><div class="t-cell t-cell--grow"><span class="tinted-chip" style="--chip-color:#0ea5e9">Авито</span></div><div class="t-cell num-cell" style="width:70px">18</div><div class="t-cell num-cell" style="width:90px">4</div><div class="t-cell" style="width:80px;justify-content:flex-end"><span class="badge badge--neutral">22%</span></div><div class="t-cell num-cell" style="width:110px">74 000 ₽</div></div>
+            <div class="t-row"><div class="t-cell t-cell--grow"><span class="tinted-chip" style="--chip-color:#8b5cf6">ВКонтакте</span><span style="font-family:var(--font-mono);font-size:11.5px;color:var(--text-secondary)">target_school</span></div><div class="t-cell num-cell" style="width:70px">22</div><div class="t-cell num-cell" style="width:90px">3</div><div class="t-cell" style="width:80px;justify-content:flex-end"><span class="badge badge--warning">14%</span></div><div class="t-cell num-cell" style="width:110px">61 000 ₽</div></div>
+            <div class="t-row"><div class="t-cell t-cell--grow"><span class="tinted-chip" style="--chip-color:#94a3b8">Без метки</span><span style="font-size:11.5px;color:var(--text-muted)">прямые заходы</span></div><div class="t-cell num-cell" style="width:70px">12</div><div class="t-cell num-cell" style="width:90px">0</div><div class="t-cell" style="width:80px;justify-content:flex-end"><span class="badge badge--danger">0%</span></div><div class="t-cell num-cell" style="width:110px">—</div></div>
+          </div>
+        </div>
+
+        <div class="ana-card">
+          <h3>Менеджеры</h3>
+          <div class="hint">Выиграно за период, средний цикл сделки и скорость первой реакции на новый лид.</div>
+          <div class="mini-table">
+            <div class="t-head">
+              <div class="t-cell t-cell--grow">Менеджер</div>
+              <div class="t-cell num-cell" style="width:90px">Выиграно</div>
+              <div class="t-cell num-cell" style="width:110px">Сумма</div>
+              <div class="t-cell num-cell" style="width:90px">Цикл</div>
+              <div class="t-cell num-cell" style="width:90px">Отклик</div>
+            </div>
+            <div class="t-row"><div class="t-cell t-cell--grow"><span class="avatar avatar--orange">ПБ</span><span class="title" style="margin-left:4px">Полина</span></div><div class="t-cell num-cell" style="width:90px">14</div><div class="t-cell num-cell" style="width:110px">342 000 ₽</div><div class="t-cell num-cell" style="width:90px">5,2 дн</div><div class="t-cell num-cell" style="width:90px;color:var(--success-text)">12 мин</div></div>
+            <div class="t-row"><div class="t-cell t-cell--grow"><span class="avatar avatar--green">ДУ</span><span class="title" style="margin-left:4px">Даниил</span></div><div class="t-cell num-cell" style="width:90px">9</div><div class="t-cell num-cell" style="width:110px">214 000 ₽</div><div class="t-cell num-cell" style="width:90px">7,1 дн</div><div class="t-cell num-cell" style="width:90px;color:var(--warning-text)">38 мин</div></div>
+            <div class="t-row"><div class="t-cell t-cell--grow"><span class="avatar avatar--slate">СК</span><span class="title" style="margin-left:4px">Слава</span></div><div class="t-cell num-cell" style="width:90px">6</div><div class="t-cell num-cell" style="width:110px">127 000 ₽</div><div class="t-cell num-cell" style="width:90px">6,4 дн</div><div class="t-cell num-cell" style="width:90px">21 мин</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ═══════════ Карточка сделки ═══════════ -->
+<aside class="sheet" id="deal">
+  <div class="sheet__head">
+    <span class="tinted-chip" style="--chip-color:#3b82f6"><span class="dot"></span>Квалификация</span>
+    <span style="font-size:12px;color:var(--text-muted)">Продажи новым клиентам</span>
+    <span class="spacer" style="flex:1"></span>
+    <button class="btn btn--sm" style="background:var(--success-soft);color:var(--success-text)" onclick="toast('Выиграна: этап «Выиграно», сумма и дата фиксируются')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Выиграна</button>
+    <button class="btn btn--ghost btn--sm" onclick="toast('Проиграна: спросим причину отказа — без неё аналитика слепая')">Проиграна</button>
+    <button class="x-btn" title="Скопировать ссылку" onclick="toast('Ссылка на сделку скопирована')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+    <button class="x-btn" onclick="closeLayers()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  </div>
+  <div class="sheet__body">
+    <div class="stagebar" id="stagebar">
+      <button class="is-done" onclick="toast('Перенос на этап — запишется в историю для конверсий')">Неразобранное</button>
+      <button class="is-current">Квалификация</button>
+      <button onclick="toast('Перенос на этап — запишется в историю для конверсий')">Пробное</button>
+      <button onclick="toast('Перенос на этап — запишется в историю для конверсий')">Оплата</button>
+    </div>
+
+    <input class="sheet__title" value="Химия · подготовка к ЕГЭ, интенсив">
+
+    <div class="prop-grid">
+      <span class="label">Сумма</span>
+      <span style="font-family:var(--font-mono);font-weight:600;font-size:14px">36 000 ₽</span>
+      <span class="label">Клиент</span>
+      <span style="display:inline-flex;align-items:center;gap:7px"><span class="avatar avatar--pink">НС</span>Наталья Смирнова <span class="count-pill">2 сделки</span></span>
+      <span class="label">Контакт</span>
+      <span style="display:flex;flex-direction:column;gap:2px"><span>+7 900 000-00-14</span><span style="color:var(--text-secondary);font-size:12.5px">Telegram · @demo_client</span></span>
+      <span class="label">Ответственный</span>
+      <span style="display:inline-flex;align-items:center;gap:7px"><span class="avatar avatar--orange">ПБ</span>Полина</span>
+      <span class="label">Источник</span>
+      <span><span class="tinted-chip" style="--chip-color:#e8734a">Сайт · форма «Подбор репетитора»</span></span>
+      <span class="label">Создана</span>
+      <span style="color:var(--text-secondary)">вчера в 14:32 · автоматически из формы</span>
+    </div>
+
+    <div>
+      <div class="sec-label" style="margin-bottom:7px">Привлечение</div>
+      <div class="attr" id="attrBlock">
+        <div class="attr__row"><span class="k">utm_source</span><span class="v">yandex</span></div>
+        <div class="attr__row"><span class="k">utm_medium</span><span class="v">cpc</span></div>
+        <div class="attr__row"><span class="k">utm_campaign</span><span class="v">ege_intensiv_msk</span></div>
+        <div class="attr__row"><span class="k">utm_term</span><span class="v">репетитор химия егэ</span></div>
+        <div class="attr__row"><span class="k">referrer</span><span class="v">yandex.ru</span></div>
+        <div class="attr__row"><span class="k">посадочная</span><span class="v">/ege/himiya</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec-label" style="margin-bottom:7px;display:flex;align-items:center;justify-content:space-between">Следующий шаг
+        <button class="btn btn--ghost btn--sm" onclick="toast('Задача создастся связанной со сделкой')" style="text-transform:none;letter-spacing:0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Задача</button>
+      </div>
+      <div class="task-row">
+        <label class="check"><input type="checkbox"><span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></label>
+        Провести пробное занятие
+        <span class="due">завтра, 18:00</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec-label" style="margin-bottom:9px">Лента</div>
+      <div class="tl">
+        <div class="tl-item"><span class="t">вчера 14:32</span><div><b>Сделка создана</b> из формы «Подбор репетитора» на сайте</div></div>
+        <div class="tl-item"><span class="t">вчера 14:41</span><div><b>Полина</b> назначена ответственной</div></div>
+        <div class="tl-item"><span class="t">вчера 15:05</span><div><b>Полина</b> — заметка<div class="note">Дозвонилась. Цель — 80+ баллов, занятия 2 раза в неделю. Готовы начать после пробного.</div></div></div>
+        <div class="tl-item"><span class="t">сегодня 10:12</span><div>Этап: Неразобранное → <b>Квалификация</b></div></div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:auto;padding-top:4px">
+      <input class="input" placeholder="Заметка или комментарий…">
+      <button class="btn btn--primary" onclick="toast('Заметка добавлена в ленту')">Отправить</button>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══════════ Панель решений (только для ревью) ═══════════ -->
+<div class="ux-pane" id="uxPane">
+  <div class="ux-pane__head"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>Решения концепции — кликни</div>
+  <div class="ux-pane__body">
+    <div class="ux-item" onclick="uxGo(1)"><span class="n">1</span><div><b>Несколько воронок</b>Переключатель в шапке; этапы и цвета свои у каждой воронки.</div></div>
+    <div class="ux-item" onclick="uxGo(2)"><span class="n">2</span><div><b>Деньги на этапе</b>Шапка колонки: счётчик и сумма — состояние воронки видно без отчёта.</div></div>
+    <div class="ux-item" onclick="uxGo(3)"><span class="n">3</span><div><b>Лид падает сам</b>Заявка с сайта появляется в «Неразобранном» с контактом, источником и UTM. Свежие пульсируют.</div></div>
+    <div class="ux-item" onclick="uxGo(4)"><span class="n">4</span><div><b>Зависшие сделки</b>Метка «N дн на этапе» желтеет после порога — видно, где воронка застревает.</div></div>
+    <div class="ux-item" onclick="uxGo(5)"><span class="n">5</span><div><b>Всегда есть шаг</b>Сделка без связанной задачи помечена красным: продажа не должна висеть «ничьей».</div></div>
+    <div class="ux-item" onclick="uxGo(6)"><span class="n">6</span><div><b>Причина проигрыша</b>«Выиграно»/«Проиграно» — терминальные этапы; отказ требует причину из справочника.</div></div>
+    <div class="ux-item" onclick="uxGo(7)"><span class="n">7</span><div><b>Этапы в карточке</b>Кликабельная полоса прогресса; каждый перенос пишется в историю — из неё считаются конверсии.</div></div>
+    <div class="ux-item" onclick="uxGo(8)"><span class="n">8</span><div><b>Атрибуция на сделке</b>UTM первого визита, реферер и посадочная — у каждой заявки с сайта.</div></div>
+    <div class="ux-item" onclick="uxGo(9)"><span class="n">9</span><div><b>Аналитика из истории</b>Воронка, источники и менеджеры считаются по истории этапов, а не по снимку доски.</div></div>
+  </div>
+</div>
+<button class="ux-fab" onclick="document.getElementById('uxPane').classList.toggle('is-open')">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
+  Решения
+</button>
+
+<div class="overlay" id="ovl" onclick="closeLayers()"></div>
+<div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Готово</span></div>
+
+<script>
+function switchTab(t) {
+  document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('is-on', b.dataset.tab === t));
+  document.querySelectorAll('[data-pane]').forEach(p => { p.style.display = p.dataset.pane === t ? '' : 'none'; });
+}
+function hl(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('ux-hl');
+  setTimeout(() => el.classList.remove('ux-hl'), 2200);
+}
+function uxGo(n) {
+  switch (n) {
+    case 1: switchTab('board'); hl('pipeSelect'); break;
+    case 2: switchTab('board'); hl('sumQual'); break;
+    case 3: switchTab('board'); hl('cardFresh'); break;
+    case 4: switchTab('board'); hl('cardStuck'); break;
+    case 5: switchTab('board'); hl('cardNoStep'); break;
+    case 6: switchTab('board'); hl('colLost'); break;
+    case 7: openSheet('deal'); setTimeout(() => hl('stagebar'), 450); break;
+    case 8: openSheet('deal'); setTimeout(() => hl('attrBlock'), 450); break;
+    case 9: switchTab('ana'); setTimeout(() => hl('funnelCard'), 100); break;
+  }
+}
+</script>
+</body>
+</html>
