@@ -106,7 +106,20 @@ export async function listNotifications(
             CASE
               WHEN e.entity_type = 'task' THEN (SELECT t.title FROM core.tasks t WHERE t.id = e.entity_id)
               WHEN e.entity_type = 'project' THEN (SELECT p.name FROM core.projects p WHERE p.id = e.entity_id)
-            END AS entity_title
+            END AS entity_title,
+            -- Своё/подписка/прочее: инбокс фильтрует и группирует по этому
+            -- признаку, а в браузере ни исполнителей, ни подписок нет.
+            CASE
+              WHEN e.entity_type = 'task'
+                   AND EXISTS (SELECT 1 FROM core.task_assignees ta
+                               WHERE ta.task_id = e.entity_id AND ta.user_id = n.user_id)
+                THEN 'mine'
+              WHEN e.entity_type = 'task'
+                   AND EXISTS (SELECT 1 FROM core.task_followers tf
+                               WHERE tf.task_id = e.entity_id AND tf.user_id = n.user_id)
+                THEN 'subscribed'
+              ELSE 'other'
+            END AS scope
      FROM core.notifications n
      LEFT JOIN core.events e ON e.id = n.event_id
      LEFT JOIN core.users u ON u.id = e.actor_id
