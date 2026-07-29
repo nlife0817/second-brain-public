@@ -25,8 +25,15 @@ import {
 } from "./cells";
 import type { TaskRow } from "@/lib/core/types";
 import { BASE_COLUMNS, COLUMN_MAX_WIDTH, COLUMN_MIN_WIDTH, type ColumnDef } from "@/lib/core/view-store";
-import type { GroupByField, MatchContext, SortState, SubtaskMode } from "@/lib/core/views";
-import { arrangeRows, groupKeys } from "@/lib/core/views";
+import type {
+  GroupByField,
+  GroupNaming,
+  GroupNode,
+  MatchContext,
+  SortState,
+  SubtaskMode,
+} from "@/lib/core/views";
+import { arrangeRows, buildGroups } from "@/lib/core/views";
 import { cn } from "@/lib/utils";
 
 /**
@@ -37,11 +44,6 @@ const GROUP_PAGE = 100;
 
 /** Ширина служебной колонки с чекбоксом — строка добавления равняется по ней же. */
 export const SELECT_COLUMN_WIDTH = 34;
-
-export interface GroupLabel {
-  text: string;
-  color?: string;
-}
 
 export interface TaskTableProps {
   tasks: TaskRow[];
@@ -59,9 +61,8 @@ export interface TaskTableProps {
   collapsed: ReadonlySet<string>;
   onToggleCollapsed: (key: string) => void;
   onOpen: (taskId: string) => void;
-  labelForGroup: (field: GroupByField, key: string) => GroupLabel;
-  /** Порядок ключей группы: справочники имеют свой (позиция статуса и т.п.). */
-  groupOrder: (field: GroupByField, keys: string[]) => string[];
+  labelForGroup: GroupNaming["labelForGroup"];
+  groupOrder: GroupNaming["groupOrder"];
   /**
    * Строка создания задачи. Живёт внутри таблицы, а не над ней: только так её
    * поля стоят ровно под своими колонками и едут вместе с ними при
@@ -70,67 +71,6 @@ export interface TaskTableProps {
   composer?: React.ReactNode;
   /** Что показать вместо строк, когда показывать нечего. */
   emptyState?: React.ReactNode;
-}
-
-interface GroupNode {
-  key: string;
-  path: string;
-  label: GroupLabel;
-  tasks: TaskRow[];
-  children: GroupNode[];
-}
-
-function buildGroups(
-  tasks: TaskRow[],
-  fields: [GroupByField, GroupByField],
-  matchCtx: MatchContext,
-  labelForGroup: TaskTableProps["labelForGroup"],
-  groupOrder: TaskTableProps["groupOrder"],
-): GroupNode[] {
-  const [first, second] = fields;
-  if (first === "none") {
-    return [{ key: "__all__", path: "__all__", label: { text: "" }, tasks, children: [] }];
-  }
-
-  const buckets = new Map<string, TaskRow[]>();
-  for (const task of tasks) {
-    // Задача с несколькими проектами/исполнителями/тегами попадает в каждую
-    // группу — иначе список молча теряет часть её принадлежностей.
-    for (const key of groupKeys(task, first, matchCtx)) {
-      const arr = buckets.get(key);
-      if (arr) arr.push(task);
-      else buckets.set(key, [task]);
-    }
-  }
-
-  return groupOrder(first, [...buckets.keys()]).map((key) => {
-    const rows = buckets.get(key) ?? [];
-    const path = `${first}:${key}`;
-    if (second === "none") {
-      return { key, path, label: labelForGroup(first, key), tasks: rows, children: [] };
-    }
-    const sub = new Map<string, TaskRow[]>();
-    for (const task of rows) {
-      for (const subKey of groupKeys(task, second, matchCtx)) {
-        const arr = sub.get(subKey);
-        if (arr) arr.push(task);
-        else sub.set(subKey, [task]);
-      }
-    }
-    return {
-      key,
-      path,
-      label: labelForGroup(first, key),
-      tasks: rows,
-      children: groupOrder(second, [...sub.keys()]).map((subKey) => ({
-        key: subKey,
-        path: `${path}/${second}:${subKey}`,
-        label: labelForGroup(second, subKey),
-        tasks: sub.get(subKey) ?? [],
-        children: [],
-      })),
-    };
-  });
 }
 
 // --- Шапка ------------------------------------------------------------------------
@@ -471,7 +411,7 @@ export function TaskTable(props: TaskTableProps) {
   }, [columns]);
 
   const nodes = useMemo(
-    () => buildGroups(tasks, groupBy, matchCtx, labelForGroup, groupOrder),
+    () => buildGroups(tasks, groupBy, matchCtx, { labelForGroup, groupOrder }),
     [tasks, groupBy, matchCtx, labelForGroup, groupOrder],
   );
 

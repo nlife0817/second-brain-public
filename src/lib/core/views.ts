@@ -546,6 +546,83 @@ export function arrangeRows(tasks: TaskRow[], mode: SubtaskMode): ArrangedRow[] 
   return out;
 }
 
+export interface GroupLabel {
+  text: string;
+  color?: string;
+}
+
+export interface GroupNode {
+  key: string;
+  path: string;
+  label: GroupLabel;
+  tasks: TaskRow[];
+  children: GroupNode[];
+}
+
+/** Подписи и порядок ключей берутся снаружи: справочники живут в сторе экрана. */
+export interface GroupNaming {
+  labelForGroup: (field: GroupByField, key: string) => GroupLabel;
+  /** Порядок ключей группы: у справочников он свой (позиция статуса и т.п.). */
+  groupOrder: (field: GroupByField, keys: string[]) => string[];
+}
+
+/**
+ * Двухуровневые группы. Живёт здесь, а не в таблице: гант раскладывает строки
+ * той же группировкой, и вторая копия означала бы, что одна настройка даёт в
+ * таблице и на ганте разные группы с разными счётчиками.
+ */
+export function buildGroups(
+  tasks: TaskRow[],
+  fields: GroupByConfig,
+  matchCtx: MatchContext,
+  { labelForGroup, groupOrder }: GroupNaming,
+): GroupNode[] {
+  const [first, second] = fields;
+  if (first === "none") {
+    return [{ key: "__all__", path: "__all__", label: { text: "" }, tasks, children: [] }];
+  }
+
+  const buckets = new Map<string, TaskRow[]>();
+  for (const task of tasks) {
+    // Задача с несколькими проектами/исполнителями/тегами попадает в каждую
+    // группу — иначе список молча теряет часть её принадлежностей.
+    for (const key of groupKeys(task, first, matchCtx)) {
+      const arr = buckets.get(key);
+      if (arr) arr.push(task);
+      else buckets.set(key, [task]);
+    }
+  }
+
+  return groupOrder(first, [...buckets.keys()]).map((key) => {
+    const rows = buckets.get(key) ?? [];
+    const path = `${first}:${key}`;
+    if (second === "none") {
+      return { key, path, label: labelForGroup(first, key), tasks: rows, children: [] };
+    }
+    const sub = new Map<string, TaskRow[]>();
+    for (const task of rows) {
+      for (const subKey of groupKeys(task, second, matchCtx)) {
+        const arr = sub.get(subKey);
+        if (arr) arr.push(task);
+        else sub.set(subKey, [task]);
+      }
+    }
+    return {
+      key,
+      path,
+      label: labelForGroup(first, key),
+      tasks: rows,
+      children: groupOrder(second, [...sub.keys()]).map((subKey) => ({
+        key: subKey,
+        path: `${path}/${second}:${subKey}`,
+        label: labelForGroup(second, subKey),
+        tasks: sub.get(subKey) ?? [],
+        children: [],
+      })),
+    };
+  });
+}
+
 /**
  * Ключи группы для задачи. Возвращается список: задача с несколькими проектами
  * (multi-homing), исполнителями или тегами попадает в каждую группу — иначе

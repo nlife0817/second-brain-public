@@ -16,7 +16,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { TaskSheet } from "@/components/v2/lazy";
+import { GanttView } from "@/components/v2/tasks/GanttView";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
+import { ViewModeSwitch } from "@/components/v2/tasks/ViewToolbar";
 import { cachedGet, invalidate, peek, seed } from "@/lib/core/query";
 import { useLoad } from "@/lib/core/use-load";
 import { applyTaskChange } from "@/lib/core/task-change";
@@ -39,6 +41,7 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
   // Пуш и поиск умеют вести прямо на задачу.
   const deepLinkTaskId = useSearchParams().get("task");
   const filterGroups = useViewStore((s) => s.groups);
+  const mode = useViewStore((s) => s.mode);
 
   const [tasks, setTasks] = useState<TaskRow[]>(initial.tasks);
   const [truncated, setTruncated] = useState(initial.truncated);
@@ -110,21 +113,42 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
     [orgId, reload, refreshProjects],
   );
 
+  const title = <h1 className="font-heading text-xl font-semibold tracking-tight">Все задачи</h1>;
+  // Доски здесь нет: раскладка по статусам поверх всех проектов организации —
+  // это не доска, а свалка. Таблица и гант показывают один и тот же срез.
+  const viewSwitch = <ViewModeSwitch modes={["table", "gantt"]} />;
+
   return (
     <>
-      <TaskTableView
-        tasks={tasks}
-        setTasks={setTasks}
-        reload={reload}
-        invalidateKey={orgId ? `/orgs/${orgId}/tasks` : null}
-        loading={loading}
-        truncated={truncated}
-        error={error}
-        onDismissError={() => setError(null)}
-        onOpenTask={setOpenTaskId}
-        onCreateTask={createTask}
-        titleSlot={<h1 className="font-heading text-xl font-semibold tracking-tight">Все задачи</h1>}
-      />
+      {mode === "gantt" ? (
+        <GanttView
+          tasks={tasks}
+          setTasks={setTasks}
+          reload={reload}
+          invalidateKey={orgId ? `/orgs/${orgId}/tasks` : null}
+          loading={loading}
+          error={error}
+          onDismissError={() => setError(null)}
+          onOpenTask={setOpenTaskId}
+          titleSlot={title}
+          actionsSlot={viewSwitch}
+        />
+      ) : (
+        <TaskTableView
+          tasks={tasks}
+          setTasks={setTasks}
+          reload={reload}
+          invalidateKey={orgId ? `/orgs/${orgId}/tasks` : null}
+          loading={loading}
+          truncated={truncated}
+          error={error}
+          onDismissError={() => setError(null)}
+          onOpenTask={setOpenTaskId}
+          onCreateTask={createTask}
+          titleSlot={title}
+          actionsSlot={viewSwitch}
+        />
+      )}
 
       <TaskSheet
         taskId={openTaskId}
