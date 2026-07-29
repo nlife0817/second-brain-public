@@ -15,6 +15,18 @@ export const memberPatchSchema = z.object({
   role: z.enum(["owner", "admin", "member", "guest"]),
 });
 
+/**
+ * Состав экрана настроек по ролям. Список разделов не перечисляем: он живёт в
+ * `settings-sections.ts` и там же отсеиваются неизвестные ключи — дублировать
+ * его здесь значит однажды забыть одно из двух мест.
+ */
+export const settingsSectionsSchema = z.object({
+  sections: z.record(
+    z.string().max(40),
+    z.array(z.enum(["owner", "admin", "member", "guest"])).max(4),
+  ),
+});
+
 export const projectGrantSchema = z.object({
   project_id: z.uuid(),
   role: z.enum(["admin", "editor", "commenter", "viewer"]),

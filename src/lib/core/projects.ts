@@ -10,7 +10,6 @@ import {
   PolicyError,
   type ProjectAction,
 } from "./policy";
-import { assertWithinLimit } from "./saas";
 import type {
   AuthContext,
   PolicyProject,
@@ -86,7 +85,6 @@ export async function createProject(
   },
 ): Promise<ProjectWithMeta> {
   assertOrg(ctx, "project.create");
-  await assertWithinLimit(ctx, "projects");
   // Гость не может создать проект (project.create), поэтому проверка
   // «доступом организации управляют только сотрудники» здесь избыточна.
   const project = await transaction(async (tx) => {

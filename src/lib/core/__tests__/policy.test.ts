@@ -50,6 +50,7 @@ describe("canOrg: матрица org-ролей", () => {
     ["fields.manage",      { owner: true,  admin: true,  member: true,  guest: false }],
     ["tags.manage",        { owner: true,  admin: true,  member: true,  guest: false }],
     ["audit.view",         { owner: true,  admin: true,  member: false, guest: false }],
+    ["settings.sections.manage", { owner: true, admin: false, member: false, guest: false }],
   ];
 
   for (const [action, expected] of cases) {

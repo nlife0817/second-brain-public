@@ -4,6 +4,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { prepare, transaction } from "@/lib/sql";
 import { DomainError } from "./http";
+import { SETTINGS_SECTIONS_KEY } from "./settings-sections";
 import { PROJECT_ROLE_RANK } from "./types";
 import type {
   CoreUser,
@@ -257,6 +258,22 @@ export async function updateOrganization(
   );
   if (!row) throw new DomainError(500, "Failed to update organization");
   return row;
+}
+
+/**
+ * Состав экрана настроек по ролям — точечная правка ключа в `settings`.
+ * Через `updateOrganization` это было бы чтение-запись целиком: параллельная
+ * правка имени организации затёрла бы настройку (или наоборот).
+ */
+export async function setSettingsSections(
+  orgId: string,
+  config: Record<string, string[]>,
+): Promise<void> {
+  await prepare(
+    `UPDATE core.organizations
+     SET settings = jsonb_set(coalesce(settings, '{}'::jsonb), ?::text[], ?::jsonb, true)
+     WHERE id = ?`,
+  ).run(`{${SETTINGS_SECTIONS_KEY}}`, JSON.stringify(config), orgId);
 }
 
 // --- Invitations -----------------------------------------------------------------
