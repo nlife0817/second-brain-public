@@ -2,8 +2,9 @@
 
 // Настройки организации: участники, приглашения, статусы, теги, кастомные поля.
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { Bell, Copy, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -23,7 +24,6 @@ import type {
 } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { Avatar } from "@/components/v2/bits";
-import { PushToggle } from "@/components/v2/PushToggle";
 
 const ORG_ROLE_LABELS: Record<OrgRole, string> = {
   owner: "Владелец",
@@ -565,8 +565,18 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
             </Section>
           )}
 
-          <Section title="Уведомления на этом устройстве">
-            <PushToggle />
+          {/* Сами уведомления настраиваются в отдельном разделе: он личный,
+              а эта страница — про организацию и открыта не всем. */}
+          <Section title="Уведомления">
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="flex-1 text-sm text-muted-foreground">
+                Доставка в этот браузер, устройства и типы событий
+              </p>
+              <Button variant="outline" size="sm" render={<Link href="/v2/settings/notifications" />}>
+                <Bell className="size-4" />
+                Открыть раздел
+              </Button>
+            </div>
           </Section>
 
           {isAdmin && initial.admin && <AdminSection orgId={orgId} initial={initial.admin} />}

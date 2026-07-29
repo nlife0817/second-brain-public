@@ -298,6 +298,12 @@ export const projectTeamSchema = z.object({ team_id: z.uuid().nullable() });
 
 // --- Push-подписки ----------------------------------------------------------------
 
+export const notificationPrefSchema = z.object({
+  kind: z.string().min(1).max(64),
+  inbox: z.boolean(),
+  push: z.boolean(),
+});
+
 export const pushSubscribeSchema = z.object({
   endpoint: z.url().max(2000),
   keys: z.object({

@@ -4,6 +4,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { SignOutButton } from "@/components/v2/SignOutButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/core/client";
@@ -60,6 +61,11 @@ export function OrgOnboarding({ user }: { user?: UserBrief | null }) {
         <Button className="mt-3 w-full" onClick={() => void create()} disabled={!name.trim() || saving}>
           {saving ? "Создаём…" : "Создать организацию"}
         </Button>
+        {/* Приглашение ждут в тот аккаунт, в который вошли: если адрес не тот,
+            выйти надо прямо отсюда — других элементов на экране нет. */}
+        <div className="mt-4 flex items-center justify-center border-t border-border pt-3">
+          <SignOutButton variant="ghost" label="Выйти из аккаунта" />
+        </div>
       </div>
     </div>
   );

@@ -19,12 +19,13 @@ import {
   Repeat,
   Search,
   Settings,
-  Smartphone,
   Users,
 } from "lucide-react";
 import { CreateProjectDialog, GlobalSearch, OrgOnboarding, TaskSheet } from "@/components/v2/lazy";
+import { AccountMenu } from "@/components/v2/AccountMenu";
 import { GlobalTimer } from "@/components/v2/GlobalTimer";
-import { Avatar } from "@/components/v2/bits";
+import { PushPrompt, PushToasts } from "@/components/v2/PushDesktop";
+import { SignOutButton } from "@/components/v2/SignOutButton";
 import { ProjectIcon } from "@/components/v2/project-icons";
 import {
   DropdownMenu,
@@ -172,9 +173,12 @@ export function V2Shell({
         </div>
       );
     }
+    // Тупик: чаще всего сюда попадают, войдя не тем аккаунтом Google.
+    // Без выхода отсюда некуда деться.
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-2">
+      <div className="flex h-screen flex-col items-center justify-center gap-3">
         <p className="text-sm text-destructive">{store.error ?? "Нет доступа"}</p>
+        <SignOutButton label="Выйти и войти другим аккаунтом" />
       </div>
     );
   }
@@ -326,28 +330,16 @@ export function V2Shell({
           </div>
         </div>
 
-        <div className="border-t border-border px-4 py-3">
-          <div className="flex items-center gap-2">
-            <Avatar user={me} size="md" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium">{me.name || me.email}</p>
-              <p className="truncate text-[11px] text-muted-foreground">
-                {orgRole === "owner" ? "Владелец" : orgRole === "admin" ? "Администратор" : orgRole === "member" ? "Сотрудник" : "Гость"}
-              </p>
-            </div>
-            <Link
-              href="/v2/m/my?mobile"
-              title="Мобильная версия"
-              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <Smartphone className="size-4" />
-            </Link>
-          </div>
+        <PushPrompt />
+
+        <div className="border-t border-border px-3 py-2">
+          <AccountMenu me={me} orgRole={orgRole} />
         </div>
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
 
+      <PushToasts onNotification={() => void storeApi.getState().refreshUnread()} />
       <GlobalTimer />
       <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
       <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} onPickTask={setSearchTaskId} />

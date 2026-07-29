@@ -10,6 +10,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { Bell, CheckCircle2, Clock, CloudOff, FolderKanban, Settings } from "lucide-react";
 import { OrgOnboarding } from "@/components/v2/OrgOnboarding";
+import { SignOutButton } from "@/components/v2/SignOutButton";
 import { Button } from "@/components/ui/button";
 import { InstallPrompt, PushNudge } from "./InstallPrompt";
 import { TASK_DEEPLINK_EVENT, useAppResume, useOnline } from "./hooks";
@@ -87,7 +88,14 @@ export function MobileShell({ children }: { children: React.ReactNode }) {
     if (!("serviceWorker" in navigator)) return;
     function onMessage(e: MessageEvent) {
       const data = e.data as { type?: string; url?: string } | null;
-      if (!data || data.type !== "sb:navigate" || typeof data.url !== "string") return;
+      if (!data) return;
+      // Push пришёл в открытое приложение: счётчик и бейдж обновляем сразу,
+      // не дожидаясь возврата на экран или следующего опроса.
+      if (data.type === "sb:push") {
+        void refreshUnread();
+        return;
+      }
+      if (data.type !== "sb:navigate" || typeof data.url !== "string") return;
       const target = new URL(data.url, window.location.origin);
       const taskId = target.searchParams.get("task");
       if (target.pathname !== window.location.pathname) {
@@ -133,10 +141,12 @@ export function MobileShell({ children }: { children: React.ReactNode }) {
           <Button size="sm" variant="outline" onClick={() => void bootstrap()}>
             Повторить
           </Button>
-          <Link className="text-sm text-primary underline" href="/v2/my?desktop">
-            Полная версия
-          </Link>
+          {/* Вошли не тем аккаунтом — другого выхода с этого экрана нет. */}
+          <SignOutButton />
         </div>
+        <Link className="text-sm text-primary underline" href="/v2/my?desktop">
+          Полная версия
+        </Link>
       </div>
     );
   }

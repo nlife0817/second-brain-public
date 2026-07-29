@@ -2,8 +2,9 @@
 
 // Инбокс уведомлений: назначения, комментарии, смены статусов и сроков.
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Bell, CheckCheck } from "lucide-react";
+import { Bell, CheckCheck, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TaskSheet } from "@/components/v2/lazy";
 import { api } from "@/lib/core/client";
@@ -104,6 +105,16 @@ export function InboxClient({ initial }: { initial: CoreNotification[] }) {
         <Button variant="outline" size="sm" onClick={() => void markAll()}>
           <CheckCheck className="size-4" />
           Прочитать все
+        </Button>
+        {/* Настройки доставки живут рядом со списком: гостю раздел
+            «Настройки» в сайдбаре не показан, а уведомления получает и он. */}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title="Настройки уведомлений"
+          render={<Link href="/v2/settings/notifications" />}
+        >
+          <Settings className="size-4" />
         </Button>
       </header>
 

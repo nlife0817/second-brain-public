@@ -3,6 +3,7 @@
 // after() в withOrg/withUser шлёт сразу после ответа, cron добирает остатки.
 
 import { prepare, type TxContext } from "@/lib/sql";
+import { filterByInboxPref } from "./notification-prefs";
 import type { CoreEvent, CoreNotification } from "./types";
 
 export type EntityType = "task" | "project" | "client" | "org";
@@ -30,7 +31,11 @@ export async function emitEvent(tx: TxContext, e: EmitInput): Promise<number> {
   return Number(row.id);
 }
 
-/** Уведомления получателям (кроме автора действия), в той же транзакции. */
+/**
+ * Уведомления получателям (кроме автора действия), в той же транзакции.
+ * Отключённый в настройках тип не создаёт записи вовсе: инбокс — источник
+ * правды и для push, поэтому фильтр стоит здесь, а не на доставке.
+ */
 export async function notifyUsers(
   tx: TxContext,
   input: {
@@ -41,7 +46,8 @@ export async function notifyUsers(
     excludeUserId?: string | null;
   },
 ): Promise<void> {
-  const targets = [...new Set(input.userIds)].filter((id) => id && id !== input.excludeUserId);
+  const candidates = [...new Set(input.userIds)].filter((id) => id && id !== input.excludeUserId);
+  const targets = await filterByInboxPref(tx, input.kind, candidates);
   for (const userId of targets) {
     await tx
       .prepare(
