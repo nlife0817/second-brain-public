@@ -86,8 +86,19 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
 
           # Проверяем ключ до подключения — иначе причина тонет в «Permission denied».
-          ssh-keygen -y -f ~/.ssh/deploy > /dev/null 2>&1 \
-            || { echo "::error::DEPLOY_SSH_KEY не разбирается как приватный ключ OpenSSH — секрет повреждён или скопирован не целиком"; exit 1; }
+          # В диагностику идут только форма файла и текст ошибки ssh-keygen: сам
+          # ключ не печатается, а из сообщения на всякий случай вычищаются длинные
+          # base64-последовательности.
+          if ! ssh-keygen -y -f ~/.ssh/deploy > /dev/null 2>/tmp/keyerr; then
+            echo "строк: $(wc -l < ~/.ssh/deploy)" \
+                 "· заголовок BEGIN: $(grep -c 'BEGIN OPENSSH PRIVATE KEY' ~/.ssh/deploy)" \
+                 "· концевик END: $(grep -c 'END OPENSSH PRIVATE KEY' ~/.ssh/deploy)"
+            echo "ssh-keygen: $(sed -e 's|[A-Za-z0-9+/=]\{20,\}|…|g' /tmp/keyerr | head -3)"
+            echo "Ожидается ~7 строк, BEGIN 1, END 1. Ноль заголовков — в секрет попал"
+            echo "публичный ключ (.pub) вместо приватного; END 0 — ключ скопирован не целиком."
+            echo "::error::DEPLOY_SSH_KEY не разбирается как приватный ключ OpenSSH"
+            exit 1
+          fi
           # Отпечаток сервера берётся из секрета, а не подбирается на месте:
           # ssh-keyscan прямо в момент подключения доверял бы кому угодно.
           #
