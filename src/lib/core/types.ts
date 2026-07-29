@@ -1,4 +1,4 @@
-// Доменные типы ядра v2 (schema core). Не смешивать с типами v1 из @/types.
+// Доменные типы ядра (schema core).
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";
 export type ProjectRole = "admin" | "editor" | "commenter" | "viewer";
@@ -206,8 +206,8 @@ export interface TaskListItem extends Omit<CoreTask, "description">, TaskMeta {}
 
 /**
  * Строка сводного списка «Все задачи»: элемент списка + значения кастомных
- * полей. Поля нужны как колонки таблицы — в v1 их роль играли «категория»,
- * «этап разработки» и «участники», зашитые в схему.
+ * полей. Поля нужны как колонки таблицы: организация задаёт свой набор
+ * атрибутов вместо зашитых в схему.
  */
 export interface TaskRow extends TaskListItem {
   field_values: Record<string, unknown>;
