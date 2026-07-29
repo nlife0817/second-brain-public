@@ -569,7 +569,11 @@ export function TaskSheet({
                       </button>
                     </span>
                   ))}
-                  <MemberPicker selected={task.assignees} onChange={(ids) => void setAssignees(ids)} />
+                  <MemberPicker
+                    selected={task.assignees}
+                    projectIds={task.placements.map((p) => p.project_id)}
+                    onChange={(ids) => void setAssignees(ids)}
+                  />
                 </div>
 
                 <span className="text-muted-foreground">Теги</span>

@@ -120,6 +120,12 @@ export interface Project {
 export interface ProjectWithMeta extends Project {
   my_role: ProjectRole | null;
   open_task_count: number;
+  /**
+   * Явные участники закрытого проекта; `null` — проект открыт, и ограничений на
+   * состав исполнителей он не накладывает. Нужен интерфейсу: закрытый проект
+   * виден только своим, а назначение задачи само по себе её открывает.
+   */
+  member_ids: string[] | null;
 }
 
 export interface Section {

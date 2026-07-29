@@ -20,6 +20,7 @@ import {
   dueTone,
   formatDue,
 } from "@/components/v2/bits";
+import { assigneeChoice } from "@/lib/core/assignable";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField, TaskPriority } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -375,7 +376,10 @@ function ProjectDraftCell({ draft, patch }: CellProps) {
 
 function AssigneesDraftCell({ draft, patch }: CellProps) {
   const members = useV2Store((s) => s.members);
+  const projects = useV2Store((s) => s.projects);
   const selected = members.filter((m) => draft.assignee_ids.includes(m.user_id));
+  // Закрытый проект пускает в исполнители только своих участников.
+  const choice = assigneeChoice(members, projects, draft.project_ids, draft.assignee_ids);
 
   function toggle(userId: string) {
     patch({
@@ -403,7 +407,7 @@ function AssigneesDraftCell({ draft, patch }: CellProps) {
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className="max-h-72 w-60 overflow-y-auto p-1">
-        {members.map((m) => (
+        {choice.members.map((m) => (
           <button
             key={m.user_id}
             onClick={() => toggle(m.user_id)}
@@ -417,8 +421,15 @@ function AssigneesDraftCell({ draft, patch }: CellProps) {
             {draft.assignee_ids.includes(m.user_id) && <Check className="size-3.5 shrink-0" />}
           </button>
         ))}
-        {members.length === 0 && (
-          <p className="px-2 py-1.5 text-xs text-muted-foreground">Участники ещё не загружены</p>
+        {choice.members.length === 0 && (
+          <p className="px-2 py-1.5 text-xs text-muted-foreground">
+            {members.length === 0 ? "Участники ещё не загружены" : "В закрытом проекте некого назначить"}
+          </p>
+        )}
+        {choice.restrictedBy.length > 0 && (
+          <p className="border-t border-border px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
+            Только участники закрытого проекта «{choice.restrictedBy.join("», «")}»
+          </p>
         )}
       </PopoverContent>
     </Popover>

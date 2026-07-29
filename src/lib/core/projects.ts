@@ -65,10 +65,27 @@ export async function listProjects(ctx: AuthContext, opts: { archived?: boolean 
   ).all(visible.map((p) => p.id));
   const countMap = new Map(counts.map((c) => [c.project_id, c.n]));
 
+  // Состав участников тянем только у закрытых проектов: только там он что-то
+  // ограничивает, а открытых в организации обычно на порядок больше.
+  const closed = visible.filter((p) => !p.default_role);
+  const memberMap = new Map<string, string[]>();
+  if (closed.length > 0) {
+    const closedPh = closed.map(() => "?").join(",");
+    const rows = await prepare<{ project_id: string; user_id: string }>(
+      `SELECT project_id, user_id FROM core.project_members WHERE project_id IN (${closedPh})`,
+    ).all(closed.map((p) => p.id));
+    for (const row of rows) {
+      const list = memberMap.get(row.project_id);
+      if (list) list.push(row.user_id);
+      else memberMap.set(row.project_id, [row.user_id]);
+    }
+  }
+
   return visible.map((p) => ({
     ...p,
     my_role: effectiveProjectRole(ctx, p),
     open_task_count: countMap.get(p.id) ?? 0,
+    member_ids: p.default_role ? null : (memberMap.get(p.id) ?? []),
   }));
 }
 
@@ -123,7 +140,13 @@ export async function createProject(
     });
     return row;
   });
-  return { ...project, my_role: "admin", open_task_count: 0 };
+  // Автор закрытого проекта — его единственный участник (запись выше).
+  return {
+    ...project,
+    my_role: "admin",
+    open_task_count: 0,
+    member_ids: project.default_role ? null : [ctx.user.id],
+  };
 }
 
 export async function updateProject(

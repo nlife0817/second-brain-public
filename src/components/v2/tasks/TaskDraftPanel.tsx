@@ -192,6 +192,7 @@ export function TaskDraftPanel({
               ))}
               <MemberPicker
                 selected={assignees}
+                projectIds={draft.project_ids}
                 onChange={(ids) => onChange({ assignee_ids: ids })}
               />
             </div>

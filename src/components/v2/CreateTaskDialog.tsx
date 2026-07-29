@@ -143,7 +143,7 @@ export function CreateTaskDialog({
               onChange={(e) => setDueDate(e.target.value)}
               className="h-7 rounded-md border border-border bg-background px-2 text-sm"
             />
-            <MemberPicker selected={assignees} onChange={(ids) => {
+            <MemberPicker selected={assignees} projectIds={projectId ? [projectId] : []} onChange={(ids) => {
               const { members } = storeApi.getState();
               setAssignees(
                 ids

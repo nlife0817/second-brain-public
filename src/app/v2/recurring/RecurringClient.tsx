@@ -11,6 +11,7 @@ import { CalendarClock, Pencil, Plus, Repeat, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { PRIORITY_LABELS } from "@/components/v2/bits";
+import { assigneeChoice } from "@/lib/core/assignable";
 import { api } from "@/lib/core/client";
 import { cachedGet, invalidate, peek, seed } from "@/lib/core/query";
 import type { TaskPriority } from "@/lib/core/types";
@@ -463,7 +464,14 @@ export function RecurringClient({ initial }: { initial: RecurringRule[] }) {
               <div className="flex flex-col gap-1 text-xs text-muted-foreground">
                 Исполнители
                 <div className="flex flex-wrap gap-1">
-                  {members.map((m) => {
+                  {/* Закрытый проект пускает в исполнители только своих: правило
+                      с посторонним просто не материализуется. */}
+                  {assigneeChoice(
+                    members,
+                    projects,
+                    draft.project_id ? [draft.project_id] : [],
+                    draft.assignee_ids,
+                  ).members.map((m) => {
                     const on = draft.assignee_ids.includes(m.user_id);
                     return (
                       <button
