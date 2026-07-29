@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listTaskComments } from "@/lib/core/comments";
 import { withOrg } from "@/lib/core/context";
+import { listDocComments } from "@/lib/core/doc-comments";
 import { listEntityFeed } from "@/lib/core/events";
 import { isUuid, jsonError } from "@/lib/core/http";
 import { listRelations, listRelationTypes } from "@/lib/core/relations";
@@ -24,14 +25,26 @@ export const GET = withOrg(async (_request, { params, auth }) => {
   // Один общий чек доступа — дальше выборки идут без повторной проверки прав.
   await requireTaskAccess(auth, taskId, "view");
 
-  const [task, comments, feed, subtasks, relations, relation_types] = await Promise.all([
-    getTaskDetail(auth, taskId),
-    listTaskComments(auth, taskId),
-    listEntityFeed("task", taskId),
-    listSubtasks(auth, taskId),
-    listRelations(auth, "task", taskId),
-    listRelationTypes(auth),
-  ]);
+  const [task, comments, feed, subtasks, relations, relation_types, doc_comments] =
+    await Promise.all([
+      getTaskDetail(auth, taskId),
+      listTaskComments(auth, taskId),
+      listEntityFeed("task", taskId),
+      listSubtasks(auth, taskId),
+      listRelations(auth, "task", taskId),
+      listRelationTypes(auth),
+      // Комментарии к описанию едут вместе с карточкой: их количество рисуется
+      // на кнопке «развернуть», то есть нужно ещё до открытия документа.
+      listDocComments(auth, taskId),
+    ]);
 
-  return NextResponse.json({ task, comments, feed, subtasks, relations, relation_types });
+  return NextResponse.json({
+    task,
+    comments,
+    feed,
+    subtasks,
+    relations,
+    relation_types,
+    doc_comments,
+  });
 });

@@ -1,28 +1,52 @@
 import sanitizeHtml from "sanitize-html";
 
 // Allowlist tuned for Tiptap output: text formatting, headings, lists, links,
-// images (uploaded to our own storage bucket), code blocks. No <script>, no
-// inline event handlers, no <iframe>/<object>/<embed>, no javascript: URLs.
+// images (served from our own /api/v2/.../attachments route), code blocks,
+// tables, two-column layouts and inline comment anchors. No <script>, no inline
+// event handlers, no <iframe>/<object>/<embed>, no javascript: URLs.
+//
+// Structural tags below mirror the editor extensions in components/v2/editor:
+// dropping one of them here silently strips that block from every description
+// the moment it is saved.
 const TIPTAP_OPTIONS: sanitizeHtml.IOptions = {
   allowedTags: [
-    "p", "br", "hr",
+    "p", "br", "hr", "span", "div",
     "strong", "em", "u", "s", "code", "mark",
     "h1", "h2", "h3", "h4", "h5", "h6",
     "ul", "ol", "li",
     "blockquote", "pre",
-    "a", "img",
+    "a", "img", "figure", "figcaption",
+    "table", "colgroup", "col", "thead", "tbody", "tr", "td", "th",
   ],
   allowedAttributes: {
     a: ["href", "title", "target", "rel"],
-    img: ["src", "alt", "title", "width", "height"],
+    img: ["src", "alt", "title", "width", "height", "style"],
+    figure: ["style"],
+    // colwidth — как его пишет расширение таблиц Tiptap (список ширин колонок).
+    td: ["colspan", "rowspan", "colwidth", "style"],
+    th: ["colspan", "rowspan", "colwidth", "style"],
+    col: ["style", "span"],
+    table: ["style"],
+    p: ["style"],
+    h1: ["style"], h2: ["style"], h3: ["style"],
+    h4: ["style"], h5: ["style"], h6: ["style"],
     code: ["class"],
     pre: ["class"],
     "*": ["data-*"],
   },
-  allowedSchemes: ["http", "https", "mailto"],
-  allowedSchemesByTag: {
-    img: ["http", "https", "data"],
+  // Только геометрия и выключка: без этого не переживут ширина картинки,
+  // ширина колонки таблицы и выравнивание абзаца.
+  allowedStyles: {
+    "*": {
+      width: [/^\d+(?:\.\d+)?(?:px|%)$/],
+      height: [/^\d+(?:\.\d+)?(?:px|%)$/],
+      "min-width": [/^\d+(?:\.\d+)?(?:px|%)$/],
+      "max-width": [/^\d+(?:\.\d+)?(?:px|%)$/],
+      "text-align": [/^(?:left|right|center|justify)$/],
+      "background-color": [/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i],
+    },
   },
+  allowedSchemes: ["http", "https", "mailto"],
   transformTags: {
     a: (tagName, attribs) => ({
       tagName,
