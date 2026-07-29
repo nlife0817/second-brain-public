@@ -78,8 +78,16 @@ jobs:
         run: |
           umask 077
           mkdir -p ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY"     > ~/.ssh/deploy
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # tr -d '\r' обязателен: секрет, попавший в GitHub через буфер обмена
+          # Windows, приезжает с CRLF, и OpenSSH отказывается разбирать такой ключ
+          # («Load key: error in libcrypto»), а следом выдаёт малосвязанное
+          # «Permission denied (publickey)».
+          printf '%s\n' "$DEPLOY_SSH_KEY"     | tr -d '\r' > ~/.ssh/deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+
+          # Проверяем ключ до подключения — иначе причина тонет в «Permission denied».
+          ssh-keygen -y -f ~/.ssh/deploy > /dev/null 2>&1 \
+            || { echo "::error::DEPLOY_SSH_KEY не разбирается как приватный ключ OpenSSH — секрет повреждён или скопирован не целиком"; exit 1; }
           # Отпечаток сервера берётся из секрета, а не подбирается на месте:
           # ssh-keyscan прямо в момент подключения доверял бы кому угодно.
           #
