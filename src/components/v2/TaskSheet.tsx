@@ -13,6 +13,7 @@ import {
   Check,
   CheckCircle2,
   CornerLeftUp,
+  Link2,
   Play,
   Plus,
   Square,
@@ -203,6 +204,29 @@ export function TaskSheet({
   useEffect(() => () => {
     if (savedTimer.current) clearTimeout(savedTimer.current);
   }, []);
+
+  // Ссылка на задачу. Копируем адрес роута /v2/tasks/<id>, а не текущий URL:
+  // тот зависит от того, откуда карточку открыли, и после пересылки увёл бы
+  // получателя на чужой экран (или на «Мои задачи», где этой задачи нет).
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (copiedTimer.current) clearTimeout(copiedTimer.current);
+  }, []);
+
+  const copyLink = useCallback(async () => {
+    if (!taskId) return;
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/v2/tasks/${taskId}`);
+      setLinkCopied(true);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setLinkCopied(false), 1600);
+    } catch {
+      // Буфер обмена закрыт настройками браузера — молчать нельзя, иначе
+      // кнопка выглядит сработавшей.
+      setError("Не удалось скопировать ссылку — браузер не дал доступ к буферу обмена");
+    }
+  }, [taskId]);
 
   // Раскладка: в широком модальном окне свойства уходят в правую колонку —
   // описание и обсуждение получают всю ширину. Панель остаётся одноколоночной.
@@ -996,6 +1020,16 @@ export function TaskSheet({
                   Таймер
                 </Button>
               )}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="size-9 sm:size-7"
+                onClick={() => void copyLink()}
+                title={linkCopied ? "Ссылка скопирована" : "Скопировать ссылку на задачу"}
+                aria-label="Скопировать ссылку на задачу"
+              >
+                {linkCopied ? <Check className="size-4 text-emerald-500" /> : <Link2 className="size-4" />}
+              </Button>
               <Button
                 variant="ghost"
                 size="icon-sm"

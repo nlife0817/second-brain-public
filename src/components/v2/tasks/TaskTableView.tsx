@@ -11,15 +11,14 @@
 // «Назад», которому здесь делать нечего.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { Filter, Loader2, Plus, Redo2, Search, Undo2, X } from "lucide-react";
+import { Loader2, Plus, Redo2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PRIORITY_LABELS } from "@/components/v2/bits";
 import { BulkBar } from "@/components/v2/tasks/BulkBar";
-import { FilterBuilder } from "@/components/v2/tasks/FilterBuilder";
 import { TaskComposer } from "@/components/v2/tasks/TaskComposer";
 import { TaskTable, resolveColumns, type GroupLabel } from "@/components/v2/tasks/TaskTable";
 import { ViewSettingsPopover } from "@/components/v2/tasks/ViewControls";
+import { FilterButton, TaskCount, TaskSearch } from "@/components/v2/tasks/ViewToolbar";
 import { assigneeChoice } from "@/lib/core/assignable";
 import { api } from "@/lib/core/client";
 import { invalidate } from "@/lib/core/query";
@@ -34,13 +33,12 @@ import {
   NONE_VALUE,
   PRIORITY_WEIGHT,
   compareTasks,
-  hiddenStatusIds,
+  filterTasks,
   makeMatchContext,
-  matchesGroups,
+  visiblePool,
   type GroupByField,
   type SortColumn,
 } from "@/lib/core/views";
-import { cn } from "@/lib/utils";
 
 /** Сколько PATCH-ов уходит одновременно при массовом действии. */
 const BULK_CONCURRENCY = 6;
@@ -143,7 +141,6 @@ export function TaskTableView({
   const search = useViewStore((s) => s.search);
   const subtaskMode = useViewStore((s) => s.subtaskMode);
   const collapsedList = useViewStore((s) => s.collapsed);
-  const setSearch = useViewStore((s) => s.setSearch);
   const toggleSortRaw = useViewStore((s) => s.toggleSort);
   const setWidth = useViewStore((s) => s.setWidth);
   const toggleCollapsed = useViewStore((s) => s.toggleCollapsed);
@@ -315,18 +312,13 @@ export function TaskTableView({
    * внутри общего фильтра: это умолчание экрана, и в счётчике «N из M» ему
    * делать нечего — иначе список без единого условия показывал бы «12 из 40».
    */
-  const pool = useMemo(() => {
-    const hidden = hiddenStatusIds(filterGroups, statuses);
-    if (hidden.size === 0) return tasks;
-    return tasks.filter((t) => !(t.status_id && hidden.has(t.status_id)));
-  }, [tasks, filterGroups, statuses]);
+  const pool = useMemo(
+    () => visiblePool(tasks, filterGroups, statuses),
+    [tasks, filterGroups, statuses],
+  );
 
   const visibleTasks = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    const filtered = pool.filter((t) => {
-      if (needle && !t.title.toLowerCase().includes(needle)) return false;
-      return matchesGroups(t, filterGroups, matchCtx);
-    });
+    const filtered = filterTasks(pool, filterGroups, search, matchCtx);
     const statusPosition = new Map(statuses.map((s) => [s.id, s.position]));
     const projectPosition = new Map(projects.map((p) => [p.id, p.position]));
     const projectName = new Map(projects.map((p) => [p.id, p.name]));
@@ -516,17 +508,13 @@ export function TaskTableView({
 
   const toggleSort = useCallback((column: string) => toggleSortRaw(column as SortColumn), [toggleSortRaw]);
 
-  const activeFilterCount = filterGroups.reduce((n, g) => n + g.conditions.length, 0);
   const shownError = externalError ?? error;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
         {titleSlot}
-        <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-muted-foreground">
-          {visibleTasks.length}
-          {visibleTasks.length !== pool.length && ` из ${pool.length}`}
-        </span>
+        <TaskCount shown={visibleTasks.length} total={pool.length} />
 
         {/* На узком экране кнопки экрана держатся первой строки — получается
             обычная шапка приложения, а настройки уходят строкой ниже. */}
@@ -537,46 +525,8 @@ export function TaskTableView({
           </>
         )}
 
-        <div className={cn("relative ml-1", compact ? "w-24" : "w-48")}>
-          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Поиск по названию…"
-            className="h-7 w-full rounded-lg border border-input bg-transparent pl-7 pr-6 text-sm outline-none focus-visible:border-ring"
-          />
-          {search && (
-            <button
-              onClick={() => setSearch("")}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
-            >
-              <X className="size-3.5" />
-            </button>
-          )}
-        </div>
-
-        <Popover>
-          <PopoverTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn("gap-1.5 text-xs", activeFilterCount > 0 && "text-primary")}
-              />
-            }
-          >
-            <Filter className="size-3.5" />
-            <span className="hidden sm:inline">Фильтры</span>
-            {activeFilterCount > 0 && (
-              <span className="rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">
-                {activeFilterCount}
-              </span>
-            )}
-          </PopoverTrigger>
-          <PopoverContent align="start" className="max-h-[70vh] w-[520px] max-w-[calc(100vw-2rem)] overflow-y-auto p-2.5">
-            <FilterBuilder />
-          </PopoverContent>
-        </Popover>
+        <TaskSearch compact={compact} />
+        <FilterButton />
 
         {!compact && (
           <div className="flex items-center gap-0.5">

@@ -278,6 +278,39 @@ export function hiddenStatusIds(
   return new Set(statuses.filter((s) => hiddenKinds.has(s.kind)).map((s) => s.id));
 }
 
+/**
+ * Задачи, которые экран показывает до фильтра: без архивных и завершённых,
+ * пока их не попросили показать. Отсев отдельным шагом, а не условием фильтра —
+ * это умолчание экрана, и в знаменателе счётчика «N из M» ему делать нечего.
+ */
+export function visiblePool<T extends { status_id: string | null }>(
+  tasks: T[],
+  groups: FilterGroup[],
+  statuses: ReadonlyArray<{ id: string; kind: StatusKind }>,
+): T[] {
+  const hidden = hiddenStatusIds(groups, statuses);
+  if (hidden.size === 0) return tasks;
+  return tasks.filter((t) => !(t.status_id && hidden.has(t.status_id)));
+}
+
+/**
+ * Условия фильтра плюс поиск по названию. Общая для таблицы и доски: разошлись
+ * бы — один и тот же фильтр показывал бы в двух видах проекта разные задачи.
+ */
+export function filterTasks(
+  tasks: TaskRow[],
+  groups: FilterGroup[],
+  search: string,
+  ctx: MatchContext,
+): TaskRow[] {
+  const needle = search.trim().toLowerCase();
+  if (needle === "" && groups.length === 0) return tasks;
+  return tasks.filter((t) => {
+    if (needle && !t.title.toLowerCase().includes(needle)) return false;
+    return matchesGroups(t, groups, ctx);
+  });
+}
+
 /** Группы объединяются через И, условия внутри группы — по её `logic`. */
 export function matchesGroups(task: TaskRow, groups: FilterGroup[], ctx: MatchContext): boolean {
   for (const group of groups) {

@@ -27,7 +27,14 @@ function mobileV2Target(url: URL): string | null {
   if (pathname === "/v2/time") return "/v2/m/time";
   if (pathname === "/v2/settings") return "/v2/m/settings";
   const project = pathname.match(/^\/v2\/projects\/([^/]+)$/);
-  if (project) return `/v2/m/projects/${project[1]}`;
+  if (project) {
+    // ?task= сюда приводит ссылка на задачу (/v2/tasks/<id> редиректит в проект
+    // задачи): без переноса параметра телефон открыл бы проект без карточки.
+    const task = url.searchParams.get("task");
+    return task
+      ? `/v2/m/projects/${project[1]}?task=${encodeURIComponent(task)}`
+      : `/v2/m/projects/${project[1]}`;
+  }
   return null;
 }
 

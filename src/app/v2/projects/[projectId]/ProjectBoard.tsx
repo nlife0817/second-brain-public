@@ -23,7 +23,7 @@ import { invalidate } from "@/lib/core/query";
 import type { TaskDetail, TaskRow, TaskStatus } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
-import { hiddenStatusIds } from "@/lib/core/views";
+import { filterTasks, hiddenStatusIds, makeMatchContext } from "@/lib/core/views";
 
 /** Общая пустая колонка: новый [] на каждый рендер ломал бы memo карточек. */
 const EMPTY_TASKS: TaskRow[] = [];
@@ -146,11 +146,14 @@ export function ProjectBoard({
   onOpenTask: (id: string) => void;
   onAddTask: (statusId: string | null) => void;
 }) {
-  const { orgId, statuses, refreshProjects } = useV2Store();
+  const { orgId, statuses, me, refreshProjects } = useV2Store();
   // Фильтры у доски и таблицы общие (один ViewScope проекта) — архив и
   // завершённое показываются там и там по одним и тем же условиям
-  // «Архив/Готово = Показать».
+  // «Архив/Готово = Показать», а условия фильтра и поиск отсеивают карточки
+  // ровно как строки таблицы: кнопки в шапке одни и те же.
   const filterGroups = useViewStore((s) => s.groups);
+  const search = useViewStore((s) => s.search);
+  const matchCtx = useMemo(() => makeMatchContext(me?.id ?? null), [me?.id]);
   const [dragTask, setDragTask] = useState<TaskRow | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -161,12 +164,14 @@ export function ProjectBoard({
   const columns = useMemo(() => {
     const known = new Set(statuses.map((s) => s.id));
     const hidden = hiddenStatusIds(filterGroups, statuses);
+    const matched = new Set(filterTasks(tasks, filterGroups, search, matchCtx).map((t) => t.id));
     const byStatus = new Map<string, TaskRow[]>();
     const noStatusTasks: TaskRow[] = [];
     for (const t of tasks) {
       // Скрытая группа не просто убирает колонку: сама задача не должна
       // всплыть нигде — ни в «Без статуса», ни в счётчиках.
       if (t.status_id && hidden.has(t.status_id)) continue;
+      if (!matched.has(t.id)) continue;
       if (t.status_id && known.has(t.status_id)) {
         const bucket = byStatus.get(t.status_id);
         if (bucket) bucket.push(t);
@@ -180,7 +185,7 @@ export function ProjectBoard({
     // уходит с доски вместе с остальными завершёнными.
     const visible = statuses.filter((s) => s.kind !== "archived" || !hidden.has(s.id));
     return { visible, byStatus, noStatusTasks };
-  }, [statuses, tasks, filterGroups]);
+  }, [statuses, tasks, filterGroups, search, matchCtx]);
 
   const openNoStatusAdd = useCallback(() => onAddTask(null), [onAddTask]);
 
