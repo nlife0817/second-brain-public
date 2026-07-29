@@ -178,30 +178,23 @@ export function reminderText(
 // ---- Работа с базой -----------------------------------------------------------------------
 
 /**
- * Кандидаты: незавершённые задачи со сроком в окне, вместе с получателями и
+ * Кандидаты: незавершённые задачи со сроком в окне, вместе с исполнителями и
  * их настройками.
  *
- * Получатель — исполнитель, а если исполнителя нет — автор задачи. Второе
- * правило не формальность: в рабочей базе больше пятисот открытых задач со
- * сроком и ни одного назначения — «напоминания только исполнителям» означало
- * бы, что не приходит ничего и никому. Подписчики ленты сюда не входят:
- * чужой дедлайн — не повод будить.
+ * Получатель — только исполнитель. Ни автор, ни подписчики ленты: чужой
+ * дедлайн — не повод будить, а «я это когда-то завёл» тем более. Чтобы задача
+ * не оставалась ничьей, исполнителем при создании становится сам создатель
+ * (см. createTask в tasks.ts) — правило живёт там, а не здесь.
  */
 async function loadCandidates(): Promise<CandidateRow[]> {
   return prepare<CandidateRow>(
     `SELECT t.id::text AS task_id, t.org_id::text AS org_id, t.title,
             t.due_date::text AS due_date, t.due_time::text AS due_time,
-            r.user_id::text AS user_id,
+            a.user_id::text AS user_id,
             ns.timezone, ns.digest_hour, ns.reminders_enabled
      FROM core.tasks t
-     JOIN LATERAL (
-       SELECT a.user_id FROM core.task_assignees a WHERE a.task_id = t.id
-       UNION
-       SELECT t.created_by
-       WHERE t.created_by IS NOT NULL
-         AND NOT EXISTS (SELECT 1 FROM core.task_assignees a2 WHERE a2.task_id = t.id)
-     ) r ON true
-     LEFT JOIN core.notification_settings ns ON ns.user_id = r.user_id
+     JOIN core.task_assignees a ON a.task_id = t.id
+     LEFT JOIN core.notification_settings ns ON ns.user_id = a.user_id
      WHERE t.completed_at IS NULL
        AND t.due_date IS NOT NULL
        AND t.due_date BETWEEN (current_date - ?::int * interval '1 day')
