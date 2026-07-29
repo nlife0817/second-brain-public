@@ -118,7 +118,6 @@ export interface V2State {
   refreshProjects: () => Promise<void>;
   refreshMeta: () => Promise<void>;
   refreshMembers: () => Promise<void>;
-  refreshFields: () => Promise<void>;
   refreshUnread: () => Promise<void>;
 }
 
@@ -150,7 +149,6 @@ const EMPTY = {
   | "refreshProjects"
   | "refreshMeta"
   | "refreshMembers"
-  | "refreshFields"
   | "refreshUnread"
 >;
 
@@ -260,14 +258,6 @@ export function createV2Store(initial?: V2InitialState | null) {
       const { orgId } = get();
       if (!orgId) return;
       set({ members: await api.get<OrgMemberWithUser[]>(`/orgs/${orgId}/members`) });
-    },
-
-    // Кастомные поля — справочник организации: держим в сторе, а не тянем
-    // заново при каждом открытии карточки задачи.
-    refreshFields: async () => {
-      const { orgId } = get();
-      if (!orgId) return;
-      set({ fields: await api.get<CustomField[]>(`/orgs/${orgId}/fields`) });
     },
 
     refreshUnread: async () => {

@@ -160,15 +160,6 @@ export function cachedGet<T>(path: string, opts: { force?: boolean } = {}): Prom
   return inflight;
 }
 
-/**
- * Прогрев кэша по намерению (наведение на ссылку). Ошибки глотаем: префетч —
- * догадка, а не действие пользователя.
- */
-export function prefetch(path: string): void {
-  if (!isBrowser()) return;
-  void cachedGet(path).catch(() => {});
-}
-
 export interface QueryResult<T> {
   data: T | undefined;
   loading: boolean;

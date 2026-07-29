@@ -21,6 +21,7 @@ import {
   dueTone,
   formatDue,
 } from "@/components/v2/bits";
+import { DuePicker } from "@/components/v2/DuePicker";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField, TaskPriority } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -476,46 +477,18 @@ function TagsDraftCell({ draft, patch }: CellProps) {
 function DueDraftCell({ draft, patch }: CellProps) {
   const text = formatDue(draft.due_date, draft.due_time);
   return (
-    <Popover>
-      <PopoverTrigger render={<button className={CELL} />}>
-        {text ? (
-          <span className={cn("truncate text-xs", dueTone(draft.due_date, false))}>{text}</span>
-        ) : (
-          <span className={PLACEHOLDER}>Срок</span>
-        )}
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-60 gap-2 p-2.5">
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Дата
-          <input
-            type="date"
-            value={draft.due_date ?? ""}
-            onChange={(e) =>
-              patch({ due_date: e.target.value || null, due_time: e.target.value ? draft.due_time : null })
-            }
-            className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Время
-          <input
-            type="time"
-            value={draft.due_time?.slice(0, 5) ?? ""}
-            disabled={!draft.due_date}
-            onChange={(e) => patch({ due_time: e.target.value || null })}
-            className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring disabled:opacity-50"
-          />
-        </label>
-        {draft.due_date && (
-          <button
-            onClick={() => patch({ due_date: null, due_time: null })}
-            className="flex items-center gap-1.5 rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <X className="size-3.5" /> Убрать срок
-          </button>
-        )}
-      </PopoverContent>
-    </Popover>
+    <DuePicker
+      date={draft.due_date}
+      time={draft.due_time}
+      triggerClassName={CELL}
+      onCommit={(next) => patch(next)}
+    >
+      {text ? (
+        <span className={cn("truncate text-xs", dueTone(draft.due_date, false))}>{text}</span>
+      ) : (
+        <span className={PLACEHOLDER}>Срок</span>
+      )}
+    </DuePicker>
   );
 }
 

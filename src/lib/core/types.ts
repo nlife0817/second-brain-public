@@ -275,6 +275,48 @@ export interface CoreComment {
   author: UserBrief | null;
 }
 
+// --- Документ описания: вложения и комментарии к тексту ---------------------------
+
+/** Файл, вставленный в описание задачи. Байты живут в БД, здесь — только метаданные. */
+export interface Attachment {
+  id: string;
+  org_id: string;
+  task_id: string;
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+  width: number | null;
+  height: number | null;
+  created_at: string;
+  /** Готовый путь для `<img src>` / скачивания. */
+  url: string;
+}
+
+/** Одно сообщение в треде комментариев к описанию (корень или ответ). */
+export interface DocCommentMessage {
+  id: string;
+  author_id: string | null;
+  body: string;
+  created_at: string;
+  edited_at: string | null;
+  author: UserBrief | null;
+}
+
+/**
+ * Тред комментариев к фрагменту описания. `id` треда совпадает с id корневого
+ * сообщения и хранится в разметке как `<span data-comment="…">` — по нему
+ * панель комментариев и текст находят друг друга.
+ */
+export interface DocCommentThread {
+  id: string;
+  task_id: string;
+  quote: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  created_at: string;
+  messages: DocCommentMessage[];
+}
+
 export interface CoreEvent {
   id: number;
   org_id: string;

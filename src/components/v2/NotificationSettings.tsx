@@ -14,7 +14,15 @@ import {
   type NotificationPref,
   type NotificationPrefs,
 } from "@/lib/core/notification-kinds";
+import { isValidHhMm, type DeliverySettings } from "@/lib/core/delivery";
+import { plural } from "@/lib/core/plural";
+import { cachedGet, invalidate } from "@/lib/core/query";
+import { browserTimezone } from "@/lib/core/timezone";
+import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
+
+/** Один ответ на два блока настроек — путь общий и для кэша, и для сброса. */
+const SETTINGS_PATH = "/notifications/settings";
 
 // ---- Проверочная отправка ----------------------------------------------------------------
 
@@ -29,7 +37,7 @@ export function PushTestButton({ className }: { className?: string }) {
       const res = await api.post<{ sent: number }>("/push/test");
       setState({
         ok: true,
-        text: res.sent === 1 ? "Отправлено на 1 устройство" : `Отправлено на ${res.sent} устройства`,
+        text: `Отправлено на ${plural(res.sent, "устройство", "устройства", "устройств")}`,
       });
     } catch (e) {
       setState({ ok: false, text: e instanceof Error ? e.message : "Не удалось отправить" });
@@ -178,6 +186,224 @@ export function PushDevices() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ---- Режим тишины, сводка и напоминания ---------------------------------------------------
+
+interface SettingsResponse {
+  settings: DeliverySettings;
+  muted_projects: string[];
+}
+
+function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3 border-b border-border py-2.5 last:border-b-0">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm">{label}</p>
+        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      </div>
+      <div className="flex shrink-0 items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Поле времени с черновиком.
+ *
+ * Наивный `onChange → сохранить` шлёт запрос на каждое нажатие, а пока часы
+ * набраны, а минуты нет, поле отдаёт пустую строку — сервер честно отвечает
+ * «время в формате ЧЧ:ММ», и человек видит ошибку посреди набора. Поэтому
+ * набор живёт в черновике, а сохраняется завершённое значение.
+ */
+function TimeField({ value, onCommit }: { value: string; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+
+  // Значение пришло с сервера (или откатилось после ошибки) — показываем его.
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  function commit(next: string) {
+    if (!isValidHhMm(next) || next === value) return;
+    onCommit(next);
+  }
+
+  return (
+    <input
+      type="time"
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        commit(e.target.value);
+      }}
+      onBlur={() => {
+        // Незавершённый набор не сохраняем и возвращаем прежнее значение.
+        if (!isValidHhMm(draft)) setDraft(value);
+      }}
+      className="h-8 rounded-lg border border-border bg-background px-2 text-sm"
+    />
+  );
+}
+
+export function DeliveryPreferences() {
+  const [settings, setSettings] = useState<DeliverySettings | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Через кэш: на десктопной странице этот же ответ читает и список проектов —
+  // без него экран дважды спрашивал бы одно и то же.
+  useEffect(() => {
+    void cachedGet<SettingsResponse>(SETTINGS_PATH)
+      .then((res) => setSettings(res.settings))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Не удалось загрузить"));
+  }, []);
+
+  async function save(patch: Partial<DeliverySettings>) {
+    const prev = settings;
+    setSettings((s) => (s ? { ...s, ...patch } : s));
+    setError(null);
+    try {
+      const res = await api.patch<{ settings: DeliverySettings }>(SETTINGS_PATH, patch);
+      setSettings(res.settings);
+      invalidate(SETTINGS_PATH);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось сохранить");
+      if (prev) setSettings(prev);
+    }
+  }
+
+  if (!settings) {
+    return <p className="text-sm text-muted-foreground">{error ?? "Загрузка…"}</p>;
+  }
+
+  const deviceTz = browserTimezone();
+
+  return (
+    <div className="flex flex-col">
+      {error && <p className="pb-2 text-sm text-destructive">{error}</p>}
+
+      <Row
+        label="Напоминать о сроках"
+        hint="За полчаса до времени задачи, при просрочке и утренней сводкой"
+      >
+        <Checkbox
+          checked={settings.reminders_enabled}
+          onCheckedChange={(checked) => void save({ reminders_enabled: checked === true })}
+        />
+      </Row>
+
+      <Row label="Утренняя сводка" hint="Час по вашему местному времени">
+        <select
+          value={settings.digest_hour}
+          disabled={!settings.reminders_enabled}
+          onChange={(e) => void save({ digest_hour: Number(e.target.value) })}
+          className="h-8 rounded-lg border border-border bg-background px-2 text-sm disabled:opacity-50"
+        >
+          {Array.from({ length: 24 }, (_, h) => (
+            <option key={h} value={h}>
+              {String(h).padStart(2, "0")}:00
+            </option>
+          ))}
+        </select>
+      </Row>
+
+      <Row
+        label="Не беспокоить"
+        hint="В это время push не приходит: уведомления копятся и приходят одним сообщением после окончания"
+      >
+        <Checkbox
+          checked={settings.quiet_enabled}
+          onCheckedChange={(checked) => void save({ quiet_enabled: checked === true })}
+        />
+      </Row>
+
+      {settings.quiet_enabled && (
+        <Row label="Тихие часы" hint="Можно задать через полночь — например, с 22:00 до 08:00">
+          <TimeField
+            value={settings.quiet_start}
+            onCommit={(value) => void save({ quiet_start: value })}
+          />
+          <span className="text-sm text-muted-foreground">—</span>
+          <TimeField
+            value={settings.quiet_end}
+            onCommit={(value) => void save({ quiet_end: value })}
+          />
+        </Row>
+      )}
+
+      <Row label="Часовой пояс" hint="Определяется устройством — задавать вручную не нужно">
+        <span className="text-sm text-muted-foreground">
+          {settings.timezone}
+          {deviceTz && deviceTz !== settings.timezone && " → " + deviceTz}
+        </span>
+      </Row>
+    </div>
+  );
+}
+
+// ---- Отключение по проектам ----------------------------------------------------------------
+
+export function ProjectMutes() {
+  const projects = useV2Store((s) => s.projects);
+  const [muted, setMuted] = useState<Set<string> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void cachedGet<SettingsResponse>(SETTINGS_PATH)
+      .then((res) => setMuted(new Set(res.muted_projects)))
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : "Не удалось загрузить");
+        setMuted(new Set());
+      });
+  }, []);
+
+  async function toggle(projectId: string, mute: boolean) {
+    setMuted((prev) => {
+      const next = new Set(prev ?? []);
+      if (mute) next.add(projectId);
+      else next.delete(projectId);
+      return next;
+    });
+    try {
+      const res = await api.put<{ muted_projects: string[] }>(SETTINGS_PATH, {
+        project_id: projectId,
+        muted: mute,
+      });
+      setMuted(new Set(res.muted_projects));
+      invalidate(SETTINGS_PATH);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось сохранить");
+    }
+  }
+
+  if (!muted) return <p className="text-sm text-muted-foreground">Загрузка…</p>;
+  if (projects.length === 0) {
+    return <p className="text-sm text-muted-foreground">Доступных проектов пока нет.</p>;
+  }
+
+  return (
+    <div className="flex flex-col">
+      {error && <p className="pb-2 text-sm text-destructive">{error}</p>}
+      {projects.map((project) => (
+        <Row key={project.id} label={project.name}>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            не беспокоить
+            <Checkbox
+              checked={muted.has(project.id)}
+              onCheckedChange={(checked) => void toggle(project.id, checked === true)}
+            />
+          </label>
+        </Row>
+      ))}
     </div>
   );
 }

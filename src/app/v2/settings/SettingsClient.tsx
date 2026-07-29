@@ -426,7 +426,14 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
               <p className="flex-1 text-sm text-muted-foreground">
                 Доставка в этот браузер, устройства и типы событий
               </p>
-              <Button variant="outline" size="sm" render={<Link href="/v2/settings/notifications" />}>
+              {/* nativeButton={false}: внутри ссылка, а не <button> — иначе Base UI
+                  навешивает клавиатурные повадки кнопки поверх якоря и ругается. */}
+              <Button
+                variant="outline"
+                size="sm"
+                nativeButton={false}
+                render={<Link href="/v2/settings/notifications" />}
+              >
                 <Bell className="size-4" />
                 Открыть раздел
               </Button>

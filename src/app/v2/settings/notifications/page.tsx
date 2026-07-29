@@ -10,7 +10,13 @@
 import Link from "next/link";
 import { ArrowLeft, Bell } from "lucide-react";
 import { PushToggle } from "@/components/v2/PushToggle";
-import { NotificationKinds, PushDevices, PushTestButton } from "@/components/v2/NotificationSettings";
+import {
+  DeliveryPreferences,
+  NotificationKinds,
+  ProjectMutes,
+  PushDevices,
+  PushTestButton,
+} from "@/components/v2/NotificationSettings";
 
 function Section({
   title,
@@ -72,6 +78,20 @@ export default function NotificationSettingsPage() {
             description="«В приложении» — строка в этом разделе и счётчик в сайдбаре. «Push» — системное уведомление на подписанные устройства. Настройка общая для всех ваших организаций."
           >
             <NotificationKinds />
+          </Section>
+
+          <Section
+            title="Режим и сроки"
+            description="Напоминания о сроках приходят по вашему местному времени. Несколько задач подряд приходят одним сообщением, а не очередью."
+          >
+            <DeliveryPreferences />
+          </Section>
+
+          <Section
+            title="Проекты"
+            description="Заглушённый проект перестаёт присылать уведомления вам — на остальных участников это не влияет. Задача, лежащая ещё и в незаглушённом проекте, уведомление пришлёт."
+          >
+            <ProjectMutes />
           </Section>
         </div>
       </div>
