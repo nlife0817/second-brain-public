@@ -26,6 +26,10 @@ function place(element: HTMLElement, rect: DOMRect | null | undefined) {
   element.style.position = "fixed";
   // Выше слоя развёрнутого документа (z-60) и всплывающего меню (z-70).
   element.style.zIndex = "80";
+  // Каретку увезли прокруткой за пределы экрана — прячем список: он `fixed` и
+  // иначе висел бы посреди страницы поверх всего, оставаясь кликабельным.
+  const offscreen = rect.bottom < 0 || rect.top > window.innerHeight;
+  element.style.visibility = offscreen ? "hidden" : "";
   element.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - PANEL_WIDTH - 8))}px`;
   if (window.innerHeight - rect.bottom < FLIP_THRESHOLD) {
     element.style.top = "auto";
@@ -67,24 +71,42 @@ export function createMention(getItems: () => MentionItem[]) {
         // suggestion сам её не выключает. Показываем обратно, как только запрос
         // изменился — то есть человек продолжил набирать.
         let dismissed = false;
+        // Откуда брать координаты каретки между транзакциями редактора: сам
+        // плагин зовёт нас только на них, а прокрутка транзакции не порождает.
+        let rectOf: (() => DOMRect | null) | null = null;
 
         const show = (visible: boolean) => {
           const el = renderer?.element as HTMLElement | undefined;
           if (el) el.style.display = visible ? "" : "none";
         };
 
+        /**
+         * Список приклеен к каретке `position: fixed`, поэтому прокрутка любого
+         * предка (карточка задачи, панель обсуждения) уводит каретку, а список
+         * остаётся на прежнем месте экрана — поверх чужого содержимого и всё ещё
+         * кликабельным. Слушаем в фазе перехвата: события прокрутки внутренних
+         * контейнеров до window не всплывают.
+         */
+        const reposition = () => {
+          if (renderer && rectOf) place(renderer.element as HTMLElement, rectOf());
+        };
+
         return {
           onStart: (props) => {
             dismissed = false;
+            rectOf = props.clientRect ?? null;
             renderer = new ReactRenderer(MentionList, {
               props: { items: props.items, command: props.command },
               editor: props.editor,
             });
             document.body.appendChild(renderer.element);
             place(renderer.element as HTMLElement, props.clientRect?.());
+            window.addEventListener("scroll", reposition, true);
+            window.addEventListener("resize", reposition);
           },
           onUpdate: (props) => {
             dismissed = false;
+            rectOf = props.clientRect ?? null;
             show(true);
             renderer?.updateProps({ items: props.items, command: props.command });
             if (renderer) place(renderer.element as HTMLElement, props.clientRect?.());
@@ -106,9 +128,12 @@ export function createMention(getItems: () => MentionItem[]) {
             return renderer?.ref?.onKeyDown(props.event) ?? false;
           },
           onExit: () => {
+            window.removeEventListener("scroll", reposition, true);
+            window.removeEventListener("resize", reposition);
             renderer?.element.remove();
             renderer?.destroy();
             renderer = null;
+            rectOf = null;
             dismissed = false;
           },
         };
