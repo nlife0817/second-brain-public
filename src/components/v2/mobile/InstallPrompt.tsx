@@ -115,6 +115,9 @@ export function InstallPrompt() {
   return (
     <div className="shrink-0 border-b border-border bg-muted/40 px-4 py-2.5">
       <div className="flex items-center gap-2.5">
+        {/* Свой значок из public, 32 px: оптимизировать нечего, а next/image ради
+            него тянет за собой лоадер изображений. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/icons/icon-192.png" alt="" className="size-8 rounded-lg" />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium leading-tight">Установите приложение</p>

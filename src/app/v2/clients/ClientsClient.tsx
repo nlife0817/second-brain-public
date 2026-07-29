@@ -18,6 +18,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
+import { useLoad } from "@/lib/core/use-load";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 
@@ -102,9 +103,7 @@ export function ClientsClient({ initial }: { initial: ClientsInitial }) {
     await load({ force: true });
   }, [orgId, load]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useLoad(load);
 
   const open = useCallback(
     async (clientId: string) => {
@@ -124,9 +123,10 @@ export function ClientsClient({ initial }: { initial: ClientsInitial }) {
   );
 
   // Переход из поиска: /v2/clients?client=<id>
-  useEffect(() => {
-    if (deepLinkId) void open(deepLinkId);
+  const openDeepLink = useCallback(() => {
+    if (deepLinkId) return open(deepLinkId);
   }, [deepLinkId, open]);
+  useLoad(openDeepLink);
 
   async function call(fn: () => Promise<unknown>) {
     try {

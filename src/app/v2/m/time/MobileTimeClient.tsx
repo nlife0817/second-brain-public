@@ -10,6 +10,7 @@ import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
 import { useAppResume } from "@/components/v2/mobile/hooks";
 import { api } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
+import { useLoad } from "@/lib/core/use-load";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 
@@ -104,9 +105,7 @@ export function MobileTimeClient({ initial }: { initial: MobileTimeInitial }) {
     await load({ force: true });
   }, [orgId, load]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useLoad(load);
 
   // Таймер мог остановиться с другого устройства, пока приложение было в фоне.
   useAppResume(reload);

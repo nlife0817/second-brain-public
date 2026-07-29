@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
+import { useLoad } from "@/lib/core/use-load";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 
 export interface TimeEntry {
@@ -95,12 +96,20 @@ export function TimeClient({ initial }: { initial: TimeInitial }) {
   }, [orgId, initial]);
 
   // Часовой пояс браузера мог дать другой недельный период — поправляем.
+  //
+  // Именно эффектом: границы периода посчитал сервер в своём поясе, и вычислить
+  // их заново прямо в рендере значило бы разойтись с присланной разметкой на
+  // гидрации. Правило запрещает синхронный setState в эффекте — здесь это
+  // осознанная плата за отсутствие расхождения, и стоит она один лишний проход
+  // рендера ровно у тех, чей пояс отличается от серверного.
+  /* eslint-disable react-hooks/set-state-in-effect -- поправка после гидрации, в рендере её сделать нельзя */
   useEffect(() => {
     const localFrom = isoDaysAgo(7);
     const localTo = isoDaysAgo(0);
     setFrom((prev) => (prev === initial.from ? localFrom : prev));
     setTo((prev) => (prev === initial.to ? localTo : prev));
   }, [initial.from, initial.to]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const load = useCallback(
     async (opts: { force?: boolean } = {}) => {
@@ -133,9 +142,7 @@ export function TimeClient({ initial }: { initial: TimeInitial }) {
     [orgId, from, to, groupBy, storeApi],
   );
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useLoad(load);
 
   // Секундная стрелка активного таймера.
   useEffect(() => {

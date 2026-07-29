@@ -44,6 +44,7 @@ import type {
   TaskListItem,
 } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
+import { useLoad } from "@/lib/core/use-load";
 import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle } from "./bits";
 import { MemberPicker } from "./MemberPicker";
@@ -219,12 +220,17 @@ export function TaskSheet({
       if (currentTaskRef.current !== taskId) return;
       setError(e instanceof Error ? e.message : "Не удалось загрузить задачу");
     }
-  }, [orgId, taskId]);
+    // setTask — псевдоним setLoaded, ссылка стабильна; в списке он только
+    // потому, что через `const` правило этого не видит.
+  }, [orgId, taskId, setTask]);
 
-  useEffect(() => {
+  // Отметку «какую задачу ждём» ставим до запроса: по ней ответ прежней задачи
+  // отсекается, если пользователь уже переключился на следующую.
+  const loadTask = useCallback(() => {
     currentTaskRef.current = taskId;
-    if (taskId) void load();
+    if (taskId) return load();
   }, [taskId, load]);
+  useLoad(loadTask);
 
   /** Единая точка вызова API: показывает ошибку вместо тихого падения. */
   async function run(fn: () => Promise<void>) {

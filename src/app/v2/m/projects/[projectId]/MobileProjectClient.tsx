@@ -18,6 +18,7 @@ import { useAppResume, useBackDismiss, useTaskDeepLink } from "@/components/v2/m
 import { ProjectIcon } from "@/components/v2/project-icons";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
+import { useLoad } from "@/lib/core/use-load";
 import { applyTaskChange } from "@/lib/core/task-change";
 import type {
   Project,
@@ -99,9 +100,7 @@ function MobileProjectScreen({
     await load({ force: true });
   }, [projectPath, load]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useLoad(load);
   useAppResume(reload);
 
   const canEdit = project?.my_role === "admin" || project?.my_role === "editor";

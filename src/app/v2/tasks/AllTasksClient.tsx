@@ -18,6 +18,7 @@ import { useSearchParams } from "next/navigation";
 import { TaskSheet } from "@/components/v2/lazy";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
 import { cachedGet, invalidate, peek, seed } from "@/lib/core/query";
+import { useLoad } from "@/lib/core/use-load";
 import { applyTaskChange } from "@/lib/core/task-change";
 import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type { AllTasksResult, TaskRow } from "@/lib/core/types";
@@ -43,7 +44,7 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
   const [truncated, setTruncated] = useState(initial.truncated);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(deepLinkTaskId);
 
   // Завершённых сервер по умолчанию не отдаёт — просим их только по условию
   // «Готово = Показать». Иначе оно показало бы пустоту, а грузить весь архив
@@ -85,13 +86,18 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
     await load({ force: true });
   }, [orgId, load]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useLoad(load);
 
-  useEffect(() => {
+  // Ссылка из пуша или поиска открывает карточку сразу, на первом же рендере, и
+  // ещё раз, если ссылка сменилась при уже смонтированном экране. Правка
+  // состояния во время рендера — задокументированный React способ подстроиться
+  // под изменившийся вход; эффект здесь означал бы лишний проход рендера до
+  // отрисовки.
+  const [seenDeepLink, setSeenDeepLink] = useState(deepLinkTaskId);
+  if (deepLinkTaskId !== seenDeepLink) {
+    setSeenDeepLink(deepLinkTaskId);
     if (deepLinkTaskId) setOpenTaskId(deepLinkTaskId);
-  }, [deepLinkTaskId]);
+  }
 
   const createTask = useCallback(
     async (draft: TaskDraft) => {
