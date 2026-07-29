@@ -6,7 +6,7 @@
 // Форма фильтров — `FilterGroup[]`: группы соединяются через И, условия
 // внутри группы через И/ИЛИ.
 
-import type { CustomField, TaskPriority, TaskRow } from "./types";
+import type { CustomField, StatusKind, TaskPriority, TaskRow } from "./types";
 
 // --- Фильтры ------------------------------------------------------------------
 
@@ -222,6 +222,68 @@ export function matchesGroups(task: TaskRow, groups: FilterGroup[], ctx: MatchCo
     if (!ok) return false;
   }
   return true;
+}
+
+// --- Завершённое и архив: что список прячет по умолчанию ------------------------
+//
+// «Готово» и «Архив» — это прошлое, а не работа: в сводном списке они только
+// разбавляют текущие задачи. Прячем их по умолчанию, но выбор такого статуса в
+// «Фильтрах» — явное намерение их увидеть, и тогда список их показывает.
+
+/** Виды статусов, задачи которых сводный список прячет без спроса. */
+const HIDDEN_STATUS_KINDS: ReadonlySet<StatusKind> = new Set<StatusKind>(["done", "archived"]);
+
+/** Минимум, который нужен правилам ниже: id статуса и его вид. */
+export interface StatusKindRef {
+  id: string;
+  kind: StatusKind;
+}
+
+/**
+ * Что фильтр выбрал явно: id статусов из условий «Статус равно X» плюс признак
+ * «Завершена равно Да». Только оператор «равно» считается выбором — «не равно»
+ * сужает выборку, но архив им никто не запрашивает.
+ */
+function explicitPicks(groups: FilterGroup[]): { statusIds: Set<string>; completed: boolean } {
+  const statusIds = new Set<string>();
+  let completed = false;
+  for (const group of groups) {
+    for (const cond of group.conditions) {
+      if (cond.operator !== "is") continue;
+      if (cond.field === "status" && cond.value) statusIds.add(cond.value);
+      if (cond.field === "completed" && cond.value === "yes") completed = true;
+    }
+  }
+  return { statusIds, completed };
+}
+
+/**
+ * Статусы, задачи которых список не показывает. Пустое множество означает
+ * «прятать нечего».
+ */
+export function hiddenStatusIds(groups: FilterGroup[], statuses: StatusKindRef[]): Set<string> {
+  const picks = explicitPicks(groups);
+  const hidden = new Set<string>();
+  for (const status of statuses) {
+    if (!HIDDEN_STATUS_KINDS.has(status.kind)) continue;
+    if (picks.statusIds.has(status.id)) continue;
+    // «Завершена = Да» — тот же явный запрос, только через другое поле.
+    if (picks.completed && status.kind === "done") continue;
+    hidden.add(status.id);
+  }
+  return hidden;
+}
+
+/**
+ * Нужно ли просить у сервера завершённые задачи. Их не отдают по умолчанию, и
+ * без этого фильтр «Статус = Готово» показал бы пустоту вместо задач.
+ * Архивных это не касается: `completed_at` им не проставляют, они приходят
+ * всегда.
+ */
+export function needsCompletedTasks(groups: FilterGroup[], statuses: StatusKindRef[]): boolean {
+  const picks = explicitPicks(groups);
+  if (picks.completed) return true;
+  return statuses.some((s) => s.kind === "done" && picks.statusIds.has(s.id));
 }
 
 // --- Сортировка ----------------------------------------------------------------
