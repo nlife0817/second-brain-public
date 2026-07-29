@@ -279,14 +279,22 @@ export function GanttView({
 
   // --- Правка ---------------------------------------------------------------------
 
+  // Зеркало списка для обработчиков: см. комментарий в patchTask.
+  const tasksRef = useRef(tasks);
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+
   const patchTask = useCallback(
     async (taskId: string, payload: Record<string, unknown>) => {
       if (!orgId || Object.keys(payload).length === 0) return;
-      let before: TaskRow | undefined;
-      setTasks((prev) => {
-        before = prev.find((t) => t.id === taskId);
-        return prev.map((t) => (t.id === taskId ? { ...t, ...payload } : t));
-      });
+      // Состояние до правки читаем из ref-зеркала, а не внутри апдейтера:
+      // побочный эффект в нём выполняется столько раз, сколько React решит
+      // прогнать обновление, и брать `tasks` в зависимости тоже нельзя —
+      // обработчик пересоздавался бы на каждое изменение списка и обнулял memo
+      // строк.
+      const before = tasksRef.current.find((t) => t.id === taskId);
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...payload } : t)));
       try {
         const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`, payload);
         setTasks((prev) =>
