@@ -1,4 +1,4 @@
-const CACHE_NAME = "second-brain-v4";
+const CACHE_NAME = "second-brain-v5";
 const OFFLINE_URL = "/offline.html";
 const STATIC_ASSETS = [OFFLINE_URL, "/icons/icon-192.png", "/icons/icon-512.png"];
 
@@ -95,19 +95,6 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  // Action "stop" → POST to /api/timing/stop using session cookies.
-  if (event.action === "stop") {
-    event.waitUntil(
-      fetch("/api/timing/stop", {
-        method: "POST",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      }).catch(() => {})
-    );
-    return;
-  }
-
   event.waitUntil(openTarget(event.notification.data?.url || "/"));
 });
 

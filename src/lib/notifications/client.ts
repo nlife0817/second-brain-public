@@ -28,15 +28,10 @@ export async function getPushState(): Promise<PushState> {
   };
 }
 
-/**
- * Куда сохранять подписку. v1-экраны используют /api/push/subscribe
- * (whitelist-авторизация), v2 передаёт /api/v2/push/subscribe — его
- * авторизация построена на core-identity и принимает приглашённых
- * участников, которых нет в whitelist v1.
- */
+/** Куда сохранять подписку. Приёмник один — /api/v2/push/subscribe. */
 export type PushClientOptions = { subscribeUrl?: string };
 
-const DEFAULT_SUBSCRIBE_URL = "/api/push/subscribe";
+const DEFAULT_SUBSCRIBE_URL = "/api/v2/push/subscribe";
 
 export async function enablePushNotifications(opts?: PushClientOptions): Promise<void> {
   const subscribeUrl = opts?.subscribeUrl ?? DEFAULT_SUBSCRIBE_URL;
@@ -90,12 +85,4 @@ export async function disablePushNotifications(opts?: PushClientOptions): Promis
   await fetch(`${subscribeUrl}?endpoint=${encodeURIComponent(endpoint)}`, {
     method: "DELETE",
   });
-}
-
-export async function sendTestPush(): Promise<void> {
-  const res = await fetch("/api/push/test", { method: "POST" });
-  if (!res.ok) {
-    const { error } = await res.json().catch(() => ({ error: "test failed" }));
-    throw new Error(error);
-  }
 }

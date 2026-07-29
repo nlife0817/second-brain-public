@@ -13,7 +13,9 @@ function isMobileUserAgent(ua: string): boolean {
  */
 function mobileV2Target(url: URL): string | null {
   const { pathname } = url;
-  if (pathname === "/v2" || pathname === "/v2/my") {
+  // "/" тоже здесь, а не отдельным правилом: иначе телефон делал бы два хопа
+  // (/ → /v2/my серверным редиректом → /v2/m/my этим proxy).
+  if (pathname === "/" || pathname === "/v2" || pathname === "/v2/my") {
     const task = url.searchParams.get("task");
     return task ? `/v2/m/my?task=${encodeURIComponent(task)}` : "/v2/m/my";
   }
@@ -37,9 +39,6 @@ function mobileRedirect(request: NextRequest): NextResponse | null {
   // по сайдбару снова уводил бы на /v2/m/*.
   if (request.nextUrl.searchParams.has("desktop")) return null;
   if (request.cookies.has(DESKTOP_COOKIE)) return null;
-  if (request.nextUrl.pathname === "/") {
-    return NextResponse.redirect(new URL("/m/tasks", request.url));
-  }
   const v2 = mobileV2Target(request.nextUrl);
   if (v2) return NextResponse.redirect(new URL(v2, request.url));
   return null;
@@ -55,7 +54,7 @@ function applyDesktopModeCookie(request: NextRequest, response: NextResponse): v
 }
 
 // /invite/* открыт до входа: страница сама показывает кнопку «Войти» с возвратом.
-const PUBLIC_PATHS = ["/login", "/auth/callback", "/mockup", "/invite"];
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/invite"];
 
 // Local-only dev bypass. Active iff both conditions hold:
 //   1) NODE_ENV !== "production"  (Vercel builds always set this to "production")
@@ -111,7 +110,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // Мобильные UA: корень v1 → /m/tasks, десктопные экраны v2 → /v2/m/*
+  // Мобильные UA: десктопные экраны → /v2/m/*
   // (только для авторизованных; обход — ?desktop, возврат — ?mobile).
   if (user) {
     const redirect = mobileRedirect(request);
@@ -126,6 +125,6 @@ export const config = {
   matcher: [
     // api/v2/invitations исключён: GET показывает приглашение до входа, POST
     // сам требует сессию через withUser.
-    "/((?!_next|api/cron|api/v2/cron|api/notifications/dispatch|api/timing/watchdog|api/mcp|api/v2/invitations|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
+    "/((?!_next|api/v2/cron|api/v2/invitations|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
   ],
 };
