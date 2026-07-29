@@ -34,6 +34,7 @@ export type FilterField =
   | "due_date"
   | "completed"
   | "has_parent"
+  | "archive"
   | `field:${string}`;
 
 export type FilterLogic = "and" | "or";
@@ -57,11 +58,15 @@ export const NONE_VALUE = "__none__";
 /** Подстановка «текущий пользователь» в условии по исполнителю. */
 export const ME_VALUE = "__me__";
 
+/** Значения фильтра «Архив». Умолчание — `hide`, даже когда условия нет вовсе. */
+export const ARCHIVE_SHOW = "show";
+export const ARCHIVE_HIDE = "hide";
+
 export interface FieldMeta {
   field: FilterField;
   label: string;
   /** Какие операторы имеют смысл: определяет и вид редактора значения. */
-  kind: "select" | "text" | "date" | "boolean";
+  kind: "select" | "text" | "date" | "boolean" | "archive";
 }
 
 export const BASE_FILTER_FIELDS: FieldMeta[] = [
@@ -74,6 +79,7 @@ export const BASE_FILTER_FIELDS: FieldMeta[] = [
   { field: "due_date", label: "Дедлайн", kind: "date" },
   { field: "completed", label: "Завершена", kind: "boolean" },
   { field: "has_parent", label: "Подзадача", kind: "boolean" },
+  { field: "archive", label: "Архив", kind: "archive" },
 ];
 
 export const OPERATORS_BY_KIND: Record<FieldMeta["kind"], FilterOperator[]> = {
@@ -81,6 +87,7 @@ export const OPERATORS_BY_KIND: Record<FieldMeta["kind"], FilterOperator[]> = {
   text: ["contains", "not_contains", "is_empty", "is_not_empty"],
   date: ["is", "before", "after", "is_today", "is_this_week", "is_overdue", "is_empty", "is_not_empty"],
   boolean: ["is"],
+  archive: ["is"],
 };
 
 export const OPERATOR_LABELS: Record<FilterOperator, string> = {
@@ -166,6 +173,9 @@ function valuesOf(task: TaskRow, field: FilterField): string[] {
       return [task.completed_at ? "yes" : "no"];
     case "has_parent":
       return [task.parent_task_id ? "yes" : "no"];
+    case "archive":
+      // Режим показа архива, а не свойство задачи, — см. showsArchived.
+      return [];
     default: {
       const id = field.slice("field:".length);
       const raw = task.field_values[id];
@@ -212,10 +222,27 @@ function matchesCondition(task: TaskRow, cond: FilterCondition, ctx: MatchContex
   }
 }
 
+/**
+ * Показывать ли задачи в архивных статусах. Архив скрыт всегда, кроме явного
+ * условия «Архив = Показать»: иначе архивные задачи всплывают в каждой
+ * группировке, ради чего фильтр и заводился.
+ *
+ * Логика группы (И/ИЛИ) здесь роли не играет: это переключатель видимости, а не
+ * условие на строку, и «спрятано, пока не попросили» — единственное поведение,
+ * которое читается однозначно.
+ */
+export function showsArchived(groups: FilterGroup[]): boolean {
+  return groups.some((g) =>
+    g.conditions.some((c) => c.field === "archive" && c.operator === "is" && c.value === ARCHIVE_SHOW),
+  );
+}
+
 /** Группы объединяются через И, условия внутри группы — по её `logic`. */
 export function matchesGroups(task: TaskRow, groups: FilterGroup[], ctx: MatchContext): boolean {
   for (const group of groups) {
-    const active = group.conditions;
+    // «Архив» — режим показа, его разбирает showsArchived: как предикат строки
+    // он бы вырезал из списка вообще всё.
+    const active = group.conditions.filter((c) => c.field !== "archive");
     if (active.length === 0) continue;
     const results = active.map((c) => matchesCondition(task, c, ctx));
     const ok = group.logic === "and" ? results.every(Boolean) : results.some(Boolean);
