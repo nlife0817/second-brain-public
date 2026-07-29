@@ -34,7 +34,8 @@ import { cn } from "@/lib/utils";
  */
 const GROUP_PAGE = 100;
 
-const SELECT_COLUMN_WIDTH = 34;
+/** Ширина служебной колонки с чекбоксом — строка добавления равняется по ней же. */
+export const SELECT_COLUMN_WIDTH = 34;
 
 export interface GroupLabel {
   text: string;
@@ -60,6 +61,14 @@ export interface TaskTableProps {
   labelForGroup: (field: GroupByField, key: string) => GroupLabel;
   /** Порядок ключей группы: справочники имеют свой (позиция статуса и т.п.). */
   groupOrder: (field: GroupByField, keys: string[]) => string[];
+  /**
+   * Строка создания задачи. Живёт внутри таблицы, а не над ней: только так её
+   * поля стоят ровно под своими колонками и едут вместе с ними при
+   * горизонтальной прокрутке.
+   */
+  composer?: React.ReactNode;
+  /** Что показать вместо строк, когда показывать нечего. */
+  emptyState?: React.ReactNode;
 }
 
 interface GroupNode {
@@ -448,6 +457,8 @@ export function TaskTable(props: TaskTableProps) {
     onOpen,
     labelForGroup,
     groupOrder,
+    composer,
+    emptyState,
   } = props;
 
   const widths = useMemo(() => {
@@ -491,24 +502,28 @@ export function TaskTable(props: TaskTableProps) {
           ))}
         </div>
 
-        {nodes.map((node) => (
-          <GroupBody
-            key={node.path}
-            node={node}
-            level={0}
-            columns={columns}
-            widths={widths}
-            ctx={ctx}
-            selected={selected}
-            onToggleSelected={onToggleSelected}
-            onSelectMany={onSelectMany}
-            collapsed={collapsed}
-            onToggleCollapsed={onToggleCollapsed}
-            onOpen={onOpen}
-            grouped={grouped}
-            subtaskMode={subtaskMode}
-          />
-        ))}
+        {composer}
+
+        {tasks.length === 0
+          ? emptyState
+          : nodes.map((node) => (
+              <GroupBody
+                key={node.path}
+                node={node}
+                level={0}
+                columns={columns}
+                widths={widths}
+                ctx={ctx}
+                selected={selected}
+                onToggleSelected={onToggleSelected}
+                onSelectMany={onSelectMany}
+                collapsed={collapsed}
+                onToggleCollapsed={onToggleCollapsed}
+                onOpen={onOpen}
+                grouped={grouped}
+                subtaskMode={subtaskMode}
+              />
+            ))}
       </div>
     </div>
   );
