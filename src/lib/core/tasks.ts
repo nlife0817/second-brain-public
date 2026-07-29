@@ -459,6 +459,26 @@ export async function listSubtasks(ctx: AuthContext, parentTaskId: string): Prom
   return enrichTasks(rows);
 }
 
+/**
+ * Родитель подзадачи — для хлебной крошки в карточке. Доступ к подзадаче не
+ * означает доступа к родителю (подзадачу могли назначить исполнителю мимо
+ * проекта), поэтому недоступного родителя не раскрываем даже названием:
+ * видимость проверяется тем же каналом, что и у связей (правило 8).
+ */
+export async function getParentBrief(
+  ctx: AuthContext,
+  taskId: string,
+): Promise<{ id: string; title: string; completed_at: string | null } | null> {
+  const row = await prepare<{ id: string; title: string; completed_at: string | null }>(
+    `SELECT p.id, p.title, p.completed_at
+     FROM core.tasks t JOIN core.tasks p ON p.id = t.parent_task_id
+     WHERE t.id = ? AND p.org_id = ?`,
+  ).get(taskId, ctx.orgId);
+  if (!row) return null;
+  const visible = await filterVisibleTaskIds(ctx, [row.id]);
+  return visible.has(row.id) ? row : null;
+}
+
 export async function getTaskDetail(ctx: AuthContext, taskId: string): Promise<TaskDetail> {
   const access = await requireTaskAccess(ctx, taskId, "view");
   // Обвязка, подписчики, значения полей и автор независимы — берём параллельно.
@@ -688,13 +708,43 @@ export interface UpdateTaskInput {
   due_date?: string | null;
   due_time?: string | null;
   estimated_minutes?: number | null;
+  /** `null` — отвязать от родителя; uuid — переподчинить другой задаче. */
+  parent_task_id?: string | null;
   assignee_ids?: string[];
   tag_ids?: string[];
+}
+
+/**
+ * Задача принадлежит собственной ветке — то есть назначить её родителем значит
+ * замкнуть цикл. Обход идёт вниз от `taskId` и включает саму задачу, поэтому
+ * попытка сделать задачу родителем самой себе тоже отсекается здесь.
+ */
+async function isSelfOrDescendant(taskId: string, candidateId: string): Promise<boolean> {
+  const row = await prepare<{ id: string }>(
+    `WITH RECURSIVE down AS (
+       SELECT id, 0 AS depth FROM core.tasks WHERE id = ?
+       UNION ALL
+       SELECT c.id, d.depth + 1 FROM core.tasks c JOIN down d ON c.parent_task_id = d.id
+       WHERE d.depth < 8
+     )
+     SELECT id FROM down WHERE id = ?`,
+  ).get(taskId, candidateId);
+  return !!row;
 }
 
 export async function updateTask(ctx: AuthContext, taskId: string, patch: UpdateTaskInput): Promise<TaskDetail> {
   const access = await requireTaskAccess(ctx, taskId, "edit");
   const task = access.task;
+
+  // Смена родителя меняет и видимость задачи (доступ наследуется по цепочке),
+  // поэтому на нового родителя нужны права правки — как при создании подзадачи.
+  const reparented = patch.parent_task_id !== undefined && patch.parent_task_id !== task.parent_task_id;
+  if (reparented && patch.parent_task_id) {
+    await requireTaskAccess(ctx, patch.parent_task_id, "edit");
+    if (await isSelfOrDescendant(taskId, patch.parent_task_id)) {
+      throw new DomainError(422, "Task cannot be a subtask of its own branch");
+    }
+  }
 
   const nextStatus =
     patch.status_id !== undefined && patch.status_id !== null ? await getOrgStatus(ctx, patch.status_id) : null;
@@ -734,6 +784,10 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
     if (patch.estimated_minutes !== undefined && patch.estimated_minutes !== task.estimated_minutes) {
       scalar.estimated_minutes = patch.estimated_minutes;
       changedFields.push("estimated_minutes");
+    }
+    if (reparented) {
+      scalar.parent_task_id = patch.parent_task_id ?? null;
+      changedFields.push("parent_task_id");
     }
 
     const statusChanged = patch.status_id !== undefined && patch.status_id !== task.status_id;

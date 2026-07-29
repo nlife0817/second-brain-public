@@ -5,7 +5,7 @@ import { listEntityFeed } from "@/lib/core/events";
 import { isUuid, jsonError } from "@/lib/core/http";
 import { getTaskRule } from "@/lib/core/recurring";
 import { listRelations, listRelationTypes } from "@/lib/core/relations";
-import { getTaskDetail, listSubtasks, requireTaskAccess } from "@/lib/core/tasks";
+import { getParentBrief, getTaskDetail, listSubtasks, requireTaskAccess } from "@/lib/core/tasks";
 
 /**
  * Всё содержимое карточки задачи за один запрос.
@@ -25,11 +25,14 @@ export const GET = withOrg(async (_request, { params, auth }) => {
   // Один общий чек доступа — дальше выборки идут без повторной проверки прав.
   await requireTaskAccess(auth, taskId, "view");
 
-  const [task, comments, feed, subtasks, relations, relation_types, recurrence] = await Promise.all([
+  const [task, comments, feed, subtasks, parent, relations, relation_types, recurrence] = await Promise.all([
     getTaskDetail(auth, taskId),
     listTaskComments(auth, taskId),
     listEntityFeed("task", taskId),
     listSubtasks(auth, taskId),
+    // Родитель — для хлебной крошки: карточку подзадачи открывают и напрямую
+    // (из списка, поиска, пуша), а не только изнутри родительской.
+    getParentBrief(auth, taskId),
     listRelations(auth, "task", taskId),
     listRelationTypes(auth),
     // Повтор — свойство задачи и живёт в её карточке: отдельным запросом это
@@ -37,5 +40,5 @@ export const GET = withOrg(async (_request, { params, auth }) => {
     getTaskRule(taskId, auth.orgId),
   ]);
 
-  return NextResponse.json({ task, comments, feed, subtasks, relations, relation_types, recurrence });
+  return NextResponse.json({ task, comments, feed, subtasks, parent, relations, relation_types, recurrence });
 });
