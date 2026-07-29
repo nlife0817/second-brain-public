@@ -323,6 +323,19 @@ export const recurringCreateSchema = z.object({
   until_date: dateSchema.nullish(),
 });
 
+/**
+ * Расписание задачи — то, что правится в карточке. Шаблона здесь нет: новая
+ * задача повторяет саму исходную, а не отдельный слепок её полей.
+ */
+export const taskRecurrenceSchema = z.object({
+  freq: z.enum(["daily", "weekdays", "weekly", "monthly"]),
+  interval: z.number().int().min(1).max(365).default(1),
+  byweekday: z.array(z.number().int().min(0).max(6)).max(7).nullish(),
+  bymonthday: z.number().int().min(1).max(28).nullish(),
+  start_date: dateSchema.optional(),
+  until_date: dateSchema.nullish(),
+});
+
 export const recurringPatchSchema = z
   .object({
     template: z

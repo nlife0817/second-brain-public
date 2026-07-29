@@ -1,11 +1,17 @@
-// Повторяющиеся задачи: правило хранит шаблон и дату следующего запуска.
+// Повторяющиеся задачи: правило хранит расписание и дату следующего запуска.
 // Материализация — идемпотентная (по next_run_date), вызывается из cron.
+//
+// Правил два вида. Привязанное к задаче (`task_id`) — то, что живёт в карточке:
+// шаблон новой задачи берётся из живой строки в момент срабатывания, поэтому
+// переименование или смена исполнителя сразу отражаются на следующих повторах.
+// Старые правила со своим `template` остались от отдельного экрана повторов и
+// продолжают работать как прежде.
 
 import { prepare } from "@/lib/sql";
 import { DomainError } from "./http";
 import { assertOrg, canOrg, effectiveProjectRole, PolicyError } from "./policy";
 import { requireProject } from "./projects";
-import { createTask } from "./tasks";
+import { createTask, requireTaskAccess } from "./tasks";
 import type { AuthContext, PolicyProject, TaskPriority } from "./types";
 
 export type Freq = "daily" | "weekdays" | "weekly" | "monthly";
@@ -31,7 +37,22 @@ export interface RecurringRule {
   until_date: string | null;
   next_run_date: string;
   created_at: string;
+  /** Задача, чьё это расписание; null — правило из старого экрана повторов. */
+  task_id?: string | null;
 }
+
+/** Расписание задачи — то, что правится в карточке. */
+export interface TaskSchedule {
+  freq: Freq;
+  interval: number;
+  byweekday: number[] | null;
+  bymonthday: number | null;
+  start_date: string;
+  until_date: string | null;
+}
+
+const RULE_COLUMNS = `id, org_id, template, freq, interval, byweekday, bymonthday,
+            start_date, until_date, next_run_date, created_at, task_id`;
 
 function toIso(d: Date): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
@@ -78,12 +99,15 @@ export function nextOccurrence(
   }
 }
 
-/** Правило видно автору и тем, кто видит его проект: шаблон содержит и текст задачи, и исполнителей. */
+/**
+ * Правило видно автору и тем, кто видит его проект: шаблон содержит и текст
+ * задачи, и исполнителей. Расписания задач (`task_id`) сюда не попадают — их
+ * показывает и правит сама карточка, где права считаются по задаче.
+ */
 export async function listRules(ctx: AuthContext): Promise<RecurringRule[]> {
   const rows = await prepare<RecurringRule & { created_by: string | null }>(
-    `SELECT id, org_id, template, freq, interval, byweekday, bymonthday,
-            start_date, until_date, next_run_date, created_at, created_by
-     FROM core.recurring_rules WHERE org_id = ? ORDER BY next_run_date`,
+    `SELECT ${RULE_COLUMNS}, created_by
+     FROM core.recurring_rules WHERE org_id = ? AND task_id IS NULL ORDER BY next_run_date`,
   ).all(ctx.orgId);
 
   const projectIds = [...new Set(rows.map((r) => r.template?.project_id).filter((id): id is string => !!id))];
@@ -106,6 +130,70 @@ export async function listRules(ctx: AuthContext): Promise<RecurringRule[]> {
       return rule as RecurringRule;
     });
 }
+
+// --- Расписание задачи (карточка) ---------------------------------------------
+
+/** Расписание задачи или null. Доступ к задаче проверяет вызывающий. */
+export async function getTaskRule(taskId: string, orgId: string): Promise<RecurringRule | null> {
+  const row = await prepare<RecurringRule>(
+    `SELECT ${RULE_COLUMNS} FROM core.recurring_rules WHERE task_id = ? AND org_id = ?`,
+  ).get(taskId, orgId);
+  return row ?? null;
+}
+
+/** Первая дата не в прошлом по этому расписанию. */
+function firstRun(schedule: TaskSchedule, today: string): string {
+  let next = schedule.start_date;
+  let guard = 0;
+  while (next < today && guard++ < 400) next = nextOccurrence(schedule, next);
+  return next;
+}
+
+/**
+ * Включить или изменить повтор задачи. Право то же, что и на правку задачи:
+ * расписание — такое же её свойство, как срок или исполнитель.
+ */
+export async function setTaskRule(
+  ctx: AuthContext,
+  taskId: string,
+  schedule: TaskSchedule,
+  today: string,
+): Promise<RecurringRule> {
+  await requireTaskAccess(ctx, taskId, "edit");
+  const nextRun = firstRun(schedule, today);
+  const row = await prepare<RecurringRule>(
+    `INSERT INTO core.recurring_rules
+       (org_id, task_id, template, freq, interval, byweekday, bymonthday,
+        start_date, until_date, next_run_date, created_by)
+     VALUES (?, ?, '{}'::jsonb, ?, ?, ?::jsonb, ?, ?::date, ?::date, ?::date, ?)
+     ON CONFLICT (task_id) WHERE task_id IS NOT NULL DO UPDATE
+       SET freq = excluded.freq, interval = excluded.interval, byweekday = excluded.byweekday,
+           bymonthday = excluded.bymonthday, start_date = excluded.start_date,
+           until_date = excluded.until_date, next_run_date = excluded.next_run_date
+     RETURNING ${RULE_COLUMNS}`,
+  ).get(
+    ctx.orgId,
+    taskId,
+    schedule.freq,
+    schedule.interval,
+    schedule.byweekday ? JSON.stringify(schedule.byweekday) : null,
+    schedule.bymonthday,
+    schedule.start_date,
+    schedule.until_date,
+    nextRun,
+    ctx.user.id,
+  );
+  if (!row) throw new DomainError(500, "Failed to save schedule");
+  return row;
+}
+
+/** Выключить повтор задачи. */
+export async function clearTaskRule(ctx: AuthContext, taskId: string): Promise<void> {
+  await requireTaskAccess(ctx, taskId, "edit");
+  await prepare(`DELETE FROM core.recurring_rules WHERE task_id = ? AND org_id = ?`).run(taskId, ctx.orgId);
+}
+
+// --- Правила отдельной сущностью (наследие экрана повторов) ---------------------
 
 export async function createRule(
   ctx: AuthContext,
@@ -249,6 +337,79 @@ export async function updateRule(
   return row;
 }
 
+/** Поля новой задачи — то, что материализация передаёт в `createTask`. */
+interface TaskShape {
+  title: string;
+  description?: string;
+  priority?: TaskPriority;
+  status_id?: string | null;
+  estimated_minutes?: number | null;
+  placements?: Array<{ project_id: string }>;
+  assignee_ids?: string[];
+  tag_ids?: string[];
+}
+
+function shapeOfTemplate(template: RecurringTemplate): TaskShape | null {
+  if (!template?.title) return null;
+  return {
+    title: template.title,
+    description: template.description,
+    priority: template.priority,
+    status_id: template.status_id ?? null,
+    placements: template.project_id ? [{ project_id: template.project_id }] : undefined,
+    assignee_ids: template.assignee_ids,
+  };
+}
+
+/**
+ * Слепок живой задачи. Именно живой: смысл повтора в карточке в том, что
+ * следующая задача повторяет текущее состояние исходной, а не то, каким оно
+ * было в день включения расписания.
+ */
+async function shapeOfTask(taskId: string, orgId: string): Promise<TaskShape | null> {
+  const task = await prepare<{
+    title: string;
+    description: string;
+    priority: TaskPriority;
+    status_id: string | null;
+    status_kind: string | null;
+    estimated_minutes: number | null;
+  }>(
+    `SELECT t.title, t.description, t.priority, t.status_id, s.kind AS status_kind, t.estimated_minutes
+     FROM core.tasks t
+     LEFT JOIN core.task_statuses s ON s.id = t.status_id
+     WHERE t.id = ?`,
+  ).get(taskId);
+  if (!task) return null;
+
+  const [projects, assignees, tags] = await Promise.all([
+    prepare<{ project_id: string }>(`SELECT project_id FROM core.task_projects WHERE task_id = ?`).all(taskId),
+    prepare<{ user_id: string }>(`SELECT user_id FROM core.task_assignees WHERE task_id = ?`).all(taskId),
+    prepare<{ tag_id: string }>(`SELECT tag_id FROM core.task_tags WHERE task_id = ?`).all(taskId),
+  ]);
+
+  // Исходная задача к этому дню обычно уже завершена или в архиве — копия,
+  // рождённая сразу «сделанной», бессмысленна. Берём первый рабочий статус.
+  let statusId = task.status_id;
+  if (task.status_kind !== "open") {
+    const open = await prepare<{ id: string }>(
+      `SELECT id FROM core.task_statuses WHERE org_id = ? AND kind = 'open' ORDER BY position LIMIT 1`,
+    ).get(orgId);
+    statusId = open?.id ?? null;
+  }
+
+  return {
+    title: task.title,
+    description: task.description,
+    priority: task.priority,
+    status_id: statusId,
+    estimated_minutes: task.estimated_minutes,
+    placements: projects.map((p) => ({ project_id: p.project_id })),
+    assignee_ids: assignees.map((a) => a.user_id),
+    tag_ids: tags.map((t) => t.tag_id),
+  };
+}
+
 /**
  * Материализация: для каждого правила, у которого подошёл срок, создаём задачу
  * от имени автора правила и сдвигаем next_run_date. Пропущенные дни не
@@ -259,7 +420,7 @@ export async function materializeDueRules(today: string): Promise<{ created: num
     RecurringRule & { created_by: string | null; user_email: string | null }
   >(
     `SELECT r.id, r.org_id, r.template, r.freq, r.interval, r.byweekday, r.bymonthday,
-            r.start_date, r.until_date, r.next_run_date, r.created_at,
+            r.start_date, r.until_date, r.next_run_date, r.created_at, r.task_id,
             r.created_by, u.email AS user_email
      FROM core.recurring_rules r
      LEFT JOIN core.users u ON u.id = r.created_by
@@ -307,14 +468,18 @@ export async function materializeDueRules(today: string): Promise<{ created: num
     if (claimed.changes === 0) continue;
 
     try {
+      // Расписание задачи повторяет саму задачу, какой она стала к этому дню;
+      // старое правило — свой слепок полей.
+      const shape = rule.task_id
+        ? await shapeOfTask(rule.task_id, rule.org_id)
+        : shapeOfTemplate(rule.template);
+      if (!shape) {
+        console.error(`[recurring] правило ${rule.id}: исходная задача не найдена`);
+        continue;
+      }
       const task = await createTask(ctx, {
-        title: rule.template.title,
-        description: rule.template.description,
-        priority: rule.template.priority,
-        status_id: rule.template.status_id ?? null,
+        ...shape,
         due_date: rule.next_run_date,
-        placements: rule.template.project_id ? [{ project_id: rule.template.project_id }] : undefined,
-        assignee_ids: rule.template.assignee_ids,
         source: "recurring",
       });
       await prepare(`UPDATE core.recurring_rules SET last_task_id = ? WHERE id = ?`).run(task.id, rule.id);
