@@ -390,8 +390,9 @@ async function shapeOfTask(taskId: string, orgId: string): Promise<TaskShape | n
 
   // Исходная задача к этому дню обычно уже завершена или в архиве — копия,
   // рождённая сразу «сделанной», бессмысленна. Берём первый рабочий статус.
+  // Задачу без статуса не трогаем: у копии его тоже быть не должно.
   let statusId = task.status_id;
-  if (task.status_kind !== "open") {
+  if (task.status_id && task.status_kind !== "open") {
     const open = await prepare<{ id: string }>(
       `SELECT id FROM core.task_statuses WHERE org_id = ? AND kind = 'open' ORDER BY position LIMIT 1`,
     ).get(orgId);
