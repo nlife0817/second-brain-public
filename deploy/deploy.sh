@@ -17,7 +17,25 @@
 
 set -euo pipefail
 
-COMPOSE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Скрипт лежит в том самом репозитории, который сам же и переключает: после
+# `git reset --hard` его файл на диске меняется прямо во время исполнения. Bash
+# дочитывает скрипт по мере выполнения и продолжил бы с середины уже другого
+# файла — на небольшом файле обычно проносит, но это лотерея. Поэтому первым
+# делом уходим в копию; она удаляет себя на выходе.
+#
+# migrate.sh и cleanup.sh защищать не нужно: они запускаются отдельными
+# процессами уже ПОСЛЕ переключения, то есть читаются целиком и в новой редакции —
+# как раз то, что нужно.
+if [ -z "${DEPLOY_FROM_COPY:-}" ]; then
+  copy="$(mktemp /tmp/secondbrain-deploy.XXXXXX)"
+  cat "$0" > "$copy"
+  chmod +x "$copy"
+  DEPLOY_FROM_COPY="$(cd "$(dirname "$0")" && pwd)" exec "$copy" "$@"
+fi
+trap 'rm -f "$0"' EXIT
+
+# Каталог берём из окружения: у копии во временном файле $0 указывает в /tmp.
+COMPOSE_DIR="$DEPLOY_FROM_COPY"
 REPO_DIR="$(cd "$COMPOSE_DIR/.." && pwd)"
 IMAGE="secondbrain-app"
 LOCKFILE="/var/lock/secondbrain-deploy.lock"
