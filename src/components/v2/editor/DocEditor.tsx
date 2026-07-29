@@ -23,10 +23,11 @@ import {
   removeThreadFromDoc,
   scrollToThread,
   setThreadResolvedInDoc,
-  textToHtml,
 } from "./comment-marks";
+import { SelectionMenu } from "./SelectionMenu";
 import { EditorToolbar } from "./Toolbar";
 import { useDocEditor } from "./useDocEditor";
+import { fileDropHint, useFileDrop } from "./useFileDrop";
 
 export interface DocEditorProps {
   open: boolean;
@@ -75,6 +76,15 @@ export function DocEditor({
     placeholder: "Описание задачи…",
   });
   const editor = doc.editor;
+
+  const canUpload = editable && !!orgId && !!taskId;
+  const drop = useFileDrop({
+    enabled: canUpload,
+    onFiles: (files) => void doc.uploadFiles(files),
+  });
+  // Меню по выделению стоит `fixed` и обязано ехать вместе с текстом: без
+  // ссылки на прокручиваемую колонку оно зависало бы на месте.
+  const [scrollHost, setScrollHost] = useState<HTMLElement | null>(null);
 
   // Свежие треды при повторном открытии карточки: initialThreads — это снимок
   // на момент загрузки bundle, а обсуждение могло уйти вперёд.
@@ -154,11 +164,13 @@ export function DocEditor({
     });
   }
 
-  async function submitDraft(text: string) {
+  // Панель отдаёт готовую разметку: комментарии набирают в редакторе, потому что
+  // в них живут @-упоминания, и заворачивать текст в <p> вручную больше нечего.
+  async function submitDraft(html: string) {
     if (!orgId || !taskId || !draft || !editor) return;
     const created = await guard(() =>
       api.post<DocCommentThread>(`/orgs/${orgId}/tasks/${taskId}/doc-comments`, {
-        body: textToHtml(text),
+        body: html,
         quote: draft.quote,
       }),
     );
@@ -171,23 +183,21 @@ export function DocEditor({
     setDraft(null);
   }
 
-  async function reply(threadId: string, text: string) {
+  async function reply(threadId: string, html: string) {
     if (!orgId || !taskId) return;
     const updated = await guard(() =>
       api.post<DocCommentThread>(
         `/orgs/${orgId}/tasks/${taskId}/doc-comments?thread=${threadId}`,
-        { body: textToHtml(text), quote: "" },
+        { body: html, quote: "" },
       ),
     );
     if (updated) upsertThread(updated);
   }
 
-  async function editMessage(commentId: string, text: string) {
+  async function editMessage(commentId: string, html: string) {
     if (!orgId) return;
     const updated = await guard(() =>
-      api.patch<DocCommentThread>(`/orgs/${orgId}/doc-comments/${commentId}`, {
-        body: textToHtml(text),
-      }),
+      api.patch<DocCommentThread>(`/orgs/${orgId}/doc-comments/${commentId}`, { body: html }),
     );
     if (updated) upsertThread(updated);
   }
@@ -280,10 +290,39 @@ export function DocEditor({
       )}
 
       <div className="relative flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8 sm:py-10">
-            <EditorContent editor={editor} className="doc-surface" />
+        {/* Зона сброса — вся колонка документа, но подсветка не должна ездить
+            вместе с текстом: оверлей висит на неподвижной обёртке, прокрутка
+            остаётся внутри неё. */}
+        <div className="relative flex min-w-0 flex-1 flex-col" {...drop.handlers}>
+          <div ref={setScrollHost} className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-8 sm:py-10">
+              <EditorContent editor={editor} className="doc-surface" />
+            </div>
           </div>
+
+          {editable && editor && (
+            <SelectionMenu
+              editor={editor}
+              scrollHost={scrollHost}
+              onComment={canComment ? startDraft : undefined}
+            />
+          )}
+
+          {editable && (
+            <p className="border-t border-border px-4 py-1.5 text-xs text-muted-foreground sm:px-8">
+              {fileDropHint(canUpload)}
+            </p>
+          )}
+
+          {/* pointer-events-none обязателен: перехватив указатель, оверлей съест
+              и dragleave (подсветка залипнет), и сам сброс. */}
+          {drop.active && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/80">
+              <span className="rounded-lg border-2 border-dashed border-primary px-6 py-4 text-sm font-medium text-primary">
+                Отпустите, чтобы прикрепить
+              </span>
+            </div>
+          )}
         </div>
 
         {/* На широком экране обсуждение стоит рядом с текстом, на узком —

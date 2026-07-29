@@ -88,7 +88,15 @@ export interface PolicyProject {
 // --- Задачи и проекты -----------------------------------------------------------
 
 export type TaskPriority = "urgent" | "high" | "medium" | "low" | "none";
-export type StatusKind = "open" | "done" | "archived";
+
+/**
+ * Категория статуса. Задаёт и поведение (`done` проставляет completed_at,
+ * `archived` прячет задачу из списков), и раскладку справочника в настройках.
+ * Пришла на смену колонке `kind`, которая до следующего выката остаётся в БД
+ * живым зеркалом под триггером ради уже загруженных вкладок — см.
+ * 0041_core_status_categories.sql.
+ */
+export type StatusCategory = "backlog" | "in_progress" | "done" | "archived";
 export type FieldType =
   | "text" | "number" | "select" | "multi_select" | "date" | "user" | "checkbox" | "url";
 
@@ -128,14 +136,6 @@ export interface ProjectWithMeta extends Project {
   member_ids: string[] | null;
 }
 
-export interface Section {
-  id: string;
-  project_id: string;
-  name: string;
-  position: number;
-  created_at: string;
-}
-
 export interface ProjectMemberWithUser {
   project_id: string;
   user_id: string;
@@ -150,7 +150,9 @@ export interface TaskStatus {
   org_id: string;
   name: string;
   color: string;
-  kind: StatusKind;
+  category: StatusCategory;
+  /** Статус новой задачи. Ровно один на организацию, удалить его нельзя. */
+  is_default: boolean;
   position: number;
 }
 
@@ -180,7 +182,6 @@ export interface CustomField {
 
 export interface TaskPlacement {
   project_id: string;
-  section_id: string | null;
   position: number;
 }
 
@@ -309,6 +310,11 @@ export interface CoreComment {
   body: string;
   created_at: string;
   edited_at: string | null;
+  /**
+   * Корень обсуждения; null — сам корень. Уровень ровно один: ответ на ответ
+   * сервер приводит к тому же корню (как в core.doc_comments).
+   */
+  parent_id: string | null;
   author: UserBrief | null;
 }
 

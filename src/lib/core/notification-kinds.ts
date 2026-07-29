@@ -24,6 +24,11 @@ export const NOTIFICATION_KINDS: NotificationKindMeta[] = [
     hint: "Комментарий в задаче, где вы автор, исполнитель или подписчик",
   },
   {
+    kind: "mention",
+    label: "Упоминание",
+    hint: "Вас назвали через @ в описании задачи или в комментарии",
+  },
+  {
     kind: "status_changed",
     label: "Статус изменён",
     hint: "Задачу передвинули по доске",

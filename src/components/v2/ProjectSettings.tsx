@@ -1,13 +1,13 @@
 "use client";
 
-// Настройки проекта: общие параметры, доступ сотрудников, секции, архив и удаление.
+// Настройки проекта: общие параметры, доступ сотрудников, архив и удаление.
 // Общий экран для десктопа (/v2/projects/[id]/settings) и мобильного
 // (/v2/m/projects/[id]/settings) — правила доступа к проекту должны выглядеть
 // одинаково в обеих оболочках.
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, Check, Trash2 } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -22,12 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ProjectMuteToggle } from "@/components/v2/ProjectMuteToggle";
 import { api, ApiError } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
-import type {
-  Project,
-  ProjectMemberWithUser,
-  ProjectRole,
-  Section,
-} from "@/lib/core/types";
+import type { Project, ProjectMemberWithUser, ProjectRole } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { ProjectAccessPicker, type ProjectAccessValue } from "./ProjectAccessPicker";
@@ -36,7 +31,6 @@ import { PROJECT_COLORS, PROJECT_ICON_NAMES, ProjectIcon } from "./project-icons
 
 export type ProjectDetail = Project & {
   my_role: ProjectRole | null;
-  sections: Section[];
   members: ProjectMemberWithUser[];
 };
 
@@ -48,7 +42,6 @@ export interface Team {
 const TABS = [
   { id: "general", label: "Общие" },
   { id: "access", label: "Доступ" },
-  { id: "sections", label: "Секции" },
   { id: "danger", label: "Архив и удаление" },
 ] as const;
 
@@ -83,8 +76,8 @@ export function ProjectSettings({
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Черновик общих параметров: правки применяются кнопкой, доступ и секции —
-  // сразу (там каждое действие самостоятельно и обратимо).
+  // Черновик общих параметров: правки применяются кнопкой, доступ — сразу
+  // (там каждое действие самостоятельно и обратимо).
   const [draft, setDraft] = useState({
     name: initialProject.name,
     description: initialProject.description,
@@ -94,7 +87,6 @@ export function ProjectSettings({
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [newSection, setNewSection] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -129,10 +121,9 @@ export function ProjectSettings({
 
   const canManage = project?.my_role === "admin";
   const canManageAccess = canManage && orgRole !== "guest";
-  const canManageSections = project?.my_role === "admin" || project?.my_role === "editor";
 
   /**
-   * Любая мутация здесь меняет и то, что показывает доска (секции, роль, доступ),
+   * Любая мутация здесь меняет и то, что показывает доска (роль, доступ),
    * поэтому кэш пути проекта сбрасывается вместе с перечитыванием.
    */
   async function call(fn: () => Promise<unknown>, after: () => Promise<void> | void = load) {
@@ -175,21 +166,6 @@ export function ProjectSettings({
     await call(() => api.patch(`/orgs/${orgId}/projects/${projectId}`, { default_role: value }), async () => {
       await load();
       await refreshProjects();
-    });
-  }
-
-  async function moveSection(section: Section, delta: -1 | 1) {
-    const ordered = [...project.sections].sort((a, b) => a.position - b.position);
-    const index = ordered.findIndex((s) => s.id === section.id);
-    const neighbour = ordered[index + delta];
-    if (!neighbour) return;
-    await call(async () => {
-      await api.patch(`/orgs/${orgId}/projects/${projectId}/sections/${section.id}`, {
-        position: neighbour.position,
-      });
-      await api.patch(`/orgs/${orgId}/projects/${projectId}/sections/${neighbour.id}`, {
-        position: section.position,
-      });
     });
   }
 
@@ -398,100 +374,6 @@ export function ProjectSettings({
             />
           </Card>
         </>
-      )}
-
-      {tab === "sections" && (
-        <Card title="Секции" hint="Разделы доски внутри проекта; порядок повторяет порядок на доске">
-          <div className="flex flex-col gap-2">
-            {[...project.sections]
-              .sort((a, b) => a.position - b.position)
-              .map((s, i, arr) => (
-                <div key={s.id} className="flex items-center gap-2">
-                  <Input
-                    defaultValue={s.name}
-                    disabled={!canManageSections}
-                    onBlur={(e) => {
-                      const name = e.target.value.trim();
-                      if (!name || name === s.name) return;
-                      void call(() =>
-                        api.patch(`/orgs/${orgId}/projects/${projectId}/sections/${s.id}`, { name }),
-                      );
-                    }}
-                    className="flex-1"
-                  />
-                  {canManageSections && (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Выше"
-                        disabled={i === 0}
-                        onClick={() => void moveSection(s, -1)}
-                      >
-                        <ArrowUp className="size-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Ниже"
-                        disabled={i === arr.length - 1}
-                        onClick={() => void moveSection(s, 1)}
-                      >
-                        <ArrowDown className="size-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Удалить секцию"
-                        onClick={() =>
-                          void call(() =>
-                            api.del(`/orgs/${orgId}/projects/${projectId}/sections/${s.id}`),
-                          )
-                        }
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </>
-                  )}
-                </div>
-              ))}
-            {project.sections.length === 0 && (
-              <p className="text-sm text-muted-foreground">Секций пока нет</p>
-            )}
-            {canManageSections && (
-              <div className="mt-2 flex items-center gap-2 border-t border-border pt-3">
-                <Input
-                  value={newSection}
-                  onChange={(e) => setNewSection(e.target.value)}
-                  placeholder="Новая секция"
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter" || !newSection.trim()) return;
-                    void call(async () => {
-                      await api.post(`/orgs/${orgId}/projects/${projectId}/sections`, {
-                        name: newSection.trim(),
-                      });
-                      setNewSection("");
-                    });
-                  }}
-                />
-                <Button
-                  size="sm"
-                  disabled={!newSection.trim()}
-                  onClick={() =>
-                    void call(async () => {
-                      await api.post(`/orgs/${orgId}/projects/${projectId}/sections`, {
-                        name: newSection.trim(),
-                      });
-                      setNewSection("");
-                    })
-                  }
-                >
-                  Добавить
-                </Button>
-              </div>
-            )}
-          </div>
-        </Card>
       )}
 
       {tab === "danger" && (

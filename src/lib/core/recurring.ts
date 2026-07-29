@@ -9,6 +9,7 @@
 
 import { prepare } from "@/lib/sql";
 import { DomainError } from "./http";
+import { getDefaultStatus } from "./orgmeta";
 import { assertOrg, canOrg, effectiveProjectRole, PolicyError } from "./policy";
 import { requireProject } from "./projects";
 import { createTask, requireTaskAccess } from "./tasks";
@@ -378,12 +379,12 @@ async function shapeOfTask(taskId: string, orgId: string): Promise<TaskShape | n
     description: string;
     priority: TaskPriority;
     status_id: string | null;
-    status_kind: string | null;
+    status_category: string | null;
     estimated_minutes: number | null;
     start_date: string | null;
     due_date: string | null;
   }>(
-    `SELECT t.title, t.description, t.priority, t.status_id, s.kind AS status_kind, t.estimated_minutes,
+    `SELECT t.title, t.description, t.priority, t.status_id, s.category AS status_category, t.estimated_minutes,
             t.start_date, t.due_date
      FROM core.tasks t
      LEFT JOIN core.task_statuses s ON s.id = t.status_id
@@ -398,14 +399,13 @@ async function shapeOfTask(taskId: string, orgId: string): Promise<TaskShape | n
   ]);
 
   // Исходная задача к этому дню обычно уже завершена или в архиве — копия,
-  // рождённая сразу «сделанной», бессмысленна. Берём первый рабочий статус.
-  // Задачу без статуса не трогаем: у копии его тоже быть не должно.
+  // рождённая сразу «сделанной», бессмысленна. Возвращаем её в статус по
+  // умолчанию: копия повтора — это новая задача, а новая задача рождается там же,
+  // где любая другая. Пустой status_id (правило старого образца) досоздание
+  // задачи разрешит само.
   let statusId = task.status_id;
-  if (task.status_id && task.status_kind !== "open") {
-    const open = await prepare<{ id: string }>(
-      `SELECT id FROM core.task_statuses WHERE org_id = ? AND kind = 'open' ORDER BY position LIMIT 1`,
-    ).get(orgId);
-    statusId = open?.id ?? null;
+  if (task.status_category === "done" || task.status_category === "archived") {
+    statusId = (await getDefaultStatus(orgId))?.id ?? statusId;
   }
 
   return {

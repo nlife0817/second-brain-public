@@ -24,9 +24,7 @@ export const WIDE_MENU_POPOVER = "max-h-72 w-60 overflow-y-auto p-1";
 export const ESTIMATE_POPOVER = "w-52 gap-2 p-2.5";
 export const FIELD_POPOVER = "w-64 gap-2 p-2.5";
 
-const ROW = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted";
-const CLEAR_ROW =
-  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted";
+const ROW = "flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted";
 const FIELD_INPUT =
   "h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring";
 
@@ -59,12 +57,13 @@ export function PriorityMenu({
   );
 }
 
+/** «Без статуса» здесь нет намеренно: пустого статуса у задачи не бывает. */
 export function StatusMenu({
   value,
   onChange,
 }: {
   value: string | null;
-  onChange: (statusId: string | null) => void;
+  onChange: (statusId: string) => void;
 }) {
   const statuses = useV2Store((s) => s.statuses);
   return (
@@ -76,9 +75,6 @@ export function StatusMenu({
           {value === s.id && <Check className="size-3.5 shrink-0" />}
         </button>
       ))}
-      <button onClick={() => onChange(null)} className={CLEAR_ROW}>
-        <X className="size-3.5" /> Без статуса
-      </button>
     </>
   );
 }

@@ -92,12 +92,6 @@ export function scrollToThread(editor: Editor, threadId: string): void {
   editor.chain().setTextSelection(first).scrollIntoView().run();
 }
 
-/** Многострочный ввод → HTML: иначе переносы строк теряются при рендере. */
-export function textToHtml(text: string): string {
-  const escape = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return text
-    .split(/\n{2,}/)
-    .map((block) => `<p>${block.split("\n").map(escape).join("<br>")}</p>`)
-    .join("");
-}
+// Преобразование «многострочный текст → HTML» здесь больше не нужно:
+// комментарии набирают в редакторе (CommentComposer), и он сразу отдаёт
+// разметку. Ручная свёртка съедала бы @-упоминания.

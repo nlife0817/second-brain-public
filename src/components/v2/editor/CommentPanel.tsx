@@ -6,10 +6,10 @@
 import { useState } from "react";
 import { Check, CornerDownRight, MessageSquare, MoreHorizontal, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import type { DocCommentThread, UserBrief } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
 import { Avatar } from "../bits";
+import { CommentComposer } from "./CommentComposer";
 
 function when(iso: string): string {
   return new Date(iso).toLocaleString("ru-RU", {
@@ -95,42 +95,28 @@ function DraftCard({
   onSubmit: (text: string) => Promise<void>;
   onCancel: () => void;
 }) {
-  const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-
-  async function submit() {
-    if (!text.trim() || busy) return;
-    setBusy(true);
-    try {
-      await onSubmit(text.trim());
-      setText("");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <div className="mb-2 rounded-lg border border-primary/40 bg-background p-2.5 shadow-sm">
       {quote && <Quote text={quote} />}
-      <Textarea
+      {/* Escape здесь не перехватываем: он нужен списку @-упоминаний. Черновик
+          закрывает Escape, дошедший до DocEditor, когда список не открыт. */}
+      <CommentComposer
         autoFocus
-        value={text}
-        onChange={(e) => setText(e.target.value)}
         placeholder="Комментарий…"
-        className="min-h-16 text-sm"
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void submit();
-          if (e.key === "Escape") onCancel();
+        submitLabel="Оставить"
+        busy={busy}
+        onCancel={onCancel}
+        onSubmit={async (html) => {
+          setBusy(true);
+          try {
+            await onSubmit(html);
+          } finally {
+            setBusy(false);
+          }
         }}
       />
-      <div className="mt-1.5 flex justify-end gap-1.5">
-        <Button size="sm" variant="ghost" onClick={onCancel}>
-          Отмена
-        </Button>
-        <Button size="sm" onClick={() => void submit()} disabled={!text.trim() || busy}>
-          Оставить
-        </Button>
-      </div>
     </div>
   );
 }
@@ -159,7 +145,9 @@ function ThreadCard({
   CommentPanelProps,
   "threads" | "draftQuote" | "onSubmitDraft" | "onCancelDraft"
 >) {
-  const [replyText, setReplyText] = useState("");
+  // Поле ответа монтируется по клику, а не живёт в каждом треде: редактор
+  // Tiptap на тред — это десятки экземпляров ProseMirror в одной панели.
+  const [replying, setReplying] = useState(false);
   const [busy, setBusy] = useState(false);
   const active = activeThreadId === thread.id;
   const resolved = !!thread.resolved_at;
@@ -210,36 +198,30 @@ function ThreadCard({
 
       {!resolved && canComment && (
         <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-          <Textarea
-            value={replyText}
-            onChange={(e) => setReplyText(e.target.value)}
-            placeholder="Ответить…"
-            className="min-h-9 py-1.5 text-sm"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && replyText.trim()) {
-                void guard(async () => {
-                  await onReply(thread.id, replyText.trim());
-                  setReplyText("");
-                });
+          {replying ? (
+            <CommentComposer
+              autoFocus
+              placeholder="Ответить…"
+              submitLabel="Ответить"
+              busy={busy}
+              onCancel={() => setReplying(false)}
+              onSubmit={(html) =>
+                guard(async () => {
+                  await onReply(thread.id, html);
+                  setReplying(false);
+                })
               }
-            }}
-          />
-          {replyText.trim() && (
-            <div className="mt-1.5 flex justify-end">
-              <Button
-                size="sm"
-                disabled={busy}
-                onClick={() =>
-                  void guard(async () => {
-                    await onReply(thread.id, replyText.trim());
-                    setReplyText("");
-                  })
-                }
-              >
-                <CornerDownRight className="size-3.5" />
-                Ответить
-              </Button>
-            </div>
+            />
+          ) : (
+            // Заглушка того же вида, что и поле: панель не должна дёргаться,
+            // когда в тред заходят отвечать.
+            <button
+              onClick={() => setReplying(true)}
+              className="flex w-full items-center gap-1.5 rounded-lg border border-input bg-background px-3 py-1.5 text-left text-sm text-muted-foreground hover:border-ring"
+            >
+              <CornerDownRight className="size-3.5 shrink-0" />
+              Ответить…
+            </button>
           )}
         </div>
       )}
@@ -285,19 +267,10 @@ function Message({
 }) {
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  // Правится обычный текст, а хранится HTML: разметку в теле комментария
-  // никто не набирает, а тегами в поле ввода тыкать неудобно.
-  const [draft, setDraft] = useState("");
 
   function startEdit() {
-    const plain = message.body
-      .replace(/<\/p>\s*<p>/gi, "\n\n")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<[^>]+>/g, "")
-      .replace(/&amp;/gi, "&")
-      .replace(/&lt;/gi, "<")
-      .replace(/&gt;/gi, ">");
-    setDraft(plain.trim());
+    // Разметка отдаётся редактору как есть: снятие тегов регуляркой съедало бы
+    // упоминания, превращая @Ивана в обычный текст.
     setEditing(true);
     setMenuOpen(false);
   }
@@ -344,35 +317,17 @@ function Message({
         </p>
 
         {editing ? (
-          <div onClick={(e) => e.stopPropagation()}>
-            <Textarea
+          <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+            <CommentComposer
               autoFocus
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              className="mt-1 min-h-14 text-sm"
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setEditing(false);
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && draft.trim()) {
-                  onEdit(draft.trim());
-                  setEditing(false);
-                }
+              value={message.body}
+              submitLabel="Сохранить"
+              onCancel={() => setEditing(false)}
+              onSubmit={(html) => {
+                onEdit(html);
+                setEditing(false);
               }}
             />
-            <div className="mt-1.5 flex justify-end gap-1.5">
-              <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-                Отмена
-              </Button>
-              <Button
-                size="sm"
-                disabled={!draft.trim()}
-                onClick={() => {
-                  onEdit(draft.trim());
-                  setEditing(false);
-                }}
-              >
-                Сохранить
-              </Button>
-            </div>
           </div>
         ) : (
           <div

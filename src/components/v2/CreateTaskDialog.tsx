@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/core/client";
+import { defaultStatus } from "@/lib/core/status-model";
 import type { TaskDetail, TaskPriority, UserBrief } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { MemberPicker } from "./MemberPicker";
@@ -72,7 +73,8 @@ export function CreateTaskDialog({
           : undefined,
         priority,
         due_date: dueDate || null,
-        status_id: status ?? statusId ?? statuses.find((s) => s.kind === "open")?.id ?? null,
+        // null допустим: сервер подставит статус организации по умолчанию.
+        status_id: status ?? statusId ?? defaultStatus(statuses)?.id ?? null,
         placements: projectId ? [{ project_id: projectId }] : undefined,
         assignee_ids: assignees.map((a) => a.id),
       });

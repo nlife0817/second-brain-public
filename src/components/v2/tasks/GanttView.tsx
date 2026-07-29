@@ -53,7 +53,8 @@ import type { TaskDependency, TaskDetail, TaskRow } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
 import {
-  arrangeRows,
+  arrangeGroupRows,
+  buildForest,
   buildGroups,
   compareTasks,
   filterTasks,
@@ -63,6 +64,7 @@ import {
   type GroupLabel,
   type GroupNode,
   type SubtaskMode,
+  type TaskForest,
 } from "@/lib/core/views";
 import { cn } from "@/lib/utils";
 
@@ -93,12 +95,17 @@ function flattenRows(
   groups: GroupNode[],
   collapsed: ReadonlySet<string>,
   subtaskMode: SubtaskMode,
+  forest: TaskForest | null,
   today: string,
 ): GanttRow[] {
   const out: GanttRow[] = [];
 
+  // Раскладка внутри группы — общая с таблицей: в корзину группы попали только
+  // корни, а подзадачи приезжают из дерева, построенного по всему набору. Иначе
+  // подзадача, у которой статус отличается от родительского, уходила бы
+  // отдельной строкой в чужую группу.
   const pushTasks = (tasks: TaskRow[], baseDepth: number) => {
-    for (const { task, depth } of arrangeRows(tasks, subtaskMode)) {
+    for (const { task, depth } of arrangeGroupRows(tasks, forest, subtaskMode)) {
       out.push({ kind: "task", task, depth: baseDepth + depth, bar: barOf(task, today) });
     }
   };
@@ -235,9 +242,23 @@ export function GanttView({
     );
   }, [pool, search, filterGroups, matchCtx, sort, statuses, projects]);
 
+  // Дерево считается по всему набору ДО группировки — родство не должно
+  // зависеть от того, в какую корзину попала задача.
+  const forest = useMemo(
+    () => (subtaskMode === "flat" ? null : buildForest(visibleTasks)),
+    [visibleTasks, subtaskMode],
+  );
+
   const rows = useMemo(
-    () => flattenRows(buildGroups(visibleTasks, groupBy, matchCtx, naming), collapsed, subtaskMode, today),
-    [visibleTasks, groupBy, matchCtx, naming, collapsed, subtaskMode, today],
+    () =>
+      flattenRows(
+        buildGroups(visibleTasks, groupBy, matchCtx, naming, forest),
+        collapsed,
+        subtaskMode,
+        forest,
+        today,
+      ),
+    [visibleTasks, groupBy, matchCtx, naming, forest, collapsed, subtaskMode, today],
   );
 
   const bars = useMemo(

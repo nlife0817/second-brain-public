@@ -67,14 +67,6 @@ export const projectPatchSchema = z
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
-export const sectionCreateSchema = z.object({ name: z.string().trim().min(1).max(200) });
-export const sectionPatchSchema = z
-  .object({
-    name: z.string().trim().min(1).max(200).optional(),
-    position: z.number().finite().optional(),
-  })
-  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
-
 export const projectMemberSchema = z.object({
   user_id: z.uuid(),
   role: z.enum(["admin", "editor", "commenter", "viewer"]).default("editor"),
@@ -98,10 +90,7 @@ export const taskCreateSchema = z.object({
   due_time: timeSchema.nullish(),
   estimated_minutes: z.number().int().min(0).max(60_000).nullish(),
   parent_task_id: z.uuid().nullish(),
-  placements: z
-    .array(z.object({ project_id: z.uuid(), section_id: z.uuid().nullish() }))
-    .max(20)
-    .optional(),
+  placements: z.array(z.object({ project_id: z.uuid() })).max(20).optional(),
   assignee_ids: z.array(z.uuid()).max(20).optional(),
   tag_ids: z.array(z.uuid()).max(50).optional(),
 });
@@ -110,6 +99,9 @@ export const taskPatchSchema = z
   .object({
     title: z.string().trim().min(1).max(500).optional(),
     description: z.string().max(500_000).optional(),
+    // null трактуется сервисом как «вернуть статус по умолчанию»: пустого
+    // статуса у задачи больше не бывает, но вкладка со старым бандлом всё ещё
+    // умеет жать «Снять статус», и отвечать ей 400 незачем.
     status_id: z.uuid().nullable().optional(),
     priority: prioritySchema.optional(),
     start_date: dateSchema.nullable().optional(),
@@ -124,18 +116,22 @@ export const taskPatchSchema = z
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
 export const taskPlacementsSchema = z.object({
-  placements: z
-    .array(z.object({ project_id: z.uuid(), section_id: z.uuid().nullish() }))
-    .max(20),
+  placements: z.array(z.object({ project_id: z.uuid() })).max(20),
 });
 
 export const taskMoveSchema = z.object({
   project_id: z.uuid(),
-  section_id: z.uuid().nullable().optional(),
   position: z.number().finite().optional(),
 });
 
-export const commentCreateSchema = z.object({ body: z.string().min(1).max(50_000) });
+export const commentCreateSchema = z.object({
+  body: z.string().min(1).max(50_000),
+  /** Ответ в обсуждении. Ответ на ответ сервер приведёт к тому же корню. */
+  parent_id: z.uuid().nullish(),
+});
+
+/** Правка не меняет место в ленте — parent_id здесь не принимается. */
+export const commentEditSchema = z.object({ body: z.string().min(1).max(50_000) });
 
 // --- Комментарии к описанию (треды на фрагменте текста) ------------------------------
 
@@ -151,16 +147,22 @@ export const docThreadResolveSchema = z.object({ resolved: z.boolean() });
 
 // --- Справочники и поля ---------------------------------------------------------------
 
+const statusCategorySchema = z.enum(["backlog", "in_progress", "done", "archived"]);
+
+// Схемы не strict намеренно: вкладка со старым бандлом ещё шлёт `kind`, и
+// правильный ответ на него — молча отбросить поле, а не 400.
 export const statusCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
   color: z.string().trim().max(32).optional(),
-  kind: z.enum(["open", "done", "archived"]).optional(),
+  category: statusCategorySchema.optional(),
 });
 export const statusPatchSchema = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),
     color: z.string().trim().max(32).optional(),
-    kind: z.enum(["open", "done", "archived"]).optional(),
+    category: statusCategorySchema.optional(),
+    /** Только true: дефолт не снимают, его переносят на другой статус. */
+    is_default: z.literal(true).optional(),
     position: z.number().finite().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });

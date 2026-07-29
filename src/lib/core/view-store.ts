@@ -30,7 +30,7 @@ export const BASE_COLUMNS: ColumnDef[] = [
   { id: "priority", label: "Приоритет", headerLabel: "P", width: 44, sortable: true, editable: true },
   { id: "title", label: "Название", width: 380, sortable: true, editable: true },
   { id: "status", label: "Статус", width: 132, sortable: true, editable: true },
-  { id: "project", label: "Проект", width: 150, sortable: true, editable: false },
+  { id: "project", label: "Проект", width: 150, sortable: true, editable: true },
   { id: "assignees", label: "Исполнители", width: 116, sortable: false, editable: true },
   { id: "tags", label: "Теги", width: 150, sortable: false, editable: true },
   { id: "start_date", label: "Начало", width: 96, sortable: true, editable: true },
@@ -94,6 +94,12 @@ export interface ViewSnapshot {
   groupBy: GroupByConfig;
   groups: FilterGroup[];
   subtaskMode: SubtaskMode;
+  /**
+   * Переносить название на следующую строку вместо обрезки многоточием.
+   * Переносится только «Название»: чипы проектов и тегов растянули бы строку
+   * по самой длинной ячейке, и таблица потеряла бы ритм.
+   */
+  wrapTitle: boolean;
 }
 
 export interface SavedView extends ViewSnapshot {
@@ -127,6 +133,7 @@ export interface ViewState extends ViewSnapshot {
   setGroups: (groups: FilterGroup[]) => void;
   setSearch: (search: string) => void;
   setSubtaskMode: (mode: SubtaskMode) => void;
+  setWrapTitle: (wrap: boolean) => void;
   toggleCollapsed: (key: string) => void;
 
   saveView: (name: string) => void;
@@ -143,6 +150,7 @@ const DEFAULT_SNAPSHOT: ViewSnapshot = {
   groupBy: ["status", "none"],
   groups: [],
   subtaskMode: "nested",
+  wrapTitle: false,
 };
 
 /** В проекте колонка «Проект» повторяет заголовок экрана — её там нет. */
@@ -161,6 +169,7 @@ function snapshotOf(state: ViewSnapshot): ViewSnapshot {
     groupBy: state.groupBy,
     groups: state.groups,
     subtaskMode: state.subtaskMode,
+    wrapTitle: state.wrapTitle,
   };
 }
 
@@ -226,6 +235,7 @@ function createViewStore(scope: ViewScope) {
         setGroups: (groups) => set((s) => edit(s, { groups })),
         setSearch: (search) => set({ search }),
         setSubtaskMode: (subtaskMode) => set((s) => edit(s, { subtaskMode })),
+        setWrapTitle: (wrapTitle) => set((s) => edit(s, { wrapTitle })),
         toggleCollapsed: (key) =>
           set((s) => ({
             collapsed: s.collapsed.includes(key) ? s.collapsed.filter((k) => k !== key) : [...s.collapsed, key],
@@ -270,7 +280,19 @@ function createViewStore(scope: ViewScope) {
           mode: s.mode,
           ganttScale: s.ganttScale,
         }),
-        version: 1,
+        version: 2,
+        // Версия 2 добавила wrapTitle. Migrate обязателен: без него zustand
+        // не смог бы поднять срез старой версии и молча выбросил бы его вместе
+        // со всеми именованными представлениями и порядком колонок.
+        migrate: (persisted, from) => {
+          const s = persisted as Partial<ViewState> | undefined;
+          if (!s || from >= 2) return s as ViewState;
+          return {
+            ...s,
+            wrapTitle: false,
+            savedViews: (s.savedViews ?? []).map((v) => ({ ...v, wrapTitle: false })),
+          } as ViewState;
+        },
       },
     ),
   );

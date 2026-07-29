@@ -15,6 +15,7 @@ import type {
   Organization,
   ProjectGrant,
   ProjectRole,
+  StatusCategory,
 } from "./types";
 
 // --- Users ---------------------------------------------------------------------
@@ -200,24 +201,28 @@ export async function createOrganization(name: string, ownerId: string): Promise
     await tx
       .prepare(`INSERT INTO core.org_members (org_id, user_id, role) VALUES (?, ?, 'owner')`)
       .run(org.id, ownerId);
-    const defaultStatuses: Array<[string, string, string]> = [
-      ["Входящие", "#6b7280", "open"],
-      ["К выполнению", "#3b82f6", "open"],
-      ["В работе", "#f59e0b", "open"],
-      ["Готово", "#10b981", "done"],
-      ["Архив", "#9ca3af", "archived"],
+    // Состав обязан совпадать с бэкфиллом 0041_core_status_categories.sql
+    // строка в строку: разъедутся — и организации, созданные до и после
+    // выката, будут вести себя по-разному.
+    const defaultStatuses: Array<[string, string, StatusCategory, boolean]> = [
+      ["Входящие", "#6b7280", "backlog", false],
+      ["К выполнению", "#3b82f6", "backlog", true],
+      ["В работе", "#f59e0b", "in_progress", false],
+      ["Готово", "#10b981", "done", false],
+      ["Архив", "#9ca3af", "archived", false],
     ];
     for (let i = 0; i < defaultStatuses.length; i++) {
-      const [statusName, color, kind] = defaultStatuses[i];
+      const [statusName, color, category, isDefault] = defaultStatuses[i];
       await tx
         .prepare(
-          `INSERT INTO core.task_statuses (org_id, name, color, kind, position) VALUES (?, ?, ?, ?, ?)`,
+          `INSERT INTO core.task_statuses (org_id, name, color, category, is_default, position)
+           VALUES (?, ?, ?, ?, ?, ?)`,
         )
-        .run(org.id, statusName, color, kind, i + 1);
+        .run(org.id, statusName, color, category, isDefault, i + 1);
     }
     // Зависимость для ганта: стрелки рисуются по связям этого типа, и без него
     // вид пустой у любой новой организации. Существующим его завела миграция
-    // 0041 — здесь та же строка для тех, кто заведётся после неё.
+    // 0044 — здесь та же строка для тех, кто заведётся после неё.
     await tx
       .prepare(
         `INSERT INTO core.relation_types (org_id, name, color, icon, kind, position)

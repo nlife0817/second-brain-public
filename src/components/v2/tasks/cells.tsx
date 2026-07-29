@@ -5,7 +5,7 @@
 // саму мутацию делает страница.
 
 import { memo, useEffect, useRef, useState } from "react";
-import { Check, MessageSquare, Pencil, X } from "lucide-react";
+import { Check, CornerDownRight, MessageSquare, Pencil, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarStack, PRIORITY_LABELS, PriorityDot, chipStyle, dueTone, formatDue } from "@/components/v2/bits";
 import { DatePicker, DuePicker } from "@/components/v2/DuePicker";
@@ -19,6 +19,7 @@ import type {
   TaskStatus,
 } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
+import { ProjectsMenu, WIDE_MENU_POPOVER } from "./draft-controls";
 
 export interface CellContext {
   statuses: TaskStatus[];
@@ -26,7 +27,11 @@ export interface CellContext {
   members: OrgMemberWithUser[];
   projectsById: Map<string, ProjectWithMeta>;
   canEdit: boolean;
+  /** Название переносится на следующую строку (до трёх), а не обрезается. */
+  wrapTitle: boolean;
   onPatch: (taskId: string, payload: Record<string, unknown>) => void;
+  /** Полный список проектов задачи: размещения PATCH не принимает. */
+  onPlacements: (taskId: string, projectIds: string[]) => void;
 }
 
 /** 90 → «1 ч 30 м». Пустая оценка отображается прочерком, а не нулём. */
@@ -45,11 +50,20 @@ export function formatShortDate(iso: string): string {
 }
 
 const CELL_BUTTON =
-  "flex h-full w-full items-center gap-1 rounded px-1.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+  "flex h-full w-full items-center gap-0.5 rounded px-1 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+
+/**
+ * Пункт выпадающего списка. Вынесен в константу: тот же класс стоял семью
+ * копиями, и любая правка плотности разъезжалась по половине из них.
+ */
+const MENU_ITEM = "flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted";
+
+/** Чип значения в ячейке: высоту держит строка таблицы, а не вертикальный паддинг. */
+const CELL_CHIP = "tinted-chip inline-flex max-w-full items-center gap-1 truncate px-1.5 text-xs leading-5";
 
 /** Некликабельная обёртка — когда прав на правку нет. */
 function ReadOnly({ children, className }: { children?: React.ReactNode; className?: string }) {
-  return <span className={cn("flex h-full items-center gap-1 px-1.5", className)}>{children}</span>;
+  return <span className={cn("flex h-full items-center gap-0.5 px-1", className)}>{children}</span>;
 }
 
 // --- Приоритет ------------------------------------------------------------------
@@ -88,7 +102,7 @@ export const PriorityCell = memo(function PriorityCell({
           <button
             key={p}
             onClick={() => ctx.onPatch(task.id, { priority: p })}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
+            className={MENU_ITEM}
           >
             <span className={cn("size-2 shrink-0 rounded-full", PRIORITY_LABELS[p].dot)} />
             <span className="flex-1 text-left">{PRIORITY_LABELS[p].label}</span>
@@ -130,7 +144,10 @@ export const TitleCell = memo(function TitleCell({
 
   if (editing) {
     return (
-      <span className="flex h-full items-center px-1.5" style={{ paddingLeft: depth * 16 + 6 }}>
+      // w-full min-w-0 обязателен: без ширины обёртка — flex-элемент по
+      // содержимому, и `w-full` инпута замыкается сам на себя, схлопывая поле
+      // до размера по умолчанию вместо ширины столбца.
+      <span className="flex h-full w-full min-w-0 items-center px-1.5" style={{ paddingLeft: depth * 16 + 6 }}>
         <input
           ref={inputRef}
           value={draft}
@@ -150,11 +167,27 @@ export const TitleCell = memo(function TitleCell({
   }
 
   return (
-    <span className="group/title flex h-full items-center gap-1" style={{ paddingLeft: depth * 16 + 6 }}>
+    <span
+      className={cn("group/title flex w-full min-w-0 gap-1", ctx.wrapTitle ? "items-start py-1" : "h-full items-center")}
+      style={{ paddingLeft: depth * 16 + 6 }}
+    >
+      {/* При группировке подзадача едет в группу родителя и её собственный
+          статус в колонке отличается от заголовка группы. Без явного знака
+          вложенности такая строка читается как ошибка списка; на телефоне
+          отступ в 16 px — и вовсе единственный признак. */}
+      {depth > 0 && (
+        <CornerDownRight
+          aria-label="Подзадача"
+          className={cn("size-3 shrink-0 text-muted-foreground/60", ctx.wrapTitle && "mt-1")}
+        />
+      )}
       <button
         onClick={() => onOpen(task.id)}
         className={cn(
-          "min-w-0 flex-1 truncate text-left text-sm hover:underline",
+          // Подчёркивания по наведению нет намеренно: строка и так подсвечивается
+          // целиком, а два сигнала на одно наведение читаются как рябь.
+          "min-w-0 flex-1 text-left text-sm",
+          ctx.wrapTitle ? "line-clamp-3 whitespace-normal break-words leading-snug" : "truncate",
           task.completed_at && "text-muted-foreground line-through",
         )}
         title={task.title}
@@ -182,10 +215,7 @@ export const TitleCell = memo(function TitleCell({
 export const StatusCell = memo(function StatusCell({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
   const status = task.status_id ? ctx.statuses.find((s) => s.id === task.status_id) : undefined;
   const label = status ? (
-    <span
-      className="tinted-chip inline-flex max-w-full items-center gap-1.5 truncate rounded-full px-2 py-0.5 text-xs font-medium"
-      style={chipStyle(status.color)}
-    >
+    <span className={cn(CELL_CHIP, "rounded-full font-medium")} style={chipStyle(status.color)}>
       <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: status.color }} />
       <span className="truncate">{status.name}</span>
     </span>
@@ -203,19 +233,15 @@ export const StatusCell = memo(function StatusCell({ task, ctx }: { task: TaskRo
           <button
             key={s.id}
             onClick={() => ctx.onPatch(task.id, { status_id: s.id })}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
+            className={MENU_ITEM}
           >
             <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: s.color }} />
             <span className="flex-1 truncate text-left">{s.name}</span>
             {task.status_id === s.id && <Check className="size-3.5 shrink-0" />}
           </button>
         ))}
-        <button
-          onClick={() => ctx.onPatch(task.id, { status_id: null })}
-          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted"
-        >
-          <X className="size-3.5" /> Снять статус
-        </button>
+        {/* «Снять статус» здесь больше нет: пустого статуса у задачи не бывает,
+            новая встаёт в статус организации по умолчанию. */}
       </PopoverContent>
     </Popover>
   );
@@ -224,25 +250,42 @@ export const StatusCell = memo(function StatusCell({ task, ctx }: { task: TaskRo
 // --- Проекты (multi-homing) ------------------------------------------------------
 
 export const ProjectCell = memo(function ProjectCell({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
-  if (task.placements.length === 0) {
-    return <ReadOnly className="text-xs text-muted-foreground">Личная</ReadOnly>;
-  }
+  const label =
+    task.placements.length === 0 ? (
+      // Задача без размещений видна только своим — «Личная» честнее прочерка.
+      <span className="text-xs text-muted-foreground">Личная</span>
+    ) : (
+      <span className="flex gap-1 overflow-hidden">
+        {task.placements.map((p) => {
+          const project = ctx.projectsById.get(p.project_id);
+          return (
+            <span
+              key={p.project_id}
+              className={cn(CELL_CHIP, "rounded")}
+              style={chipStyle(project?.color)}
+              title={project?.name ?? "Недоступный проект"}
+            >
+              <span className="truncate">{project?.name ?? "—"}</span>
+            </span>
+          );
+        })}
+      </span>
+    );
+
+  if (!ctx.canEdit) return <ReadOnly className="overflow-hidden">{label}</ReadOnly>;
+
+  // Список тот же, что в строке создания задачи: правило «куда можно положить»
+  // одно на всё приложение, и второй его копии здесь взяться неоткуда.
   return (
-    <ReadOnly className="gap-1 overflow-hidden">
-      {task.placements.map((p) => {
-        const project = ctx.projectsById.get(p.project_id);
-        return (
-          <span
-            key={p.project_id}
-            className="tinted-chip inline-flex max-w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-xs"
-            style={chipStyle(project?.color)}
-            title={project?.name ?? "Недоступный проект"}
-          >
-            <span className="truncate">{project?.name ?? "—"}</span>
-          </span>
-        );
-      })}
-    </ReadOnly>
+    <Popover>
+      <PopoverTrigger render={<button className={CELL_BUTTON} />}>{label}</PopoverTrigger>
+      <PopoverContent align="start" className={WIDE_MENU_POPOVER}>
+        <ProjectsMenu
+          value={task.placements.map((p) => p.project_id)}
+          onChange={(ids) => ctx.onPlacements(task.id, ids)}
+        />
+      </PopoverContent>
+    </Popover>
   );
 });
 
@@ -279,7 +322,7 @@ export const AssigneesCell = memo(function AssigneesCell({ task, ctx }: { task: 
           <button
             key={m.user_id}
             onClick={() => toggle(m.user_id)}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
+            className={MENU_ITEM}
           >
             <Avatar
               user={{ id: m.user_id, email: m.email, name: m.name, avatar_url: m.avatar_url }}
@@ -314,7 +357,7 @@ export const TagsCell = memo(function TagsCell({ task, ctx }: { task: TaskRow; c
         {task.tags.map((t) => (
           <span
             key={t.id}
-            className="tinted-chip truncate rounded px-1.5 py-0.5 text-[11px]"
+            className={cn(CELL_CHIP, "rounded text-[11px]")}
             style={chipStyle(t.color)}
           >
             {t.name}
@@ -340,7 +383,7 @@ export const TagsCell = memo(function TagsCell({ task, ctx }: { task: TaskRow; c
           <button
             key={t.id}
             onClick={() => toggle(t.id)}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
+            className={MENU_ITEM}
           >
             <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: t.color }} />
             <span className="flex-1 truncate text-left">{t.name}</span>

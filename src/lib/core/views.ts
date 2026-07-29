@@ -6,7 +6,7 @@
 // Форма фильтров — `FilterGroup[]`: группы соединяются через И, условия
 // внутри группы через И/ИЛИ.
 
-import type { CustomField, StatusKind, TaskPriority, TaskRow } from "./types";
+import type { CustomField, StatusCategory, TaskPriority, TaskRow } from "./types";
 
 // --- Фильтры ------------------------------------------------------------------
 
@@ -72,9 +72,9 @@ export const HIDE_VALUE = "hide";
  * Каждому соответствует вид статуса, задачи которого по умолчанию не видны.
  */
 export const VISIBILITY_FIELDS = [
-  { field: "archive", label: "Архив", statusKind: "archived" },
-  { field: "done", label: "Готово", statusKind: "done" },
-] as const satisfies ReadonlyArray<{ field: FilterField; label: string; statusKind: StatusKind }>;
+  { field: "archive", label: "Архив", statusCategory: "archived" },
+  { field: "done", label: "Готово", statusCategory: "done" },
+] as const satisfies ReadonlyArray<{ field: FilterField; label: string; statusCategory: StatusCategory }>;
 
 /** Быстрая проверка «это переключатель, а не условие на строку». */
 const VISIBILITY_FIELD_SET: ReadonlySet<FilterField> = new Set(VISIBILITY_FIELDS.map((f) => f.field));
@@ -274,12 +274,12 @@ export function showsDone(groups: FilterGroup[]): boolean {
  */
 export function hiddenStatusIds(
   groups: FilterGroup[],
-  statuses: ReadonlyArray<{ id: string; kind: StatusKind }>,
+  statuses: ReadonlyArray<{ id: string; category: StatusCategory }>,
 ): Set<string> {
-  const hiddenKinds = new Set<StatusKind>(
-    VISIBILITY_FIELDS.filter((f) => !showsField(groups, f.field)).map((f) => f.statusKind),
+  const hidden = new Set<StatusCategory>(
+    VISIBILITY_FIELDS.filter((f) => !showsField(groups, f.field)).map((f) => f.statusCategory),
   );
-  return new Set(statuses.filter((s) => hiddenKinds.has(s.kind)).map((s) => s.id));
+  return new Set(statuses.filter((s) => hidden.has(s.category)).map((s) => s.id));
 }
 
 /**
@@ -290,7 +290,7 @@ export function hiddenStatusIds(
 export function visiblePool<T extends { status_id: string | null }>(
   tasks: T[],
   groups: FilterGroup[],
-  statuses: ReadonlyArray<{ id: string; kind: StatusKind }>,
+  statuses: ReadonlyArray<{ id: string; category: StatusCategory }>,
 ): T[] {
   const hidden = hiddenStatusIds(groups, statuses);
   if (hidden.size === 0) return tasks;
@@ -504,21 +504,31 @@ export interface ArrangedRow {
   depth: number;
 }
 
-/**
- * Раскладка строк с учётом режима подзадач. Порядок внутри уровня сохраняется
- * тем, что задала сортировка. «Осиротевшую» подзадачу (родитель не попал в
- * набор — отфильтрован или недоступен) всегда показываем как обычную строку:
- * иначе она молча исчезла бы из списка.
- */
-export function arrangeRows(tasks: TaskRow[], mode: SubtaskMode): ArrangedRow[] {
-  if (mode === "flat") return tasks.map((task) => ({ task, depth: 0 }));
+/** Циклов в данных быть не должно, но защита дешевле, чем зависший рендер. */
+const MAX_DEPTH = 8;
 
+/**
+ * Дерево задач по всему набору — считается ДО группировки. Это ключевой момент:
+ * родство определяется по всему списку, а не внутри корзины группы. Иначе
+ * подзадача, у которой статус (проект, исполнитель) отличается от родительского,
+ * попадала бы в чужую корзину, не находила там родителя и рисовалась отдельной
+ * строкой — при включённом режиме «вложенными под родителя».
+ */
+export interface TaskForest {
+  /** Дети по id родителя, в порядке, который задала сортировка. */
+  childrenOf: Map<string, TaskRow[]>;
+  /**
+   * Строки верхнего уровня: задачи без родителя и «осиротевшие» подзадачи, чей
+   * родитель не попал в набор (отфильтрован или недоступен). Сюда же уходят
+   * узлы, до которых не дошёл обход, — иначе взаимная ссылка в данных унесла бы
+   * задачу из списка совсем.
+   */
+  roots: TaskRow[];
+}
+
+export function buildForest(tasks: TaskRow[]): TaskForest {
   const present = new Set(tasks.map((t) => t.id));
   const hasVisibleParent = (t: TaskRow) => !!t.parent_task_id && present.has(t.parent_task_id);
-
-  if (mode === "hidden") {
-    return tasks.filter((t) => !hasVisibleParent(t)).map((task) => ({ task, depth: 0 }));
-  }
 
   const childrenOf = new Map<string, TaskRow[]>();
   for (const t of tasks) {
@@ -528,21 +538,35 @@ export function arrangeRows(tasks: TaskRow[], mode: SubtaskMode): ArrangedRow[] 
     else childrenOf.set(t.parent_task_id!, [t]);
   }
 
+  const roots = tasks.filter((t) => !hasVisibleParent(t));
+
+  const reachable = new Set<string>();
+  const walk = (task: TaskRow, depth: number) => {
+    if (reachable.has(task.id) || depth > MAX_DEPTH) return;
+    reachable.add(task.id);
+    for (const child of childrenOf.get(task.id) ?? []) walk(child, depth + 1);
+  };
+  for (const task of roots) walk(task, 0);
+  for (const task of tasks) {
+    if (reachable.has(task.id)) continue;
+    roots.push(task);
+    walk(task, 0);
+  }
+
+  return { childrenOf, roots };
+}
+
+/** Поддеревья перечисленных корней — плоским списком строк с глубиной. */
+export function expandRoots(roots: TaskRow[], forest: TaskForest): ArrangedRow[] {
   const out: ArrangedRow[] = [];
   const emitted = new Set<string>();
-  const MAX_DEPTH = 8;
   const emit = (task: TaskRow, depth: number) => {
-    // Циклов в данных быть не должно, но защита дешевле, чем зависший рендер.
     if (emitted.has(task.id) || depth > MAX_DEPTH) return;
     emitted.add(task.id);
     out.push({ task, depth });
-    for (const child of childrenOf.get(task.id) ?? []) emit(child, depth + 1);
+    for (const child of forest.childrenOf.get(task.id) ?? []) emit(child, depth + 1);
   };
-  for (const task of tasks) {
-    if (!hasVisibleParent(task)) emit(task, 0);
-  }
-  // Остаток — узлы, до которых обход не дошёл (например, взаимные ссылки).
-  for (const task of tasks) if (!emitted.has(task.id)) emit(task, 0);
+  for (const task of roots) emit(task, 0);
   return out;
 }
 
@@ -576,14 +600,20 @@ export function buildGroups(
   fields: GroupByConfig,
   matchCtx: MatchContext,
   { labelForGroup, groupOrder }: GroupNaming,
+  forest: TaskForest | null,
 ): GroupNode[] {
   const [first, second] = fields;
+  // В режимах «вложенными» и «скрыть» по корзинам раскладываются ТОЛЬКО корни:
+  // подзадача едет под родителем, в его группу, а не отдельной строкой в свою.
+  // Раскладка всех подряд и была причиной, по которой вложенность разваливалась
+  // при любой активной группировке — а по умолчанию она включена.
+  const source = forest ? forest.roots : tasks;
   if (first === "none") {
-    return [{ key: "__all__", path: "__all__", label: { text: "" }, tasks, children: [] }];
+    return [{ key: "__all__", path: "__all__", label: { text: "" }, tasks: source, children: [] }];
   }
 
   const buckets = new Map<string, TaskRow[]>();
-  for (const task of tasks) {
+  for (const task of source) {
     // Задача с несколькими проектами/исполнителями/тегами попадает в каждую
     // группу — иначе список молча теряет часть её принадлежностей.
     for (const key of groupKeys(task, first, matchCtx)) {
@@ -621,6 +651,30 @@ export function buildGroups(
       })),
     };
   });
+}
+
+/**
+ * Строки одной группы. `groupRoots` — то, что реально разложено по этой корзине:
+ * в режимах `nested`/`hidden` туда попадают только корни, поэтому подзадача едет
+ * под родителем и в его группу.
+ */
+export function arrangeGroupRows(
+  groupRoots: TaskRow[],
+  forest: TaskForest | null,
+  mode: SubtaskMode,
+): ArrangedRow[] {
+  if (mode === "nested" && forest) return expandRoots(groupRoots, forest);
+  return groupRoots.map((task) => ({ task, depth: 0 }));
+}
+
+/**
+ * Раскладка плоского (не сгруппированного) списка с учётом режима подзадач.
+ * Порядок внутри уровня сохраняется тем, что задала сортировка.
+ */
+export function arrangeRows(tasks: TaskRow[], mode: SubtaskMode): ArrangedRow[] {
+  if (mode === "flat") return tasks.map((task) => ({ task, depth: 0 }));
+  const forest = buildForest(tasks);
+  return arrangeGroupRows(forest.roots, forest, mode);
 }
 
 /**

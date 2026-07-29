@@ -13,6 +13,7 @@ import {
   CalendarRange,
   Check,
   CheckCircle2,
+  Clock,
   CornerLeftUp,
   Link2,
   Play,
@@ -32,9 +33,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SheetHeader } from "@/components/ui/sheet";
-import { Textarea } from "@/components/ui/textarea";
+import { formatEstimate } from "@/components/v2/tasks/cells";
+import {
+  ESTIMATE_POPOVER,
+  EstimateForm,
+  PRIORITY_ORDER,
+} from "@/components/v2/tasks/draft-controls";
+import { SegmentedPicker } from "@/components/v2/tasks/SegmentedPicker";
 import { SubtaskSection } from "@/components/v2/tasks/SubtaskSection";
 import { api } from "@/lib/core/client";
+import { cardStatuses } from "@/lib/core/status-model";
 import type { TaskChange } from "@/lib/core/task-change";
 import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type {
@@ -52,7 +60,7 @@ import { useV2Store, useV2StoreApi, type ActiveTimer } from "@/lib/core/ui-store
 import { useLoad } from "@/lib/core/use-load";
 import { useTaskOpenStore } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
-import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle, dueTone, formatDue } from "./bits";
+import { Avatar, PRIORITY_LABELS, chipStyle, dueTone, formatDue } from "./bits";
 import { DatePicker, DuePicker } from "./DuePicker";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
@@ -74,6 +82,30 @@ const RichText = dynamic(() => import("./RichText").then((m) => m.RichText), {
 const DocEditor = dynamic(() => import("./editor/DocEditor").then((m) => m.DocEditor), {
   ssr: false,
 });
+// Композер комментария — тот же Tiptap, что и редактор описания, поэтому и он
+// приезжает отдельным чанком: карточку открывают и ради одного взгляда на срок.
+const CommentComposer = dynamic(
+  () => import("./editor/CommentComposer").then((m) => m.CommentComposer),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="min-h-9 rounded-lg border border-input px-3 py-2 text-sm text-muted-foreground">
+        Написать комментарий…
+      </div>
+    ),
+  },
+);
+
+/**
+ * Высота поля названия по содержимому. Ref-колбэк, а не эффект: правило
+ * `set-state-in-effect` считает нарушением любую правку состояния в эффекте, а
+ * здесь состояния и нет — только стиль узла, который уже в DOM.
+ */
+function autoGrow(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
 
 const VERB_LABELS: Record<string, string> = {
   "task.created": "создал(а) задачу",
@@ -103,6 +135,14 @@ function eventLabel(e: CoreEvent): string {
   }
   return base;
 }
+
+/**
+ * Чип и кнопка в сетке свойств. Высоту держит `h-7` — тот же рост, что у полей
+ * и селектов карточки; вертикальные паддинги при ней не нужны. Раньше каждый ряд
+ * набирал свою высоту паддингами (проекты 20 px, теги 24, исполнители 26), и
+ * значения в соседних строках не стояли на одной линии.
+ */
+const PROP_CHIP = "inline-flex h-7 items-center gap-1.5 text-xs";
 
 /** Родитель подзадачи — ровно то, что нужно хлебной крошке. */
 interface ParentBrief {
@@ -190,7 +230,8 @@ export function TaskSheet({
   // означало бы лишний каскад перерисовок.
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [tab, setTab] = useState<"comments" | "feed">("comments");
-  const [commentText, setCommentText] = useState("");
+  /** Корень обсуждения, в который уйдёт следующий комментарий; null — в ленту. */
+  const [replyTo, setReplyTo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Тихое «Сохранено ✓» в шапке: blur сохраняет молча, и без подтверждения
@@ -318,11 +359,17 @@ export function TaskSheet({
     if ("start_date" in body) next.start_date = body.start_date as string | null;
     if ("due_date" in body) next.due_date = body.due_date as string | null;
     if ("due_time" in body) next.due_time = body.due_time as string | null;
+    if ("estimated_minutes" in body) {
+      next.estimated_minutes = body.estimated_minutes as number | null;
+    }
     if (typeof body.status_id === "string") {
       next.status_id = body.status_id;
-      const kind = statuses.find((s) => s.id === body.status_id)?.kind;
-      if (kind === "done") next.completed_at = prev.completed_at ?? new Date().toISOString();
-      else if (kind === "open") next.completed_at = null;
+      const category = statuses.find((s) => s.id === body.status_id)?.category;
+      // Снимает метку любая категория кроме `done`, а не только «рабочая»:
+      // ровно так считает сервер (`becameDone`) и таблица (`applyLocal`).
+      // Проверка на «открытый» пропускала архив — карточка мигала ответом.
+      if (category === "done") next.completed_at = prev.completed_at ?? new Date().toISOString();
+      else if (category) next.completed_at = null;
     }
     if (Array.isArray(body.tag_ids)) {
       const ids = body.tag_ids as string[];
@@ -362,38 +409,43 @@ export function TaskSheet({
     }
   }
 
-  /** Многострочный ввод → HTML: иначе переносы строк теряются при рендере. */
-  function textToHtml(text: string): string {
-    const escape = (s: string) =>
-      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    return text
-      .split(/\n{2,}/)
-      .map((block) => `<p>${block.split("\n").map(escape).join("<br>")}</p>`)
-      .join("");
-  }
-
-  async function addComment() {
-    if (!orgId || !taskId || !commentText.trim()) return;
-    const text = commentText.trim();
-    // Поле очищаем сразу: ждать ответа сервера, чтобы убрать свой же текст,
-    // выглядит как зависшая кнопка.
-    setCommentText("");
+  /**
+   * Разметка приходит из редактора: комментарии набирают в нём, потому что в них
+   * живут @-упоминания. Ручная свёртка текста в <p> съедала бы их.
+   *
+   * `parentId` — корень обсуждения; ответ на ответ сервер приведёт к тому же
+   * корню, поэтому здесь достаточно передать, на что нажали.
+   */
+  async function addComment(html: string, parentId: string | null = null) {
+    if (!orgId || !taskId) return;
     await run(async () => {
       const comment = await api.post<CoreComment>(`/orgs/${orgId}/tasks/${taskId}/comments`, {
-        body: textToHtml(text),
+        body: html,
+        parent_id: parentId,
       });
       if (currentTaskRef.current !== taskId) return;
-      setComments((prev) => [...prev, comment]);
+      // Ответ встаёт за последним ответом своего корня, а не в конец ленты:
+      // иначе он прыгнет на место после первой же перезагрузки карточки.
+      setComments((prev) => {
+        if (!comment.parent_id) return [...prev, comment];
+        const last = prev.findLastIndex(
+          (c) => c.id === comment.parent_id || c.parent_id === comment.parent_id,
+        );
+        if (last < 0) return [...prev, comment];
+        return [...prev.slice(0, last + 1), comment, ...prev.slice(last + 1)];
+      });
+      setReplyTo(null);
       // Композер закреплён внизу и виден из обеих вкладок — отправка из
       // «Истории» должна показать, куда упал комментарий.
       setTab("comments");
       flashSaved();
-      setTask((prev) => {
-        if (!prev) return prev;
-        const next = { ...prev, comment_count: prev.comment_count + 1 };
+      // Через зеркало, а не апдейтером: см. комментарий к taskRef.
+      const current = taskRef.current;
+      if (current) {
+        const next = { ...current, comment_count: current.comment_count + 1 };
+        setTask(next);
         onChanged?.({ type: "patched", task: next, confirmed: true });
-        return next;
-      });
+      }
     });
   }
 
@@ -481,7 +533,7 @@ export function TaskSheet({
 
   async function toggleSubtaskDone(sub: TaskListItem) {
     if (!orgId) return;
-    const doneStatus = statuses.find((s) => s.kind === "done");
+    const doneStatus = statuses.find((s) => s.category === "done");
     const openStatus = reopenStatus();
     const target = sub.completed_at ? openStatus : doneStatus;
     if (!target) return;
@@ -507,19 +559,67 @@ export function TaskSheet({
     }
   }
 
+  /**
+   * Предсказание для строки подзадачи. Правила те же, что у таблицы
+   * (`applyLocal` в `TaskTableView`) и у сервера: метку завершения снимает
+   * любой статус не вида `done`.
+   */
+  function previewSubtask(prev: TaskListItem, body: Record<string, unknown>): TaskListItem {
+    const { members } = storeApi.getState();
+    const next: TaskListItem = { ...prev };
+    for (const [key, value] of Object.entries(body)) {
+      if (key === "assignee_ids") {
+        const ids = new Set(value as string[]);
+        next.assignees = members
+          .filter((m) => ids.has(m.user_id))
+          .map((m) => ({ id: m.user_id, email: m.email, name: m.name, avatar_url: m.avatar_url }));
+      } else {
+        (next as unknown as Record<string, unknown>)[key] = value;
+      }
+    }
+    if ("status_id" in body) {
+      const category = statuses.find((s) => s.id === body.status_id)?.category;
+      if (category === "done" && !prev.completed_at) next.completed_at = new Date().toISOString();
+      if (category && category !== "done" && prev.completed_at) next.completed_at = null;
+    }
+    return next;
+  }
+
+  /**
+   * Правка поля подзадачи прямо в её строке — не открывая карточку. Счётчики
+   * родителя двигаем только когда метка завершения действительно поменялась:
+   * иначе колонка «Подзадачи» в списке за карточкой начнёт врать.
+   */
+  async function patchSubtask(sub: TaskListItem, body: Record<string, unknown>) {
+    if (!orgId) return;
+    const previous = subtasks;
+    const optimistic = previewSubtask(sub, body);
+    const deltaDone = (optimistic.completed_at ? 1 : 0) - (sub.completed_at ? 1 : 0);
+    setSubtasks((prev) => prev.map((s) => (s.id === sub.id ? optimistic : s)));
+    if (deltaDone !== 0) bumpSubtaskCounters(0, deltaDone, false);
+    try {
+      const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${sub.id}`, body);
+      if (currentTaskRef.current !== taskId) return;
+      setSubtasks((prev) => prev.map((s) => (s.id === sub.id ? { ...s, ...updated } : s)));
+      // Строка подзадачи живёт и в списке за карточкой — отдаём ей ответ сервера.
+      onChanged?.({ type: "patched", task: updated, confirmed: true });
+      setError(null);
+    } catch (e) {
+      setSubtasks(previous);
+      if (deltaDone !== 0) bumpSubtaskCounters(0, -deltaDone);
+      setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+    }
+  }
+
   async function setPlacements(projectIds: string[]) {
     if (!orgId || !taskId || !task) return;
-    const placements = projectIds.map((pid) => {
-      const existing = task.placements.find((p) => p.project_id === pid);
-      return { project_id: pid, section_id: existing?.section_id ?? null };
-    });
+    const placements = projectIds.map((pid) => ({ project_id: pid }));
     const previous = task;
     const optimistic: TaskDetail = {
       ...task,
       placements: placements.map((p) => ({
         ...(task.placements.find((x) => x.project_id === p.project_id) ?? {
           project_id: p.project_id,
-          section_id: p.section_id,
           position: 0,
         }),
       })),
@@ -591,8 +691,8 @@ export function TaskSheet({
    * снятая галочка отбрасывает задачу в начало процесса.
    */
   function reopenStatus() {
-    const open = statuses.filter((s) => s.kind === "open");
-    return open.length > 0 ? open[open.length - 1] : undefined;
+    const working = statuses.filter((s) => s.category === "backlog" || s.category === "in_progress");
+    return working.length > 0 ? working[working.length - 1] : undefined;
   }
 
   /** Учёт времени начинается там, где идёт работа — в карточке задачи. */
@@ -661,7 +761,7 @@ export function TaskSheet({
     }
   }
 
-  const doneStatus = statuses.find((s) => s.kind === "done");
+  const doneStatus = statuses.find((s) => s.category === "done");
   const isDone = !!task?.completed_at;
   const visibleFields = fields.filter(
     (f) => !f.project_id || task?.placements.some((p) => p.project_id === f.project_id),
@@ -718,7 +818,7 @@ export function TaskSheet({
         <span className="text-muted-foreground">Указать срок</span>
       )}
       {overdueDays > 0 && (
-        <span className="shrink-0 rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+        <span className="shrink-0 rounded-full bg-destructive/10 px-1.5 text-[10px] font-semibold leading-5 text-destructive">
           просрочено {overdueDays} дн.
         </span>
       )}
@@ -734,6 +834,42 @@ export function TaskSheet({
       )}
     </>
   );
+
+  /**
+   * Статус и приоритет — ряды кнопок во всю ширину под заголовком, а не строки
+   * в сетке свойств: это самые частые действия в карточке, и прятать их в
+   * выпадающий список значит два клика вместо одного каждый раз.
+   *
+   * Архивные статусы в ряд не входят (архивирование — не следующий шаг работы),
+   * кроме случая, когда задача уже в архиве: иначе из него было бы не выйти.
+   */
+  const flowRows = task && (
+    <div className="flex flex-col gap-1.5">
+      <SegmentedPicker
+        ariaLabel="Статус задачи"
+        options={cardStatuses(statuses, task.status_id).map((s) => ({
+          value: s.id,
+          label: s.name,
+          color: s.color,
+        }))}
+        value={task.status_id}
+        disabled={!canEdit}
+        onChange={(id) => void patch({ status_id: id })}
+      />
+      <SegmentedPicker
+        ariaLabel="Приоритет задачи"
+        options={PRIORITY_ORDER.map((p) => ({
+          value: p,
+          label: PRIORITY_LABELS[p].label,
+          dotClass: PRIORITY_LABELS[p].dot,
+        }))}
+        value={task.priority}
+        disabled={!canEdit}
+        onChange={(p) => void patch({ priority: p })}
+      />
+    </div>
+  );
+
   const propsGrid = task && (
     <div
       className={cn(
@@ -743,41 +879,9 @@ export function TaskSheet({
           : "grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2.5",
       )}
     >
-      <span className={propLabel}>Статус</span>
-      <Select
-        value={task.status_id ?? ""}
-        onValueChange={(v) => v && void patch({ status_id: v })}
-      >
-        <SelectTrigger size="sm" className="w-fit min-w-36">
-          <SelectValue placeholder="Без статуса">
-            <StatusPill status={statuses.find((s) => s.id === task.status_id)} />
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {statuses.map((s) => (
-            <SelectItem key={s.id} value={s.id}>
-              {s.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <span className={propLabel}>Приоритет</span>
-      <Select
-        value={task.priority}
-        onValueChange={(v) => v && void patch({ priority: v as TaskPriority })}
-      >
-        <SelectTrigger size="sm" className="w-fit min-w-36">
-          <SelectValue>{PRIORITY_LABELS[task.priority].label}</SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {(Object.keys(PRIORITY_LABELS) as TaskPriority[]).map((p) => (
-            <SelectItem key={p} value={p}>
-              {PRIORITY_LABELS[p].label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {/* Статуса и приоритета здесь больше нет: они переехали под заголовок
+          задачи рядами кнопок (`flowRows`). Два способа поменять одно и то же
+          поле — это два места, которые разъедутся. */}
 
       {/* Начало стоит перед сроком: слева направо читается как отрезок, тем же
           порядком, каким полоса лежит на ганте. */}
@@ -801,13 +905,51 @@ export function TaskSheet({
         <DuePicker
           date={task.due_date}
           time={task.due_time}
-          triggerClassName="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+          triggerClassName="-ml-2 flex h-7 w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 text-sm transition-colors hover:border-input hover:bg-background"
           onCommit={(next) => void patch(next)}
         >
           {dueLabelContent}
         </DuePicker>
       ) : (
         <span className="flex items-center gap-2">{dueLabelContent}</span>
+      )}
+
+      {/* Оценку правит и таблица, и черновик, и строка подзадачи — а в самой
+          карточке её не было вовсе. */}
+      <span className={propLabel}>Оценка</span>
+      {canEdit ? (
+        <Popover>
+          <PopoverTrigger
+            render={
+              <button
+                className="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+                title="Оценка"
+              />
+            }
+          >
+            <Clock className="size-4 shrink-0 text-muted-foreground" />
+            {task.estimated_minutes != null ? (
+              <span className="tabular-nums">{formatEstimate(task.estimated_minutes)}</span>
+            ) : (
+              <span className="text-muted-foreground">Указать оценку</span>
+            )}
+          </PopoverTrigger>
+          <PopoverContent align="start" className={ESTIMATE_POPOVER}>
+            <EstimateForm
+              value={task.estimated_minutes}
+              onChange={(estimated_minutes) => void patch({ estimated_minutes })}
+            />
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <span className="flex items-center gap-2">
+          <Clock className="size-4 shrink-0 text-muted-foreground" />
+          {task.estimated_minutes != null ? (
+            <span className="tabular-nums">{formatEstimate(task.estimated_minutes)}</span>
+          ) : (
+            <span className="text-muted-foreground">Не задана</span>
+          )}
+        </span>
       )}
 
       {/* Повтор — свойство самой задачи: отдельного экрана правил больше нет,
@@ -822,11 +964,15 @@ export function TaskSheet({
       />
 
       <span className={propLabel}>Исполнители</span>
-      <div className="flex flex-wrap items-center gap-1.5">
+      {/* Кнопку «Назначить» рисует MemberPicker, общий на несколько экранов:
+          свой рост она задаёт паддингом внутри себя, и в ряду с чипами
+          получалась на пару пикселей выше. Правим здесь, чтобы не менять
+          плотность пикера там, где он стоит один. */}
+      <div className="flex flex-wrap items-center gap-1.5 [&>button]:h-7 [&>button]:py-0">
         {task.assignees.map((a) => (
           <span
             key={a.id}
-            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card py-0.5 pl-0.5 pr-2 text-xs shadow-xs"
+            className={cn(PROP_CHIP, "rounded-full border border-border bg-card pl-0.5 pr-2 shadow-xs")}
           >
             <Avatar user={a} size="xs" />
             {a.name || a.email}
@@ -857,7 +1003,7 @@ export function TaskSheet({
         {task.tags.map((t) => (
           <span
             key={t.id}
-            className="tinted-chip inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+            className={cn(PROP_CHIP, "tinted-chip gap-1 rounded-full px-2 text-[11px] font-medium")}
             style={chipStyle(t.color)}
           >
             {t.name}
@@ -879,7 +1025,10 @@ export function TaskSheet({
             <PopoverTrigger
               render={
                 <button
-                  className="flex h-6 items-center gap-1 rounded-full border border-dashed border-border px-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary"
+                  className={cn(
+                    PROP_CHIP,
+                    "gap-1 rounded-full border border-dashed border-border px-2 text-muted-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary",
+                  )}
                   title="Добавить тег"
                 />
               }
@@ -898,7 +1047,7 @@ export function TaskSheet({
                         : [...task.tags.map((x) => x.id), t.id];
                       void patch({ tag_ids: next });
                     }}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
+                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted"
                   >
                     <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: t.color }} />
                     <span className="flex-1 truncate text-left">{t.name}</span>
@@ -922,7 +1071,7 @@ export function TaskSheet({
         {task.placements.map((pl) => {
           const project = projects.find((p) => p.id === pl.project_id);
           return (
-            <span key={pl.project_id} className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">
+            <span key={pl.project_id} className={cn(PROP_CHIP, "rounded-full bg-muted px-2")}>
               <span className="size-2 rounded-sm" style={{ backgroundColor: project?.color ?? "#6b7280" }} />
               {project?.name ?? "Недоступный проект"}
               <button
@@ -942,7 +1091,7 @@ export function TaskSheet({
             if (v) void setPlacements([...task.placements.map((p) => p.project_id), v]);
           }}
         >
-          <SelectTrigger size="sm" className="h-6 w-fit border-dashed text-xs text-muted-foreground">
+          <SelectTrigger size="sm" className="w-fit border-dashed text-xs text-muted-foreground">
             <Plus className="size-3" /> В проект
           </SelectTrigger>
           <SelectContent>
@@ -1099,15 +1248,31 @@ export function TaskSheet({
                 </button>
               )}
 
-              <Input
+              {/* Textarea, а не Input: длинное название в поле ввода уезжает за
+                  правый край без единого признака, что текст продолжается.
+                  Высота подгоняется по содержимому, Enter не переносит строку —
+                  название однострочное по смыслу, перенос только визуальный. */}
+              <textarea
                 key={`title-${task.id}`}
+                ref={autoGrow}
+                rows={1}
                 defaultValue={task.title}
-                className="border-none px-0 font-heading text-lg font-semibold tracking-tight shadow-none focus-visible:ring-0 md:text-lg"
+                onInput={(e) => autoGrow(e.currentTarget)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                  }
+                }}
+                className="resize-none border-none bg-transparent p-0 font-heading text-lg font-semibold leading-snug tracking-tight outline-none"
                 onBlur={(e) => {
                   const v = e.target.value.trim();
                   if (v && v !== task.title) void patch({ title: v });
+                  else if (!v) e.target.value = task.title;
                 }}
               />
+
+              {flowRows}
 
               {!twoCol && propsGrid}
 
@@ -1124,6 +1289,7 @@ export function TaskSheet({
                   editable={canEdit}
                   onExpand={() => setExpandedTaskId(task.id)}
                   threadCount={docThreads.filter((t) => !t.resolved_at).length}
+                  collapsible
                 />
               )}
 
@@ -1131,9 +1297,11 @@ export function TaskSheet({
                 subtasks={subtasks}
                 canEdit={canEdit}
                 defaults={subtaskDefaults}
+                chainProjectIds={task.chain_project_ids}
                 onCreate={addSubtask}
                 onToggleDone={(s) => void toggleSubtaskDone(s)}
                 onOpen={openNested}
+                onPatch={(s, body) => void patchSubtask(s, body)}
                 onDelete={(s) => void deleteSubtask(s)}
                 onDetach={(s) => void detachSubtask(s)}
               />
@@ -1167,7 +1335,10 @@ export function TaskSheet({
                   {tab === "comments" ? (
                     <>
                       {comments.map((c) => (
-                        <div key={c.id} className="flex gap-2">
+                        // Ответы сдвинуты и отчёркнуты слева: иерархия ровно
+                        // одноуровневая, ответ на ответ сервер приводит к тому
+                        // же корню — дерево в узкой колонке нечитаемо.
+                        <div key={c.id} className={cn("flex gap-2", c.parent_id && "ml-8 border-l border-border pl-3")}>
                           {c.author ? <Avatar user={c.author} size="sm" /> : <span className="size-6" />}
                           <div className="min-w-0 flex-1">
                             <p className="text-xs text-muted-foreground">
@@ -1181,6 +1352,14 @@ export function TaskSheet({
                               className="prose prose-sm dark:prose-invert max-w-none text-sm"
                               dangerouslySetInnerHTML={{ __html: c.body }}
                             />
+                            {orgRole !== null && replyTo !== (c.parent_id ?? c.id) && (
+                              <button
+                                onClick={() => setReplyTo(c.parent_id ?? c.id)}
+                                className="mt-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+                              >
+                                Ответить
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -1219,23 +1398,26 @@ export function TaskSheet({
               сервер — гостю оно доступно по роли в проекте. */}
           {orgRole !== null && (
             <div className="shrink-0 border-t border-border bg-background px-4 py-2.5">
-              <div className="flex items-end gap-2">
+              <div className="flex items-start gap-2">
                 {me && <Avatar user={me} size="sm" />}
-                <Textarea
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  placeholder="Написать комментарий…"
-                  className="min-h-9 flex-1 resize-none text-sm"
-                  rows={1}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void addComment();
-                  }}
-                />
-                <Button size="sm" onClick={() => void addComment()} disabled={!commentText.trim()}>
-                  Отправить
-                </Button>
+                <div className="min-w-0 flex-1">
+                  {replyTo && (
+                    <p className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      Ответ в обсуждении
+                      <button onClick={() => setReplyTo(null)} className="underline hover:text-foreground">
+                        отменить
+                      </button>
+                    </p>
+                  )}
+                  <CommentComposer
+                    // key переводит композер в чистое состояние при смене задачи
+                    // и при переходе «новый комментарий ↔ ответ».
+                    key={`${taskId}-${replyTo ?? "root"}`}
+                    placeholder={replyTo ? "Ответить…" : "Написать комментарий…"}
+                    onSubmit={(html) => addComment(html, replyTo)}
+                  />
+                </div>
               </div>
-              <p className="mt-1 pl-8 text-[10.5px] text-muted-foreground">Ctrl+Enter — отправить</p>
             </div>
           )}
         </>
@@ -1303,7 +1485,7 @@ function FieldRow({
             type="date"
             value={typeof value === "string" ? value : ""}
             onChange={(e) => onChange(e.target.value || null)}
-            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+            className="h-7 rounded-md border border-border bg-background px-2 text-sm"
           />
         )}
         {field.type === "checkbox" && (
@@ -1348,7 +1530,8 @@ function FieldRow({
                   key={o.id}
                   onClick={() => onChange(active ? arr.filter((x) => x !== o.id) : [...arr, o.id])}
                   className={cn(
-                    "rounded-full border px-2 py-0.5 text-[11px]",
+                    PROP_CHIP,
+                    "rounded-full border px-2 text-[11px]",
                     active ? "border-primary bg-muted font-medium" : "border-border text-muted-foreground",
                   )}
                 >

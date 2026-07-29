@@ -10,7 +10,7 @@ import { ProjectSettings } from "@/components/v2/ProjectSettings";
 import { getActiveOrgAuth } from "@/lib/core/bootstrap";
 import { isUuid } from "@/lib/core/http";
 import { canOrg, effectiveProjectRole } from "@/lib/core/policy";
-import { listProjectMembers, listSections, requireProject } from "@/lib/core/projects";
+import { listProjectMembers, requireProject } from "@/lib/core/projects";
 import { listTeams } from "@/lib/core/teams";
 
 export default async function ProjectSettingsPage({
@@ -31,8 +31,7 @@ export default async function ProjectSettingsPage({
     notFound();
   }
 
-  const [sections, members, teams] = await Promise.all([
-    listSections(projectId),
+  const [members, teams] = await Promise.all([
     listProjectMembers(projectId),
     // Структура организации не для гостей — listTeams бросил бы PolicyError.
     canOrg(auth, "clients.view") ? listTeams(auth) : Promise.resolve([]),
@@ -56,7 +55,6 @@ export default async function ProjectSettingsPage({
         initialProject={{
           ...project,
           my_role: effectiveProjectRole(auth, project),
-          sections,
           members,
         }}
         teams={teams}
