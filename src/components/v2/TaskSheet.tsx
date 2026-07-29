@@ -319,8 +319,11 @@ export function TaskSheet({
     if (typeof body.status_id === "string") {
       next.status_id = body.status_id;
       const kind = statuses.find((s) => s.id === body.status_id)?.kind;
+      // Снимает метку любой статус не вида `done`, а не только «открытый»:
+      // ровно так считает сервер (`becameDone`) и таблица (`applyLocal`).
+      // Проверка на `open` пропускала `archived` — карточка мигала ответом.
       if (kind === "done") next.completed_at = prev.completed_at ?? new Date().toISOString();
-      else if (kind === "open") next.completed_at = null;
+      else if (kind) next.completed_at = null;
     }
     if (Array.isArray(body.tag_ids)) {
       const ids = body.tag_ids as string[];
@@ -501,6 +504,58 @@ export function TaskSheet({
     } catch (e) {
       setSubtasks(previous);
       bumpSubtaskCounters(0, wasDone ? 1 : -1);
+      setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+    }
+  }
+
+  /**
+   * Предсказание для строки подзадачи. Правила те же, что у таблицы
+   * (`applyLocal` в `TaskTableView`) и у сервера: метку завершения снимает
+   * любой статус не вида `done`.
+   */
+  function previewSubtask(prev: TaskListItem, body: Record<string, unknown>): TaskListItem {
+    const { members } = storeApi.getState();
+    const next: TaskListItem = { ...prev };
+    for (const [key, value] of Object.entries(body)) {
+      if (key === "assignee_ids") {
+        const ids = new Set(value as string[]);
+        next.assignees = members
+          .filter((m) => ids.has(m.user_id))
+          .map((m) => ({ id: m.user_id, email: m.email, name: m.name, avatar_url: m.avatar_url }));
+      } else {
+        (next as unknown as Record<string, unknown>)[key] = value;
+      }
+    }
+    if ("status_id" in body) {
+      const kind = statuses.find((s) => s.id === body.status_id)?.kind;
+      if (kind === "done" && !prev.completed_at) next.completed_at = new Date().toISOString();
+      if (kind && kind !== "done" && prev.completed_at) next.completed_at = null;
+    }
+    return next;
+  }
+
+  /**
+   * Правка поля подзадачи прямо в её строке — не открывая карточку. Счётчики
+   * родителя двигаем только когда метка завершения действительно поменялась:
+   * иначе колонка «Подзадачи» в списке за карточкой начнёт врать.
+   */
+  async function patchSubtask(sub: TaskListItem, body: Record<string, unknown>) {
+    if (!orgId) return;
+    const previous = subtasks;
+    const optimistic = previewSubtask(sub, body);
+    const deltaDone = (optimistic.completed_at ? 1 : 0) - (sub.completed_at ? 1 : 0);
+    setSubtasks((prev) => prev.map((s) => (s.id === sub.id ? optimistic : s)));
+    if (deltaDone !== 0) bumpSubtaskCounters(0, deltaDone, false);
+    try {
+      const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${sub.id}`, body);
+      if (currentTaskRef.current !== taskId) return;
+      setSubtasks((prev) => prev.map((s) => (s.id === sub.id ? { ...s, ...updated } : s)));
+      // Строка подзадачи живёт и в списке за карточкой — отдаём ей ответ сервера.
+      onChanged?.({ type: "patched", task: updated, confirmed: true });
+      setError(null);
+    } catch (e) {
+      setSubtasks(previous);
+      if (deltaDone !== 0) bumpSubtaskCounters(0, -deltaDone);
       setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
     }
   }
@@ -1105,9 +1160,11 @@ export function TaskSheet({
                 subtasks={subtasks}
                 canEdit={canEdit}
                 defaults={subtaskDefaults}
+                chainProjectIds={task.chain_project_ids}
                 onCreate={addSubtask}
                 onToggleDone={(s) => void toggleSubtaskDone(s)}
                 onOpen={openNested}
+                onPatch={(s, body) => void patchSubtask(s, body)}
                 onDelete={(s) => void deleteSubtask(s)}
                 onDetach={(s) => void detachSubtask(s)}
               />

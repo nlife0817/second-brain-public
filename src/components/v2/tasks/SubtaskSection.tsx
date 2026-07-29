@@ -10,7 +10,7 @@
 // поверх карточки это на телефоне давало бы две наложенные шторки.
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
   ChevronDown,
@@ -76,13 +76,28 @@ const CHIP =
 const CHIP_EMPTY = "text-muted-foreground/70";
 const CHIP_SET = "text-foreground";
 
+/**
+ * Незаполненный параметр подзадачи: строка не должна шуметь пятью пустыми
+ * плейсхолдерами, поэтому такой чип проявляется по наведению.
+ *
+ * `data-[popup-open]` обязателен — иначе уведённая с строки мышь гасит чип
+ * вместе с его открытым меню. На телефоне наведения не существует, а карточку
+ * там открывают три экрана: под `[data-mobile-v2]` (атрибут стоит на `<html>`)
+ * пустые чипы видны всегда, иначе параметры подзадачи недостижимы вовсе.
+ */
+const CHIP_ON_HOVER =
+  "opacity-0 transition-opacity focus-visible:opacity-100 data-[popup-open]:opacity-100 " +
+  "group-hover/sub:opacity-100 group-focus-within/sub:opacity-100 [[data-mobile-v2]_&]:opacity-100";
+
 export function SubtaskSection({
   subtasks,
   canEdit,
   defaults,
+  chainProjectIds,
   onCreate,
   onToggleDone,
   onOpen,
+  onPatch,
   onDelete,
   onDetach,
 }: {
@@ -90,9 +105,12 @@ export function SubtaskSection({
   canEdit: boolean;
   /** Что карточка проставляет в черновик подзадачи — проекты родителя и т.п. */
   defaults: Partial<TaskDraft>;
+  /** Проекты цепочки родителя: по ним сужается выбор исполнителей подзадачи. */
+  chainProjectIds: string[];
   onCreate: (draft: TaskDraft) => Promise<void>;
   onToggleDone: (sub: TaskListItem) => void;
   onOpen: (taskId: string) => void;
+  onPatch: (sub: TaskListItem, body: Record<string, unknown>) => void;
   onDelete: (sub: TaskListItem) => void;
   onDetach: (sub: TaskListItem) => void;
 }) {
@@ -123,8 +141,10 @@ export function SubtaskSection({
             key={s.id}
             sub={s}
             canEdit={canEdit}
+            chainProjectIds={chainProjectIds}
             onToggleDone={onToggleDone}
             onOpen={onOpen}
+            onPatch={onPatch}
             onDelete={onDelete}
             onDetach={onDetach}
           />
@@ -140,57 +160,121 @@ export function SubtaskSection({
 function SubtaskRow({
   sub,
   canEdit,
+  chainProjectIds,
   onToggleDone,
   onOpen,
+  onPatch,
   onDelete,
   onDetach,
 }: {
   sub: TaskListItem;
   canEdit: boolean;
+  /** Проекты цепочки родителя — см. `projectIds` ниже. */
+  chainProjectIds: string[];
   onToggleDone: (sub: TaskListItem) => void;
   onOpen: (taskId: string) => void;
+  onPatch: (sub: TaskListItem, body: Record<string, unknown>) => void;
   onDelete: (sub: TaskListItem) => void;
   onDetach: (sub: TaskListItem) => void;
 }) {
   const isDone = !!sub.completed_at;
   const due = formatDue(sub.due_date, sub.due_time);
 
+  // Состав исполнителей закрытого проекта сервер сужает по всей цепочке
+  // (`access.chainProjectIds`), а собственных размещений у подзадачи может не
+  // быть вовсе. По одним её `placements` список вышел бы на всю организацию —
+  // и сохранение закончилось бы отказом.
+  const projectIds = useMemo(
+    () => Array.from(new Set([...sub.placements.map((p) => p.project_id), ...chainProjectIds])),
+    [sub.placements, chainProjectIds],
+  );
+
+  const mark = isDone ? (
+    <CheckCircle2 className="size-4 text-emerald-500" />
+  ) : (
+    <Circle className="size-4 text-muted-foreground" />
+  );
+
   return (
-    <div className="flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-muted/50">
-      <button
-        onClick={() => onToggleDone(sub)}
-        title={isDone ? "Вернуть в работу" : "Завершить"}
-        className="shrink-0"
-      >
-        {isDone ? (
-          <CheckCircle2 className="size-4 text-emerald-500" />
-        ) : (
-          <Circle className="size-4 text-muted-foreground" />
-        )}
-      </button>
+    <div className="group/sub flex items-center gap-0.5 rounded-md px-1 py-0.5 hover:bg-muted/50">
+      {/* Гостю кружок не кликабелен: сервер такую правку всё равно отвергнет. */}
+      {canEdit ? (
+        <button
+          onClick={() => onToggleDone(sub)}
+          title={isDone ? "Вернуть в работу" : "Завершить"}
+          className="shrink-0"
+        >
+          {mark}
+        </button>
+      ) : (
+        <span className="shrink-0" title={isDone ? "Завершена" : "В работе"}>
+          {mark}
+        </span>
+      )}
       {/* Название открывает карточку подзадачи: она такая же задача, и все её
           поля правятся там же, где у обычной. */}
       <button
         onClick={() => onOpen(sub.id)}
         className={cn(
-          "min-w-0 flex-1 truncate py-0.5 text-left text-sm hover:underline",
+          "mx-1 min-w-0 flex-1 truncate py-0.5 text-left text-sm hover:underline",
           isDone && "text-muted-foreground line-through",
         )}
         title={sub.title}
       >
         {sub.title}
       </button>
-      {sub.priority !== "none" && (
-        <span title={PRIORITY_LABELS[sub.priority].label}>
-          <PriorityDot priority={sub.priority} />
-        </span>
+
+      {/* Те же параметры, что задаются в момент создания подзадачи. Проекты,
+          теги и кастомные поля сюда не выносим: они и в строке создания спрятаны
+          под «развернуть», а правятся отдельными эндпоинтами. */}
+      {canEdit ? (
+        <>
+          <PriorityChip
+            value={sub.priority}
+            onChange={(priority) => onPatch(sub, { priority })}
+            className={sub.priority === "none" ? CHIP_ON_HOVER : undefined}
+          />
+          <StatusChip
+            value={sub.status_id}
+            onChange={(status_id) => onPatch(sub, { status_id })}
+            className={cn("max-w-28", !sub.status_id && CHIP_ON_HOVER)}
+          />
+          <AssigneesChip
+            value={sub.assignees.map((a) => a.id)}
+            projectIds={projectIds}
+            onChange={(assignee_ids) => onPatch(sub, { assignee_ids })}
+            className={sub.assignees.length === 0 ? CHIP_ON_HOVER : undefined}
+          />
+          <DueChip
+            date={sub.due_date}
+            time={sub.due_time}
+            done={isDone}
+            onChange={(next) => onPatch(sub, next)}
+            className={sub.due_date ? undefined : CHIP_ON_HOVER}
+          />
+          <EstimateChip
+            value={sub.estimated_minutes}
+            onChange={(estimated_minutes) => onPatch(sub, { estimated_minutes })}
+            className={sub.estimated_minutes == null ? CHIP_ON_HOVER : undefined}
+          />
+        </>
+      ) : (
+        <>
+          {sub.priority !== "none" && (
+            <span title={PRIORITY_LABELS[sub.priority].label}>
+              <PriorityDot priority={sub.priority} />
+            </span>
+          )}
+          {due && (
+            <span
+              className={cn("shrink-0 px-1 text-[11px] tabular-nums", dueTone(sub.due_date, isDone))}
+            >
+              {due}
+            </span>
+          )}
+          {sub.assignees.length > 0 && <AvatarStack users={sub.assignees} max={2} />}
+        </>
       )}
-      {due && (
-        <span className={cn("shrink-0 text-[11px] tabular-nums", dueTone(sub.due_date, isDone))}>
-          {due}
-        </span>
-      )}
-      {sub.assignees.length > 0 && <AvatarStack users={sub.assignees} max={2} />}
       {canEdit && (
         <DropdownMenu>
           <DropdownMenuTrigger
