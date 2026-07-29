@@ -15,6 +15,7 @@ import {
   ListChecks,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Plus,
   Search,
   Settings,
@@ -58,6 +59,7 @@ function NavLink({
   badge,
   active,
   collapsed = false,
+  action,
 }: {
   href: string;
   icon: React.ReactNode;
@@ -66,9 +68,15 @@ function NavLink({
   active: boolean;
   /** Свёрнутая панель: остаётся только значок, подпись уходит в title. */
   collapsed?: boolean;
+  /**
+   * Действие у правого края строки — появляется по наведению (`group/nav`).
+   * В свёрнутой панели не рисуется: там на значок и подпись-то места нет.
+   */
+  action?: React.ReactNode;
 }) {
   const [intent, setIntent] = useState(false);
-  return (
+  const withAction = !collapsed && !!action;
+  const link = (
     <Link
       href={href}
       prefetch={intent ? true : false}
@@ -79,6 +87,9 @@ function NavLink({
       className={cn(
         "flex items-center rounded-lg py-1.5 text-sm transition-colors",
         collapsed ? "relative justify-center px-0" : "gap-2.5 px-2.5",
+        // Рядом с действием ссылка перестаёт быть всей строкой — иначе она
+        // выдавит кнопку за край панели длинным названием.
+        withAction && "min-w-0 flex-1",
         // Активный пункт несёт акцентный цвет: на тонированном фоне панели
         // одна лишь серая подложка почти неразличима.
         active ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -100,6 +111,38 @@ function NavLink({
           {!collapsed && (badge > 99 ? "99+" : badge)}
         </span>
       )}
+    </Link>
+  );
+
+  if (!withAction) return link;
+  // Действие — сосед ссылки, а не её потомок: <a> внутри <a> недопустим.
+  // Общая обёртка нужна ради одного состояния наведения на всю строку.
+  return (
+    <span className="group/nav flex items-center">
+      {link}
+      {action}
+    </span>
+  );
+}
+
+/**
+ * Настройки проекта прямо из сайдбара — карандаш у правого края строки.
+ * Префетч, как и у самой строки, включается намерением: экран настроек
+ * динамический, тянуть его для каждого проекта при монтировании незачем.
+ */
+function ProjectSettingsLink({ projectId, name }: { projectId: string; name: string }) {
+  const [intent, setIntent] = useState(false);
+  return (
+    <Link
+      href={`/v2/projects/${projectId}/settings`}
+      prefetch={intent ? true : false}
+      onMouseEnter={() => setIntent(true)}
+      onFocus={() => setIntent(true)}
+      className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/nav:opacity-100"
+      title="Настройки проекта"
+      aria-label={`Настройки проекта «${name}»`}
+    >
+      <Pencil className="size-3.5" />
     </Link>
   );
 }
@@ -349,9 +392,15 @@ export function V2Shell({
                 href={`/v2/projects/${p.id}`}
                 icon={<ProjectIcon name={p.icon} color={p.color} className="size-3.5" />}
                 label={p.name}
-                badge={p.open_task_count}
                 active={pathname.startsWith(`/v2/projects/${p.id}`)}
                 collapsed={collapsed}
+                // Порог тот же, что был у шестерёнки в шапке проекта: смотреть
+                // настройки может любой участник, а править — editor и админ.
+                action={
+                  (p.my_role === "admin" || p.my_role === "editor") && (
+                    <ProjectSettingsLink projectId={p.id} name={p.name} />
+                  )
+                }
               />
             ))}
             {/* Справочники доезжают заново только при смене организации: пока

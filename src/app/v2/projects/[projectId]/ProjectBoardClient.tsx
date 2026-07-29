@@ -12,12 +12,9 @@
 // пары запросов после гидрации. Дальше список живёт в клиентском кэше.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { KanbanSquare, Plus, Settings, Table2, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { AvatarStack } from "@/components/v2/bits";
+import { KanbanSquare, Table2 } from "lucide-react";
 import { CardSettingsPopover } from "@/components/v2/CardSettings";
-import { CreateTaskDialog, ProjectMembersDialog, TaskSheet } from "@/components/v2/lazy";
+import { CreateTaskDialog, TaskSheet } from "@/components/v2/lazy";
 import { accessLabel } from "@/components/v2/ProjectAccessPicker";
 import { ProjectIcon } from "@/components/v2/project-icons";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
@@ -103,7 +100,6 @@ function ProjectScreen({
   const [tasks, setTasks] = useState<TaskRow[]>(initialTasks);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [createIn, setCreateIn] = useState<string | null | false>(false); // false = закрыт, null/statusId = открыт
-  const [membersOpen, setMembersOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Отдельно от `error`: тот означает «экран показать нечем» и подменяет собой
   // всю страницу. Замечание по только что созданной задаче — полоса над списком.
@@ -181,6 +177,9 @@ function ProjectScreen({
     return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Загрузка…</div>;
   }
 
+  // Шапка — только название и переключатель вида. Участники и параметры проекта
+  // живут в его настройках (карандаш у строки проекта в сайдбаре), а задача
+  // заводится там, где её и пишут: строкой в таблице и «плюсом» в колонке доски.
   const title = (
     <>
       <ProjectIcon name={project.icon} color={project.color} className="size-4" />
@@ -189,36 +188,6 @@ function ProjectScreen({
         {accessLabel(project.default_role)}
       </span>
     </>
-  );
-
-  const membersButton = (
-    <button
-      onClick={() => setMembersOpen(true)}
-      className="flex items-center gap-1.5 rounded-lg px-2 py-1 hover:bg-muted"
-      title="Участники проекта"
-    >
-      <AvatarStack
-        users={project.members.map((m) => ({ id: m.user_id, email: m.email, name: m.name, avatar_url: m.avatar_url }))}
-      />
-      <Users className="size-4 text-muted-foreground" />
-    </button>
-  );
-
-  const settingsLink = canEdit && (
-    <Link
-      href={`/v2/projects/${projectId}/settings`}
-      className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-      title="Настройки проекта"
-    >
-      <Settings className="size-4" />
-    </Link>
-  );
-
-  const addButton = canEdit && (
-    <Button size="sm" onClick={() => setCreateIn(null)}>
-      <Plus className="size-4" />
-      Задача
-    </Button>
   );
 
   const layers = (
@@ -252,13 +221,6 @@ function ProjectScreen({
           void refreshProjects();
         }}
       />
-      <ProjectMembersDialog
-        open={membersOpen}
-        onOpenChange={setMembersOpen}
-        project={project}
-        onChanged={() => void reload()}
-        settingsHref={`/v2/projects/${projectId}/settings`}
-      />
     </>
   );
 
@@ -278,14 +240,7 @@ function ProjectScreen({
           quickAddPlaceholder={`Быстро добавить задачу в «${project.name}»…`}
           emptyText="В проекте пока нет задач."
           titleSlot={title}
-          actionsSlot={
-            <>
-              <ViewSwitch />
-              {membersButton}
-              {settingsLink}
-              {addButton}
-            </>
-          }
+          actionsSlot={<ViewSwitch />}
         />
         {layers}
       </>
@@ -299,9 +254,6 @@ function ProjectScreen({
         <span className="flex-1" />
         <ViewSwitch />
         <CardSettingsPopover />
-        {membersButton}
-        {settingsLink}
-        {addButton}
       </header>
 
       <ProjectBoard
