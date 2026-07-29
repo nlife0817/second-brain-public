@@ -209,9 +209,11 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
               <h2 className={`mb-2 text-xs font-semibold uppercase tracking-wide ${g.tone || "text-muted-foreground"}`}>
                 {g.title} · {g.items.length}
               </h2>
-              <div className="flex flex-col gap-1.5">
+              {/* Разделители вместо зазора и рамок: список задач на телефоне
+                  читается как список, а не как стопка отдельных карточек. */}
+              <div className="flex flex-col divide-y divide-border/50">
                 {g.items.map((t) => (
-                  <TaskCard key={t.id} task={t} onOpen={openTask} />
+                  <TaskCard key={t.id} task={t} variant="compact" onOpen={openTask} />
                 ))}
               </div>
             </section>
