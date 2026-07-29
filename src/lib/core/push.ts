@@ -8,6 +8,16 @@
 
 import { prepare } from "@/lib/sql";
 import { sendWebPush, type PushPayload } from "@/lib/notifications/push";
+import { plural } from "./plural";
+
+/**
+ * Окно склейки серии. Первое уведомление уходит мгновенно, следующие за ним в
+ * пределах этого окна ждут — и уезжают одним сводным пушем на ближайшей
+ * отправке (любая мутация или тик cron). Минута выбрана как компромисс:
+ * достаточно, чтобы поймать шквал правок одной задачи, и незаметно для
+ * одиночного уведомления.
+ */
+const COALESCE_WINDOW_SECONDS = 60;
 
 const KIND_TITLES: Record<string, string> = {
   assigned: "Вам назначили задачу",
@@ -32,6 +42,8 @@ type PendingRow = {
   unread: number;
   /** Настройка получателя: слать ли push по этому типу события. */
   push_enabled: boolean;
+  /** Готовый текст напоминания; у событийных уведомлений пусто. */
+  payload: { title?: string; body?: string } | null;
 };
 
 type TargetRow = {
@@ -151,17 +163,13 @@ function buildPayload(row: PendingRow, mobile: boolean): PushPayload {
   const body = comment
     ? clamp([row.actor_name, where].filter(Boolean).join(" в ") + (where || row.actor_name ? ": " : "") + comment, 180)
     : [row.actor_name, where].filter(Boolean).join(" · ");
-  let url: string;
-  if (row.entity_type === "task" && row.entity_id) {
-    url = mobile ? `/v2/m/my?task=${row.entity_id}` : `/v2/my?task=${row.entity_id}`;
-  } else if (row.entity_type === "project" && row.entity_id) {
-    url = mobile ? `/v2/m/projects/${row.entity_id}` : `/v2/projects/${row.entity_id}`;
-  } else {
-    url = mobile ? "/v2/m/inbox" : "/v2/inbox";
-  }
+  const url = taskUrl(row, mobile);
+  // У напоминания нет автора и комментария: текст собран в reminders.ts, где
+  // известны и число задач, и их названия.
+  const reminder = row.payload as { title?: string; body?: string } | null;
   return {
-    title: KIND_TITLES[row.kind] ?? "Обновление",
-    body: body || "Открыть задачу",
+    title: reminder?.title ?? KIND_TITLES[row.kind] ?? "Обновление",
+    body: reminder?.body ?? body ?? "",
     url,
     // Тег по сущности, а не по уведомлению: пять комментариев к одной задаче
     // схлопываются в одно уведомление вместо пяти строк в шторке.
@@ -170,36 +178,131 @@ function buildPayload(row: PendingRow, mobile: boolean): PushPayload {
   };
 }
 
+/** Заголовок сводного пуша по типу события и числу штук. */
+function groupTitle(kind: string, count: number): string {
+  switch (kind) {
+    case "comment":
+      return plural(count, "новый комментарий", "новых комментария", "новых комментариев");
+    case "assigned":
+      return plural(count, "новая задача", "новые задачи", "новых задач");
+    case "status_changed":
+      return plural(count, "смена статуса", "смены статуса", "смен статуса");
+    default:
+      return plural(count, "новое уведомление", "новых уведомления", "новых уведомлений");
+  }
+}
+
+/**
+ * Сводный пуш, когда за одну отправку у человека накопилось несколько
+ * уведомлений: пять комментариев к одной задаче — это «5 новых комментариев»,
+ * а не пять строк в шторке. Копятся они либо из-за окна склейки, либо из-за
+ * тихих часов, когда отправка ждала утра.
+ */
+function buildGroupPayload(rows: PendingRow[], mobile: boolean): PushPayload {
+  const unread = Math.max(...rows.map((r) => r.unread));
+  const entityIds = new Set(rows.map((r) => r.entity_id).filter(Boolean));
+  const kinds = new Set(rows.map((r) => r.kind));
+  const first = rows[0];
+
+  // Всё про одну задачу — тег тот же, что у одиночного пуша: сводка заменит
+  // собой уже показанное уведомление, а не ляжет рядом с ним.
+  if (entityIds.size === 1 && first.entity_id) {
+    const title = kinds.size === 1 ? groupTitle(first.kind, rows.length) : groupTitle("", rows.length);
+    const where = first.entity_title ? `«${first.entity_title}»` : "";
+    return {
+      title,
+      body: where,
+      url: taskUrl(first, mobile),
+      tag: `v2-${first.entity_type}-${first.entity_id}`,
+      unread,
+    };
+  }
+
+  return {
+    title: groupTitle(kinds.size === 1 ? first.kind : "", rows.length),
+    body: "Откройте уведомления, чтобы посмотреть",
+    url: mobile ? "/v2/m/inbox" : "/v2/inbox",
+    tag: "v2-digest",
+    unread,
+  };
+}
+
+function taskUrl(row: PendingRow, mobile: boolean): string {
+  if (row.entity_type === "task" && row.entity_id) {
+    return mobile ? `/v2/m/my?task=${row.entity_id}` : `/v2/my?task=${row.entity_id}`;
+  }
+  if (row.entity_type === "project" && row.entity_id) {
+    return mobile ? `/v2/m/projects/${row.entity_id}` : `/v2/projects/${row.entity_id}`;
+  }
+  return mobile ? "/v2/m/inbox" : "/v2/inbox";
+}
+
 /**
  * Рассылает push по неотправленным core.notifications. Безопасно звать
  * с любой частотой: пустая очередь — один быстрый UPDATE.
+ *
+ * Счётчики считают получателей, а не записи: несколько уведомлений одному
+ * человеку — это один push.
  */
 export async function dispatchPendingPush(): Promise<{ sent: number; skipped: number }> {
   const claimed = await prepare<{ id: string }>(
     `WITH pending AS (
-       SELECT id FROM core.notifications
-       WHERE dispatched_at IS NULL
-         AND read_at IS NULL
-         AND created_at > now() - interval '2 days'
-       ORDER BY created_at
+       SELECT n.id FROM core.notifications n
+       LEFT JOIN core.notification_settings ns ON ns.user_id = n.user_id
+       WHERE n.dispatched_at IS NULL
+         AND n.read_at IS NULL
+         AND n.created_at > now() - interval '2 days'
+         -- Тихие часы: строку не забираем вовсе, поэтому она уйдёт следующим
+         -- тиком после их окончания — и уйдёт вместе с остальными, одним
+         -- сводным пушем, а не очередью за ночь. Окно может пересекать
+         -- полночь; условие повторяет isQuietNow из notification-settings.ts.
+         AND NOT (
+           coalesce(ns.quiet_enabled, false)
+           AND ns.quiet_start <> ns.quiet_end
+           AND CASE
+                 WHEN ns.quiet_start < ns.quiet_end
+                   THEN (now() AT TIME ZONE ns.timezone)::time >= ns.quiet_start
+                    AND (now() AT TIME ZONE ns.timezone)::time <  ns.quiet_end
+                 ELSE (now() AT TIME ZONE ns.timezone)::time >= ns.quiet_start
+                   OR (now() AT TIME ZONE ns.timezone)::time <  ns.quiet_end
+               END
+         )
+         -- Окно склейки: только что этому человеку уже уходил push, а этому
+         -- уведомлению меньше минуты — значит идёт серия. Придержим: через
+         -- минуту оно уедет вместе с остальными накопившимися одним сводным
+         -- сообщением. Первое уведомление серии при этом уходит мгновенно.
+         AND NOT (
+           n.created_at > now() - ?::int * interval '1 second'
+           AND EXISTS (
+             SELECT 1 FROM core.notifications d
+             WHERE d.user_id = n.user_id
+               AND d.dispatched_at > now() - ?::int * interval '1 second'
+           )
+         )
+       ORDER BY n.created_at
        LIMIT 100
-       FOR UPDATE SKIP LOCKED
+       -- OF n обязательно: блокировать нечего на нулевой стороне LEFT JOIN,
+       -- и без указания таблицы Postgres откажется выполнять запрос.
+       FOR UPDATE OF n SKIP LOCKED
      )
      UPDATE core.notifications n
      SET dispatched_at = now()
      FROM pending
      WHERE n.id = pending.id
      RETURNING n.id::text AS id`,
-  ).all();
+  ).all(COALESCE_WINDOW_SECONDS, COALESCE_WINDOW_SECONDS);
   if (claimed.length === 0) return { sent: 0, skipped: 0 };
 
   const placeholders = claimed.map(() => "?").join(",");
   const rows = await prepare<PendingRow>(
-    `SELECT n.id, n.kind, n.user_id, u.email, a.name AS actor_name,
-            e.entity_type, e.entity_id::text AS entity_id,
+    `SELECT n.id, n.kind, n.user_id, u.email, a.name AS actor_name, n.payload,
+            coalesce(n.entity_type, e.entity_type) AS entity_type,
+            coalesce(n.entity_id, e.entity_id)::text AS entity_id,
             CASE
-              WHEN e.entity_type = 'task' THEN (SELECT t.title FROM core.tasks t WHERE t.id = e.entity_id)
-              WHEN e.entity_type = 'project' THEN (SELECT p.name FROM core.projects p WHERE p.id = e.entity_id)
+              WHEN coalesce(n.entity_type, e.entity_type) = 'task'
+                THEN (SELECT t.title FROM core.tasks t WHERE t.id = coalesce(n.entity_id, e.entity_id))
+              WHEN coalesce(n.entity_type, e.entity_type) = 'project'
+                THEN (SELECT p.name FROM core.projects p WHERE p.id = coalesce(n.entity_id, e.entity_id))
             END AS entity_title,
             CASE WHEN n.kind = 'comment' AND e.payload ->> 'comment_id' IS NOT NULL
                  THEN (SELECT c.body FROM core.comments c
@@ -217,7 +320,9 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
      ORDER BY n.created_at`,
   ).all(claimed.map((c) => c.id));
 
-  let sent = 0;
+  // Отправляем по получателю, а не по записи: у одного человека в пачке может
+  // оказаться пять уведомлений, и это одно сообщение со сводкой.
+  const byUser = new Map<string, PendingRow[]>();
   let skipped = 0;
   for (const row of rows) {
     // Тип выключён в настройках: запись в инбоксе остаётся, шторку не трогаем.
@@ -225,11 +330,18 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
       skipped++;
       continue;
     }
+    byUser.set(row.user_id, [...(byUser.get(row.user_id) ?? []), row]);
+  }
+
+  let sent = 0;
+  for (const [userId, userRows] of byUser) {
     try {
-      const targets = await listTargets(row.user_id);
+      const targets = await listTargets(userId);
       let delivered = 0;
       for (const target of targets) {
-        const payload = buildPayload(row, isMobileUserAgent(target.user_agent));
+        const mobile = isMobileUserAgent(target.user_agent);
+        const payload =
+          userRows.length === 1 ? buildPayload(userRows[0], mobile) : buildGroupPayload(userRows, mobile);
         const result = await sendWebPush(target, payload);
         if (result === "sent") delivered++;
         if (result === "dead") await dropTarget(target);

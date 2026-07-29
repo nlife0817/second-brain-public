@@ -663,6 +663,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         kind: "assigned",
         userIds: assigneeIds,
         excludeUserId: ctx.user.id,
+        taskId: id,
       });
     }
     return id;
@@ -761,6 +762,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
           kind: "due_changed",
           userIds: audience,
           excludeUserId: ctx.user.id,
+          taskId,
         });
       }
     }
@@ -783,6 +785,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
         kind: nextStatus?.kind === "done" ? "completed" : "status_changed",
         userIds: audience,
         excludeUserId: ctx.user.id,
+        taskId,
       });
     }
 
@@ -820,6 +823,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
             kind: "assigned",
             userIds: added,
             excludeUserId: ctx.user.id,
+            taskId,
           });
         }
       }

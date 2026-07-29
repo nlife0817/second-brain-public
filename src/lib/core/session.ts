@@ -15,8 +15,12 @@ import { disablePushNotifications } from "@/lib/notifications/client";
 
 const V2_PUSH = { subscribeUrl: "/api/v2/push/subscribe" };
 
-/** Ключи localStorage, привязанные к конкретному человеку. */
-const USER_SCOPED_KEYS = ["sb.v2.orgId"];
+/**
+ * Ключи localStorage, привязанные к конкретному человеку: активная
+ * организация и отметка об отправленном часовом поясе (следующий вошедший
+ * должен сообщить свой, а не унаследовать чужой).
+ */
+const USER_SCOPED_KEYS = ["sb.v2.orgId", "sb.v2.tz"];
 
 export async function signOut(): Promise<void> {
   // Устройство может быть общим: оставленная подписка продолжила бы приносить

@@ -298,6 +298,23 @@ export const projectTeamSchema = z.object({ team_id: z.uuid().nullable() });
 
 // --- Push-подписки ----------------------------------------------------------------
 
+export const notificationSettingsSchema = z
+  .object({
+    timezone: z.string().min(1).max(64).optional(),
+    quiet_enabled: z.boolean().optional(),
+    quiet_start: z.string().max(5).optional(),
+    quiet_end: z.string().max(5).optional(),
+    digest_hour: z.number().int().min(0).max(23).optional(),
+    reminders_enabled: z.boolean().optional(),
+  })
+  // Пустой PATCH — почти наверняка ошибка вызывающего, а не «сохранить как есть».
+  .refine((v) => Object.keys(v).length > 0, { message: "Нечего сохранять" });
+
+export const projectMuteSchema = z.object({
+  project_id: z.string().min(1),
+  muted: z.boolean(),
+});
+
 export const notificationPrefSchema = z.object({
   kind: z.string().min(1).max(64),
   inbox: z.boolean(),
