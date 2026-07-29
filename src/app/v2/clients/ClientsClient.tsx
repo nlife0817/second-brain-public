@@ -152,7 +152,7 @@ export function ClientsClient({ initial }: { initial: ClientsInitial }) {
     <div className="flex h-full">
       <div className="flex w-80 shrink-0 flex-col border-r border-border">
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-          <h1 className="text-base font-semibold">Клиенты</h1>
+          <h1 className="font-heading text-xl font-semibold tracking-tight">Клиенты</h1>
           <span className="flex-1" />
           <span className="text-xs text-muted-foreground">{clients.length}</span>
         </div>

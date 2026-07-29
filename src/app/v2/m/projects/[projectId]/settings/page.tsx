@@ -46,7 +46,7 @@ export default async function MobileProjectSettingsPage({
           <ChevronLeft className="size-5" />
         </Link>
         <ProjectIcon name={project.icon} color={project.color} className="size-4 shrink-0" />
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold">{project.name}</h1>
+        <h1 className="min-w-0 flex-1 truncate font-heading text-lg font-semibold tracking-tight">{project.name}</h1>
       </header>
       <ProjectSettings
         projectId={projectId}

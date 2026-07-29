@@ -60,7 +60,7 @@ export default function InvitePage({ params }: { params: Promise<{ token: string
       <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-sm">
         {error && !preview ? (
           <>
-            <h1 className="text-lg font-semibold">Приглашение недоступно</h1>
+            <h1 className="font-heading text-xl font-semibold tracking-tight">Приглашение недоступно</h1>
             <p className="mt-2 text-sm text-muted-foreground">{error}</p>
             <Link href="/login" className="mt-4 inline-block text-sm text-primary underline">
               Перейти ко входу
@@ -70,7 +70,7 @@ export default function InvitePage({ params }: { params: Promise<{ token: string
           <p className="text-sm text-muted-foreground">Загрузка…</p>
         ) : (
           <>
-            <h1 className="text-lg font-semibold">Приглашение в «{preview.org_name}»</h1>
+            <h1 className="font-heading text-xl font-semibold tracking-tight">Приглашение в «{preview.org_name}»</h1>
             <p className="mt-2 text-sm text-muted-foreground">
               Вас приглашают присоединиться в роли {ROLE_LABELS[preview.org_role]}. Приглашение
               выписано на адрес <span className="font-medium text-foreground">{preview.email}</span>.

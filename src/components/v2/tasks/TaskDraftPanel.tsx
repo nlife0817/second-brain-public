@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Avatar, PRIORITY_LABELS, StatusPill } from "@/components/v2/bits";
+import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle } from "@/components/v2/bits";
 import { MemberPicker } from "@/components/v2/MemberPicker";
 import { SidePanel } from "@/components/v2/SidePanel";
 import type { TaskDraft } from "@/lib/core/task-draft";
@@ -212,10 +212,10 @@ export function TaskDraftPanel({
                       })
                     }
                     className={
-                      "rounded-full px-2 py-0.5 text-[11px] font-medium transition-opacity " +
+                      "tinted-chip rounded-full px-2 py-0.5 text-[11px] font-medium transition-opacity " +
                       (active ? "" : "opacity-40 hover:opacity-80")
                     }
-                    style={{ backgroundColor: `${t.color}1a`, color: t.color }}
+                    style={chipStyle(t.color)}
                   >
                     {t.name}
                   </button>

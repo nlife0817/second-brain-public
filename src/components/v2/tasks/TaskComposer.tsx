@@ -17,9 +17,11 @@ import {
   AvatarStack,
   PRIORITY_LABELS,
   PriorityDot,
+  chipStyle,
   dueTone,
   formatDue,
 } from "@/components/v2/bits";
+import { DuePicker } from "@/components/v2/DuePicker";
 import { assigneeChoice } from "@/lib/core/assignable";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField, TaskPriority } from "@/lib/core/types";
@@ -226,8 +228,9 @@ function DraftCell({
     default: {
       const fieldId = column.id.startsWith("field:") ? column.id.slice("field:".length) : null;
       if (fieldId) return <CustomFieldDraftCell fieldId={fieldId} draft={draft} patch={patch} />;
-      // Подзадачи, комментарии, даты создания — у ещё не созданной задачи их нет.
-      return <span className="px-1.5 text-xs text-muted-foreground/50">—</span>;
+      // Подзадачи, комментарии, даты создания — у ещё не созданной задачи их
+      // нет; ячейка просто молчит, как пустые ячейки таблицы.
+      return <span className="px-1.5" />;
     }
   }
 }
@@ -275,8 +278,8 @@ function StatusDraftCell({ draft, patch }: CellProps) {
       <PopoverTrigger render={<button className={CELL} />}>
         {status ? (
           <span
-            className="inline-flex max-w-full items-center gap-1.5 truncate rounded-full px-2 py-0.5 text-xs font-medium"
-            style={{ backgroundColor: `${status.color}1a`, color: status.color }}
+            className="tinted-chip inline-flex max-w-full items-center gap-1.5 truncate rounded-full px-2 py-0.5 text-xs font-medium"
+            style={chipStyle(status.color)}
           >
             <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: status.color }} />
             <span className="truncate">{status.name}</span>
@@ -340,11 +343,8 @@ function ProjectDraftCell({ draft, patch }: CellProps) {
             return (
               <span
                 key={id}
-                className="inline-flex max-w-full items-center truncate rounded px-1.5 py-0.5 text-xs"
-                style={{
-                  backgroundColor: `${project?.color ?? "#94a3b8"}1a`,
-                  color: project?.color ?? undefined,
-                }}
+                className="tinted-chip inline-flex max-w-full items-center truncate rounded px-1.5 py-0.5 text-xs"
+                style={chipStyle(project?.color)}
               >
                 <span className="truncate">{project?.name ?? "—"}</span>
               </span>
@@ -456,8 +456,8 @@ function TagsDraftCell({ draft, patch }: CellProps) {
             {selected.map((t) => (
               <span
                 key={t.id}
-                className="truncate rounded px-1.5 py-0.5 text-[11px]"
-                style={{ backgroundColor: `${t.color}1a`, color: t.color }}
+                className="tinted-chip truncate rounded px-1.5 py-0.5 text-[11px]"
+                style={chipStyle(t.color)}
               >
                 {t.name}
               </span>
@@ -488,46 +488,18 @@ function TagsDraftCell({ draft, patch }: CellProps) {
 function DueDraftCell({ draft, patch }: CellProps) {
   const text = formatDue(draft.due_date, draft.due_time);
   return (
-    <Popover>
-      <PopoverTrigger render={<button className={CELL} />}>
-        {text ? (
-          <span className={cn("truncate text-xs", dueTone(draft.due_date, false))}>{text}</span>
-        ) : (
-          <span className={PLACEHOLDER}>Срок</span>
-        )}
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-60 gap-2 p-2.5">
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Дата
-          <input
-            type="date"
-            value={draft.due_date ?? ""}
-            onChange={(e) =>
-              patch({ due_date: e.target.value || null, due_time: e.target.value ? draft.due_time : null })
-            }
-            className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Время
-          <input
-            type="time"
-            value={draft.due_time?.slice(0, 5) ?? ""}
-            disabled={!draft.due_date}
-            onChange={(e) => patch({ due_time: e.target.value || null })}
-            className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring disabled:opacity-50"
-          />
-        </label>
-        {draft.due_date && (
-          <button
-            onClick={() => patch({ due_date: null, due_time: null })}
-            className="flex items-center gap-1.5 rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <X className="size-3.5" /> Убрать срок
-          </button>
-        )}
-      </PopoverContent>
-    </Popover>
+    <DuePicker
+      date={draft.due_date}
+      time={draft.due_time}
+      triggerClassName={CELL}
+      onCommit={(next) => patch(next)}
+    >
+      {text ? (
+        <span className={cn("truncate text-xs", dueTone(draft.due_date, false))}>{text}</span>
+      ) : (
+        <span className={PLACEHOLDER}>Срок</span>
+      )}
+    </DuePicker>
   );
 }
 
@@ -595,7 +567,7 @@ function CustomFieldDraftCell({
 }) {
   const fields = useV2Store((s) => s.fields);
   const field: CustomField | undefined = fields.find((f) => f.id === fieldId);
-  if (!field) return <span className="px-1.5 text-xs text-muted-foreground/50">—</span>;
+  if (!field) return <span className="px-1.5" />;
 
   const text = describeFieldValue(field, draft.field_values[fieldId]);
 

@@ -37,7 +37,7 @@ export default async function AuditPage() {
         >
           <ChevronLeft className="size-4" />
         </Link>
-        <h1 className="text-base font-semibold">Журнал действий</h1>
+        <h1 className="font-heading text-xl font-semibold tracking-tight">Журнал действий</h1>
         <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-muted-foreground">
           {events.length}
         </span>

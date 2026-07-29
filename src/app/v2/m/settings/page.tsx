@@ -49,7 +49,7 @@ export default function MobileSettingsPage() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 items-center border-b border-border px-4 py-3">
-        <h1 className="text-base font-semibold">Настройки</h1>
+        <h1 className="font-heading text-lg font-semibold tracking-tight">Настройки</h1>
       </header>
 
       <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3">

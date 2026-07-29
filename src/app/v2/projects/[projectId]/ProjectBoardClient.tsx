@@ -185,7 +185,7 @@ function ProjectScreen({
   const title = (
     <>
       <ProjectIcon name={project.icon} color={project.color} className="size-4" />
-      <h1 className="text-base font-semibold">{project.name}</h1>
+      <h1 className="font-heading text-xl font-semibold tracking-tight">{project.name}</h1>
       <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
         {accessLabel(project.default_role)}
       </span>

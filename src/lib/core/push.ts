@@ -26,6 +26,8 @@ const KIND_TITLES: Record<string, string> = {
   completed: "Задача завершена",
   due_changed: "Срок изменён",
   added_to_project: "Вас добавили в проект",
+  doc_comment: "Комментарий к описанию",
+  doc_comment_resolved: "Обсуждение закрыто",
 };
 
 type PendingRow = {
@@ -308,9 +310,15 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
               WHEN coalesce(n.entity_type, e.entity_type) = 'project'
                 THEN (SELECT p.name FROM core.projects p WHERE p.id = coalesce(n.entity_id, e.entity_id))
             END AS entity_title,
-            CASE WHEN n.kind = 'comment' AND e.payload ->> 'comment_id' IS NOT NULL
-                 THEN (SELECT c.body FROM core.comments c
-                       WHERE c.id = (e.payload ->> 'comment_id')::uuid AND c.deleted_at IS NULL)
+            CASE
+              WHEN n.kind = 'comment' AND e.payload ->> 'comment_id' IS NOT NULL
+                THEN (SELECT c.body FROM core.comments c
+                      WHERE c.id = (e.payload ->> 'comment_id')::uuid AND c.deleted_at IS NULL)
+              -- Комментарий к описанию живёт в своей таблице, но в шторке должен
+              -- читаться так же — самим текстом, а не «кто-то что-то написал».
+              WHEN n.kind = 'doc_comment' AND e.payload ->> 'doc_comment_id' IS NOT NULL
+                THEN (SELECT d.body FROM core.doc_comments d
+                      WHERE d.id = (e.payload ->> 'doc_comment_id')::uuid AND d.deleted_at IS NULL)
             END AS comment_html,
             (SELECT count(*)::int FROM core.notifications un
              WHERE un.user_id = n.user_id AND un.read_at IS NULL) AS unread,
