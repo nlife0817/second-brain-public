@@ -1,10 +1,15 @@
 "use client";
 
+import { useCallback, useState } from "react";
 import { EditorContent } from "@tiptap/react";
-import { Loader2, Maximize2, MessageSquare } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Maximize2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { EditorToolbar } from "./editor/Toolbar";
 import { useDocEditor } from "./editor/useDocEditor";
+
+/** Высота свёрнутого описания — примерно шесть строк текста. */
+const COLLAPSED_MAX_PX = 160;
 
 /**
  * Описание задачи в карточке. Тот же документ, что и в развёрнутом режиме, но
@@ -20,6 +25,7 @@ export function RichText({
   editable = true,
   onExpand,
   threadCount = 0,
+  collapsible = false,
 }: {
   value: string;
   onSave: (html: string) => void;
@@ -35,8 +41,30 @@ export function RichText({
   onExpand?: () => void;
   /** Открытые обсуждения описания — счётчик на кнопке разворачивания. */
   threadCount?: number;
+  /**
+   * Длинное описание обрезать до {@link COLLAPSED_MAX_PX} с кнопкой «Показать
+   * всё». Только для карточки: в черновиках описание набирают с нуля, и прятать
+   * там нечего.
+   */
+  collapsible?: boolean;
 }) {
   const doc = useDocEditor({ value, onSave, orgId, taskId, editable, placeholder });
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+
+  // Меряем нескливаемую обёртку, а не сам клип: её высота одинакова в обоих
+  // состояниях, поэтому кнопка «Свернуть» не исчезает после раскрытия.
+  // Через ref-колбэк, а не эффектом — правило react-hooks/set-state-in-effect.
+  const measureRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const check = () => setOverflows(node.scrollHeight > COLLAPSED_MAX_PX + 8);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const collapsed = collapsible && overflows && !expanded;
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -52,12 +80,14 @@ export function RichText({
         )}
         <span className="flex-1" />
         {onExpand && (
+          // Не «Развернуть»: рядом теперь живёт раскрытие текста на месте, и две
+          // кнопки с одним словом означали бы разное.
           <Button
             variant="ghost"
             size="sm"
             className="h-7 text-xs"
             onClick={onExpand}
-            title="Развернуть описание на весь экран"
+            title="Открыть описание документом — во весь экран, с комментариями к тексту"
           >
             {threadCount > 0 && (
               <>
@@ -65,8 +95,7 @@ export function RichText({
                 {threadCount}
               </>
             )}
-            <Maximize2 className="size-3.5" />
-            Развернуть
+            <Maximize2 className="size-3.5" />В документ
           </Button>
         )}
       </div>
@@ -83,7 +112,40 @@ export function RichText({
             />
           </div>
         )}
-        <EditorContent editor={doc.editor} className="doc-surface min-h-24 px-3 py-2 text-sm" />
+        {/* Клип строго вокруг текста: на внешней рамке он съел бы и высоту
+            панели инструментов. onFocusCapture обязателен — ProseMirror при
+            установке каретки скроллит контейнер, и обрезанная область иначе
+            залипает прокрученной. */}
+        <div
+          className={cn("relative", collapsed && "overflow-hidden")}
+          style={collapsed ? { maxHeight: COLLAPSED_MAX_PX } : undefined}
+          onFocusCapture={() => setExpanded(true)}
+        >
+          <div ref={measureRef}>
+            <EditorContent editor={doc.editor} className="doc-surface min-h-24 px-3 py-2 text-sm" />
+          </div>
+          {collapsed && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-background to-transparent" />
+          )}
+        </div>
+        {collapsible && overflows && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="flex w-full items-center justify-center gap-1 border-t border-border bg-muted/20 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          >
+            {expanded ? (
+              <>
+                <ChevronUp className="size-3.5" />
+                Свернуть
+              </>
+            ) : (
+              <>
+                <ChevronDown className="size-3.5" />
+                Показать всё
+              </>
+            )}
+          </button>
+        )}
       </div>
 
       {doc.error && (
