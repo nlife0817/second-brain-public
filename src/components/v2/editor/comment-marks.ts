@@ -41,11 +41,35 @@ export function anchoredThreadIds(editor: Editor): Set<string> {
   return ids;
 }
 
-/** Пометить текущее выделение якорем нового треда. */
+/**
+ * Правка меток идёт одной транзакцией напрямую, без `chain()`.
+ *
+ * Команды Tiptap работают от текущего выделения, и цепочка из пар
+ * «переставить курсор → сменить метку» на разорванном якоре срабатывает не
+ * целиком: у закрытого треда подсветка так и оставалась прежней. Позиции здесь
+ * посчитаны по тому же документу, который правим, и документ не меняется —
+ * пересчитывать их между шагами не нужно.
+ */
+function editThreadMarks(
+  editor: Editor,
+  ranges: Range[],
+  attrs: { threadId: string; resolved: boolean } | null,
+): void {
+  const markType = editor.state.schema.marks.docComment;
+  if (!markType || !ranges.length) return;
+  const { tr } = editor.state;
+  for (const range of ranges) {
+    tr.removeMark(range.from, range.to, markType);
+    if (attrs) tr.addMark(range.from, range.to, markType.create(attrs));
+  }
+  editor.view.dispatch(tr);
+}
+
+/** Пометить выделение якорем нового треда. */
 export function markSelectionAsThread(editor: Editor, threadId: string, range?: Range): void {
-  const chain = editor.chain().focus();
-  if (range) chain.setTextSelection(range);
-  chain.setMark("docComment", { threadId, resolved: false }).run();
+  const target = range ?? { from: editor.state.selection.from, to: editor.state.selection.to };
+  if (target.from === target.to) return;
+  editThreadMarks(editor, [target], { threadId, resolved: false });
 }
 
 /**
@@ -53,24 +77,12 @@ export function markSelectionAsThread(editor: Editor, threadId: string, range?: 
  * переоткрыть, и без якоря оно вернулось бы «в никуда».
  */
 export function setThreadResolvedInDoc(editor: Editor, threadId: string, resolved: boolean): void {
-  const ranges = threadRanges(editor, threadId);
-  if (!ranges.length) return;
-  const chain = editor.chain();
-  for (const range of ranges) {
-    chain.setTextSelection(range).setMark("docComment", { threadId, resolved });
-  }
-  chain.run();
+  editThreadMarks(editor, threadRanges(editor, threadId), { threadId, resolved });
 }
 
 /** Снять якорь: тред удалён, подсвечивать больше нечего. */
 export function removeThreadFromDoc(editor: Editor, threadId: string): void {
-  const ranges = threadRanges(editor, threadId);
-  if (!ranges.length) return;
-  const chain = editor.chain();
-  for (const range of ranges) {
-    chain.setTextSelection(range).unsetMark("docComment");
-  }
-  chain.run();
+  editThreadMarks(editor, threadRanges(editor, threadId), null);
 }
 
 /** Поставить курсор на якорь треда и подвести его в область видимости. */

@@ -439,9 +439,17 @@ export function TaskSheet({
     (f) => !f.project_id || task?.placements.some((p) => p.project_id === f.project_id),
   );
 
+  // Развёрнутое описание закрывает экран целиком, и карточка под ним не нужна.
+  // Дело не в красоте: лист — модальный диалог, он забирает фокус себе и
+  // объявляет всё вне себя скрытым для скринридера. Оставить его открытым
+  // значит держать поверх него слой, до которого не добраться ни клавиатурой,
+  // ни озвучкой. Состояние карточки живёт в этом компоненте и переживает
+  // закрытие листа, поэтому возврат ничего не перечитывает.
+  const docOpen = !!task && expandedTaskId === task.id;
+
   return (
     <>
-    <Sheet open={!!taskId} onOpenChange={(open) => !open && onClose()}>
+    <Sheet open={!!taskId && !docOpen} onOpenChange={(open) => !open && !docOpen && onClose()}>
       <SheetContent
         side="right"
         showCloseButton={false}
@@ -674,6 +682,10 @@ export function TaskSheet({
                   ))}
                 </div>
 
+                {/* Лист остаётся смонтированным и закрытым, поэтому редактор
+                    карточки надо снимать явно: два живых редактора на одном
+                    описании наперегонки сохраняют его каждый своей версией. */}
+                {!docOpen && (
                 <RichText
                   key={`desc-${task.id}`}
                   value={task.description}
@@ -684,6 +696,7 @@ export function TaskSheet({
                   onExpand={() => setExpandedTaskId(task.id)}
                   threadCount={docThreads.filter((t) => !t.resolved_at).length}
                 />
+                )}
 
                 <div>
                   <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -804,7 +817,7 @@ export function TaskSheet({
       </SheetContent>
     </Sheet>
 
-    {task && expandedTaskId === task.id && (
+    {task && docOpen && (
       <DocEditor
         open
         onClose={() => setExpandedTaskId(null)}

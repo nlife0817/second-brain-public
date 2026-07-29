@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEditor, type Editor } from "@tiptap/react";
+import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
 import { docExtensions } from "./extensions";
 import { isInlineImageMime, uploadAttachment, UploadError } from "./upload";
 
@@ -16,6 +17,25 @@ import { isInlineImageMime, uploadAttachment, UploadError } from "./upload";
  */
 const AUTOSAVE_DELAY_MS = 1200;
 
+/**
+ * Тот же документ или другой — сравнение по структуре, а не по строке.
+ *
+ * Сервер отдаёт описание не тем же текстом, каким его прислал редактор:
+ * санитайзер закрывает пустые теги (`<br>` → `<br />`) и убирает пустые
+ * значения атрибутов. Строковое сравнение видит в этом чужую правку и
+ * перезаписывает документ ответом на собственное же сохранение — вставленная
+ * секунду назад картинка при этом пропадала.
+ */
+function sameAsDocument(editor: Editor, html: string): boolean {
+  const holder = document.createElement("div");
+  holder.innerHTML = html || "";
+  try {
+    return PMDOMParser.fromSchema(editor.schema).parse(holder).eq(editor.state.doc);
+  } catch {
+    return false;
+  }
+}
+
 export interface UseDocEditorOptions {
   value: string;
   onSave: (html: string) => void;
@@ -23,7 +43,6 @@ export interface UseDocEditorOptions {
   taskId: string | null;
   editable?: boolean;
   placeholder?: string;
-  withComments?: boolean;
   autofocus?: boolean;
 }
 
@@ -44,7 +63,6 @@ export function useDocEditor({
   taskId,
   editable = true,
   placeholder,
-  withComments = false,
   autofocus = false,
 }: UseDocEditorOptions): DocEditorApi {
   const [uploading, setUploading] = useState(0);
@@ -65,7 +83,7 @@ export function useDocEditor({
   const uploadFilesRef = useRef<(files: File[]) => Promise<void>>(async () => {});
 
   const editor = useEditor({
-    extensions: docExtensions({ placeholder, withComments }),
+    extensions: docExtensions({ placeholder }),
     content: value || "",
     editable,
     immediatelyRender: false,
@@ -164,11 +182,15 @@ export function useDocEditor({
     uploadFilesRef.current = uploadFiles;
   }, [uploadFiles]);
 
-  // Синхронизация при смене задачи и при ответе сервера на чужую правку.
+  // Синхронизация при смене задачи и при чужой правке. Своя правка, вернувшаяся
+  // с сервера, документ не трогает — иначе редактор перерисовывался бы после
+  // каждого автосохранения, теряя курсор.
   useEffect(() => {
     if (!editor || editor.isFocused) return;
-    const current = editor.isEmpty ? "" : editor.getHTML();
-    if (current === (value || "")) return;
+    // Правка ещё не доехала до сервера: пришедшее значение заведомо старее
+    // того, что набрано, и накатывать его нельзя.
+    if (timerRef.current) return;
+    if (sameAsDocument(editor, value || "")) return;
     savedRef.current = value || "";
     editor.commands.setContent(value || "", { emitUpdate: false });
   }, [editor, value]);

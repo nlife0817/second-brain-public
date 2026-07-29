@@ -20,13 +20,19 @@ import { DocImage } from "./DocImage";
 
 export interface DocExtensionsOptions {
   placeholder?: string;
-  /** Якоря комментариев нужны только там, где есть панель обсуждения. */
-  withComments?: boolean;
 }
 
+/**
+ * Набор одинаков для обеих оболочек, включая якоря комментариев — хотя оставить
+ * комментарий можно только в развёрнутом режиме.
+ *
+ * Убрать метку там, где её негде поставить, нельзя: расширение — это ещё и
+ * правило разбора. Редактор без `CommentMark` не узнаёт `<span data-comment>` в
+ * описании и молча выбрасывает его при первом же сохранении, обрывая привязку
+ * всех обсуждений к тексту.
+ */
 export function docExtensions({
   placeholder = "Добавьте описание…",
-  withComments = false,
 }: DocExtensionsOptions = {}): Extensions {
   return [
     StarterKit.configure({
@@ -44,6 +50,6 @@ export function docExtensions({
     Column,
     DocImage,
     DocFile,
-    ...(withComments ? [CommentMark] : []),
+    CommentMark,
   ];
 }

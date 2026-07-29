@@ -72,7 +72,6 @@ export function DocEditor({
     orgId,
     taskId,
     editable,
-    withComments: true,
     placeholder: "Описание задачи…",
   });
   const editor = doc.editor;
@@ -99,23 +98,31 @@ export function DocEditor({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, draft, onClose]);
 
-  /** Тред под курсором: по нему панель подсвечивает нужную карточку. */
-  const editorSignals = useEditorState({
+  /**
+   * Тред под курсором и набор тредов, у которых остался якорь в тексте.
+   *
+   * Подписка даёт только перерисовку — сами значения читаются из редактора
+   * прямо здесь. Через селектор их брать нельзя: на первом рендере редактора
+   * ещё нет (`immediatelyRender: false`), подписка возвращает пустоту, а
+   * следующей транзакции может не случиться вовсе — панель так и осталась бы
+   * уверена, что все обсуждения откреплены от текста.
+   */
+  const signals = useEditorState({
     editor,
-    selector: ({ editor: e }) => {
-      if (!e) return { activeThreadId: null as string | null, anchors: "" };
-      return {
-        activeThreadId: (e.getAttributes("docComment").threadId as string | null) ?? null,
-        // Строкой, а не Set: селектор сравнивается по значению, и новый Set на
-        // каждый рендер означал бы бесконечную перерисовку.
-        anchors: [...anchoredThreadIds(e)].sort().join(","),
-      };
-    },
+    selector: ({ editor: e }) => ({
+      // Строка, а не Set/объект: результат селектора сравнивается по значению.
+      threadId: e ? ((e.getAttributes("docComment").threadId as string | null) ?? null) : null,
+      version: e ? e.state.doc.content.size : 0,
+    }),
   });
-  const activeThreadId = editorSignals?.activeThreadId ?? null;
+  const activeThreadId = editor
+    ? ((editor.getAttributes("docComment").threadId as string | null) ?? null)
+    : null;
+  // signals здесь — признак того, что документ жив и мог измениться: пока
+  // подписка пуста, редактора ещё нет и считать нечего.
   const anchors = useMemo(
-    () => new Set((editorSignals?.anchors ?? "").split(",").filter(Boolean)),
-    [editorSignals?.anchors],
+    () => (editor && signals ? anchoredThreadIds(editor) : new Set<string>()),
+    [editor, signals],
   );
 
   const startDraft = useCallback(() => {
