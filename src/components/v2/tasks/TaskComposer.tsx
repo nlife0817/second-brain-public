@@ -45,7 +45,7 @@ import { SELECT_COLUMN_WIDTH } from "./TaskTable";
 import { TaskDraftPanel } from "./TaskDraftPanel";
 
 const CELL =
-  "flex h-full w-full items-center gap-1 rounded px-1.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+  "flex h-full w-full items-center gap-0.5 rounded px-1 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 const PLACEHOLDER = "truncate text-xs text-muted-foreground/70";
 
 export function TaskComposer({
@@ -103,7 +103,10 @@ export function TaskComposer({
 
   return (
     <>
-      <div className="border-b border-border bg-muted/20">
+      {/* Пунктирная рамка и зазор снизу: строка создания стоит вплотную к
+          заголовку первой группы, и со сплошной нижней границей читалась как
+          ещё одна строка данных. */}
+      <div className="mb-1.5 rounded-md border border-dashed border-border bg-muted/30">
         <div className="flex h-8 items-stretch">
           <div
             className="flex shrink-0 items-center justify-center"
@@ -151,13 +154,7 @@ export function TaskComposer({
               Очистить
             </Button>
           )}
-          {error ? (
-            <span className="truncate text-xs text-destructive">{error}</span>
-          ) : (
-            <span className="hidden truncate text-[11px] text-muted-foreground lg:inline">
-              Enter — сохранить, Esc — очистить
-            </span>
-          )}
+          {error && <span className="truncate text-xs text-destructive">{error}</span>}
         </div>
       </div>
 

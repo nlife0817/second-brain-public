@@ -317,11 +317,7 @@ function SubtaskComposer({
               Очистить
             </Button>
           )}
-          {error ? (
-            <span className="text-xs text-destructive">{error}</span>
-          ) : (
-            <span className="text-[11px] text-muted-foreground">Enter — добавить, Esc — очистить</span>
-          )}
+          {error && <span className="text-xs text-destructive">{error}</span>}
         </div>
       )}
     </div>

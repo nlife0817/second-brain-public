@@ -37,6 +37,26 @@ const GROUP_PAGE = 100;
 /** Ширина служебной колонки с чекбоксом — строка добавления равняется по ней же. */
 export const SELECT_COLUMN_WIDTH = 34;
 
+/**
+ * Заголовки групп по уровням. Раньше уровни отличались только цветом текста, и
+ * при двухуровневой группировке было не разобрать, где кончается первая группа и
+ * начинается вложенная. Теперь различаются кегль, высота и отступ слева.
+ *
+ * `top-*` обязан совпадать с суммой высот всего, что липнет выше: шапка колонок
+ * `h-8` (32px) + заголовок первого уровня `h-9` (36px) = 68px для второго.
+ */
+const GROUP_HEADER_BOX: Record<number, string> = {
+  0: "top-8 h-9 border-border px-2",
+  1: "top-[68px] h-8 border-border/60 pl-6 pr-2",
+  2: "top-[100px] h-8 border-border/60 pl-10 pr-2",
+};
+
+const GROUP_HEADER_TEXT: Record<number, string> = {
+  0: "text-sm",
+  1: "text-[13px] text-muted-foreground",
+  2: "text-xs text-muted-foreground",
+};
+
 export interface GroupLabel {
   text: string;
   color?: string;
@@ -233,10 +253,14 @@ const Row = memo(function Row({
   onToggleSelected: (taskId: string, checked: boolean) => void;
   onOpen: (taskId: string) => void;
 }) {
+  // При переносе названия высота строки перестаёт быть фиксированной: h-8 → min-h-8,
+  // а ячейки центрируются по вертикали, иначе однострочные значения прилипают к верху.
+  const wrap = ctx.wrapTitle;
   return (
     <div
       className={cn(
-        "flex h-8 items-stretch border-b border-border/40 text-sm",
+        "flex items-stretch border-b border-border/40 text-sm",
+        wrap ? "min-h-8" : "h-8",
         selected ? "bg-primary/5" : "hover:bg-muted/40",
       )}
     >
@@ -357,8 +381,10 @@ function GroupBody({
       {grouped && (
         <div
           className={cn(
-            "sticky z-10 flex h-8 items-center gap-2 border-b border-border/60 bg-muted/50 px-2 backdrop-blur",
-            level === 0 ? "top-8" : "top-16",
+            // group — чтобы «выбрать все» проявлялась по наведению: раньше класс
+            // group-hover стоял без родителя с `group` и кнопка не показывалась.
+            "group sticky z-10 flex items-center gap-2 border-b bg-muted/50 backdrop-blur",
+            GROUP_HEADER_BOX[level] ?? GROUP_HEADER_BOX[2],
           )}
         >
           <button
@@ -371,9 +397,12 @@ function GroupBody({
               <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
             )}
             {node.label.color && (
-              <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: node.label.color }} />
+              <span
+                className={cn("shrink-0 rounded-full", level === 0 ? "size-2.5" : "size-2")}
+                style={{ backgroundColor: node.label.color }}
+              />
             )}
-            <span className={cn("truncate text-xs font-semibold", level > 0 && "text-muted-foreground")}>
+            <span className={cn("truncate font-semibold", GROUP_HEADER_TEXT[level] ?? GROUP_HEADER_TEXT[2])}>
               {node.label.text}
             </span>
             <span className="shrink-0 rounded bg-background px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground">

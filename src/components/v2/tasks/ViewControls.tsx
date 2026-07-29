@@ -302,6 +302,9 @@ function ColumnsSection({ customFields }: { customFields: { id: string; name: st
 
   return (
     <>
+      <span className={SUBHEAD}>Текст в строке</span>
+      <WrapTitleToggle />
+
       <span className={SUBHEAD}>Показаны</span>
       <div className="flex select-none flex-col">
         {visible.map((c, i) => {
@@ -378,6 +381,35 @@ function ColumnsSection({ customFields }: { customFields: { id: string; name: st
         </>
       )}
     </>
+  );
+}
+
+/**
+ * Перенос названия. Живёт в разделе «Колонки», а не отдельным пунктом слева:
+ * настройки представления — одна кнопка, и плодить разделы ради переключателя
+ * значит вернуть россыпь поповеров в шапке.
+ */
+function WrapTitleToggle() {
+  const wrapTitle = useViewStore((s) => s.wrapTitle);
+  const setWrapTitle = useViewStore((s) => s.setWrapTitle);
+
+  return (
+    <button
+      onClick={() => setWrapTitle(!wrapTitle)}
+      role="switch"
+      aria-checked={wrapTitle}
+      className="flex h-8 items-center gap-2 rounded px-1 text-left text-sm hover:bg-muted"
+    >
+      <span
+        className={cn(
+          "flex size-3.5 shrink-0 items-center justify-center rounded-[4px] border",
+          wrapTitle ? "border-primary bg-primary text-primary-foreground" : "border-input",
+        )}
+      >
+        {wrapTitle && <Check className="size-2.5" />}
+      </span>
+      <span className="min-w-0 flex-1 truncate">Переносить название на следующую строку</span>
+    </button>
   );
 }
 

@@ -142,6 +142,7 @@ export function TaskTableView({
   const filterGroups = useViewStore((s) => s.groups);
   const search = useViewStore((s) => s.search);
   const subtaskMode = useViewStore((s) => s.subtaskMode);
+  const wrapTitle = useViewStore((s) => s.wrapTitle);
   const collapsedList = useViewStore((s) => s.collapsed);
   const setSearch = useViewStore((s) => s.setSearch);
   const toggleSortRaw = useViewStore((s) => s.toggleSort);
@@ -345,8 +346,8 @@ export function TaskTableView({
   const canEdit = useV2Store((s) => s.orgRole !== "guest" && s.orgRole !== null);
 
   const cellCtx = useMemo(
-    () => ({ statuses, tags, members, projectsById, canEdit, onPatch: patchOne }),
-    [statuses, tags, members, projectsById, canEdit, patchOne],
+    () => ({ statuses, tags, members, projectsById, canEdit, wrapTitle, onPatch: patchOne }),
+    [statuses, tags, members, projectsById, canEdit, wrapTitle, patchOne],
   );
 
   const labelForGroup = useCallback(
