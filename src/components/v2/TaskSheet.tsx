@@ -403,12 +403,13 @@ export function TaskSheet({
       // «Истории» должна показать, куда упал комментарий.
       setTab("comments");
       flashSaved();
-      setTask((prev) => {
-        if (!prev) return prev;
-        const next = { ...prev, comment_count: prev.comment_count + 1 };
+      // Через зеркало, а не апдейтером: см. комментарий к taskRef.
+      const current = taskRef.current;
+      if (current) {
+        const next = { ...current, comment_count: current.comment_count + 1 };
+        setTask(next);
         onChanged?.({ type: "patched", task: next, confirmed: true });
-        return next;
-      });
+      }
     });
   }
 
