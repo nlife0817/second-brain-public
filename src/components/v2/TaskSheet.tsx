@@ -10,15 +10,18 @@ import {
   Bell,
   BellOff,
   Calendar,
+  Check,
   CheckCircle2,
   CornerLeftUp,
   Play,
   Plus,
+  Square,
   Trash2,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -43,13 +46,15 @@ import type {
   TaskPriority,
   TaskListItem,
 } from "@/lib/core/types";
-import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
+import { useV2Store, useV2StoreApi, type ActiveTimer } from "@/lib/core/ui-store";
 import { useLoad } from "@/lib/core/use-load";
+import { useTaskOpenStore } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
-import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle } from "./bits";
+import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle, dueTone, formatDue } from "./bits";
+import { DuePicker } from "./DuePicker";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
-import { SidePanel } from "./SidePanel";
+import { SidePanel, useWideViewport } from "./SidePanel";
 import { TaskRecurrence, type TaskRecurrenceRule } from "./TaskRecurrence";
 // Tiptap — самая тяжёлая зависимость интерфейса (≈370 КБ). Статический импорт
 // тянул её в бандл каждой страницы v2, хотя редактор нужен только когда открыта
@@ -186,6 +191,39 @@ export function TaskSheet({
   const [commentText, setCommentText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Тихое «Сохранено ✓» в шапке: blur сохраняет молча, и без подтверждения
+  // непонятно, ушла ли правка на сервер.
+  const [saved, setSaved] = useState(false);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashSaved = useCallback(() => {
+    setSaved(true);
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+    savedTimer.current = setTimeout(() => setSaved(false), 1400);
+  }, []);
+  useEffect(() => () => {
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+  }, []);
+
+  // Раскладка: в широком модальном окне свойства уходят в правую колонку —
+  // описание и обсуждение получают всю ширину. Панель остаётся одноколоночной.
+  const openMode = useTaskOpenStore((s) => s.mode);
+  const wideViewport = useWideViewport();
+  const twoCol = openMode === "modal" && wideViewport;
+
+  // Живой таймер в шапке: если глобальный таймер тикает по этой задаче,
+  // кнопка «Таймер» превращается в бегущий счётчик со стопом.
+  const activeTimer = useV2Store((s) => s.activeTimer);
+  const timerHere = activeTimer && !activeTimer.ended_at && activeTimer.task_id === taskId ? activeTimer : null;
+  const [timerNow, setTimerNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!timerHere) return;
+    // Первое значение придёт по тику: синхронный setState в эффекте запускает
+    // каскадный ре-рендер (react-hooks/set-state-in-effect), а секунда
+    // задержки на старте счётчика незаметна.
+    const t = setInterval(() => setTimerNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [timerHere]);
+
   // Быстрое переключение задач: ответ по прежней задаче не должен перетереть текущую.
   const currentTaskRef = useRef<string | null>(null);
 
@@ -289,6 +327,7 @@ export function TaskSheet({
       setTask(updated);
       onChanged?.({ type: "patched", task: updated, confirmed: true });
       setError(null);
+      flashSaved();
     } catch (e) {
       if (currentTaskRef.current !== taskId) return;
       setTask(previous);
@@ -319,6 +358,10 @@ export function TaskSheet({
       });
       if (currentTaskRef.current !== taskId) return;
       setComments((prev) => [...prev, comment]);
+      // Композер закреплён внизу и виден из обеих вкладок — отправка из
+      // «Истории» должна показать, куда упал комментарий.
+      setTab("comments");
+      flashSaved();
       setTask((prev) => {
         if (!prev) return prev;
         const next = { ...prev, comment_count: prev.comment_count + 1 };
@@ -463,6 +506,7 @@ export function TaskSheet({
       setTask(updated);
       onChanged?.({ type: "patched", task: updated, confirmed: true });
       setError(null);
+      flashSaved();
     } catch (e) {
       if (currentTaskRef.current !== taskId) return;
       setTask(previous);
@@ -480,6 +524,7 @@ export function TaskSheet({
     try {
       await api.put(`/orgs/${orgId}/tasks/${taskId}/fields/${fieldId}`, { value });
       setError(null);
+      flashSaved();
     } catch (e) {
       if (currentTaskRef.current !== taskId) return;
       setTask(previous);
@@ -529,8 +574,40 @@ export function TaskSheet({
     if (!orgId || !taskId) return;
     await run(async () => {
       await api.post(`/orgs/${orgId}/time/timer`, { task_id: taskId });
+      // Свежее состояние — в стор: счётчик в шапке и глобальный виджет
+      // должны затикать сразу, а не после минутной сверки.
+      const res = await api.get<{ active: ActiveTimer | null }>(`/orgs/${orgId}/time/timer`);
+      storeApi.getState().setActiveTimer(res.active);
       setError(null);
     });
+  }
+
+  async function stopTimerHere() {
+    if (!orgId) return;
+    await run(async () => {
+      await api.del(`/orgs/${orgId}/time/timer`);
+      storeApi.getState().setActiveTimer(null);
+      setError(null);
+    });
+  }
+
+  /** Секунды таймера → «м:сс» или «ч:мм:сс» — как в глобальном виджете. */
+  function formatElapsed(seconds: number): string {
+    const s = Math.max(0, Math.floor(seconds));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return h > 0 ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
+  }
+
+  /** На сколько дней просрочен срок; 0 — не просрочен. */
+  function overdueDaysOf(date: string | null): number {
+    if (!date) return 0;
+    const [y, m, d] = date.split("-").map(Number);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const diff = Math.round((today.getTime() - new Date(y, m - 1, d).getTime()) / 86_400_000);
+    return diff > 0 ? diff : 0;
   }
 
   const amFollower = !!task && !!me && task.followers.some((f) => f.id === me.id);
@@ -599,6 +676,252 @@ export function TaskSheet({
   // перечитывает.
   const docOpen = !!task && expandedTaskId === task.id;
 
+  // Сетка свойств. В панели — «метка · значение» в две колонки, в широкой
+  // модалке она уезжает в правую колонку и метки встают над значениями.
+  const propLabel = twoCol
+    ? "mt-3 truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground first:mt-0"
+    : "truncate text-muted-foreground";
+  const dueText = task ? formatDue(task.due_date, task.due_time) : null;
+  const overdueDays = task && !isDone ? overdueDaysOf(task.due_date) : 0;
+  const dueLabelContent = task && (
+    <>
+      <Calendar className={cn("size-4 shrink-0", overdueDays > 0 ? "text-destructive" : "text-muted-foreground")} />
+      {dueText ? (
+        <span className={cn("tabular-nums", dueTone(task.due_date, isDone))}>{dueText}</span>
+      ) : (
+        <span className="text-muted-foreground">Указать срок</span>
+      )}
+      {overdueDays > 0 && (
+        <span className="shrink-0 rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+          просрочено {overdueDays} дн.
+        </span>
+      )}
+    </>
+  );
+  const propsGrid = task && (
+    <div
+      className={cn(
+        "text-sm",
+        twoCol
+          ? "grid grid-cols-1 items-start gap-y-1"
+          : "grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2.5",
+      )}
+    >
+      <span className={propLabel}>Статус</span>
+      <Select
+        value={task.status_id ?? ""}
+        onValueChange={(v) => v && void patch({ status_id: v })}
+      >
+        <SelectTrigger size="sm" className="w-fit min-w-36">
+          <SelectValue placeholder="Без статуса">
+            <StatusPill status={statuses.find((s) => s.id === task.status_id)} />
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {statuses.map((s) => (
+            <SelectItem key={s.id} value={s.id}>
+              {s.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <span className={propLabel}>Приоритет</span>
+      <Select
+        value={task.priority}
+        onValueChange={(v) => v && void patch({ priority: v as TaskPriority })}
+      >
+        <SelectTrigger size="sm" className="w-fit min-w-36">
+          <SelectValue>{PRIORITY_LABELS[task.priority].label}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {(Object.keys(PRIORITY_LABELS) as TaskPriority[]).map((p) => (
+            <SelectItem key={p} value={p}>
+              {PRIORITY_LABELS[p].label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <span className={propLabel}>Срок</span>
+      {canEdit ? (
+        // Календарь с быстрыми датами и временем вместо двух нативных полей;
+        // просрочка видна прямо у значения.
+        <DuePicker
+          date={task.due_date}
+          time={task.due_time}
+          triggerClassName="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+          onCommit={(next) => void patch(next)}
+        >
+          {dueLabelContent}
+        </DuePicker>
+      ) : (
+        <span className="flex items-center gap-2">{dueLabelContent}</span>
+      )}
+
+      {/* Повтор — свойство самой задачи: отдельного экрана правил больше нет,
+          копия рождается из её текущего состояния. */}
+      <span className={propLabel}>Повтор</span>
+      <TaskRecurrence
+        orgId={orgId}
+        taskId={task.id}
+        rule={recurrence}
+        canEdit={canEdit}
+        onChange={setRecurrence}
+      />
+
+      <span className={propLabel}>Исполнители</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {task.assignees.map((a) => (
+          <span
+            key={a.id}
+            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card py-0.5 pl-0.5 pr-2 text-xs shadow-xs"
+          >
+            <Avatar user={a} size="xs" />
+            {a.name || a.email}
+            <button
+              className="text-muted-foreground hover:text-destructive"
+              title="Снять исполнителя"
+              onClick={() =>
+                void setAssignees(task.assignees.filter((x) => x.id !== a.id).map((x) => x.id))
+              }
+            >
+              <X className="size-3" />
+            </button>
+          </span>
+        ))}
+        <MemberPicker
+          selected={task.assignees}
+          // Цепочка, а не свои размещения: подзадача наследует
+          // проекты родителя вместе с их закрытостью.
+          projectIds={task.chain_project_ids}
+          onChange={(ids) => void setAssignees(ids)}
+        />
+      </div>
+
+      <span className={propLabel}>Теги</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {/* Только надетые теги: полный список организации разом превращал
+            карточку в кашу. Добавление — через «+ тег». */}
+        {task.tags.map((t) => (
+          <span
+            key={t.id}
+            className="tinted-chip inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+            style={chipStyle(t.color)}
+          >
+            {t.name}
+            {canEdit && (
+              <button
+                className="opacity-55 transition-opacity hover:opacity-100"
+                title="Снять тег"
+                onClick={() =>
+                  void patch({ tag_ids: task.tags.filter((x) => x.id !== t.id).map((x) => x.id) })
+                }
+              >
+                <X className="size-3" />
+              </button>
+            )}
+          </span>
+        ))}
+        {canEdit && (
+          <Popover>
+            <PopoverTrigger
+              render={
+                <button
+                  className="flex h-6 items-center gap-1 rounded-full border border-dashed border-border px-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary"
+                  title="Добавить тег"
+                />
+              }
+            >
+              <Plus className="size-3" /> тег
+            </PopoverTrigger>
+            <PopoverContent align="start" className="max-h-72 w-56 overflow-y-auto p-1">
+              {tags.map((t) => {
+                const active = task.tags.some((x) => x.id === t.id);
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      const next = active
+                        ? task.tags.filter((x) => x.id !== t.id).map((x) => x.id)
+                        : [...task.tags.map((x) => x.id), t.id];
+                      void patch({ tag_ids: next });
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
+                  >
+                    <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: t.color }} />
+                    <span className="flex-1 truncate text-left">{t.name}</span>
+                    {active && <Check className="size-3.5 shrink-0" />}
+                  </button>
+                );
+              })}
+              {tags.length === 0 && (
+                <p className="px-2 py-1.5 text-xs text-muted-foreground">Тегов пока нет</p>
+              )}
+            </PopoverContent>
+          </Popover>
+        )}
+        {!canEdit && task.tags.length === 0 && (
+          <span className="text-xs text-muted-foreground">Нет тегов</span>
+        )}
+      </div>
+
+      <span className={propLabel}>Проекты</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {task.placements.map((pl) => {
+          const project = projects.find((p) => p.id === pl.project_id);
+          return (
+            <span key={pl.project_id} className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">
+              <span className="size-2 rounded-sm" style={{ backgroundColor: project?.color ?? "#6b7280" }} />
+              {project?.name ?? "Недоступный проект"}
+              <button
+                className="text-muted-foreground hover:text-foreground"
+                onClick={() =>
+                  void setPlacements(task.placements.filter((x) => x.project_id !== pl.project_id).map((x) => x.project_id))
+                }
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          );
+        })}
+        <Select
+          value=""
+          onValueChange={(v) => {
+            if (v) void setPlacements([...task.placements.map((p) => p.project_id), v]);
+          }}
+        >
+          <SelectTrigger size="sm" className="h-6 w-fit border-dashed text-xs text-muted-foreground">
+            <Plus className="size-3" /> В проект
+          </SelectTrigger>
+          <SelectContent>
+            {projects
+              .filter(
+                (p) =>
+                  !task.placements.some((pl) => pl.project_id === p.id) &&
+                  (p.my_role === "admin" || p.my_role === "editor"),
+              )
+              .map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name}
+                </SelectItem>
+              ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {visibleFields.map((f) => (
+        <FieldRow
+          key={f.id}
+          field={f}
+          labelClassName={propLabel}
+          value={task.field_values[f.id]}
+          onChange={(v) => void setFieldValue(f.id, v)}
+        />
+      ))}
+    </div>
+  );
+
   return (
     <>
     <SidePanel
@@ -639,17 +962,40 @@ export function TaskSheet({
                 <CheckCircle2 className={cn("size-4", isDone && "text-emerald-500")} />
                 {isDone ? "Завершена" : "Завершить"}
               </Button>
-              <span className="flex-1" />
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 sm:h-7"
-                onClick={() => void startTimerHere()}
-                title="Начать отсчёт времени по этой задаче"
+              <span
+                aria-live="polite"
+                className={cn(
+                  "flex items-center gap-1 text-[11px] font-semibold text-emerald-600 transition-opacity duration-300",
+                  saved ? "opacity-100" : "opacity-0",
+                )}
               >
-                <Play className="size-4" />
-                Таймер
-              </Button>
+                <Check className="size-3" />
+                Сохранено
+              </span>
+              <span className="flex-1" />
+              {timerHere ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-9 gap-1.5 font-mono text-xs tabular-nums text-primary sm:h-7"
+                  onClick={() => void stopTimerHere()}
+                  title="Остановить таймер"
+                >
+                  <Square className="size-3 fill-current" />
+                  {formatElapsed((timerNow - new Date(timerHere.started_at).getTime()) / 1000)}
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 sm:h-7"
+                  onClick={() => void startTimerHere()}
+                  title="Начать отсчёт времени по этой задаче"
+                >
+                  <Play className="size-4" />
+                  Таймер
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -675,7 +1021,8 @@ export function TaskSheet({
           </SheetHeader>
 
           <div className="flex-1 overflow-y-auto">
-            <div className="flex flex-col gap-4 px-4 py-4">
+            <div className={cn(twoCol && "grid min-h-full grid-cols-[minmax(0,1fr)_272px] items-stretch")}>
+            <div className="flex min-w-0 flex-col gap-4 px-4 py-4">
               {error && <p className="text-sm text-destructive">{error}</p>}
 
               {/* Карточку подзадачи открывают и напрямую — из списка, поиска или
@@ -701,175 +1048,7 @@ export function TaskSheet({
                 }}
               />
 
-              <div className="grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2.5 text-sm">
-                <span className="text-muted-foreground">Статус</span>
-                <Select
-                  value={task.status_id ?? ""}
-                  onValueChange={(v) => v && void patch({ status_id: v })}
-                >
-                  <SelectTrigger size="sm" className="w-fit min-w-36">
-                    <SelectValue placeholder="Без статуса">
-                      <StatusPill status={statuses.find((s) => s.id === task.status_id)} />
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {statuses.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <span className="text-muted-foreground">Приоритет</span>
-                <Select
-                  value={task.priority}
-                  onValueChange={(v) => v && void patch({ priority: v as TaskPriority })}
-                >
-                  <SelectTrigger size="sm" className="w-fit min-w-36">
-                    <SelectValue>{PRIORITY_LABELS[task.priority].label}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(Object.keys(PRIORITY_LABELS) as TaskPriority[]).map((p) => (
-                      <SelectItem key={p} value={p}>
-                        {PRIORITY_LABELS[p].label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <span className="text-muted-foreground">Срок</span>
-                <div className="flex items-center gap-2">
-                  <Calendar className="size-4 text-muted-foreground" />
-                  <input
-                    type="date"
-                    value={task.due_date ?? ""}
-                    onChange={(e) => void patch({ due_date: e.target.value || null })}
-                    className="rounded-md border border-border bg-background px-2 py-1 text-sm"
-                  />
-                  <input
-                    type="time"
-                    value={task.due_time?.slice(0, 5) ?? ""}
-                    onChange={(e) => void patch({ due_time: e.target.value || null })}
-                    className="rounded-md border border-border bg-background px-2 py-1 text-sm"
-                  />
-                </div>
-
-                {/* Повтор — свойство самой задачи: отдельного экрана правил
-                    больше нет, копия рождается из её текущего состояния. */}
-                <span className="text-muted-foreground">Повтор</span>
-                <TaskRecurrence
-                  orgId={orgId}
-                  taskId={task.id}
-                  rule={recurrence}
-                  canEdit={canEdit}
-                  onChange={setRecurrence}
-                />
-
-                <span className="text-muted-foreground">Исполнители</span>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {task.assignees.map((a) => (
-                    <span key={a.id} className="inline-flex items-center gap-1 rounded-full bg-muted py-0.5 pl-0.5 pr-2 text-xs">
-                      <Avatar user={a} size="xs" />
-                      {a.name || a.email}
-                      <button
-                        className="text-muted-foreground hover:text-foreground"
-                        onClick={() =>
-                          void setAssignees(task.assignees.filter((x) => x.id !== a.id).map((x) => x.id))
-                        }
-                      >
-                        <X className="size-3" />
-                      </button>
-                    </span>
-                  ))}
-                  <MemberPicker
-                    selected={task.assignees}
-                    // Цепочка, а не свои размещения: подзадача наследует
-                    // проекты родителя вместе с их закрытостью.
-                    projectIds={task.chain_project_ids}
-                    onChange={(ids) => void setAssignees(ids)}
-                  />
-                </div>
-
-                <span className="text-muted-foreground">Теги</span>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {tags.map((t) => {
-                    const active = task.tags.some((x) => x.id === t.id);
-                    return (
-                      <button
-                        key={t.id}
-                        onClick={() => {
-                          const next = active
-                            ? task.tags.filter((x) => x.id !== t.id).map((x) => x.id)
-                            : [...task.tags.map((x) => x.id), t.id];
-                          void patch({ tag_ids: next });
-                        }}
-                        className={cn(
-                          "tinted-chip rounded-full px-2 py-0.5 text-[11px] font-medium transition-opacity",
-                          active ? "" : "opacity-40 hover:opacity-80",
-                        )}
-                        style={chipStyle(t.color)}
-                      >
-                        {t.name}
-                      </button>
-                    );
-                  })}
-                  {tags.length === 0 && <span className="text-xs text-muted-foreground">Нет тегов</span>}
-                </div>
-
-                <span className="text-muted-foreground">Проекты</span>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {task.placements.map((pl) => {
-                    const project = projects.find((p) => p.id === pl.project_id);
-                    return (
-                      <span key={pl.project_id} className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">
-                        <span className="size-2 rounded-sm" style={{ backgroundColor: project?.color ?? "#6b7280" }} />
-                        {project?.name ?? "Недоступный проект"}
-                        <button
-                          className="text-muted-foreground hover:text-foreground"
-                          onClick={() =>
-                            void setPlacements(task.placements.filter((x) => x.project_id !== pl.project_id).map((x) => x.project_id))
-                          }
-                        >
-                          <X className="size-3" />
-                        </button>
-                      </span>
-                    );
-                  })}
-                  <Select
-                    value=""
-                    onValueChange={(v) => {
-                      if (v) void setPlacements([...task.placements.map((p) => p.project_id), v]);
-                    }}
-                  >
-                    <SelectTrigger size="sm" className="h-6 w-fit border-dashed text-xs text-muted-foreground">
-                      <Plus className="size-3" /> В проект
-                    </SelectTrigger>
-                    <SelectContent>
-                      {projects
-                        .filter(
-                          (p) =>
-                            !task.placements.some((pl) => pl.project_id === p.id) &&
-                            (p.my_role === "admin" || p.my_role === "editor"),
-                        )
-                        .map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {visibleFields.map((f) => (
-                  <FieldRow
-                    key={f.id}
-                    field={f}
-                    value={task.field_values[f.id]}
-                    onChange={(v) => void setFieldValue(f.id, v)}
-                  />
-                ))}
-              </div>
+              {!twoCol && propsGrid}
 
               {/* Оболочка карточки остаётся смонтированной и закрытой, поэтому
                   редактор карточки надо снимать явно: два живых редактора на
@@ -905,81 +1084,99 @@ export function TaskSheet({
                 initialRelations={relations}
                 initialTypes={relationTypes}
               />
+
+              <div className="border-t border-border pt-3">
+                <div className="flex gap-1">
+                  {(["comments", "feed"] as const).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setTab(t)}
+                      className={cn(
+                        "rounded-lg px-3 py-1 text-sm",
+                        tab === t
+                          ? "bg-primary/10 font-medium text-primary"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {t === "comments" ? `Комментарии (${comments.length})` : "История"}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-col gap-3 py-3">
+                  {tab === "comments" ? (
+                    <>
+                      {comments.map((c) => (
+                        <div key={c.id} className="flex gap-2">
+                          {c.author ? <Avatar user={c.author} size="sm" /> : <span className="size-6" />}
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-muted-foreground">
+                              <span className="font-medium text-foreground">
+                                {c.author?.name || c.author?.email || c.author_label || "Неизвестный"}
+                              </span>{" "}
+                              · {new Date(c.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                              {c.edited_at && " · изменён"}
+                            </p>
+                            <div
+                              className="prose prose-sm dark:prose-invert max-w-none text-sm"
+                              dangerouslySetInnerHTML={{ __html: c.body }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                      {comments.length === 0 && (
+                        <p className="text-xs text-muted-foreground">Комментариев пока нет</p>
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {feed.map((e) => (
+                        <p key={e.id} className="text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            {e.actor?.name || e.actor?.email || "Система"}
+                          </span>{" "}
+                          {eventLabel(e)} ·{" "}
+                          {new Date(e.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      ))}
+                      {feed.length === 0 && <p className="text-xs text-muted-foreground">Пока пусто</p>}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div className="border-t border-border">
-              <div className="flex gap-1 px-4 pt-3">
-                {(["comments", "feed"] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setTab(t)}
-                    className={cn(
-                      "rounded-lg px-3 py-1 text-sm",
-                      tab === t ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {t === "comments" ? `Комментарии (${comments.length})` : "История"}
-                  </button>
-                ))}
-              </div>
-              <div className="flex flex-col gap-3 px-4 py-3">
-                {tab === "comments" ? (
-                  <>
-                    {comments.map((c) => (
-                      <div key={c.id} className="flex gap-2">
-                        {c.author ? <Avatar user={c.author} size="sm" /> : <span className="size-6" />}
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs text-muted-foreground">
-                            <span className="font-medium text-foreground">
-                              {c.author?.name || c.author?.email || c.author_label || "Неизвестный"}
-                            </span>{" "}
-                            · {new Date(c.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                            {c.edited_at && " · изменён"}
-                          </p>
-                          <div
-                            className="prose prose-sm dark:prose-invert max-w-none text-sm"
-                            dangerouslySetInnerHTML={{ __html: c.body }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                    <div className="flex gap-2">
-                      {me && <Avatar user={me} size="sm" />}
-                      <div className="flex-1">
-                        <Textarea
-                          value={commentText}
-                          onChange={(e) => setCommentText(e.target.value)}
-                          placeholder="Написать комментарий…"
-                          className="min-h-16 text-sm"
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void addComment();
-                          }}
-                        />
-                        <div className="mt-1.5 flex justify-end">
-                          <Button size="sm" onClick={() => void addComment()} disabled={!commentText.trim()}>
-                            Отправить
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {feed.map((e) => (
-                      <p key={e.id} className="text-xs text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          {e.actor?.name || e.actor?.email || "Система"}
-                        </span>{" "}
-                        {eventLabel(e)} ·{" "}
-                        {new Date(e.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                      </p>
-                    ))}
-                    {feed.length === 0 && <p className="text-xs text-muted-foreground">Пока пусто</p>}
-                  </div>
-                )}
-              </div>
+            {/* Широкая модалка: свойства — в правой колонке на тонированной
+                подложке, как в Linear; контент получает всю ширину. */}
+            {twoCol && (
+              <aside className="border-l border-border bg-muted/40 px-4 py-4">{propsGrid}</aside>
+            )}
             </div>
           </div>
+
+          {/* Композер закреплён внизу карточки: комментарий пишется без
+              прокрутки через всю задачу. Право комментировать проверяет
+              сервер — гостю оно доступно по роли в проекте. */}
+          {orgRole !== null && (
+            <div className="shrink-0 border-t border-border bg-background px-4 py-2.5">
+              <div className="flex items-end gap-2">
+                {me && <Avatar user={me} size="sm" />}
+                <Textarea
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  placeholder="Написать комментарий…"
+                  className="min-h-9 flex-1 resize-none text-sm"
+                  rows={1}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void addComment();
+                  }}
+                />
+                <Button size="sm" onClick={() => void addComment()} disabled={!commentText.trim()}>
+                  Отправить
+                </Button>
+              </div>
+              <p className="mt-1 pl-8 text-[10.5px] text-muted-foreground">Ctrl+Enter — отправить</p>
+            </div>
+          )}
         </>
       )}
     </SidePanel>
@@ -1010,15 +1207,18 @@ function FieldRow({
   field,
   value,
   onChange,
+  labelClassName,
 }: {
   field: CustomField;
   value: unknown;
   onChange: (value: unknown) => void;
+  /** Класс метки задаёт карточка: в панели и в колонке модалки он разный. */
+  labelClassName?: string;
 }) {
   const { members } = useV2Store();
   return (
     <>
-      <span className="truncate text-muted-foreground" title={field.name}>
+      <span className={labelClassName ?? "truncate text-muted-foreground"} title={field.name}>
         {field.name}
       </span>
       <div>

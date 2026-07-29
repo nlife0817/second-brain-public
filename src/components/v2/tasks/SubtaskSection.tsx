@@ -103,9 +103,18 @@ export function SubtaskSection({
       <p className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Подзадачи
         {subtasks.length > 0 && (
-          <span className="tabular-nums font-normal normal-case tracking-normal">
-            {done}/{subtasks.length}
-          </span>
+          <>
+            {/* Полоска прогресса: доля закрытых видна без чтения счётчика. */}
+            <span className="h-1 w-20 overflow-hidden rounded-full bg-muted">
+              <span
+                className="block h-full rounded-full bg-emerald-500 transition-all duration-300"
+                style={{ width: `${Math.round((done / subtasks.length) * 100)}%` }}
+              />
+            </span>
+            <span className="tabular-nums font-normal normal-case tracking-normal">
+              {done}/{subtasks.length}
+            </span>
+          </>
         )}
       </p>
       <div className="flex flex-col gap-0.5">

@@ -10,7 +10,10 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --font-heading: var(--font-golos);
+  --font-heading: var(--font-sans);
+  --color-primary-ink: var(--primary-ink);
+  --shadow-accent: 0 4px 14px rgba(232, 115, 74, 0.25);
+  --shadow-accent-hover: 0 6px 24px rgba(232, 115, 74, 0.35);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -49,78 +52,89 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Палитра: один акцент (индиго) + нейтрали с лёгкой хромой в его сторону.
-   Чистые серые дефолтной темы shadcn (хрома 0) выглядели как непокрашенный
-   вайрфрейм — тонировка убирает это, не меняя светлоту ни одной поверхности. */
+/* Палитра «Оранж» — язык DS «Твой репетитор»: тёплая бумага вместо холодного
+   серого, коралловый акцент #e8734a, нейтрали с лёгкой тёплой хромой.
+   --primary — цвет заливок (кнопки, счётчики); текстом он на белом не проходит
+   контраст, для текста есть --primary-ink (см. правило .text-primary ниже). */
 :root {
   --background: oklch(1 0 0);
-  --foreground: oklch(0.17 0.012 275);
+  --foreground: oklch(0.23 0.006 90);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.17 0.012 275);
+  --card-foreground: oklch(0.23 0.006 90);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.17 0.012 275);
-  --primary: oklch(0.49 0.165 272);
-  --primary-foreground: oklch(0.985 0.005 272);
-  --secondary: oklch(0.958 0.006 277);
-  --secondary-foreground: oklch(0.25 0.02 275);
-  --muted: oklch(0.958 0.006 277);
-  --muted-foreground: oklch(0.5 0.02 275);
-  --accent: oklch(0.945 0.01 274);
-  --accent-foreground: oklch(0.25 0.02 275);
+  --popover-foreground: oklch(0.23 0.006 90);
+  --primary: oklch(0.685 0.148 38);
+  --primary-foreground: oklch(0.99 0.004 75);
+  --primary-ink: oklch(0.56 0.12 36);
+  --secondary: oklch(0.962 0.005 90);
+  --secondary-foreground: oklch(0.3 0.008 90);
+  --muted: oklch(0.962 0.005 90);
+  --muted-foreground: oklch(0.53 0.008 90);
+  --accent: oklch(0.955 0.008 75);
+  --accent-foreground: oklch(0.3 0.008 90);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.915 0.007 277);
-  --input: oklch(0.915 0.007 277);
-  --ring: oklch(0.6 0.13 272);
-  --chart-1: oklch(0.55 0.16 272);
+  --border: oklch(0.908 0.006 90);
+  --input: oklch(0.908 0.006 90);
+  --ring: oklch(0.685 0.13 38);
+  --chart-1: oklch(0.685 0.148 38);
   --chart-2: oklch(0.62 0.12 190);
-  --chart-3: oklch(0.7 0.14 75);
-  --chart-4: oklch(0.6 0.17 15);
-  --chart-5: oklch(0.55 0.14 305);
+  --chart-3: oklch(0.55 0.14 255);
+  --chart-4: oklch(0.55 0.14 305);
+  --chart-5: oklch(0.64 0.13 155);
   --radius: 0.625rem;
-  --sidebar: oklch(0.972 0.005 277);
-  --sidebar-foreground: oklch(0.17 0.012 275);
-  --sidebar-primary: oklch(0.49 0.165 272);
-  --sidebar-primary-foreground: oklch(0.985 0.005 272);
-  --sidebar-accent: oklch(0.938 0.008 275);
-  --sidebar-accent-foreground: oklch(0.25 0.02 275);
-  --sidebar-border: oklch(0.91 0.007 277);
-  --sidebar-ring: oklch(0.6 0.13 272);
+  --sidebar: oklch(0.972 0.004 95);
+  --sidebar-foreground: oklch(0.23 0.006 90);
+  --sidebar-primary: oklch(0.685 0.148 38);
+  --sidebar-primary-foreground: oklch(0.99 0.004 75);
+  --sidebar-accent: oklch(0.94 0.007 90);
+  --sidebar-accent-foreground: oklch(0.3 0.008 90);
+  --sidebar-border: oklch(0.905 0.006 90);
+  --sidebar-ring: oklch(0.685 0.13 38);
 }
 
 /* Переключателя тёмной темы в приложении пока нет — блок обновлён в тон
    светлой палитре, чтобы включение темы не потребовало перекраски заново. */
 .dark {
-  --background: oklch(0.155 0.01 275);
-  --foreground: oklch(0.975 0.005 275);
-  --card: oklch(0.205 0.012 275);
-  --card-foreground: oklch(0.975 0.005 275);
-  --popover: oklch(0.21 0.012 275);
-  --popover-foreground: oklch(0.975 0.005 275);
-  --primary: oklch(0.7 0.13 272);
-  --primary-foreground: oklch(0.16 0.02 272);
-  --secondary: oklch(0.26 0.014 275);
-  --secondary-foreground: oklch(0.975 0.005 275);
-  --muted: oklch(0.26 0.014 275);
-  --muted-foreground: oklch(0.72 0.015 275);
-  --accent: oklch(0.28 0.016 275);
-  --accent-foreground: oklch(0.975 0.005 275);
+  --background: oklch(0.16 0.005 80);
+  --foreground: oklch(0.975 0.004 90);
+  --card: oklch(0.21 0.006 80);
+  --card-foreground: oklch(0.975 0.004 90);
+  --popover: oklch(0.215 0.006 80);
+  --popover-foreground: oklch(0.975 0.004 90);
+  --primary: oklch(0.7 0.14 38);
+  --primary-foreground: oklch(0.99 0.004 75);
+  --primary-ink: oklch(0.76 0.12 42);
+  --secondary: oklch(0.26 0.007 80);
+  --secondary-foreground: oklch(0.975 0.004 90);
+  --muted: oklch(0.26 0.007 80);
+  --muted-foreground: oklch(0.71 0.008 90);
+  --accent: oklch(0.28 0.009 78);
+  --accent-foreground: oklch(0.975 0.004 90);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.62 0.12 272);
-  --chart-1: oklch(0.62 0.16 272);
+  --ring: oklch(0.62 0.12 38);
+  --chart-1: oklch(0.72 0.14 38);
   --chart-2: oklch(0.68 0.12 190);
-  --chart-3: oklch(0.74 0.14 75);
-  --chart-4: oklch(0.66 0.17 15);
-  --chart-5: oklch(0.62 0.14 305);
-  --sidebar: oklch(0.185 0.012 275);
-  --sidebar-foreground: oklch(0.975 0.005 275);
-  --sidebar-primary: oklch(0.7 0.13 272);
-  --sidebar-primary-foreground: oklch(0.16 0.02 272);
-  --sidebar-accent: oklch(0.26 0.014 275);
-  --sidebar-accent-foreground: oklch(0.975 0.005 275);
+  --chart-3: oklch(0.62 0.14 255);
+  --chart-4: oklch(0.62 0.14 305);
+  --chart-5: oklch(0.7 0.13 155);
+  --sidebar: oklch(0.19 0.006 80);
+  --sidebar-foreground: oklch(0.975 0.004 90);
+  --sidebar-primary: oklch(0.7 0.14 38);
+  --sidebar-primary-foreground: oklch(0.99 0.004 75);
+  --sidebar-accent: oklch(0.26 0.007 80);
+  --sidebar-accent-foreground: oklch(0.975 0.004 90);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.62 0.12 272);
+  --sidebar-ring: oklch(0.62 0.12 38);
+}
+
+/* Оранжевый текстом: сырой --primary (#e8734a) на белом даёт ~2.9:1 и не
+   проходит контраст. Правило вне @layer, поэтому побеждает утилиту Tailwind:
+   каждое `text-primary` в разметке получает затемнённый «чернильный» тон,
+   а заливки (bg-primary) остаются яркими. */
+.text-primary {
+  color: var(--primary-ink);
 }
 
 /* Цветные метки (статусы, проекты, теги): цвет сущности задаёт подложку,

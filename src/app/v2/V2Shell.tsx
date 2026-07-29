@@ -236,7 +236,7 @@ export function V2Shell({
         <div className={cn("flex items-center pb-2 pt-3", collapsed ? "flex-col gap-1 px-2" : "gap-2 px-3")}>
           {!collapsed && (
             <>
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-primary to-orange-300 text-xs font-bold text-primary-foreground shadow-accent">
                 {orgName.slice(0, 1).toUpperCase()}
               </span>
               <span className="min-w-0 flex-1 truncate text-sm font-semibold">{orgName}</span>

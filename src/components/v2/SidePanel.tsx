@@ -47,7 +47,9 @@ export function SidePanel({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
           showCloseButton={false}
-          className="flex h-[min(88vh,900px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
+          // max-w-4xl: в широком окне свойства уходят в правую колонку
+          // (см. twoCol в TaskSheet), контенту нужна полная ширина.
+          className="flex h-[min(88vh,900px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
         >
           <DialogTitle className="sr-only">{title}</DialogTitle>
           {children}

@@ -1,24 +1,20 @@
 import type { Metadata, Viewport } from "next";
-import { Golos_Text, Inter, JetBrains_Mono } from "next/font/google";
+import { JetBrains_Mono, Onest } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import "./globals.css";
 
-const inter = Inter({
+// Onest — фирменный шрифт темы «Оранж» (как в DS «Твой репетитор»): хорошо
+// рисован под кириллицу, один и для текста, и для заголовков
+// (`--font-heading` в globals.css ссылается на этот же var).
+const onest = Onest({
   variable: "--font-sans",
   subsets: ["latin", "cyrillic"],
 });
 
 const jetbrainsMono = JetBrains_Mono({
   variable: "--font-mono",
-  subsets: ["latin", "cyrillic"],
-});
-
-// Заголовки: Golos Text рисован под кириллицу и даёт экранам собственное
-// лицо; текст остаётся на Inter (`--font-sans`).
-const golos = Golos_Text({
-  variable: "--font-golos",
   subsets: ["latin", "cyrillic"],
 });
 
@@ -55,7 +51,7 @@ export default function RootLayout({
   return (
     <html
       lang="ru"
-      className={`${inter.variable} ${jetbrainsMono.variable} ${golos.variable} h-full antialiased`}
+      className={`${onest.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col overflow-hidden font-sans">
         <ErrorBoundary>

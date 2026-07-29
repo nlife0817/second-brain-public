@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Local-only directories that shouldn't pollute lint output:
     ".claude/**",
+    // HTML-прототипы дизайна — не прод-код, линтить их незачем.
+    "design/**",
   ]),
 ]);
 

@@ -40,10 +40,20 @@ export function initials(user: Pick<UserBrief, "name" | "email">): string {
   return source.slice(0, 2).toUpperCase();
 }
 
+/* Скруглённые квадраты с градиентом — манера DS «Твой репетитор». */
 const AVATAR_COLORS = [
-  "bg-rose-500", "bg-orange-500", "bg-amber-500", "bg-emerald-500",
-  "bg-teal-500", "bg-sky-500", "bg-indigo-500", "bg-violet-500", "bg-fuchsia-500",
+  "bg-linear-to-br from-rose-500 to-rose-400",
+  "bg-linear-to-br from-orange-500 to-orange-400",
+  "bg-linear-to-br from-amber-500 to-amber-400",
+  "bg-linear-to-br from-emerald-500 to-emerald-400",
+  "bg-linear-to-br from-teal-500 to-teal-400",
+  "bg-linear-to-br from-sky-500 to-sky-400",
+  "bg-linear-to-br from-indigo-500 to-indigo-400",
+  "bg-linear-to-br from-violet-500 to-violet-400",
+  "bg-linear-to-br from-fuchsia-500 to-fuchsia-400",
 ];
+
+const AVATAR_RADIUS = { xs: "rounded-[7px]", sm: "rounded-[8px]", md: "rounded-[10px]" } as const;
 
 export function Avatar({ user, size = "sm" }: { user: UserBrief; size?: "xs" | "sm" | "md" }) {
   const colorIdx = [...user.id].reduce((a, c) => a + c.charCodeAt(0), 0) % AVATAR_COLORS.length;
@@ -52,8 +62,9 @@ export function Avatar({ user, size = "sm" }: { user: UserBrief; size?: "xs" | "
     <span
       title={user.name || user.email}
       className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white",
+        "inline-flex shrink-0 items-center justify-center font-semibold text-white",
         AVATAR_COLORS[colorIdx],
+        AVATAR_RADIUS[size],
         sizeCls,
       )}
     >
@@ -68,12 +79,12 @@ export function AvatarStack({ users, max = 3 }: { users: UserBrief[]; max?: numb
   return (
     <span className="flex -space-x-1.5">
       {shown.map((u) => (
-        <span key={u.id} className="rounded-full ring-2 ring-background">
+        <span key={u.id} className="rounded-[7px] ring-2 ring-background">
           <Avatar user={u} size="xs" />
         </span>
       ))}
       {rest > 0 && (
-        <span className="inline-flex size-5 items-center justify-center rounded-full bg-muted text-[9px] font-medium text-muted-foreground ring-2 ring-background">
+        <span className="inline-flex size-5 items-center justify-center rounded-[7px] bg-muted text-[9px] font-medium text-muted-foreground ring-2 ring-background">
           +{rest}
         </span>
       )}
