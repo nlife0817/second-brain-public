@@ -72,12 +72,18 @@ join core.users cu on cu.email = lower(ps.user_email)
 on conflict (endpoint) do nothing;
 
 -- ----------------------------------------------------------------------------
--- 2. Расписания v1.
+-- 2. Расписания v1 — снять окончательно.
 --
--- Без этого pg_cron продолжит стучаться в удалённые роуты: /api/notifications/dispatch
--- каждый час и в :00, /api/timing/watchdog каждые 15 минут — 404 на проде.
--- 'notif-date-only-morning' снят ещё в 0011_drop_date_only_morning.sql.
--- НЕ ТРОГАТЬ 'v2_core_tick' (0027) — это фон v2.
+-- Миграция 0034_disable_v1_cron.sql выключила их обратимо (`active := false`),
+-- рассчитывая, что код v1 ещё лежит в репозитории. Теперь роутов нет совсем,
+-- возвращать нечего — расписания удаляются.
+--
+-- Список тот же, что в 0034: в боевой базе задач больше, чем заводили файлы
+-- миграций 0005/0008 (часть создана вручную), поэтому перечисляем поимённо все
+-- десять. Они били по /api/notifications/dispatch, /api/timing/watchdog и
+-- /api/cron/planning/* — всё удалено.
+--
+-- НЕ ТРОГАТЬ 'v2_core_tick' (0027) — это единственный фон v2.
 -- ----------------------------------------------------------------------------
 
 do $$
@@ -85,8 +91,19 @@ declare j record;
 begin
   for j in
     select jobid, jobname from cron.job
-    where jobname in ('notif-overdue-hour', 'notif-date-only-morning',
-                      'notif-daily-summary', 'timing-watchdog')
+    where jobname in (
+      'notify-hourly-deadlines',
+      'notify-date-only-morning',
+      'notify-daily-summary',
+      'notif-daily-summary',
+      'notif-overdue-hour',
+      'notif-date-only-morning',
+      'timing-watchdog',
+      'planning-recurring-payments',
+      'planning-early-warning',
+      'planning-support-initiative',
+      'planning-pilot-overdue'
+    )
   loop
     perform cron.unschedule(j.jobid);
     raise notice 'cron: снято задание %', j.jobname;
@@ -94,28 +111,28 @@ begin
 end $$;
 
 -- ----------------------------------------------------------------------------
--- 3. Отцепка от публикации supabase_realtime до дропа.
+-- 3. Публикация supabase_realtime — страховка.
 --
--- Postgres убрал бы таблицы сам при DROP TABLE, но практика репозитория
--- (0021, 0022) — отцеплять явно: слот репликации Supabase к этому чувствителен.
--- Каждый ALTER в своём DO-блоке, чтобы отсутствующая запись не валила прогон.
--- НЕ ТРОГАТЬ таблицы core.* — они остаются в публикации.
+-- Основную работу сделала 0035_drop_v1_from_realtime.sql: она сняла с публикации
+-- все таблицы схемы public (их было 39 — больше, чем заводили файлы миграций).
+-- Здесь повтор того же цикла на случай, если между 0035 и этим прогоном
+-- что-то вернулось в публикацию: Postgres снял бы таблицу и сам при DROP TABLE,
+-- но практика репозитория (0021, 0022, 0035) — отцеплять явно, слот репликации
+-- Supabase к этому чувствителен. Если возвращать нечего, блок ничего не делает.
+--
+-- НЕ ТРОГАТЬ таблицы core.* — семь таблиц ядра остаются в публикации.
 -- ----------------------------------------------------------------------------
 
 do $$
-declare t text;
+declare r record;
 begin
-  foreach t in array array[
-    'items', 'item_tags', 'tags', 'categories', 'item_statuses',
-    'item_development_participants', 'development_participants', 'development_stages',
-    'weekly_plans', 'weekly_plan_entries', 'entry_comments',
-    'clients', 'client_statuses', 'client_companies', 'client_contacts',
-    'client_contact_fields', 'client_notes', 'client_links', 'client_crm_systems',
-    'crm_systems', 'relation_types', 'relations', 'comments', 'staging_items'
-  ]
+  for r in
+    select tablename from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public'
   loop
     begin
-      execute format('alter publication supabase_realtime drop table public.%I', t);
+      execute format('alter publication supabase_realtime drop table public.%I', r.tablename);
+      raise notice 'realtime: отцеплена public.%', r.tablename;
     exception when undefined_object or undefined_table then null;
     end;
   end loop;

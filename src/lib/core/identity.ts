@@ -4,6 +4,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { prepare, transaction } from "@/lib/sql";
 import { DomainError } from "./http";
+import { PROJECT_ROLE_RANK } from "./types";
 import type {
   CoreUser,
   Invitation,
@@ -12,6 +13,7 @@ import type {
   OrgSummary,
   Organization,
   ProjectGrant,
+  ProjectRole,
 } from "./types";
 
 // --- Users ---------------------------------------------------------------------
@@ -333,6 +335,26 @@ export async function peekInvitation(
 }
 
 /**
+ * `project_grants` лежит в jsonb: схема не гарантирует ни формы записи, ни того,
+ * что это вообще массив. А значения уходят прямо в параметры запроса, где
+ * undefined недопустим. Кривая запись роняла весь приём приглашения
+ * (UNDEFINED_VALUE в проде) — теперь такие записи просто отбрасываем: доступ к
+ * организации важнее, чем доступ к одному проекту.
+ */
+export function normalizeProjectGrants(raw: unknown): ProjectGrant[] {
+  if (!Array.isArray(raw)) return [];
+  const grants: ProjectGrant[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const { project_id: projectId, role } = item as Record<string, unknown>;
+    if (typeof projectId !== "string" || !projectId) continue;
+    if (typeof role !== "string" || !(role in PROJECT_ROLE_RANK)) continue;
+    grants.push({ project_id: projectId, role: role as ProjectRole });
+  }
+  return grants;
+}
+
+/**
  * Принятие приглашения. Токен «сгорает» атомарным UPDATE … RETURNING —
  * повторный вызов и гонка двух вкладок не создадут второго членства.
  * Email сессии обязан совпадать с адресом приглашения.
@@ -348,7 +370,8 @@ export async function acceptInvitation(
         org_id: string;
         email: string;
         org_role: OrgRole;
-        project_grants: ProjectGrant[];
+        // jsonb: что там лежит на самом деле — знает только normalizeProjectGrants.
+        project_grants: unknown;
       }>(
         `UPDATE core.invitations
          SET accepted_at = now(), accepted_by = ?
@@ -363,6 +386,12 @@ export async function acceptInvitation(
       // Не различаем «нет токена», «истёк» и «чужой email» — меньше информации атакующему.
       throw new DomainError(404, "Приглашение недействительно или предназначено другому адресу");
     }
+    // org_id и org_role — NOT NULL, поэтому пустыми они бывают только если строка
+    // пришла не в той форме, что мы ждём. Тогда лучше внятная ошибка, чем падение
+    // где-то ниже на параметрах запроса.
+    if (!invitation.org_id || !invitation.org_role) {
+      throw new DomainError(500, "Приглашение повреждено: нет организации или роли");
+    }
 
     await tx
       .prepare(
@@ -372,7 +401,7 @@ export async function acceptInvitation(
       )
       .run(invitation.org_id, user.id, invitation.org_role);
 
-    for (const grant of invitation.project_grants) {
+    for (const grant of normalizeProjectGrants(invitation.project_grants)) {
       // Проект мог быть удалён или уехать в другую org за время жизни инвайта.
       const project = await tx
         .prepare<{ id: string }>(`SELECT id FROM core.projects WHERE id = ? AND org_id = ?`)

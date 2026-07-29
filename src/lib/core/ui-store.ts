@@ -1,9 +1,19 @@
 "use client";
 
-// Zustand-стор интерфейса v2: контекст организации + кэши справочников.
+// Стор интерфейса v2: контекст организации + кэши справочников.
+//
+// Инстанс создаётся на запрос и раздаётся через React-контекст, а не живёт
+// модульным синглтоном. Причина — серверный рендер: модульный стор общий для
+// всех одновременных запросов сервера, и наполнить его данными пользователя
+// значило бы показать их соседнему. Пер-запросный инстанс снимает и вторую
+// проблему: экран, читающий стор при рендере, на сервере видит те же данные,
+// что и в браузере, — без расхождения гидрации.
 
-import { create } from "zustand";
+import { createContext, createElement, useContext, useEffect, useRef } from "react";
+import { createStore, useStore } from "zustand";
 import { api } from "./client";
+import { invalidate } from "./query";
+import { ACTIVE_ORG_COOKIE, ACTIVE_ORG_COOKIE_MAX_AGE, ACTIVE_ORG_LEGACY_KEY } from "./keys";
 import type {
   CoreTag,
   CustomField,
@@ -20,9 +30,64 @@ interface MeResponse {
   orgs: OrgSummary[];
 }
 
-const ACTIVE_ORG_KEY = "sb.v2.orgId";
+/** Справочники организации одним ответом — зеркало `OrgMeta` из bootstrap.ts. */
+interface OrgMetaResponse {
+  projects: ProjectWithMeta[];
+  statuses: TaskStatus[];
+  tags: CoreTag[];
+  members: OrgMemberWithUser[];
+  fields: CustomField[];
+  unreadCount: number;
+  activeTimer: ActiveTimer | null;
+}
 
-interface V2State {
+/** Активный таймер пользователя — зеркало `TimeEntryWithTask`. */
+export interface ActiveTimer {
+  id: string;
+  task_id: string | null;
+  started_at: string;
+  ended_at: string | null;
+  note: string;
+  task_title: string | null;
+}
+
+/** Состояние оболочки, посчитанное на сервере. */
+export interface V2InitialState extends OrgMetaResponse {
+  me: UserBrief;
+  orgs: OrgSummary[];
+  orgId: string;
+  orgName: string;
+  orgRole: OrgRole;
+}
+
+/** Сервер выбрал организацию — закрепляем выбор для следующих запросов. */
+export function writeActiveOrgCookie(orgId: string): void {
+  if (typeof document === "undefined") return;
+  document.cookie = `${ACTIVE_ORG_COOKIE}=${orgId}; path=/; max-age=${ACTIVE_ORG_COOKIE_MAX_AGE}; samesite=lax`;
+}
+
+export function readActiveOrgCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(?:^|; )${ACTIVE_ORG_COOKIE}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * Организация, выбранная до переезда на cookie. Читается ровно один раз —
+ * оболочка переносит значение и стирает ключ.
+ */
+export function takeLegacyActiveOrg(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const saved = window.localStorage.getItem(ACTIVE_ORG_LEGACY_KEY);
+    if (saved) window.localStorage.removeItem(ACTIVE_ORG_LEGACY_KEY);
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
+export interface V2State {
   ready: boolean;
   /** Справочники организации ещё грузятся — сайдбар показывает скелет, а не «пусто». */
   metaLoading: boolean;
@@ -40,7 +105,12 @@ interface V2State {
   members: OrgMemberWithUser[];
   fields: CustomField[];
   unreadCount: number;
+  activeTimer: ActiveTimer | null;
 
+  /** Наполнение из серверного рендера — синхронно, без единого запроса. */
+  hydrate: (initial: V2InitialState) => void;
+  setFields: (fields: CustomField[]) => void;
+  setActiveTimer: (timer: ActiveTimer | null) => void;
   bootstrap: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
   /** Справочники активной организации; вызывается из bootstrap и switchOrg. */
@@ -52,7 +122,7 @@ interface V2State {
   refreshUnread: () => Promise<void>;
 }
 
-export const useV2Store = create<V2State>((set, get) => ({
+const EMPTY = {
   ready: false,
   metaLoading: false,
   error: null,
@@ -68,115 +138,192 @@ export const useV2Store = create<V2State>((set, get) => ({
   members: [],
   fields: [],
   unreadCount: 0,
+  activeTimer: null,
+} satisfies Omit<
+  V2State,
+  | "hydrate"
+  | "setFields"
+  | "setActiveTimer"
+  | "bootstrap"
+  | "switchOrg"
+  | "loadOrgData"
+  | "refreshProjects"
+  | "refreshMeta"
+  | "refreshMembers"
+  | "refreshFields"
+  | "refreshUnread"
+>;
 
-  bootstrap: async () => {
-    try {
-      const me = await api.get<MeResponse>("/me");
-      // Активная организация запоминается между визитами.
-      const savedId = typeof window !== "undefined" ? window.localStorage.getItem(ACTIVE_ORG_KEY) : null;
-      const org = me.orgs.find((o) => o.id === savedId) ?? me.orgs[0];
-      if (!org) {
-        set({ me: me.user, orgs: [], needsOnboarding: true, ready: true, error: null });
-        return;
+export function createV2Store(initial?: V2InitialState | null) {
+  return createStore<V2State>()((set, get) => ({
+    ...EMPTY,
+    ...(initial ? { ...initial, ready: true } : {}),
+
+    setActiveTimer: (activeTimer) => set({ activeTimer }),
+
+    hydrate: (next) => {
+      // Повторная гидрация приходит при клиентской навигации: серверный рендер
+      // следующего экрана приносит свежие справочники, и перетереть ими стор —
+      // ровно то, что нужно.
+      set({ ...next, ready: true, metaLoading: false, needsOnboarding: false, error: null });
+    },
+
+    setFields: (fields) => set({ fields }),
+
+    bootstrap: async () => {
+      // Фолбэк: серверный рендер уже наполнил стор, сюда попадаем только если
+      // оболочка смонтировалась без начальных данных.
+      try {
+        const me = await api.get<MeResponse>("/me");
+        const savedId = readActiveOrgCookie() ?? takeLegacyActiveOrg();
+        const org = me.orgs.find((o) => o.id === savedId) ?? me.orgs[0];
+        if (!org) {
+          set({ me: me.user, orgs: [], needsOnboarding: true, ready: true, error: null });
+          return;
+        }
+        set({
+          me: me.user,
+          orgs: me.orgs,
+          needsOnboarding: false,
+          orgId: org.id,
+          orgName: org.name,
+          orgRole: org.role,
+          ready: true,
+          metaLoading: true,
+          error: null,
+        });
+        writeActiveOrgCookie(org.id);
+        await get().loadOrgData();
+      } catch (e) {
+        set({ error: e instanceof Error ? e.message : "Не удалось загрузить", ready: true });
       }
-      // ready сразу после /me: оболочка и страница монтируются и грузят своё
-      // параллельно со справочниками. Раньше экран висел на «Загрузка…», пока
-      // не ответят все шесть запросов, и только потом страница начинала свой.
+    },
+
+    switchOrg: async (orgId: string) => {
+      const org = get().orgs.find((o) => o.id === orgId);
+      if (!org) return;
+      writeActiveOrgCookie(orgId);
+      // Кэш запросов ключуется по пути с orgId, но данные экранов соседней
+      // организации всё равно чужие — чистим целиком, чтобы старые списки не
+      // мелькнули на новом контексте.
+      invalidate();
       set({
-        me: me.user,
-        orgs: me.orgs,
-        needsOnboarding: false,
         orgId: org.id,
         orgName: org.name,
         orgRole: org.role,
-        ready: true,
+        projects: [],
+        statuses: [],
+        tags: [],
+        members: [],
+        fields: [],
+        unreadCount: 0,
+        activeTimer: null,
         metaLoading: true,
         error: null,
       });
-      if (typeof window !== "undefined") window.localStorage.setItem(ACTIVE_ORG_KEY, org.id);
       await get().loadOrgData();
-    } catch (e) {
-      set({ error: e instanceof Error ? e.message : "Не удалось загрузить", ready: true });
-    }
-  },
+    },
 
-  switchOrg: async (orgId: string) => {
-    const org = get().orgs.find((o) => o.id === orgId);
-    if (!org) return;
-    if (typeof window !== "undefined") window.localStorage.setItem(ACTIVE_ORG_KEY, orgId);
-    set({
-      orgId: org.id,
-      orgName: org.name,
-      orgRole: org.role,
-      projects: [],
-      statuses: [],
-      tags: [],
-      members: [],
-      fields: [],
-      unreadCount: 0,
-      metaLoading: true,
-      error: null,
-    });
-    await get().loadOrgData();
-  },
+    loadOrgData: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      try {
+        // Один запрос вместо шести: справочники собираются на сервере за один
+        // резолв авторизации (см. `loadOrgMeta` в bootstrap.ts).
+        const meta = await api.get<OrgMetaResponse>(`/orgs/${orgId}/meta`);
+        set({ ...meta, metaLoading: false, error: null });
+      } catch (e) {
+        set({
+          metaLoading: false,
+          error: e instanceof Error ? e.message : "Не удалось загрузить",
+        });
+      }
+    },
 
-  loadOrgData: async () => {
-    // Проекты и справочники статусов критичны — без них нечего показывать;
-    // участники, поля и счётчик уведомлений могут не доехать без последствий,
-    // и ронять из-за них весь экран не нужно.
-    const [projects, meta] = await Promise.all([
-      get().refreshProjects().then(() => null).catch((e: unknown) => e),
-      get().refreshMeta().then(() => null).catch((e: unknown) => e),
-      get().refreshMembers().catch(() => {}),
-      get().refreshFields().catch(() => {}),
-      get().refreshUnread().catch(() => {}),
-    ]);
-    const failure = projects ?? meta;
-    set({
-      metaLoading: false,
-      error: failure instanceof Error ? failure.message : failure ? "Не удалось загрузить" : null,
-    });
-  },
+    refreshProjects: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      set({ projects: await api.get<ProjectWithMeta[]>(`/orgs/${orgId}/projects`) });
+    },
 
-  refreshProjects: async () => {
-    const { orgId } = get();
-    if (!orgId) return;
-    set({ projects: await api.get<ProjectWithMeta[]>(`/orgs/${orgId}/projects`) });
-  },
+    refreshMeta: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      const [statuses, tags] = await Promise.all([
+        api.get<TaskStatus[]>(`/orgs/${orgId}/statuses`),
+        api.get<CoreTag[]>(`/orgs/${orgId}/tags`),
+      ]);
+      set({ statuses, tags });
+    },
 
-  refreshMeta: async () => {
-    const { orgId } = get();
-    if (!orgId) return;
-    const [statuses, tags] = await Promise.all([
-      api.get<TaskStatus[]>(`/orgs/${orgId}/statuses`),
-      api.get<CoreTag[]>(`/orgs/${orgId}/tags`),
-    ]);
-    set({ statuses, tags });
-  },
+    refreshMembers: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      set({ members: await api.get<OrgMemberWithUser[]>(`/orgs/${orgId}/members`) });
+    },
 
-  refreshMembers: async () => {
-    const { orgId } = get();
-    if (!orgId) return;
-    set({ members: await api.get<OrgMemberWithUser[]>(`/orgs/${orgId}/members`) });
-  },
+    // Кастомные поля — справочник организации: держим в сторе, а не тянем
+    // заново при каждом открытии карточки задачи.
+    refreshFields: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      set({ fields: await api.get<CustomField[]>(`/orgs/${orgId}/fields`) });
+    },
 
-  // Кастомные поля — справочник организации: держим в сторе, а не тянем
-  // заново при каждом открытии карточки задачи.
-  refreshFields: async () => {
-    const { orgId } = get();
-    if (!orgId) return;
-    set({ fields: await api.get<CustomField[]>(`/orgs/${orgId}/fields`) });
-  },
+    refreshUnread: async () => {
+      const { orgId } = get();
+      if (!orgId) return;
+      try {
+        // count=1 — только счётчик, без выборки самих уведомлений.
+        const res = await api.get<{ unread_count: number }>(`/orgs/${orgId}/notifications?count=1`);
+        set({ unreadCount: res.unread_count });
+      } catch {
+        // Периодический опрос: офлайн или мигнувший 500 не должны шуметь в консоль.
+      }
+    },
+  }));
+}
 
-  refreshUnread: async () => {
-    const { orgId } = get();
-    if (!orgId) return;
-    try {
-      // count=1 — только счётчик, без выборки самих уведомлений.
-      const res = await api.get<{ unread_count: number }>(`/orgs/${orgId}/notifications?count=1`);
-      set({ unreadCount: res.unread_count });
-    } catch {
-      // Периодический опрос: офлайн или мигнувший 500 не должны шуметь в консоль.
-    }
-  },
-}));
+export type V2StoreApi = ReturnType<typeof createV2Store>;
+
+const V2StoreContext = createContext<V2StoreApi | null>(null);
+
+/**
+ * Создаёт стор на запрос и раздаёт его дереву v2. В браузере инстанс один на
+ * всё время жизни вкладки; серверный рендер получает свой на каждый запрос.
+ */
+export function V2StoreProvider({
+  initial,
+  children,
+}: {
+  initial: V2InitialState | null;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<V2StoreApi | null>(null);
+  ref.current ??= createV2Store(initial);
+  const store = ref.current;
+
+  // Клиентская навигация приносит свежий серверный снимок — вливаем его в
+  // существующий стор, а не пересоздаём (иначе слетело бы всё состояние).
+  const applied = useRef(initial);
+  useEffect(() => {
+    if (!initial || applied.current === initial) return;
+    applied.current = initial;
+    store.getState().hydrate(initial);
+  }, [initial, store]);
+
+  return createElement(V2StoreContext.Provider, { value: store }, children);
+}
+
+export function useV2StoreApi(): V2StoreApi {
+  const store = useContext(V2StoreContext);
+  if (!store) throw new Error("useV2Store вне <V2StoreProvider> — стор v2 живёт в /v2/layout.tsx");
+  return store;
+}
+
+export function useV2Store(): V2State;
+export function useV2Store<T>(selector: (state: V2State) => T): T;
+export function useV2Store<T>(selector?: (state: V2State) => T) {
+  const store = useV2StoreApi();
+  return useStore(store, selector ?? ((state) => state as unknown as T));
+}
