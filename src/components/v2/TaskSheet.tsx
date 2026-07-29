@@ -10,6 +10,7 @@ import {
   Bell,
   BellOff,
   Calendar,
+  CalendarRange,
   Check,
   CheckCircle2,
   CornerLeftUp,
@@ -52,7 +53,7 @@ import { useLoad } from "@/lib/core/use-load";
 import { useTaskOpenStore } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle, dueTone, formatDue } from "./bits";
-import { DuePicker } from "./DuePicker";
+import { DatePicker, DuePicker } from "./DuePicker";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
 import { SidePanel, useWideViewport } from "./SidePanel";
@@ -314,6 +315,7 @@ export function TaskSheet({
     if (typeof body.title === "string") next.title = body.title;
     if (typeof body.description === "string") next.description = body.description;
     if (typeof body.priority === "string") next.priority = body.priority as TaskPriority;
+    if ("start_date" in body) next.start_date = body.start_date as string | null;
     if ("due_date" in body) next.due_date = body.due_date as string | null;
     if ("due_time" in body) next.due_time = body.due_time as string | null;
     if (typeof body.status_id === "string") {
@@ -722,6 +724,16 @@ export function TaskSheet({
       )}
     </>
   );
+  const startLabelContent = task && (
+    <>
+      <CalendarRange className="size-4 shrink-0 text-muted-foreground" />
+      {task.start_date ? (
+        <span className="tabular-nums">{formatDue(task.start_date, null)}</span>
+      ) : (
+        <span className="text-muted-foreground">Указать начало</span>
+      )}
+    </>
+  );
   const propsGrid = task && (
     <div
       className={cn(
@@ -766,6 +778,21 @@ export function TaskSheet({
           ))}
         </SelectContent>
       </Select>
+
+      {/* Начало стоит перед сроком: слева направо читается как отрезок, тем же
+          порядком, каким полоса лежит на ганте. */}
+      <span className={propLabel}>Начало</span>
+      {canEdit ? (
+        <DatePicker
+          date={task.start_date}
+          triggerClassName="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+          onCommit={(start_date) => void patch({ start_date })}
+        >
+          {startLabelContent}
+        </DatePicker>
+      ) : (
+        <span className="flex items-center gap-2">{startLabelContent}</span>
+      )}
 
       <span className={propLabel}>Срок</span>
       {canEdit ? (

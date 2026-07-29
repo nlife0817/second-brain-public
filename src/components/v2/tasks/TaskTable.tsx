@@ -16,6 +16,7 @@ import {
   PlainDateCell,
   PriorityCell,
   ProjectCell,
+  StartCell,
   StatusCell,
   SubtasksCell,
   TagsCell,
@@ -285,6 +286,8 @@ function Cell({
       return <AssigneesCell task={task} ctx={ctx} />;
     case "tags":
       return <TagsCell task={task} ctx={ctx} />;
+    case "start_date":
+      return <StartCell task={task} ctx={ctx} />;
     case "due_date":
       return <DueCell task={task} ctx={ctx} />;
     case "estimated_minutes":

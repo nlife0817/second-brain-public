@@ -10,30 +10,38 @@ import { prepare } from "@/lib/sql";
 import { DomainError } from "./http";
 import { assertOrg, canOrg, effectiveProjectRole, PolicyError } from "./policy";
 import { filterVisibleTaskIds, requireTaskAccess } from "./tasks";
-import type { AuthContext, PolicyProject, RelationEntityType, RelationType, RelationWithTarget } from "./types";
+import type {
+  AuthContext,
+  PolicyProject,
+  RelationEntityType,
+  RelationKind,
+  RelationType,
+  RelationWithTarget,
+  TaskDependency,
+} from "./types";
 
 // --- Типы связей ------------------------------------------------------------------
 
 export async function listRelationTypes(ctx: AuthContext): Promise<RelationType[]> {
   return prepare<RelationType>(
-    `SELECT id, org_id, name, color, icon, position FROM core.relation_types
+    `SELECT id, org_id, name, color, icon, kind, position FROM core.relation_types
      WHERE org_id = ? ORDER BY position, name`,
   ).all(ctx.orgId);
 }
 
 export async function createRelationType(
   ctx: AuthContext,
-  input: { name: string; color?: string; icon?: string },
+  input: { name: string; color?: string; icon?: string; kind?: RelationKind },
 ): Promise<RelationType> {
   // Справочник org-уровня — там же, где теги и статусы.
   assertOrg(ctx, "tags.manage");
   const row = await prepare<RelationType>(
-    `INSERT INTO core.relation_types (org_id, name, color, icon, position)
-     VALUES (?, ?, COALESCE(?, '#6b7280'), COALESCE(?, 'Link'),
+    `INSERT INTO core.relation_types (org_id, name, color, icon, kind, position)
+     VALUES (?, ?, COALESCE(?, '#6b7280'), COALESCE(?, 'Link'), COALESCE(?, 'generic'),
              COALESCE((SELECT max(position) + 1 FROM core.relation_types WHERE org_id = ?), 1))
-     ON CONFLICT (org_id, name) DO UPDATE SET color = excluded.color, icon = excluded.icon
-     RETURNING id, org_id, name, color, icon, position`,
-  ).get(ctx.orgId, input.name.trim(), input.color ?? null, input.icon ?? null, ctx.orgId);
+     ON CONFLICT (org_id, name) DO UPDATE SET color = excluded.color, icon = excluded.icon, kind = excluded.kind
+     RETURNING id, org_id, name, color, icon, kind, position`,
+  ).get(ctx.orgId, input.name.trim(), input.color ?? null, input.icon ?? null, input.kind ?? null, ctx.orgId);
   if (!row) throw new DomainError(500, "Relation type was not created");
   return row;
 }
@@ -41,7 +49,7 @@ export async function createRelationType(
 export async function updateRelationType(
   ctx: AuthContext,
   id: string,
-  patch: { name?: string; color?: string; icon?: string; position?: number },
+  patch: { name?: string; color?: string; icon?: string; kind?: RelationKind; position?: number },
 ): Promise<RelationType> {
   assertOrg(ctx, "tags.manage");
   const sets: string[] = [];
@@ -54,7 +62,7 @@ export async function updateRelationType(
   if (sets.length === 0) throw new DomainError(422, "Empty patch");
   const row = await prepare<RelationType>(
     `UPDATE core.relation_types SET ${sets.join(", ")} WHERE id = ? AND org_id = ?
-     RETURNING id, org_id, name, color, icon, position`,
+     RETURNING id, org_id, name, color, icon, kind, position`,
   ).get(...params, id, ctx.orgId);
   if (!row) throw new DomainError(404, "Relation type not found");
   return row;
@@ -64,6 +72,36 @@ export async function deleteRelationType(ctx: AuthContext, id: string): Promise<
   assertOrg(ctx, "tags.manage");
   // relation_type_id → set null: сами связи переживают удаление типа.
   await prepare(`DELETE FROM core.relation_types WHERE id = ? AND org_id = ?`).run(id, ctx.orgId);
+}
+
+/**
+ * Зависимости организации для ганта: связи задача↔задача типом `blocks`.
+ *
+ * Выбираются все сразу, а не по списку показанных задач: связей на порядки
+ * меньше, чем задач, а запрос с сотнями id в строке — это и лимит длины URL, и
+ * промах кэша при каждом изменении фильтра. Полотно оставляет себе те, у
+ * которых оба конца попали в текущий срез.
+ *
+ * Обе стороны просеиваются через `filterVisibleTaskIds` (правило 8 из CLAUDE.md
+ * ядра): стрелка на недоступную задачу выдала бы её существование, а на ганте —
+ * ещё и её даты.
+ */
+export async function listTaskDependencies(ctx: AuthContext): Promise<TaskDependency[]> {
+  const rows = await prepare<{ source_id: string; target_id: string }>(
+    `SELECT r.source_id, r.target_id
+     FROM core.relations r
+     JOIN core.relation_types rt ON rt.id = r.relation_type_id
+     WHERE r.org_id = ? AND rt.kind = 'blocks'
+       AND r.source_type = 'task' AND r.target_type = 'task'`,
+  ).all(ctx.orgId);
+  if (rows.length === 0) return [];
+
+  const visible = await filterVisibleTaskIds(ctx, [
+    ...new Set(rows.flatMap((r) => [r.source_id, r.target_id])),
+  ]);
+  return rows
+    .filter((r) => visible.has(r.source_id) && visible.has(r.target_id))
+    .map((r) => ({ from: r.source_id, to: r.target_id }));
 }
 
 // --- Связи ---------------------------------------------------------------------------

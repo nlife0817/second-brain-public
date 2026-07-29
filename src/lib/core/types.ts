@@ -191,6 +191,13 @@ export interface CoreTask {
   description: string;
   status_id: string | null;
   priority: TaskPriority;
+  /**
+   * Начало работ — левая граница полосы на ганте. Без времени: гант считает в
+   * днях, а «во сколько» осмысленно только у срока (по нему идут напоминания).
+   * Порядок относительно `due_date` не навязан — план с началом позже срока
+   * пользователь видит и правит сам.
+   */
+  start_date: string | null;
   due_date: string | null;
   due_time: string | null;
   estimated_minutes: number | null;
@@ -252,13 +259,31 @@ export interface TaskDetail extends TaskWithMeta {
 
 export type RelationEntityType = "task" | "client" | "project";
 
+/**
+ * Смысл типа связи. `generic` — произвольный ярлык («см. также»), `blocks` —
+ * настоящая зависимость: источник блокирует цель. Гант рисует стрелки только по
+ * второму: по одному лишь имени типа отличить зависимость от заметки нельзя.
+ */
+export type RelationKind = "generic" | "blocks";
+
 export interface RelationType {
   id: string;
   org_id: string;
   name: string;
   color: string;
   icon: string;
+  kind: RelationKind;
   position: number;
+}
+
+/**
+ * Зависимость между задачами для ганта: `from` блокирует `to`. Плоская пара
+ * без обвязки — полотну от связи нужны только два конца, а заголовки у него уже
+ * есть в строках.
+ */
+export interface TaskDependency {
+  from: string;
+  to: string;
 }
 
 /** Связь глазами конкретной карточки: «дальняя» сторона уже разрешена. */

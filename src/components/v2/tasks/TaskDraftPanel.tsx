@@ -6,7 +6,7 @@
 // черновик действительно исчезает.
 
 import dynamic from "next/dynamic";
-import { Calendar, ChevronsRight, Plus, X } from "lucide-react";
+import { Calendar, CalendarRange, ChevronsRight, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -128,6 +128,17 @@ export function TaskDraftPanel({
                 ))}
               </SelectContent>
             </Select>
+
+            <span className="text-muted-foreground">Начало</span>
+            <div className="flex items-center gap-2">
+              <CalendarRange className="size-4 text-muted-foreground" />
+              <input
+                type="date"
+                value={draft.start_date ?? ""}
+                onChange={(e) => onChange({ start_date: e.target.value || null })}
+                className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+              />
+            </div>
 
             <span className="text-muted-foreground">Срок</span>
             <div className="flex items-center gap-2">

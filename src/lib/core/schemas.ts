@@ -93,6 +93,7 @@ export const taskCreateSchema = z.object({
   description: z.string().max(500_000).optional(),
   status_id: z.uuid().nullish(),
   priority: prioritySchema.optional(),
+  start_date: dateSchema.nullish(),
   due_date: dateSchema.nullish(),
   due_time: timeSchema.nullish(),
   estimated_minutes: z.number().int().min(0).max(60_000).nullish(),
@@ -111,6 +112,7 @@ export const taskPatchSchema = z
     description: z.string().max(500_000).optional(),
     status_id: z.uuid().nullable().optional(),
     priority: prioritySchema.optional(),
+    start_date: dateSchema.nullable().optional(),
     due_date: dateSchema.nullable().optional(),
     due_time: timeSchema.nullable().optional(),
     estimated_minutes: z.number().int().min(0).max(60_000).nullable().optional(),
@@ -192,16 +194,21 @@ export const relationQuerySchema = z.object({
   entity_id: z.uuid(),
 });
 
+/** `blocks` — связь читается гантом как зависимость и рисуется стрелкой. */
+const relationKindSchema = z.enum(["generic", "blocks"]);
+
 export const relationTypeCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
   color: z.string().trim().max(32).optional(),
   icon: z.string().trim().max(64).optional(),
+  kind: relationKindSchema.optional(),
 });
 export const relationTypePatchSchema = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),
     color: z.string().trim().max(32).optional(),
     icon: z.string().trim().max(64).optional(),
+    kind: relationKindSchema.optional(),
     position: z.number().finite().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });

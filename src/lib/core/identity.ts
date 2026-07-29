@@ -215,6 +215,15 @@ export async function createOrganization(name: string, ownerId: string): Promise
         )
         .run(org.id, statusName, color, kind, i + 1);
     }
+    // Зависимость для ганта: стрелки рисуются по связям этого типа, и без него
+    // вид пустой у любой новой организации. Существующим его завела миграция
+    // 0041 — здесь та же строка для тех, кто заведётся после неё.
+    await tx
+      .prepare(
+        `INSERT INTO core.relation_types (org_id, name, color, icon, kind, position)
+         VALUES (?, 'Блокирует', '#ef4444', 'Ban', 'blocks', 1)`,
+      )
+      .run(org.id);
     return org;
   });
 }

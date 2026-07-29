@@ -31,6 +31,7 @@ export type FilterField =
   | "assignee"
   | "tag"
   | "title"
+  | "start_date"
   | "due_date"
   | "completed"
   | "has_parent"
@@ -92,6 +93,7 @@ export const BASE_FILTER_FIELDS: FieldMeta[] = [
   { field: "assignee", label: "Исполнитель", kind: "select" },
   { field: "tag", label: "Тег", kind: "select" },
   { field: "title", label: "Название", kind: "text" },
+  { field: "start_date", label: "Начало", kind: "date" },
   { field: "due_date", label: "Дедлайн", kind: "date" },
   { field: "completed", label: "Завершена", kind: "boolean" },
   { field: "has_parent", label: "Подзадача", kind: "boolean" },
@@ -183,6 +185,8 @@ function valuesOf(task: TaskRow, field: FilterField): string[] {
       return task.tags.map((t) => t.id);
     case "title":
       return [task.title];
+    case "start_date":
+      return task.start_date ? [task.start_date] : [];
     case "due_date":
       return task.due_date ? [task.due_date] : [];
     case "completed":
@@ -332,6 +336,7 @@ export type SortColumn =
   | "title"
   | "status"
   | "project"
+  | "start_date"
   | "due_date"
   | "estimated_minutes"
   | "subtasks"
@@ -391,6 +396,9 @@ export function compareTasks(a: TaskRow, b: TaskRow, sort: SortState, ctx: SortC
       base = compareNullableString(na || null, nb || null);
       break;
     }
+    case "start_date":
+      base = compareNullableString(a.start_date, b.start_date);
+      break;
     case "due_date":
       base = compareNullableString(a.due_date, b.due_date);
       break;
@@ -416,6 +424,7 @@ export function compareTasks(a: TaskRow, b: TaskRow, sort: SortState, ctx: SortC
   // Пустые значения не переворачиваем: compareNullableString уже прижал их вниз.
   if (base === 0) return a.created_at.localeCompare(b.created_at);
   const nullPinned =
+    (sort.column === "start_date" && (!a.start_date || !b.start_date)) ||
     (sort.column === "due_date" && (!a.due_date || !b.due_date)) ||
     (sort.column === "estimated_minutes" && (a.estimated_minutes == null || b.estimated_minutes == null));
   return nullPinned ? base : base * dir;
