@@ -106,9 +106,20 @@
 
 # Хостинг
 
-Собственный VPS, всё в Docker Compose ([deploy/docker-compose.yml](deploy/docker-compose.yml)): `app` (Next.js standalone), `db` (Postgres), `caddy` (TLS + reverse proxy), `cron` (расписания).
+Продакшн — `https://brain.example.com` на собственном VPS (Timeweb Cloud, Ubuntu 26.04 LTS). Всё в Docker Compose, каталог на сервере — `/srv/secondbrain`, конфигурация — [deploy/docker-compose.yml](deploy/docker-compose.yml):
 
-- **Расписания** — контейнер `cron` (busybox crond + curl), задания в [deploy/cron/crontab](deploy/cron/crontab), время в UTC. Секрет `CRON_SECRET` из `.env`, а не из Vault
-- **Секреты** — `deploy/.env` на сервере (шаблон: [deploy/env.example](deploy/env.example)). `NEXT_PUBLIC_*` вшиваются при сборке образа, менять их можно только пересборкой
-- **Бэкапы** — [deploy/backup.sh](deploy/backup.sh) в системном cron хоста
-- Полный порядок переезда и эксплуатации: [docs/VPS-MIGRATION.md](docs/VPS-MIGRATION.md)
+| Контейнер | Роль |
+|---|---|
+| `app` | Next.js standalone, порт наружу не публикуется |
+| `db` | Postgres 17, том `secondbrain_db-data`, порт наружу **не публикуется** |
+| `caddy` | TLS (авто-Let's Encrypt) + reverse proxy, единственный с портами 80/443 |
+| `cron` | busybox crond + curl вместо pg_cron |
+
+**Деплой** — `git pull && docker compose build app && docker compose up -d app` из `/srv/secondbrain/deploy`. Образ собирается на сервере (сборка требует ~2–3 ГБ, поэтому там подключён swap).
+
+- **Расписания** — задания в [deploy/cron/crontab](deploy/cron/crontab), время в UTC. Активен только тик ядра v2 (`*/10`), задания v1 закомментированы. Секрет `CRON_SECRET` из `.env`
+- **Секреты** — `deploy/.env` на сервере (шаблон: [deploy/env.example](deploy/env.example)), в git не попадает. `NEXT_PUBLIC_*` вшиваются в бандл при сборке образа — менять их можно только пересборкой, правка `.env` не подействует
+- **Миграции** — вручную: `docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < supabase/migrations/NNNN_*.sql`
+- **Бэкапы** — [deploy/backup.sh](deploy/backup.sh) в системном cron хоста, ежедневно в 03:20 UTC, хранение 14 дней
+- **Docker Hub** отдаёт 429 анонимным клиентам с IP дата-центра — в `/etc/docker/daemon.json` прописано зеркало `mirror.gcr.io`, там же ограничение размера логов контейнеров
+- Порядок первичного развёртывания и грабли — [docs/VPS-MIGRATION.md](docs/VPS-MIGRATION.md)

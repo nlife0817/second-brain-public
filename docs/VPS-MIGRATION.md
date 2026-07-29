@@ -233,3 +233,73 @@ build-аргументами в `docker compose build`, а не только ч�
 
 Что появилось: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`
 (ключ подписи cookie сессии, 32+ байта случайных данных).
+
+---
+
+## 11. Грабли, найденные при развёртывании
+
+Собрано по факту первого запуска — пригодится при переносе на другой сервер.
+
+**Docker Hub отвечает 429 с IP дата-центра.** Анонимный лимит выбирается соседями по
+подсети ещё до вас, и `docker compose up` падает на первом же `pull`. Лечится зеркалом
+в `/etc/docker/daemon.json` (у Timeweb есть своё — `dockerhub.timeweb.cloud`, рабочей
+оказалась и `mirror.gcr.io`), затем `systemctl restart docker`. Заодно стоит сразу
+ограничить логи, иначе журнал контейнера однажды займёт весь диск:
+
+```json
+{
+  "registry-mirrors": ["https://mirror.gcr.io"],
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
+}
+```
+
+**`pg_dump` не нужен на рабочей машине.** Дамп снимается изнутри контейнера `db` —
+там Postgres той же версии, что у Supabase, и подключиться к облаку он может сам:
+
+```bash
+read -rsp 'Строка подключения Supabase: ' SUPA_URL; echo
+docker compose exec -T -e PGURL="$SUPA_URL" db sh -c \
+  'pg_dump "$PGURL" --schema=public --schema=core --no-owner --no-privileges \
+   --format=custom --file=/backups/supabase.pgc'
+```
+
+Строка подключения уходит переменной окружения — не оседает ни в `~/.bash_history`,
+ни в списке процессов.
+
+**Из трёх строк подключения Supabase годится только одна.** Direct connection работает
+по IPv6 (у сервера его может не быть), Transaction pooler на 6543 не поддерживает
+`pg_dump` в принципе. Нужен **Session pooler**, порт 5432.
+
+**`.npmrc` обязан попасть в образ.** В нём `legacy-peer-deps=true`, без которого
+`npm ci` падает с ERESOLVE: `mcp-handler` требует ровно `@modelcontextprotocol/sdk@1.26.0`,
+а в проекте 1.29.0. Состав пакетов при этом задаёт lock-файл — флаг лишь снимает
+проверку peer-диапазонов.
+
+**Домен `.ru` делегируется не мгновенно.** `whois` может показывать
+`REGISTERED, DELEGATED`, пока зона ещё не опубликована. Проверять надо у авторитетных
+серверов, минуя кеш: `dig +short @a.dns.ripn.net <домен> NS`. Плюс отрицательный ответ
+кешируется на час (negative TTL в SOA зоны `.ru`), поэтому после публикации резолверы
+ещё какое-то время отвечают NXDOMAIN. Caddy это переживает — он повторяет попытку
+раз в минуту в течение 30 дней и выпишет сертификат сам.
+
+**Проверка приложения до появления домена.** `fetch` по умолчанию идёт по редиректам,
+поэтому `/api/v2/me` отвечает 200 (это отрендерился `/login`) — нужен
+`{redirect:'manual'}`, тогда видно честный 307. А чтобы проверить связку с базой,
+удобнее всего дёрнуть `/api/v2/cron`: он исключён из proxy, авторизуется своим Bearer
+и делает несколько запросов к Postgres.
+
+Проверить путь «после входа», не имея рабочего OAuth, можно выписав себе cookie сессии —
+её формат открыт, ключ лежит в контейнере:
+
+```bash
+docker compose exec -T -e TEST_EMAIL="<email из core.users>" app node -e '
+const crypto = require("crypto");
+const payload = { id: "local-check", email: process.env.TEST_EMAIL, fullName: "Local",
+                  exp: Math.floor(Date.now()/1000) + 600 };
+const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+const sig = crypto.createHmac("sha256", process.env.SESSION_SECRET).update(body).digest("base64url");
+fetch("http://127.0.0.1:3000/api/v2/me", { headers: { cookie: "sb_session=" + body + "." + sig } })
+  .then(async r => console.log(r.status, (await r.text()).slice(0, 200)));
+'
+```
