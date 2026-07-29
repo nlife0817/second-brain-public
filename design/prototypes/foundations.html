@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Основы — палитра, типографика, тени</title>
+<link rel="stylesheet" href="sb.css">
+<script src="sb.js" defer></script>
+</head>
+<body>
+<nav class="proto-nav">
+  <span class="proto-nav__brand"><span class="dot"></span>Second Brain · Оранж</span>
+  <a href="index.html">Обзор</a>
+  <a href="foundations.html" class="is-current">Основы</a>
+  <a href="controls.html">Элементы</a>
+  <a href="overlays.html">Окна и слои</a>
+  <a href="screen-tasks.html">Таблица</a>
+  <a href="screen-board.html">Доска</a>
+  <a href="screen-my.html">Мои задачи</a>
+  <a href="screen-settings.html">Настройки</a>
+  <a href="screen-login.html">Вход</a>
+</nav>
+
+<div class="showcase">
+  <h1>Основы</h1>
+  <p class="lead">Токены один в один из ds-tr.css «Твоего репетитора», адаптация — только в радиусах и кеглях под десктоп.</p>
+
+  <div class="sc-section">
+    <h2>Акцент</h2>
+    <div class="sc-grid">
+      <div class="swatch" style="background:#e8734a;color:#fff"><b>accent</b><code>#e8734a</code></div>
+      <div class="swatch" style="background:#d4663f;color:#fff"><b>accent-hover</b><code>#d4663f</code></div>
+      <div class="swatch" style="background:rgba(232,115,74,.11)"><b style="color:#c2603a">accent-soft</b><code style="color:#c2603a">rgba 11%</code></div>
+      <div class="swatch" style="background:#fff"><b style="color:#c2603a">accent-text</b><code style="color:#c2603a">#c2603a — текстом</code></div>
+    </div>
+    <p class="sc-note">Сырой #e8734a текстом на белом не проходит контраст — текстовые ссылки и активные пункты используют затемнённый #c2603a.</p>
+  </div>
+
+  <div class="sc-section">
+    <h2>Поверхности и текст</h2>
+    <div class="sc-grid">
+      <div class="swatch" style="background:#f7f6f2"><b>bg · бумага</b><code>#f7f6f2</code></div>
+      <div class="swatch" style="background:#fff"><b>surface</b><code>#ffffff</code></div>
+      <div class="swatch" style="background:#fbfaf8"><b>surface-sheet</b><code>#fbfaf8</code></div>
+      <div class="swatch" style="background:#1c1b18;color:#fff"><b>text-primary</b><code>#1c1b18</code></div>
+      <div class="swatch" style="background:#fff"><b style="color:#6d6b64">text-secondary</b><code style="color:#6d6b64">#6d6b64</code></div>
+      <div class="swatch" style="background:#fff"><b style="color:#a3a099">text-muted</b><code style="color:#a3a099">#a3a099</code></div>
+    </div>
+    <p class="sc-note">Рамки — чёрные альфы (8–16%), а не отдельные серые: на любой подложке выглядят одинаково.</p>
+  </div>
+
+  <div class="sc-section">
+    <h2>Семантика</h2>
+    <div class="sc-row">
+      <span class="badge badge--success">Готово</span>
+      <span class="badge badge--warning">Сегодня</span>
+      <span class="badge badge--danger">Просрочено</span>
+      <span class="badge badge--accent">Активно</span>
+      <span class="badge badge--neutral">Черновик</span>
+    </div>
+    <p class="sc-note">Паттерн референса: подложка 10–12% + затемнённый текст того же тона. Никакого цветного текста на белом.</p>
+  </div>
+
+  <div class="sc-section">
+    <h2>Типографика — Onest</h2>
+    <div class="type-row"><code>h1 · 26/700 −0.4px</code><span style="font-size:26px;font-weight:700;letter-spacing:-0.4px">Все задачи организации</span></div>
+    <div class="type-row"><code>заголовок экрана · 19/700</code><span style="font-size:19px;font-weight:700;letter-spacing:-0.3px">Все задачи</span></div>
+    <div class="type-row"><code>заголовок карточки · 16/700</code><span style="font-size:16px;font-weight:700;letter-spacing:-0.2px">Создать задачу</span></div>
+    <div class="type-row"><code>текст · 13.5/400</code><span style="font-size:13.5px">Согласовать необходимые работы для КВК по чат-боту</span></div>
+    <div class="type-row"><code>вторичный · 12.5/400</code><span style="font-size:12.5px;color:var(--text-secondary)">Обновлено 2 часа назад · 3 подзадачи</span></div>
+    <div class="type-row"><code>метка · 11/700 caps</code><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)">Название колонки</span></div>
+    <div class="type-row"><code>моно · 12 JetBrains</code><span style="font-family:var(--font-mono);font-size:12px">29 июл. · 1 ч 30 м · 3/5</span></div>
+    <p class="sc-note">Onest здесь везде — и заголовки, и текст (вопрос №3 в обзоре). Числа, даты и оценки — JetBrains Mono, чтобы колонки не плясали.</p>
+  </div>
+
+  <div class="sc-section">
+    <h2>Радиусы</h2>
+    <div class="sc-row">
+      <div class="sc-card" style="border-radius:8px;padding:10px 14px"><b style="font-size:12px">8</b><div class="sc-note">мелкие кнопки</div></div>
+      <div class="sc-card" style="border-radius:10px;padding:10px 14px"><b style="font-size:12px">10</b><div class="sc-note">кнопки, поля</div></div>
+      <div class="sc-card" style="border-radius:12px;padding:10px 14px"><b style="font-size:12px">12</b><div class="sc-note">меню, поповеры</div></div>
+      <div class="sc-card" style="border-radius:14px;padding:10px 14px"><b style="font-size:12px">14</b><div class="sc-note">карточки, колонки</div></div>
+      <div class="sc-card" style="border-radius:16px;padding:10px 14px"><b style="font-size:12px">16</b><div class="sc-note">модалки</div></div>
+      <div class="sc-card" style="border-radius:99px;padding:10px 16px"><b style="font-size:12px">pill</b><div class="sc-note">чипы, счётчики</div></div>
+    </div>
+  </div>
+
+  <div class="sc-section">
+    <h2>Тени</h2>
+    <div class="sc-grid">
+      <div class="sc-card" style="box-shadow:var(--shadow-xs)"><b style="font-size:12.5px">xs</b><p class="sc-note">поля, вторичные кнопки</p></div>
+      <div class="sc-card" style="box-shadow:var(--shadow-sm)"><b style="font-size:12.5px">sm</b><p class="sc-note">карточки списка и доски</p></div>
+      <div class="sc-card" style="box-shadow:var(--shadow-md)"><b style="font-size:12.5px">md</b><p class="sc-note">ховер карточек</p></div>
+      <div class="sc-card" style="box-shadow:var(--shadow-lg)"><b style="font-size:12.5px">lg</b><p class="sc-note">модалки, меню</p></div>
+      <div class="sc-card" style="box-shadow:var(--shadow-accent)"><b style="font-size:12.5px;color:var(--accent-text)">accent</b><p class="sc-note">primary-кнопки — фирменное свечение референса</p></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

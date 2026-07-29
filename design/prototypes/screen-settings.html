@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Экран · Настройки организации</title>
+<link rel="stylesheet" href="sb.css">
+<script src="sb.js" defer></script>
+</head>
+<body>
+<nav class="proto-nav">
+  <span class="proto-nav__brand"><span class="dot"></span>Second Brain · Оранж</span>
+  <a href="index.html">Обзор</a>
+  <a href="foundations.html">Основы</a>
+  <a href="controls.html">Элементы</a>
+  <a href="overlays.html">Окна и слои</a>
+  <a href="screen-tasks.html">Таблица</a>
+  <a href="screen-board.html">Доска</a>
+  <a href="screen-my.html">Мои задачи</a>
+  <a href="screen-settings.html" class="is-current">Настройки</a>
+  <a href="screen-login.html">Вход</a>
+</nav>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="sidebar__org">
+      <span class="sidebar__org-badge">D</span>
+      <span class="sidebar__org-name">DreamUnion</span>
+    </div>
+    <button class="side-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      Поиск <kbd>⌘K</kbd>
+    </button>
+    <a class="nav-item" href="screen-my.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>Мои задачи</a>
+    <a class="nav-item" href="screen-tasks.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>Все задачи</a>
+    <a class="nav-item is-active" href="screen-settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>Настройки</a>
+    <div style="flex:1"></div>
+  </aside>
+
+  <main class="main" style="background:var(--bg)">
+    <header class="page-header" style="background:var(--surface)">
+      <h1>Настройки организации</h1>
+      <span class="spacer"></span>
+      <button class="btn btn--secondary btn--sm">Журнал действий</button>
+    </header>
+
+    <div class="page-body">
+      <div style="max-width:680px;margin:0 auto;padding:20px 24px 60px;display:flex;flex-direction:column;gap:14px">
+
+        <div class="sc-card" style="border-radius:14px">
+          <h2 style="font-size:14px;font-weight:700;margin-bottom:12px">Организация</h2>
+          <div style="display:flex;gap:12px;align-items:flex-end">
+            <label class="field" style="flex:1">
+              <span class="field__label">Название</span>
+              <input class="input" value="DreamUnion">
+            </label>
+            <button class="btn btn--secondary">Сохранить</button>
+          </div>
+        </div>
+
+        <div class="sc-card" style="border-radius:14px">
+          <h2 style="font-size:14px;font-weight:700;margin-bottom:12px">Участники · 3</h2>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="avatar avatar--md avatar--orange">ПБ</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13.5px;font-weight:600">Полина Б.</div>
+                <div style="font-size:12px;color:var(--text-muted)">demo@example.com</div>
+              </div>
+              <span class="badge badge--accent">Владелец</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="avatar avatar--md avatar--green">ДУ</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13.5px;font-weight:600">Дмитрий У.</div>
+                <div style="font-size:12px;color:var(--text-muted)">d.u@example.com</div>
+              </div>
+              <select class="select select--sm" style="width:140px"><option>Сотрудник</option><option>Администратор</option><option>Гость</option></select>
+              <button class="btn btn--ghost btn--icon btn--sm" title="Убрать"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="avatar avatar--md avatar--pink">НЛ</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13.5px;font-weight:600">Нина Л. <span class="badge badge--warning" style="margin-left:6px;font-size:10.5px;padding:1.5px 7px">приглашение отправлено</span></div>
+                <div style="font-size:12px;color:var(--text-muted)">n.l@example.com</div>
+              </div>
+              <button class="btn btn--ghost btn--sm">Отозвать</button>
+            </div>
+            <div style="border-top:1px solid var(--border-divider);padding-top:12px;display:flex;gap:8px">
+              <input class="input" placeholder="email@team.example" style="flex:1">
+              <select class="select" style="width:150px"><option>Сотрудник</option><option>Гость</option></select>
+              <button class="btn btn--primary" onclick="toast('Приглашение отправлено')">Пригласить</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="sc-card" style="border-radius:14px">
+          <h2 style="font-size:14px;font-weight:700;margin-bottom:12px">Статусы задач</h2>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="proj-dot" style="background:#94a3b8;border-radius:50%"></span>
+              <input class="input input--sm" value="Входящие" style="flex:1">
+              <select class="select select--sm" style="width:120px"><option>Открытый</option><option>Готово</option><option>Архив</option></select>
+              <button class="btn btn--ghost btn--icon btn--sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="proj-dot" style="background:#f59e0b;border-radius:50%"></span>
+              <input class="input input--sm" value="В работе" style="flex:1">
+              <select class="select select--sm" style="width:120px"><option>Открытый</option></select>
+              <button class="btn btn--ghost btn--icon btn--sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+            </div>
+            <button class="btn btn--ghost btn--sm" style="align-self:flex-start"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Добавить статус</button>
+          </div>
+        </div>
+
+        <div class="sc-card" style="border-radius:14px">
+          <h2 style="font-size:14px;font-weight:700;margin-bottom:12px">Теги</h2>
+          <div class="sc-row" style="gap:8px">
+            <span class="tinted-chip" style="--chip-color:#8b5cf6">идея <span style="cursor:pointer;opacity:.6">×</span></span>
+            <span class="tinted-chip" style="--chip-color:#f59e0b">внеплан <span style="cursor:pointer;opacity:.6">×</span></span>
+            <span class="tinted-chip" style="--chip-color:#10b981">быстрое <span style="cursor:pointer;opacity:.6">×</span></span>
+            <button class="btn btn--ghost btn--sm" style="height:24px;font-size:11.5px">+ тег</button>
+          </div>
+        </div>
+
+        <div class="sc-card" style="border-radius:14px">
+          <h2 style="font-size:14px;font-weight:700;margin-bottom:12px">Уведомления</h2>
+          <div style="display:flex;flex-direction:column;gap:12px;font-size:13.5px">
+            <span style="display:flex;align-items:center;justify-content:space-between">Пуши на этом устройстве <button class="toggle is-on" onclick="toggleSwitch(this)"></button></span>
+            <span style="display:flex;align-items:center;justify-content:space-between">Назначили исполнителем <button class="toggle is-on" onclick="toggleSwitch(this)"></button></span>
+            <span style="display:flex;align-items:center;justify-content:space-between">Комментарий в моей задаче <button class="toggle is-on" onclick="toggleSwitch(this)"></button></span>
+            <span style="display:flex;align-items:center;justify-content:space-between">Дайджест по утрам <button class="toggle" onclick="toggleSwitch(this)"></button></span>
+          </div>
+        </div>
+
+        <div class="sc-card" style="border-radius:14px;border-color:rgba(220,38,38,.25)">
+          <h2 style="font-size:14px;font-weight:700;margin-bottom:6px;color:var(--danger)">Опасная зона</h2>
+          <p style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px">Удаление организации необратимо: задачи, проекты и история исчезнут у всех участников.</p>
+          <button class="btn btn--danger" onclick="openModal('m-del')">Удалить организацию</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="overlay" id="ovl" onclick="closeLayers()"></div>
+<div class="modal" id="m-del" role="dialog">
+  <div class="modal__head">
+    <h2>Удалить организацию?</h2>
+    <button class="x-btn" onclick="closeLayers()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  </div>
+  <div class="modal__body">
+    <p style="font-size:13.5px;line-height:1.55;color:var(--text-secondary)">Введите название организации <b style="color:var(--text-primary)">DreamUnion</b>, чтобы подтвердить. Все данные будут удалены безвозвратно.</p>
+    <input class="input" placeholder="DreamUnion">
+  </div>
+  <div class="modal__foot">
+    <button class="btn btn--ghost" onclick="closeLayers()">Отмена</button>
+    <button class="btn btn--danger-solid" disabled>Удалить навсегда</button>
+  </div>
+</div>
+<div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Готово</span></div>
+</body>
+</html>

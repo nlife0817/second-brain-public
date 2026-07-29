@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Элементы — кнопки, поля, селекты, метки</title>
+<link rel="stylesheet" href="sb.css">
+<script src="sb.js" defer></script>
+</head>
+<body>
+<nav class="proto-nav">
+  <span class="proto-nav__brand"><span class="dot"></span>Second Brain · Оранж</span>
+  <a href="index.html">Обзор</a>
+  <a href="foundations.html">Основы</a>
+  <a href="controls.html" class="is-current">Элементы</a>
+  <a href="overlays.html">Окна и слои</a>
+  <a href="screen-tasks.html">Таблица</a>
+  <a href="screen-board.html">Доска</a>
+  <a href="screen-my.html">Мои задачи</a>
+  <a href="screen-settings.html">Настройки</a>
+  <a href="screen-login.html">Вход</a>
+</nav>
+
+<div class="showcase">
+  <h1>Элементы</h1>
+  <p class="lead">Каждый контрол — живой: наводите, кликайте. Все состояния из реального приложения.</p>
+
+  <div class="sc-section">
+    <h2>Кнопки · варианты</h2>
+    <div class="sc-row">
+      <button class="btn btn--primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Задача</button>
+      <button class="btn btn--secondary">Сохранить</button>
+      <button class="btn btn--ghost">Отмена</button>
+      <button class="btn btn--danger">Удалить</button>
+      <button class="btn btn--danger-solid">Удалить навсегда</button>
+      <button class="btn btn--dark">Завершить</button>
+      <button class="btn btn--primary" disabled>Недоступно</button>
+    </div>
+    <p class="sc-note">Primary — одна на экран, с оранжевым свечением. Danger по умолчанию «мягкая»; сплошная красная — только в подтверждении необратимого.</p>
+  </div>
+
+  <div class="sc-section">
+    <h2>Кнопки · размеры</h2>
+    <div class="sc-row">
+      <button class="btn btn--primary btn--lg">Крупная · 40</button>
+      <button class="btn btn--primary">Обычная · 34</button>
+      <button class="btn btn--primary btn--sm">Мелкая · 28</button>
+      <button class="btn btn--secondary btn--icon" title="Настройки вида"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg></button>
+      <button class="btn btn--ghost btn--icon btn--sm" title="Переименовать"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+      <button class="btn btn--ghost btn--icon btn--sm" title="Удалить"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+    </div>
+  </div>
+
+  <div class="sc-section">
+    <h2>Поля ввода</h2>
+    <div class="sc-grid" style="grid-template-columns:repeat(auto-fill,minmax(250px,1fr))">
+      <label class="field">
+        <span class="field__label">Название задачи</span>
+        <input class="input" placeholder="Что нужно сделать?">
+      </label>
+      <label class="field">
+        <span class="field__label">В фокусе</span>
+        <input class="input is-focus" value="Обработать ТЗ по чат-боту">
+      </label>
+      <label class="field">
+        <span class="field__label">С ошибкой</span>
+        <input class="input is-error" value="">
+        <span class="field__error">Название не может быть пустым</span>
+      </label>
+      <label class="field">
+        <span class="field__label">Поиск</span>
+        <span class="search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input class="input input--search" placeholder="Поиск по названию…">
+        </span>
+      </label>
+      <label class="field">
+        <span class="field__label">Компактное · 30px</span>
+        <input class="input input--sm" placeholder="Для шапок и тулбаров">
+      </label>
+      <label class="field">
+        <span class="field__label">Описание</span>
+        <textarea class="textarea" placeholder="Подробности, ссылки, критерии готовности…"></textarea>
+        <span class="field__hint">Поддерживается форматирование</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="sc-section">
+    <h2>Селекты и переключатели</h2>
+    <div class="sc-grid" style="grid-template-columns:repeat(auto-fill,minmax(250px,1fr))">
+      <label class="field">
+        <span class="field__label">Статус</span>
+        <select class="select"><option>Входящие</option><option>К выполнению</option><option>В работе</option><option>Готово</option></select>
+      </label>
+      <label class="field">
+        <span class="field__label">Приоритет · компактный</span>
+        <select class="select select--sm"><option>Без приоритета</option><option>Срочно</option><option>Высокий</option></select>
+      </label>
+      <div class="field">
+        <span class="field__label">Чекбоксы</span>
+        <div style="display:flex;flex-direction:column;gap:8px;padding-top:2px">
+          <label class="check"><input type="checkbox" checked><span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>Показывать завершённые</label>
+          <label class="check"><input type="checkbox"><span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>Только мои</label>
+        </div>
+      </div>
+      <div class="field">
+        <span class="field__label">Радио</span>
+        <div style="display:flex;flex-direction:column;gap:8px;padding-top:2px">
+          <label class="radio"><input type="radio" name="r1" checked><span class="dot"></span>Боковая панель</label>
+          <label class="radio"><input type="radio" name="r1"><span class="dot"></span>Модальное окно</label>
+        </div>
+      </div>
+      <div class="field">
+        <span class="field__label">Тумблеры</span>
+        <div style="display:flex;flex-direction:column;gap:10px;padding-top:2px">
+          <span style="display:flex;align-items:center;gap:10px;font-size:13.5px"><button class="toggle is-on" onclick="toggleSwitch(this)"></button>Пуш-уведомления</span>
+          <span style="display:flex;align-items:center;gap:10px;font-size:13.5px"><button class="toggle" onclick="toggleSwitch(this)"></button>Тихие часы</span>
+        </div>
+      </div>
+      <div class="field">
+        <span class="field__label">Фильтры-чипы</span>
+        <div class="sc-row" style="gap:8px;padding-top:2px">
+          <button class="filter-chip is-active">Все</button>
+          <button class="filter-chip">Мои</button>
+          <button class="filter-chip">Просроченные <span class="badge badge--danger" style="padding:0 6px;font-size:10.5px">3</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sc-section">
+    <h2>Метки статусов, проектов и тегов</h2>
+    <div class="sc-row">
+      <span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>Входящие</span>
+      <span class="tinted-chip" style="--chip-color:#3b82f6"><span class="dot"></span>К выполнению</span>
+      <span class="tinted-chip" style="--chip-color:#f59e0b"><span class="dot"></span>В работе</span>
+      <span class="tinted-chip" style="--chip-color:#10b981"><span class="dot"></span>Готово</span>
+      <span class="tinted-chip tinted-chip--sq" style="--chip-color:#3b82f6">Сторонние проекты</span>
+      <span class="tinted-chip tinted-chip--sq" style="--chip-color:#f59e0b">Идеи</span>
+      <span class="tinted-chip tinted-chip--sq" style="--chip-color:#8b5cf6">Заметки</span>
+      <span class="tinted-chip" style="--chip-color:#8b5cf6">идея</span>
+      <span class="tinted-chip" style="--chip-color:#f59e0b">внеплан</span>
+    </div>
+    <p class="sc-note">Цвета задаёт пользователь в настройках — паттерн «подложка 13% + затемнённый текст» работает с любым. Статусы круглые с точкой, проекты — скруглённые квадраты, теги — круглые без точки.</p>
+  </div>
+
+  <div class="sc-section">
+    <h2>Аватары и приоритеты</h2>
+    <div class="sc-row" style="gap:18px">
+      <span class="avatar avatar--lg avatar--orange">ПБ</span>
+      <span class="avatar avatar--md avatar--green">ДУ</span>
+      <span class="avatar avatar--indigo">АД</span>
+      <span class="avatar-stack">
+        <span class="avatar avatar--orange">ПБ</span>
+        <span class="avatar avatar--green">ДУ</span>
+        <span class="avatar avatar--pink">НЛ</span>
+        <span class="avatar avatar--slate">+2</span>
+      </span>
+      <span style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px"><span class="prio prio--urgent"></span>Срочно</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px"><span class="prio prio--high"></span>Высокий</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px"><span class="prio prio--med"></span>Средний</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px"><span class="prio prio--low"></span>Низкий</span>
+    </div>
+    <p class="sc-note">Аватары — скруглённые квадраты с градиентом и бликом, как в референсе (вопрос №5). «Срочно» получает светящееся кольцо.</p>
+  </div>
+
+  <div class="sc-section">
+    <h2>Пустое состояние</h2>
+    <div class="sc-card">
+      <div class="empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
+        <div class="empty__title">Все задачи разобраны</div>
+        <div class="empty__sub">Добавьте новую или дождитесь назначения от команды.</div>
+        <button class="btn btn--primary btn--sm" style="margin-top:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Новая задача</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

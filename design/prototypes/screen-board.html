@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Экран · Доска проекта</title>
+<link rel="stylesheet" href="sb.css">
+<script src="sb.js" defer></script>
+</head>
+<body>
+<nav class="proto-nav">
+  <span class="proto-nav__brand"><span class="dot"></span>Second Brain · Оранж</span>
+  <a href="index.html">Обзор</a>
+  <a href="foundations.html">Основы</a>
+  <a href="controls.html">Элементы</a>
+  <a href="overlays.html">Окна и слои</a>
+  <a href="screen-tasks.html">Таблица</a>
+  <a href="screen-board.html" class="is-current">Доска</a>
+  <a href="screen-my.html">Мои задачи</a>
+  <a href="screen-settings.html">Настройки</a>
+  <a href="screen-login.html">Вход</a>
+</nav>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="sidebar__org">
+      <span class="sidebar__org-badge">D</span>
+      <span class="sidebar__org-name">DreamUnion</span>
+    </div>
+    <button class="side-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      Поиск <kbd>⌘K</kbd>
+    </button>
+    <a class="nav-item" href="screen-my.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>Мои задачи</a>
+    <a class="nav-item" href="screen-tasks.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>Все задачи</a>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>Уведомления<span class="count">3</span></button>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Время</button>
+    <a class="nav-item" href="screen-settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>Настройки</a>
+    <div class="side-label">Проекты <button title="Новый проект"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+    <a class="nav-item is-active" href="screen-board.html"><span class="proj-dot" style="background:#3b82f6"></span>Сторонние проекты<span class="count count--muted">5</span></a>
+    <button class="nav-item"><span class="proj-dot" style="background:#8b5cf6"></span>Заметки<span class="count count--muted">2</span></button>
+    <button class="nav-item"><span class="proj-dot" style="background:#f59e0b"></span>Идеи<span class="count count--muted">9</span></button>
+    <button class="nav-item"><span class="proj-dot" style="background:#14b8a6"></span>Встречи</button>
+    <div style="flex:1"></div>
+  </aside>
+
+  <main class="main" style="background:var(--bg)">
+    <header class="page-header" style="background:var(--surface)">
+      <span class="proj-dot" style="background:#3b82f6;width:11px;height:11px"></span>
+      <h1>Сторонние проекты</h1>
+      <span class="badge badge--neutral">Закрытый</span>
+      <span class="spacer"></span>
+      <div style="display:flex;border:1.5px solid var(--border-input);border-radius:9px;overflow:hidden">
+        <button class="btn btn--ghost btn--sm" style="border-radius:0">Таблица</button>
+        <button class="btn btn--sm" style="border-radius:0;background:var(--text-primary);color:#fff">Доска</button>
+      </div>
+      <label class="check" style="font-size:12.5px"><input type="checkbox"><span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>Завершённые</label>
+      <span class="avatar-stack"><span class="avatar avatar--orange">ПБ</span><span class="avatar avatar--green">ДУ</span><span class="avatar avatar--slate">+1</span></span>
+      <button class="btn btn--primary btn--sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Задача</button>
+    </header>
+
+    <div class="page-body">
+      <div class="board">
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#94a3b8;border-radius:50%"></span>Входящие <span class="count-pill">3</span>
+            <button class="add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+          </div>
+          <div class="k-col__body">
+            <button class="k-card" onclick="toast('Открылась бы панель задачи')">
+              <div class="name">Согласовать необходимые работы для КВК по чат-боту</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#f59e0b">внеплан</span></div>
+              <div class="meta"><span class="due due--over" style="font-family:var(--font-mono)">10 июл.</span><span>1 ч 30 м</span><span class="spacer"></span><span class="avatar-stack"><span class="avatar avatar--orange">ПБ</span><span class="avatar avatar--green">ДУ</span></span></div>
+            </button>
+            <button class="k-card">
+              <div class="name">Обработать ТЗ по чат-боту</div>
+              <div class="meta"><span class="due due--today" style="font-family:var(--font-mono)">сегодня</span><span class="spacer"></span><span class="avatar">ПБ</span></div>
+            </button>
+            <button class="k-card">
+              <div class="name">Идея с активным шумоподавлением на улице</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#8b5cf6">идея</span></div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#f59e0b;border-radius:50%"></span>В работе <span class="count-pill">2</span>
+            <button class="add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+          </div>
+          <div class="k-col__body">
+            <button class="k-card">
+              <div class="name">Создать калькулятор-будильник</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#8b5cf6">идея</span></div>
+              <div class="meta"><span class="due" style="font-family:var(--font-mono)">13 авг.</span><span>4 ч</span><span class="spacer"></span><span class="avatar avatar--green">ДУ</span></div>
+            </button>
+            <button class="k-card">
+              <div class="name">Смета и договор по этапам внедрения</div>
+              <div class="meta"><span style="display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>4</span><span>2/5</span><span class="spacer"></span><span class="avatar avatar--orange">ПБ</span></div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#10b981;border-radius:50%"></span>Готово <span class="count-pill">1</span>
+            <button class="add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+          </div>
+          <div class="k-col__body">
+            <button class="k-card" style="opacity:.65">
+              <div class="name" style="text-decoration:line-through;color:var(--text-muted)">Первичный созвон с заказчиком</div>
+              <div class="meta"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg><span class="spacer"></span><span class="avatar avatar--green">ДУ</span></div>
+            </button>
+            <div class="empty" style="padding:20px 10px 12px">
+              <div class="empty__sub" style="font-size:11.5px">Перетащите карточку, чтобы завершить</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="k-col" style="background:transparent;border:1.5px dashed var(--border-active)">
+          <button class="btn btn--ghost" style="margin:auto;color:var(--text-muted)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Новый статус
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="overlay" id="ovl" onclick="closeLayers()"></div>
+<div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Готово</span></div>
+</body>
+</html>

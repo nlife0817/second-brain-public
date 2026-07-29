@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Экран · Все задачи</title>
+<link rel="stylesheet" href="sb.css">
+<script src="sb.js" defer></script>
+</head>
+<body>
+<nav class="proto-nav">
+  <span class="proto-nav__brand"><span class="dot"></span>Second Brain · Оранж</span>
+  <a href="index.html">Обзор</a>
+  <a href="foundations.html">Основы</a>
+  <a href="controls.html">Элементы</a>
+  <a href="overlays.html">Окна и слои</a>
+  <a href="screen-tasks.html" class="is-current">Таблица</a>
+  <a href="screen-board.html">Доска</a>
+  <a href="screen-my.html">Мои задачи</a>
+  <a href="screen-settings.html">Настройки</a>
+  <a href="screen-login.html">Вход</a>
+</nav>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="sidebar__org">
+      <span class="sidebar__org-badge">D</span>
+      <span class="sidebar__org-name">DreamUnion</span>
+    </div>
+    <button class="side-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      Поиск <kbd>⌘K</kbd>
+    </button>
+    <a class="nav-item" href="screen-my.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>Мои задачи</a>
+    <a class="nav-item is-active" href="screen-tasks.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>Все задачи</a>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>Уведомления<span class="count">3</span></button>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Время</button>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Клиенты</button>
+    <a class="nav-item" href="screen-settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>Настройки</a>
+    <div class="side-label">Проекты <button title="Новый проект"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+    <a class="nav-item" href="screen-board.html"><span class="proj-dot" style="background:#3b82f6"></span>Сторонние проекты<span class="count count--muted">5</span></a>
+    <button class="nav-item"><span class="proj-dot" style="background:#8b5cf6"></span>Заметки<span class="count count--muted">2</span></button>
+    <button class="nav-item"><span class="proj-dot" style="background:#f59e0b"></span>Идеи<span class="count count--muted">9</span></button>
+    <button class="nav-item"><span class="proj-dot" style="background:#14b8a6"></span>Встречи</button>
+    <button class="nav-item"><span class="proj-dot" style="background:#ec4899"></span>Планы<span class="count count--muted">4</span></button>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:9px;padding:10px 10px 4px;border-top:1px solid var(--border-divider)">
+      <span class="avatar avatar--orange">ПБ</span>
+      <span style="font-size:12.5px;font-weight:500;flex:1">Полина Б.</span>
+      <span class="badge badge--neutral" style="font-size:10px;padding:2px 6px">владелец</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="page-header">
+      <h1>Все задачи</h1>
+      <span class="count-pill">10 из 21</span>
+      <span class="spacer"></span>
+      <span class="search-wrap" style="width:200px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input class="input input--sm input--search" placeholder="Поиск по названию…" style="padding-left:28px">
+      </span>
+      <button class="btn btn--secondary btn--sm" data-pop-trigger onclick="togglePop('pop-filter', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        Фильтры <span class="badge badge--accent" style="padding:0 6px;font-size:10.5px">2</span>
+      </button>
+      <button class="btn btn--secondary btn--icon btn--sm" title="Настройки вида"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg></button>
+      <button class="btn btn--primary btn--sm" onclick="toast('Открылась бы модалка создания')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Задача</button>
+    </header>
+
+    <div class="page-body">
+      <div class="t-head">
+        <span style="width:34px"></span>
+        <span style="flex:1">Название</span>
+        <span style="width:130px">Статус</span>
+        <span style="width:140px">Проект</span>
+        <span style="width:80px">Люди</span>
+        <span style="width:120px">Теги</span>
+        <span style="width:80px">Дедлайн</span>
+        <span style="width:70px">Оценка</span>
+      </div>
+
+      <div class="t-group">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+        Входящие <span class="count-pill">6</span>
+      </div>
+
+      <div class="t-row" onclick="toast('Открылась бы панель задачи')">
+        <span class="t-cell" style="width:34px"><span class="prio prio--high"></span></span>
+        <span class="t-cell t-cell--grow title">Согласовать необходимые работы для КВК по чат-боту</span>
+        <span class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>Входящие</span></span>
+        <span class="t-cell" style="width:140px"><span class="tinted-chip tinted-chip--sq" style="--chip-color:#3b82f6">Сторонние</span></span>
+        <span class="t-cell" style="width:80px"><span class="avatar-stack"><span class="avatar avatar--orange">ПБ</span><span class="avatar avatar--green">ДУ</span></span></span>
+        <span class="t-cell" style="width:120px"><span class="tinted-chip" style="--chip-color:#f59e0b">внеплан</span></span>
+        <span class="t-cell" style="width:80px"><span class="due due--over">10 июл.</span></span>
+        <span class="t-cell" style="width:70px"><span class="due">1 ч 30 м</span></span>
+      </div>
+      <div class="t-row">
+        <span class="t-cell" style="width:34px"></span>
+        <span class="t-cell t-cell--grow title">Обработать ТЗ по чат-боту</span>
+        <span class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>Входящие</span></span>
+        <span class="t-cell" style="width:140px"><span class="tinted-chip tinted-chip--sq" style="--chip-color:#3b82f6">Сторонние</span></span>
+        <span class="t-cell" style="width:80px"><span class="avatar">ПБ</span></span>
+        <span class="t-cell" style="width:120px"></span>
+        <span class="t-cell" style="width:80px"><span class="due due--today">сегодня</span></span>
+        <span class="t-cell" style="width:70px"></span>
+      </div>
+      <div class="t-row">
+        <span class="t-cell" style="width:34px"><span class="prio prio--urgent"></span></span>
+        <span class="t-cell t-cell--grow title">Создать калькулятор-будильник</span>
+        <span class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#f59e0b"><span class="dot"></span>В работе</span></span>
+        <span class="t-cell" style="width:140px"><span class="tinted-chip tinted-chip--sq" style="--chip-color:#3b82f6">Сторонние</span></span>
+        <span class="t-cell" style="width:80px"><span class="avatar avatar--green">ДУ</span></span>
+        <span class="t-cell" style="width:120px"><span class="tinted-chip" style="--chip-color:#8b5cf6">идея</span></span>
+        <span class="t-cell" style="width:80px"><span class="due">13 авг.</span></span>
+        <span class="t-cell" style="width:70px"><span class="due">4 ч</span></span>
+      </div>
+      <div class="t-row">
+        <span class="t-cell" style="width:34px"></span>
+        <span class="t-cell t-cell--grow title">Идея с активным шумоподавлением на улице</span>
+        <span class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>Входящие</span></span>
+        <span class="t-cell" style="width:140px"><span class="tinted-chip tinted-chip--sq" style="--chip-color:#f59e0b">Идеи</span></span>
+        <span class="t-cell" style="width:80px"></span>
+        <span class="t-cell" style="width:120px"><span class="tinted-chip" style="--chip-color:#8b5cf6">идея</span></span>
+        <span class="t-cell" style="width:80px"></span>
+        <span class="t-cell" style="width:70px"></span>
+      </div>
+      <div class="t-row">
+        <span class="t-cell" style="width:34px"></span>
+        <span class="t-cell t-cell--grow title">Клуб романтики, но содержимое в формате фанфиков</span>
+        <span class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>Входящие</span></span>
+        <span class="t-cell" style="width:140px"><span class="tinted-chip tinted-chip--sq" style="--chip-color:#f59e0b">Идеи</span></span>
+        <span class="t-cell" style="width:80px"></span>
+        <span class="t-cell" style="width:120px"></span>
+        <span class="t-cell" style="width:80px"><span class="due">2 мая</span></span>
+        <span class="t-cell" style="width:70px"></span>
+      </div>
+      <div class="t-row is-done">
+        <span class="t-cell" style="width:34px"></span>
+        <span class="t-cell t-cell--grow title">Хорошая книга «Аэропорт»</span>
+        <span class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#10b981"><span class="dot"></span>Готово</span></span>
+        <span class="t-cell" style="width:140px"><span class="tinted-chip tinted-chip--sq" style="--chip-color:#8b5cf6">Заметки</span></span>
+        <span class="t-cell" style="width:80px"></span>
+        <span class="t-cell" style="width:120px"></span>
+        <span class="t-cell" style="width:80px"></span>
+        <span class="t-cell" style="width:70px"></span>
+      </div>
+
+      <div class="t-group">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+        В работе <span class="count-pill">2</span>
+      </div>
+      <div class="t-row">
+        <span class="t-cell" style="width:34px"><span class="prio prio--med"></span></span>
+        <span class="t-cell t-cell--grow title">Подголовники для всех поездов и электричек</span>
+        <span class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#f59e0b"><span class="dot"></span>В работе</span></span>
+        <span class="t-cell" style="width:140px"><span class="tinted-chip tinted-chip--sq" style="--chip-color:#f59e0b">Идеи</span></span>
+        <span class="t-cell" style="width:80px"><span class="avatar avatar--orange">ПБ</span></span>
+        <span class="t-cell" style="width:120px"></span>
+        <span class="t-cell" style="width:80px"><span class="due">25 авг.</span></span>
+        <span class="t-cell" style="width:70px"><span class="due">8 ч</span></span>
+      </div>
+      <div class="t-row">
+        <span class="t-cell" style="width:34px"></span>
+        <span class="t-cell t-cell--grow title">Жалобы города: карта проблем и волонтёры</span>
+        <span class="t-cell" style="width:130px"><span class="tinted-chip" style="--chip-color:#f59e0b"><span class="dot"></span>В работе</span></span>
+        <span class="t-cell" style="width:140px"><span class="tinted-chip tinted-chip--sq" style="--chip-color:#f59e0b">Идеи</span></span>
+        <span class="t-cell" style="width:80px"><span class="avatar-stack"><span class="avatar avatar--green">ДУ</span><span class="avatar avatar--pink">НЛ</span></span></span>
+        <span class="t-cell" style="width:120px"><span class="tinted-chip" style="--chip-color:#8b5cf6">идея</span></span>
+        <span class="t-cell" style="width:80px"><span class="due">17 сен.</span></span>
+        <span class="t-cell" style="width:70px"></span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 20px;color:var(--text-muted);font-size:13px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        Быстро добавить задачу…
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="pop" id="pop-filter" style="min-width:250px">
+  <div class="pop__label">Активные фильтры</div>
+  <div style="display:flex;flex-direction:column;gap:6px;padding:4px 10px 8px">
+    <span class="badge badge--accent" style="justify-content:space-between">Исполнитель: я <span style="cursor:pointer">×</span></span>
+    <span class="badge badge--accent" style="justify-content:space-between">Срок: этот месяц <span style="cursor:pointer">×</span></span>
+  </div>
+  <div class="pop__sep"></div>
+  <button class="pop__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Добавить условие</button>
+</div>
+
+<div class="overlay" id="ovl" onclick="closeLayers()"></div>
+<div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Готово</span></div>
+</body>
+</html>

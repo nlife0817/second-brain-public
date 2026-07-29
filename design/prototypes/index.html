@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Second Brain · Оранж — обзор прототипов</title>
+<link rel="stylesheet" href="sb.css">
+<script src="sb.js" defer></script>
+</head>
+<body>
+<nav class="proto-nav">
+  <span class="proto-nav__brand"><span class="dot"></span>Second Brain · Оранж</span>
+  <a href="index.html" class="is-current">Обзор</a>
+  <a href="foundations.html">Основы</a>
+  <a href="controls.html">Элементы</a>
+  <a href="overlays.html">Окна и слои</a>
+  <a href="screen-tasks.html">Таблица</a>
+  <a href="screen-board.html">Доска</a>
+  <a href="screen-my.html">Мои задачи</a>
+  <a href="screen-settings.html">Настройки</a>
+  <a href="screen-login.html">Вход</a>
+</nav>
+
+<div class="showcase">
+  <h1>Оранжевая тема для Second Brain</h1>
+  <p class="lead">
+    Язык взят из дизайн-системы «Твой репетитор»: тёплая бумага вместо холодного серого,
+    оранжевый акцент #e8734a с мягким свечением, шрифт Onest, скругления 10–14px,
+    «мягкие» статусы на цветных подложках. Здесь он адаптирован под плотный десктопный
+    трекер — контролы компактнее, таблица остаётся плотной.
+  </p>
+
+  <div class="sc-section">
+    <h2>Ключевые цвета</h2>
+    <div class="sc-grid">
+      <div class="swatch" style="background:#e8734a;color:#fff"><b>Акцент</b><code>#e8734a</code></div>
+      <div class="swatch" style="background:#f7f6f2"><b>Бумага (фон, сайдбар)</b><code>#f7f6f2</code></div>
+      <div class="swatch" style="background:#fff"><b>Поверхность</b><code>#ffffff</code></div>
+      <div class="swatch" style="background:#1c1b18;color:#fff"><b>Текст</b><code>#1c1b18</code></div>
+    </div>
+  </div>
+
+  <div class="sc-section">
+    <h2>Что смотреть</h2>
+    <div class="sc-grid" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">
+      <a class="sc-card" href="foundations.html" style="text-decoration:none">
+        <b>Основы</b>
+        <p class="sc-note">Палитра целиком, типографика Onest, радиусы, тени. Фундамент — если он не нравится, дальше можно не листать.</p>
+      </a>
+      <a class="sc-card" href="controls.html" style="text-decoration:none">
+        <b>Элементы</b>
+        <p class="sc-note">Кнопки всех видов и размеров, поля, селекты, чекбоксы, тумблеры, метки статусов, аватары. Основной запрос этой итерации.</p>
+      </a>
+      <a class="sc-card" href="overlays.html" style="text-decoration:none">
+        <b>Окна и слои</b>
+        <p class="sc-note">Живые модалки: создание задачи, подтверждение удаления, участники проекта. Выпадающие меню, поповеры, тосты, боковая панель задачи. Всё кликается.</p>
+      </a>
+      <a class="sc-card" href="screen-tasks.html" style="text-decoration:none">
+        <b>Экран «Все задачи»</b>
+        <p class="sc-note">Плотная таблица в новой теме: группы, чипы, приоритеты, дедлайны. Строки те же 34px — плотность не трогали.</p>
+      </a>
+      <a class="sc-card" href="screen-board.html" style="text-decoration:none">
+        <b>Экран «Доска»</b>
+        <p class="sc-note">Канбан: колонки на бумаге, белые карточки с тенью, ховер с подъёмом.</p>
+      </a>
+      <a class="sc-card" href="screen-my.html" style="text-decoration:none">
+        <b>Экран «Мои задачи»</b>
+        <p class="sc-note">Карточный список с группами по срокам, строка быстрого добавления, пустое состояние.</p>
+      </a>
+      <a class="sc-card" href="screen-settings.html" style="text-decoration:none">
+        <b>Экран «Настройки»</b>
+        <p class="sc-note">Секции-карточки, формы, участники, теги, зона удаления — где живут почти все «мелкие» контролы.</p>
+      </a>
+      <a class="sc-card" href="screen-login.html" style="text-decoration:none">
+        <b>Вход</b>
+        <p class="sc-note">Первый экран, который видит новый участник.</p>
+      </a>
+    </div>
+  </div>
+
+  <div class="sc-section">
+    <h2>Вопросы к ревью</h2>
+    <div class="sc-card" style="font-size:13.5px;line-height:1.65">
+      <ol style="padding-left:18px;display:flex;flex-direction:column;gap:6px">
+        <li>Оранжевый как в референсе (#e8734a, тёплый коралловый) — или ярче/спокойнее?</li>
+        <li>Тёплая бумага #f7f6f2 фоном сайдбара и досок — ок, или оставить белее?</li>
+        <li>Onest переводим целиком (и текст, и заголовки) или только заголовки, а текст оставить Inter?</li>
+        <li>Primary-кнопка с оранжевым свечением-тенью — нравится, или тень убрать?</li>
+        <li>Аватары: скруглённые квадраты с градиентом (как здесь) или вернуть круги?</li>
+        <li>Активный фильтр-чип заливается тёмным (как в референсе) — или оранжевым?</li>
+      </ol>
+    </div>
+  </div>
+</div>
+</body>
+</html>
