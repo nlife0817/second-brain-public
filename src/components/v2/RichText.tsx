@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { EditorContent } from "@tiptap/react";
 import { ChevronDown, ChevronUp, Loader2, Maximize2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,28 @@ import { useDocEditor } from "./editor/useDocEditor";
 
 /** Высота свёрнутого описания — примерно шесть строк текста. */
 const COLLAPSED_MAX_PX = 160;
+
+/**
+ * Стоит ли сворачивать это описание.
+ *
+ * Считается по самому HTML, а не замером DOM. Замерить можно только после того,
+ * как Tiptap наполнит редактор, то есть уже после первой отрисовки — описание
+ * успевало бы мигнуть целиком и схлопнуться. Вдобавок замер требует
+ * ResizeObserver, чьи колбэки привязаны к циклу отрисовки: во вкладке, которая
+ * не рисует кадры, они не приходят вовсе.
+ *
+ * Оценка приблизительная и такой и задумана: ошибка стоит лишней кнопки
+ * «Показать всё» у пограничного описания, а не сломанной вёрстки.
+ */
+function isLongDescription(html: string): boolean {
+  if (!html) return false;
+  // Картинки, таблицы и вложения растягивают карточку сильнее любого текста.
+  if (/<(img|table|figure|hr)\b/i.test(html)) return true;
+  const blocks = (html.match(/<(p|h[1-6]|li|blockquote|pre)\b/gi) ?? []).length;
+  if (blocks > 4) return true;
+  // ~70 символов в строке при ширине карточки: шесть строк — примерно 400.
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().length > 400;
+}
 
 /**
  * Описание задачи в карточке. Тот же документ, что и в развёрнутом режиме, но
@@ -50,21 +72,9 @@ export function RichText({
 }) {
   const doc = useDocEditor({ value, onSave, orgId, taskId, editable, placeholder });
   const [expanded, setExpanded] = useState(false);
-  const [overflows, setOverflows] = useState(false);
 
-  // Меряем нескливаемую обёртку, а не сам клип: её высота одинакова в обоих
-  // состояниях, поэтому кнопка «Свернуть» не исчезает после раскрытия.
-  // Через ref-колбэк, а не эффектом — правило react-hooks/set-state-in-effect.
-  const measureRef = useCallback((node: HTMLDivElement | null) => {
-    if (!node) return;
-    const check = () => setOverflows(node.scrollHeight > COLLAPSED_MAX_PX + 8);
-    check();
-    const observer = new ResizeObserver(check);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-
-  const collapsed = collapsible && overflows && !expanded;
+  const canCollapse = collapsible && isLongDescription(value);
+  const collapsed = canCollapse && !expanded;
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -121,14 +131,12 @@ export function RichText({
           style={collapsed ? { maxHeight: COLLAPSED_MAX_PX } : undefined}
           onFocusCapture={() => setExpanded(true)}
         >
-          <div ref={measureRef}>
-            <EditorContent editor={doc.editor} className="doc-surface min-h-24 px-3 py-2 text-sm" />
-          </div>
+          <EditorContent editor={doc.editor} className="doc-surface min-h-24 px-3 py-2 text-sm" />
           {collapsed && (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-background to-transparent" />
           )}
         </div>
-        {collapsible && overflows && (
+        {canCollapse && (
           <button
             onClick={() => setExpanded((v) => !v)}
             className="flex w-full items-center justify-center gap-1 border-t border-border bg-muted/20 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
