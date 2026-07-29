@@ -7,7 +7,19 @@
 // Base UI здесь не нужен — это обычные кнопки в radiogroup. Всплывающего слоя
 // нет, значит нет ни портала, ни ловушки фокуса, ни возни со слоями.
 
+import { useCallback } from "react";
 import { cn } from "@/lib/utils";
+
+/**
+ * Пол ширины сегмента — по его собственной подписи, а не общим числом.
+ *
+ * Сегменты делят свободное место поровну, но не ужимаются короче своего текста:
+ * дальше ряд начинает прокручиваться. Без пола шесть статусов на экране телефона
+ * сжимались до 51 px, и от подписей не оставалось ничего; фиксированное число
+ * вместо `fit-content` резало длинные названия и уводило в прокрутку даже те
+ * ряды, что помещались целиком (приоритет с его короткими подписями).
+ */
+const MIN_SEGMENT = "min-w-fit";
 
 export interface SegmentedOption<T extends string> {
   value: T;
@@ -33,6 +45,35 @@ export function SegmentedPicker<T extends string>({
   ariaLabel: string;
   className?: string;
 }) {
+  /**
+   * Подвести выбранный сегмент в видимую часть ряда. На узком экране ряд
+   * прокручивается, и задача в «Готово» открывалась бы с видом на «Входящие» —
+   * без единого признака, что текущий статус вообще правее.
+   *
+   * Ref-колбэк, а не эффект: правило `set-state-in-effect` не отличает правку
+   * состояния от прокрутки, а здесь состояния и нет — только узел, уже в DOM.
+   * `block: "nearest"` обязателен, иначе браузер тянет к сегменту и всю карточку.
+   */
+  const revealActive = useCallback((el: HTMLButtonElement | null) => {
+    if (!el) return () => {};
+    const reveal = () => {
+      const row = el.parentElement;
+      if (!row || row.scrollWidth <= row.clientWidth) return;
+      // scrollLeft вместо scrollIntoView: последний на вложенных скроллерах
+      // норовит подтянуть заодно и саму карточку.
+      const target = el.offsetLeft - (row.clientWidth - el.offsetWidth) / 2;
+      row.scrollLeft = Math.max(0, Math.min(target, row.scrollWidth - row.clientWidth));
+    };
+    // Дважды: на монтировании карточка ещё выезжает и ряд шире, чем станет,
+    // поэтому первый расчёт промахивается. Второй — когда панель села.
+    const frame = requestAnimationFrame(reveal);
+    const timer = setTimeout(reveal, 300);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, []);
+
   // Справочники доезжают заново при смене организации: пустой ряд рисовать
   // нечем, а «пустая рамка» читается как поломка.
   if (options.length === 0) return null;
@@ -63,6 +104,7 @@ export function SegmentedPicker<T extends string>({
         return (
           <button
             key={o.value}
+            ref={active ? revealActive : undefined}
             type="button"
             role="radio"
             aria-checked={active}
@@ -72,7 +114,10 @@ export function SegmentedPicker<T extends string>({
             className={cn(
               // basis-0 + flex-1: сегменты делят ширину поровну, а не по длине
               // подписи — иначе «Готово» вдвое уже «К выполнению».
-              "flex min-w-0 flex-1 basis-0 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs transition-colors",
+              // На телефоне сегмент выше: 28 px — это промах пальцем. Тот же
+              // приём, что у кнопок шапки карточки (size-9 sm:size-7).
+              "flex flex-1 basis-0 items-center justify-center gap-1.5 rounded-md px-2 py-2.5 text-xs transition-colors sm:py-1.5",
+              MIN_SEGMENT,
               active
                 ? o.color
                   ? "tinted-chip font-medium"
