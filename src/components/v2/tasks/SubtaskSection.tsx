@@ -43,7 +43,7 @@ import {
 } from "@/components/v2/bits";
 import { DuePicker } from "@/components/v2/DuePicker";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
-import type { CustomField, TaskListItem } from "@/lib/core/types";
+import type { CustomField, TaskListItem, TaskPriority } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { formatEstimate } from "./cells";
@@ -290,11 +290,18 @@ function SubtaskComposer({
           placeholder="Новая подзадача…"
           className="h-7 min-w-32 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"
         />
-        <PriorityChip draft={draft} patch={patch} />
-        <StatusChip draft={draft} patch={patch} />
-        <AssigneesChip draft={draft} patch={patch} />
-        <DueChip draft={draft} patch={patch} />
-        <EstimateChip draft={draft} patch={patch} />
+        <PriorityChip value={draft.priority} onChange={(priority) => patch({ priority })} />
+        <StatusChip value={draft.status_id} onChange={(status_id) => patch({ status_id })} />
+        <AssigneesChip
+          value={draft.assignee_ids}
+          projectIds={draft.project_ids}
+          onChange={(assignee_ids) => patch({ assignee_ids })}
+        />
+        <DueChip date={draft.due_date} time={draft.due_time} onChange={(next) => patch(next)} />
+        <EstimateChip
+          value={draft.estimated_minutes}
+          onChange={(estimated_minutes) => patch({ estimated_minutes })}
+        />
         <button
           onClick={() => setExpanded((v) => !v)}
           className={cn(CHIP, CHIP_EMPTY)}
@@ -405,46 +412,66 @@ function SubtaskDraftDetails({ draft, patch }: DraftProps) {
 
 // --- Чипы редакторов ----------------------------------------------------------------
 
+// Чипы работают парой {value, onChange}, а не черновиком целиком: те же самые
+// контролы обслуживают и строку создания, и строку существующей подзадачи —
+// у второй никакого `TaskDraft` нет, есть задача и PATCH.
+
 interface DraftProps {
   draft: TaskDraft;
   patch: (change: Partial<TaskDraft>) => void;
 }
 
-function PriorityChip({ draft, patch }: DraftProps) {
-  const set = draft.priority !== "none";
+function PriorityChip({
+  value,
+  onChange,
+  className,
+}: {
+  value: TaskPriority;
+  onChange: (priority: TaskPriority) => void;
+  className?: string;
+}) {
+  const set = value !== "none";
   return (
     <Popover>
       <PopoverTrigger
         render={
           <button
-            className={cn(CHIP, set ? CHIP_SET : CHIP_EMPTY)}
-            title={`Приоритет: ${PRIORITY_LABELS[draft.priority].label}`}
+            className={cn(CHIP, set ? CHIP_SET : CHIP_EMPTY, className)}
+            title={`Приоритет: ${PRIORITY_LABELS[value].label}`}
           />
         }
       >
         {set ? (
-          <PriorityDot priority={draft.priority} />
+          <PriorityDot priority={value} />
         ) : (
           <span className="size-2 rounded-full border border-dashed border-muted-foreground/60" />
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className={PRIORITY_POPOVER}>
-        <PriorityMenu value={draft.priority} onChange={(priority) => patch({ priority })} />
+        <PriorityMenu value={value} onChange={onChange} />
       </PopoverContent>
     </Popover>
   );
 }
 
-function StatusChip({ draft, patch }: DraftProps) {
+function StatusChip({
+  value,
+  onChange,
+  className,
+}: {
+  value: string | null;
+  onChange: (statusId: string | null) => void;
+  className?: string;
+}) {
   const statuses = useV2Store((s) => s.statuses);
-  const status = statuses.find((s) => s.id === draft.status_id);
+  const status = statuses.find((s) => s.id === value);
   return (
     <Popover>
       <PopoverTrigger
         render={
           <button
-            className={cn(CHIP, "max-w-32", status ? CHIP_SET : CHIP_EMPTY)}
-            title="Статус"
+            className={cn(CHIP, "max-w-32", status ? CHIP_SET : CHIP_EMPTY, className)}
+            title={status ? `Статус: ${status.name}` : "Статус"}
           />
         }
       >
@@ -461,21 +488,31 @@ function StatusChip({ draft, patch }: DraftProps) {
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className={MENU_POPOVER}>
-        <StatusMenu value={draft.status_id} onChange={(status_id) => patch({ status_id })} />
+        <StatusMenu value={value} onChange={onChange} />
       </PopoverContent>
     </Popover>
   );
 }
 
-function AssigneesChip({ draft, patch }: DraftProps) {
+function AssigneesChip({
+  value,
+  projectIds,
+  onChange,
+  className,
+}: {
+  value: string[];
+  projectIds: string[];
+  onChange: (userIds: string[]) => void;
+  className?: string;
+}) {
   const members = useV2Store((s) => s.members);
-  const selected = members.filter((m) => draft.assignee_ids.includes(m.user_id));
+  const selected = members.filter((m) => value.includes(m.user_id));
   return (
     <Popover>
       <PopoverTrigger
         render={
           <button
-            className={cn(CHIP, selected.length > 0 ? CHIP_SET : CHIP_EMPTY)}
+            className={cn(CHIP, selected.length > 0 ? CHIP_SET : CHIP_EMPTY, className)}
             title="Исполнители"
           />
         }
@@ -495,28 +532,37 @@ function AssigneesChip({ draft, patch }: DraftProps) {
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className={WIDE_MENU_POPOVER}>
-        <AssigneesMenu
-          value={draft.assignee_ids}
-          projectIds={draft.project_ids}
-          onChange={(assignee_ids) => patch({ assignee_ids })}
-        />
+        <AssigneesMenu value={value} projectIds={projectIds} onChange={onChange} />
       </PopoverContent>
     </Popover>
   );
 }
 
-function DueChip({ draft, patch }: DraftProps) {
-  const text = formatDue(draft.due_date, draft.due_time);
+function DueChip({
+  date,
+  time,
+  done = false,
+  onChange,
+  className,
+}: {
+  date: string | null;
+  time: string | null;
+  /** Просроченный срок у завершённой задачи красным не подсвечиваем. */
+  done?: boolean;
+  onChange: (next: { due_date: string | null; due_time: string | null }) => void;
+  className?: string;
+}) {
+  const text = formatDue(date, time);
   return (
     <DuePicker
-      date={draft.due_date}
-      time={draft.due_time}
-      triggerClassName={cn(CHIP, text ? CHIP_SET : CHIP_EMPTY)}
-      onCommit={(next) => patch(next)}
+      date={date}
+      time={time}
+      triggerClassName={cn(CHIP, text ? CHIP_SET : CHIP_EMPTY, className)}
+      onCommit={onChange}
     >
       {/* Подпись на самом триггере: DuePicker пробрасывает наружу только класс. */}
       {text ? (
-        <span className={cn("tabular-nums", dueTone(draft.due_date, false))} title="Срок">
+        <span className={cn("tabular-nums", dueTone(date, done))} title="Срок">
           {text}
         </span>
       ) : (
@@ -526,24 +572,31 @@ function DueChip({ draft, patch }: DraftProps) {
   );
 }
 
-function EstimateChip({ draft, patch }: DraftProps) {
-  const set = draft.estimated_minutes != null;
+function EstimateChip({
+  value,
+  onChange,
+  className,
+}: {
+  value: number | null;
+  onChange: (minutes: number | null) => void;
+  className?: string;
+}) {
+  const set = value != null;
   return (
     <Popover>
       <PopoverTrigger
-        render={<button className={cn(CHIP, set ? CHIP_SET : CHIP_EMPTY)} title="Оценка" />}
+        render={
+          <button className={cn(CHIP, set ? CHIP_SET : CHIP_EMPTY, className)} title="Оценка" />
+        }
       >
         {set ? (
-          <span className="tabular-nums">{formatEstimate(draft.estimated_minutes!)}</span>
+          <span className="tabular-nums">{formatEstimate(value)}</span>
         ) : (
           <Clock className="size-3.5" />
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className={ESTIMATE_POPOVER}>
-        <EstimateForm
-          value={draft.estimated_minutes}
-          onChange={(estimated_minutes) => patch({ estimated_minutes })}
-        />
+        <EstimateForm value={value} onChange={onChange} />
       </PopoverContent>
     </Popover>
   );
