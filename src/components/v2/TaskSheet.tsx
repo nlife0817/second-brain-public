@@ -72,6 +72,10 @@ const VERB_LABELS: Record<string, string> = {
   "task.unhomed": "убрал(а) из проекта",
   "task.deleted": "удалил(а) задачу",
   "comment.added": "оставил(а) комментарий",
+  "doc_comment.added": "начал(а) обсуждение в описании",
+  "doc_comment.replied": "ответил(а) в обсуждении описания",
+  "doc_comment.resolved": "закрыл(а) обсуждение описания",
+  "doc_comment.reopened": "переоткрыл(а) обсуждение описания",
 };
 
 function eventLabel(e: CoreEvent): string {

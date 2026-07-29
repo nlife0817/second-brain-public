@@ -21,6 +21,8 @@ const KIND_LABELS: Record<string, string> = {
   completed: "завершил(а) задачу",
   due_changed: "изменил(а) срок",
   added_to_project: "добавил(а) вас в проект",
+  doc_comment: "прокомментировал(а) описание",
+  doc_comment_resolved: "закрыл(а) обсуждение описания",
 };
 
 export function MobileInboxClient({ initial }: { initial: CoreNotification[] }) {
