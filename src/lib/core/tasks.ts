@@ -481,6 +481,7 @@ export async function getTaskDetail(ctx: AuthContext, taskId: string): Promise<T
     followers,
     field_values: Object.fromEntries(values.map((v) => [v.field_id, v.value])),
     creator: creator ?? null,
+    chain_project_ids: access.chainProjectIds,
   };
 }
 

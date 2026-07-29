@@ -571,7 +571,9 @@ export function TaskSheet({
                   ))}
                   <MemberPicker
                     selected={task.assignees}
-                    projectIds={task.placements.map((p) => p.project_id)}
+                    // Цепочка, а не свои размещения: подзадача наследует
+                    // проекты родителя вместе с их закрытостью.
+                    projectIds={task.chain_project_ids}
                     onChange={(ids) => void setAssignees(ids)}
                   />
                 </div>

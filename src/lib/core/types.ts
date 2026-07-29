@@ -240,6 +240,12 @@ export interface TaskDetail extends TaskWithMeta {
   followers: UserBrief[];
   field_values: Record<string, unknown>;
   creator: UserBrief | null;
+  /**
+   * Проекты всей цепочки, включая родительские: у подзадачи своих размещений
+   * нет, а закрытость она наследует от родителя. Карточка сужает по этому
+   * списку выбор исполнителей — ровно как сервер в `updateTask`.
+   */
+  chain_project_ids: string[];
 }
 
 // --- Связи между сущностями ------------------------------------------------------
