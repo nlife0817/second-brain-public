@@ -59,6 +59,8 @@ run_psql() {
 }
 
 run_psql -c "
+  -- Без этого каждый выкат печатал бы NOTICE «relation already exists, skipping».
+  set client_min_messages = warning;
   create table if not exists public._deploy_migrations (
     filename   text primary key,
     checksum   text not null,
