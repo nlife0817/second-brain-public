@@ -320,8 +320,6 @@ export const webhookCreateSchema = z.object({
   events: z.array(z.string().max(64)).max(50).default([]),
 });
 
-export const projectTeamSchema = z.object({ team_id: z.uuid().nullable() });
-
 // --- Push-подписки ----------------------------------------------------------------
 
 export const notificationSettingsSchema = z

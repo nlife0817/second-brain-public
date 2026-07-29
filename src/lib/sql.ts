@@ -107,7 +107,7 @@ function flattenParams(query: string, params: unknown[]): unknown[] {
 }
 
 export type SqlRow = Record<string, unknown>;
-export type SqlRunResult = { changes: number; lastInsertRowid?: number | string };
+export type SqlRunResult = { changes: number };
 
 export type PreparedStatement<Row = SqlRow> = {
   get: (...params: unknown[]) => Promise<Row | undefined>;

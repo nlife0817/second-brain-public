@@ -61,6 +61,6 @@ docker compose exec -T db psql \
   --tuples-only \
   --command="select 'core.users: ' || count(*) from core.users
              union all select 'core.tasks: ' || count(*) from core.tasks
-             union all select 'public.items: ' || count(*) from public.items;"
+             union all select 'core.projects: ' || count(*) from core.projects;"
 
 echo "✓ База готова. Дальше: docker compose up -d"

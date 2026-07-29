@@ -41,7 +41,7 @@ export async function enablePushNotifications(opts?: PushClientOptions): Promise
   const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
   if (!publicKey) {
     throw new Error(
-      "NEXT_PUBLIC_VAPID_PUBLIC_KEY не определён в build. Добавь переменную в Vercel → Settings → Environment Variables и сделай redeploy."
+      "NEXT_PUBLIC_VAPID_PUBLIC_KEY не определён в build. Добавь переменную в deploy/.env и пересобери образ."
     );
   }
 

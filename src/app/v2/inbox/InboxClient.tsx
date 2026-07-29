@@ -260,6 +260,9 @@ export function InboxClient({ initial }: { initial: CoreNotification[] }) {
           variant="ghost"
           size="icon-sm"
           title="Настройки уведомлений"
+          // Внутри ссылка, а не <button>: без этого Base UI навешивает на якорь
+          // клавиатурные повадки кнопки и пишет об этом в консоль.
+          nativeButton={false}
           render={<Link href="/v2/settings/notifications" />}
         >
           <Settings className="size-4" />

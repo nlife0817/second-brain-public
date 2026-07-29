@@ -30,19 +30,11 @@ function configure() {
   configured = true;
 }
 
-export type PushAction = {
-  action: string;       // identifier matched by service worker on click
-  title: string;
-};
-
 export type PushPayload = {
   title: string;
   body: string;
   url?: string;
   tag?: string;
-  itemId?: string;
-  requireInteraction?: boolean;
-  actions?: PushAction[];
   /** Непрочитанные уведомления получателя — бейдж на иконке приложения (setAppBadge). */
   unread?: number;
 };
