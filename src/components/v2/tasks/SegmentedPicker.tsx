@@ -18,8 +18,12 @@ import { cn } from "@/lib/utils";
  * сжимались до 51 px, и от подписей не оставалось ничего; фиксированное число
  * вместо `fit-content` резало длинные названия и уводило в прокрутку даже те
  * ряды, что помещались целиком (приоритет с его короткими подписями).
+ *
+ * Потолок обязателен: `fit-content` не даёт кнопке стать уже своего текста, то
+ * есть `truncate` на подписи не срабатывает никогда, а имя статуса схема
+ * допускает длиной до 100 символов — один такой сегмент занял бы весь ряд.
  */
-const MIN_SEGMENT = "min-w-fit";
+const MIN_SEGMENT = "min-w-fit max-w-56";
 
 export interface SegmentedOption<T extends string> {
   value: T;
@@ -50,22 +54,34 @@ export function SegmentedPicker<T extends string>({
    * прокручивается, и задача в «Готово» открывалась бы с видом на «Входящие» —
    * без единого признака, что текущий статус вообще правее.
    *
+   * Сдвиг МИНИМАЛЬНЫЙ, а не по центру: у задачи без приоритета выбран последний
+   * сегмент («Без приоритета»), и центрирование уводило за левый край «Срочно» —
+   * самый нужный вариант пропадал с экрана у большинства задач. Заодно ряд, уже
+   * показывающий выбранное, не трогаем вовсе — иначе отложенный расчёт отдёргивал
+   * назад ряд, который человек только что смахнул рукой.
+   *
+   * Координаты берём из getBoundingClientRect, а не из offsetLeft: тот считается
+   * от offsetParent, а у ряда position: static — им оказывается всплывающий слой
+   * карточки, и в offsetLeft подмешивалась позиция самого ряда.
+   *
    * Ref-колбэк, а не эффект: правило `set-state-in-effect` не отличает правку
    * состояния от прокрутки, а здесь состояния и нет — только узел, уже в DOM.
-   * `block: "nearest"` обязателен, иначе браузер тянет к сегменту и всю карточку.
    */
   const revealActive = useCallback((el: HTMLButtonElement | null) => {
-    if (!el) return () => {};
+    if (!el) return;
     const reveal = () => {
       const row = el.parentElement;
       if (!row || row.scrollWidth <= row.clientWidth) return;
-      // scrollLeft вместо scrollIntoView: последний на вложенных скроллерах
-      // норовит подтянуть заодно и саму карточку.
-      const target = el.offsetLeft - (row.clientWidth - el.offsetWidth) / 2;
-      row.scrollLeft = Math.max(0, Math.min(target, row.scrollWidth - row.clientWidth));
+      const rowRect = row.getBoundingClientRect();
+      const elRect = el.getBoundingClientRect();
+      const overLeft = elRect.left - rowRect.left;
+      const overRight = elRect.right - rowRect.right;
+      if (overLeft >= 0 && overRight <= 0) return; // видно целиком — не трогаем
+      row.scrollLeft += overLeft < 0 ? overLeft : overRight;
     };
     // Дважды: на монтировании карточка ещё выезжает и ряд шире, чем станет,
-    // поэтому первый расчёт промахивается. Второй — когда панель села.
+    // поэтому первый расчёт промахивается. Второй — когда панель села; он
+    // безвреден, потому что уже видимый сегмент reveal не двигает.
     const frame = requestAnimationFrame(reveal);
     const timer = setTimeout(reveal, 300);
     return () => {

@@ -119,6 +119,12 @@ export async function notifyMentions(
     html: string;
     /** Прошлая версия текста. Передаётся при правке — тогда шлём только новым. */
     prevHtml?: string | null;
+    /**
+     * Кому по этому же событию уже ушло уведомление поважнее (например,
+     * «вам назначена задача»). Второй строкой про то же событие сообщать нечего:
+     * уникального ключа по (user_id, event_id) у core.notifications нет.
+     */
+    skipUserIds?: ReadonlySet<string>;
   },
 ): Promise<Set<string>> {
   const ids =
@@ -127,8 +133,9 @@ export async function notifyMentions(
       : extractMentionIds(input.html);
   if (ids.length === 0) return new Set();
 
+  const skip = input.skipUserIds;
   const allowed = (await filterUsersWhoCanViewTask(tx, input.orgId, input.taskId, ids)).filter(
-    (id) => id !== input.actorId,
+    (id) => id !== input.actorId && !skip?.has(id),
   );
   if (allowed.length === 0) return new Set();
 

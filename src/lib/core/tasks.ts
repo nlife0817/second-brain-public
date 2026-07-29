@@ -750,19 +750,27 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
       verb: "task.created",
       payload: { title: input.title.trim() },
     });
+    let notifiedAsAssignee = new Set<string>();
     if (assigneeIds.length > 0) {
-      await notifyUsers(tx, {
-        orgId: ctx.orgId,
-        eventId,
-        kind: "assigned",
-        userIds: assigneeIds,
-        excludeUserId: ctx.user.id,
-        taskId: id,
-      });
+      notifiedAsAssignee = new Set(
+        await notifyUsers(tx, {
+          orgId: ctx.orgId,
+          eventId,
+          kind: "assigned",
+          userIds: assigneeIds,
+          excludeUserId: ctx.user.id,
+          taskId: id,
+        }),
+      );
     }
     // Задачу заводят вместе с описанием (развёрнутый черновик, форма создания),
     // и упоминание в нём — такое же упоминание. Без этого оно не доходило
     // никогда: notifyMentions стоял только на правке.
+    //
+    // Назначение важнее упоминания и идёт первым: кому уже сказали «вам назначена
+    // задача», второй строкой про то же событие сообщать нечего — у
+    // core.notifications нет уникального ключа по (user_id, event_id), и в
+    // инбоксе появились бы две записи об одном создании.
     if (description) {
       await notifyMentions(tx, {
         orgId: ctx.orgId,
@@ -770,6 +778,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         taskId: id,
         actorId: ctx.user.id,
         html: description,
+        skipUserIds: notifiedAsAssignee,
       });
     }
     return id;
