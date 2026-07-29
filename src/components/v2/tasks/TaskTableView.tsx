@@ -181,13 +181,12 @@ export function TaskTableView({
           const ids = new Set(value as string[]);
           next.tags = tags.filter((t) => ids.has(t.id));
         } else if (key === "project_ids") {
-          // Секция и позиция внутри проекта у прежних размещений сохраняются:
-          // правка из таблицы меняет состав проектов, а не место на доске.
+          // Позиция внутри проекта у прежних размещений сохраняется: правка из
+          // таблицы меняет состав проектов, а не место на доске.
           next.placements = (value as string[]).map(
             (projectId) =>
               task.placements.find((p) => p.project_id === projectId) ?? {
                 project_id: projectId,
-                section_id: null,
                 position: 0,
               },
           );
@@ -218,13 +217,7 @@ export function TaskTableView({
       const { project_ids: projectIds, ...rest } = payload;
       let updated: TaskDetail | null = null;
       if (Array.isArray(projectIds)) {
-        // Секцию прежнего размещения переносим как есть: пустая секция в теле
-        // означала бы «перенести в начало доски без секции».
-        const current = tasksRef.current.find((t) => t.id === taskId);
-        const placements = (projectIds as string[]).map((projectId) => ({
-          project_id: projectId,
-          section_id: current?.placements.find((p) => p.project_id === projectId)?.section_id ?? null,
-        }));
+        const placements = (projectIds as string[]).map((project_id) => ({ project_id }));
         updated = await api.put<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}/placements`, { placements });
       }
       if (Object.keys(rest).length > 0) {
