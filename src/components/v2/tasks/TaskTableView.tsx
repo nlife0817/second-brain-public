@@ -646,9 +646,10 @@ export function TaskTableView({
             ) : undefined
           }
           emptyState={
-            // sticky left-0 — иначе при горизонтальной прокрутке подпись
-            // уезжает вместе с колонками и её не видно.
-            <p className="sticky left-0 px-4 py-8 text-sm text-muted-foreground">
+            // sticky left-0 — иначе при горизонтальной прокрутке подпись уезжает
+            // вместе с колонками. w-max обязателен: блок во всю ширину таблицы
+            // смещать некуда, и sticky на нём молча не работает.
+            <p className="sticky left-0 w-max px-4 py-8 text-sm text-muted-foreground">
               {loading && tasks.length === 0
                 ? "Загрузка…"
                 : tasks.length === 0

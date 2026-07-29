@@ -101,6 +101,9 @@ function ProjectScreen({
   const [createIn, setCreateIn] = useState<string | null | false>(false); // false = закрыт, null/statusId = открыт
   const [membersOpen, setMembersOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Отдельно от `error`: тот означает «экран показать нечем» и подменяет собой
+  // всю страницу. Замечание по только что созданной задаче — полоса над списком.
+  const [notice, setNotice] = useState<string | null>(null);
 
   const projectPath = orgId ? `/orgs/${orgId}/projects/${projectId}` : null;
   const tasksPath = projectPath ? `${projectPath}/tasks${showDone ? "?done=1" : ""}` : null;
@@ -161,7 +164,7 @@ function ProjectScreen({
         draft,
         draft.project_ids.length === 0 ? { placements: [{ project_id: projectId }] } : undefined,
       );
-      setError(fieldsWarning);
+      setNotice(fieldsWarning);
       await reload();
       await refreshProjects();
     },
@@ -280,6 +283,8 @@ function ProjectScreen({
           onOpenTask={openTask}
           onCreateTask={canEdit ? createTask : undefined}
           draftDefaults={draftDefaults}
+          error={notice}
+          onDismissError={() => setNotice(null)}
           quickAddPlaceholder={`Быстро добавить задачу в «${project.name}»…`}
           emptyText="В проекте пока нет задач."
           titleSlot={title}

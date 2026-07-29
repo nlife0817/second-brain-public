@@ -107,7 +107,6 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
         onDismissError={() => setError(null)}
         onOpenTask={setOpenTaskId}
         onCreateTask={createTask}
-        quickAddPlaceholder="Быстро добавить задачу в личный инбокс…"
         titleSlot={<h1 className="text-base font-semibold">Все задачи</h1>}
       />
 
