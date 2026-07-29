@@ -14,6 +14,7 @@ import {
   Bookmark,
   Check,
   Columns3,
+  Copy,
   Group,
   ListTree,
   PanelRight,
@@ -268,7 +269,7 @@ function SavedViewsSection() {
   const activeViewId = useViewStore((s) => s.activeViewId);
   const saveView = useViewStore((s) => s.saveView);
   const applyView = useViewStore((s) => s.applyView);
-  const updateActiveView = useViewStore((s) => s.updateActiveView);
+  const duplicateView = useViewStore((s) => s.duplicateView);
   const deleteView = useViewStore((s) => s.deleteView);
   const resetView = useViewStore((s) => s.resetView);
   const [name, setName] = useState("");
@@ -289,6 +290,13 @@ function SavedViewsSection() {
                 {v.id === activeViewId && <Check className="size-3.5 shrink-0 text-primary" />}
               </button>
               <button
+                onClick={() => duplicateView(v.id)}
+                className="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                title="Дублировать — править копию, не задев оригинал"
+              >
+                <Copy className="size-3" />
+              </button>
+              <button
                 onClick={() => deleteView(v.id)}
                 className="rounded p-1 text-muted-foreground hover:bg-background hover:text-destructive"
                 title="Удалить представление"
@@ -300,6 +308,14 @@ function SavedViewsSection() {
         </div>
       )}
 
+      {/* Автосохранение незаметно, а последствия у него заметные: без подписи
+          человек правит настройки, не зная, что переписывает сохранённый срез. */}
+      <p className="px-1 text-[11px] text-muted-foreground">
+        {active
+          ? `Настройки уходят в «${active.name}» сразу. Нужен вариант — дублируйте, оригинал останется прежним.`
+          : "Выбранное представление дальше запоминает настройки само."}
+      </p>
+
       <div className="flex gap-1.5 border-t border-border pt-2">
         <input
           value={name}
@@ -310,7 +326,7 @@ function SavedViewsSection() {
               setName("");
             }
           }}
-          placeholder="Название представления"
+          placeholder="Новое из текущих настроек"
           className="h-7 min-w-0 flex-1 rounded-lg border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring"
         />
         <Button
@@ -325,16 +341,9 @@ function SavedViewsSection() {
         </Button>
       </div>
 
-      <div className="flex items-center gap-1.5">
-        {active && (
-          <Button variant="outline" size="xs" onClick={updateActiveView} className="min-w-0 flex-1">
-            <span className="truncate">Обновить «{active.name}»</span>
-          </Button>
-        )}
-        <Button variant="ghost" size="xs" onClick={resetView} className="gap-1">
-          <RotateCcw className="size-3" /> Сбросить
-        </Button>
-      </div>
+      <Button variant="ghost" size="xs" onClick={resetView} className="gap-1 self-start">
+        <RotateCcw className="size-3" /> Сбросить
+      </Button>
     </>
   );
 }
