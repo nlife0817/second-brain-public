@@ -145,7 +145,7 @@ export function MobileTimeClient({ initial }: { initial: MobileTimeInitial }) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 items-center border-b border-border px-4 py-3">
-        <h1 className="text-base font-semibold">Время</h1>
+        <h1 className="font-heading text-lg font-semibold tracking-tight">Время</h1>
       </header>
 
       <PullToRefresh onRefresh={reload} className="px-4 py-3">

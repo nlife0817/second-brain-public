@@ -41,7 +41,7 @@ export default function NotificationSettingsPage() {
         >
           <ArrowLeft className="size-4" />
         </Link>
-        <h1 className="text-base font-semibold">Уведомления</h1>
+        <h1 className="font-heading text-xl font-semibold tracking-tight">Уведомления</h1>
       </header>
 
       <div className="flex-1 overflow-y-auto px-6 py-4">

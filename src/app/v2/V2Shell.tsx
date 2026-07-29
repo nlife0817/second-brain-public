@@ -77,7 +77,9 @@ function NavLink({
       className={cn(
         "flex items-center rounded-lg py-1.5 text-sm transition-colors",
         collapsed ? "relative justify-center px-0" : "gap-2.5 px-2.5",
-        active ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+        // Активный пункт несёт акцентный цвет: на тонированном фоне панели
+        // одна лишь серая подложка почти неразличима.
+        active ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
       )}
     >
       {icon}

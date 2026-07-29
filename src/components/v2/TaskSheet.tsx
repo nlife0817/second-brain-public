@@ -41,7 +41,7 @@ import type {
 } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
-import { Avatar, PRIORITY_LABELS, StatusPill } from "./bits";
+import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle } from "./bits";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
 import { SidePanel } from "./SidePanel";
@@ -496,7 +496,7 @@ export function TaskSheet({
               <Input
                 key={`title-${task.id}`}
                 defaultValue={task.title}
-                className="border-none px-0 text-lg font-semibold shadow-none focus-visible:ring-0"
+                className="border-none px-0 font-heading text-lg font-semibold tracking-tight shadow-none focus-visible:ring-0 md:text-lg"
                 onBlur={(e) => {
                   const v = e.target.value.trim();
                   if (v && v !== task.title) void patch({ title: v });
@@ -601,10 +601,10 @@ export function TaskSheet({
                           void patch({ tag_ids: next });
                         }}
                         className={cn(
-                          "rounded-full px-2 py-0.5 text-[11px] font-medium transition-opacity",
+                          "tinted-chip rounded-full px-2 py-0.5 text-[11px] font-medium transition-opacity",
                           active ? "" : "opacity-40 hover:opacity-80",
                         )}
-                        style={{ backgroundColor: `${t.color}1a`, color: t.color }}
+                        style={chipStyle(t.color)}
                       >
                         {t.name}
                       </button>

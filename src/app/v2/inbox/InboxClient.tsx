@@ -169,7 +169,7 @@ export function InboxClient({ initial }: { initial: CoreNotification[] }) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-2 border-b border-border px-6 py-3.5">
-        <h1 className="text-base font-semibold">Уведомления</h1>
+        <h1 className="font-heading text-xl font-semibold tracking-tight">Уведомления</h1>
 
         <Popover>
           <PopoverTrigger

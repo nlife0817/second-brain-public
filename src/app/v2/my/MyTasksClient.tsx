@@ -8,7 +8,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { CheckCircle2, Plus } from "lucide-react";
 import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { TaskSheet } from "@/components/v2/lazy";
@@ -81,7 +81,7 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
     }
     return [
       { key: "overdue", title: "Просрочено", items: overdue, tone: "text-red-600 dark:text-red-400" },
-      { key: "today", title: "Сегодня", items: dueToday, tone: "text-amber-600 dark:text-amber-400" },
+      { key: "today", title: "Сегодня", items: dueToday, tone: "text-amber-700 dark:text-amber-400" },
       { key: "upcoming", title: "Предстоящие", items: upcoming, tone: "" },
       { key: "nodate", title: "Без срока", items: noDate, tone: "" },
       ...(showDone ? [{ key: "done", title: "Завершённые", items: done, tone: "text-muted-foreground" }] : []),
@@ -93,7 +93,7 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-border px-6 py-3.5">
-        <h1 className="text-base font-semibold">Мои задачи</h1>
+        <h1 className="font-heading text-xl font-semibold tracking-tight">Мои задачи</h1>
         <span className="flex-1" />
         <CardSettingsPopover />
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -123,9 +123,13 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
           {message && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{message}</p>}
           {loading && <p className="text-sm text-muted-foreground">Загрузка…</p>}
           {!loading && groups.length === 0 && (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              Пусто. Добавьте задачу или дождитесь назначения.
-            </p>
+            <div className="flex flex-col items-center gap-2 py-12 text-center">
+              <CheckCircle2 className="size-8 text-muted-foreground/40" />
+              <p className="text-sm font-medium">Все задачи разобраны</p>
+              <p className="text-sm text-muted-foreground">
+                Добавьте новую в поле выше — или дождитесь назначения.
+              </p>
+            </div>
           )}
 
           {groups.map((g) => (

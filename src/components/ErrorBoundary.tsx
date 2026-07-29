@@ -24,13 +24,13 @@ export class ErrorBoundary extends React.Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex h-screen items-center justify-center bg-white">
+        <div className="flex h-screen items-center justify-center bg-background">
           <div className="max-w-md text-center px-6">
             <div className="mb-4 text-4xl">⚠️</div>
-            <h2 className="text-lg font-semibold text-slate-900 mb-2">
+            <h2 className="font-heading text-lg font-semibold tracking-tight text-foreground mb-2">
               Что-то пошло не так
             </h2>
-            <p className="text-sm text-slate-500 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               {this.state.error?.message || "Произошла непредвиденная ошибка"}
             </p>
             <button
@@ -38,7 +38,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
                 this.setState({ hasError: false, error: null });
                 window.location.reload();
               }}
-              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition-colors"
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
             >
               Перезагрузить
             </button>

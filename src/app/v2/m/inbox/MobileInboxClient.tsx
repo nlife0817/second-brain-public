@@ -106,7 +106,7 @@ export function MobileInboxClient({ initial }: { initial: CoreNotification[] }) 
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
-        <h1 className="flex-1 text-base font-semibold">Уведомления</h1>
+        <h1 className="flex-1 font-heading text-lg font-semibold tracking-tight">Уведомления</h1>
         <button
           onClick={() => void markAll()}
           disabled={!hasUnread || marking}

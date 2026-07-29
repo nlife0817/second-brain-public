@@ -107,7 +107,7 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
         onDismissError={() => setError(null)}
         onOpenTask={setOpenTaskId}
         onCreateTask={createTask}
-        titleSlot={<h1 className="text-base font-semibold">Все задачи</h1>}
+        titleSlot={<h1 className="font-heading text-xl font-semibold tracking-tight">Все задачи</h1>}
       />
 
       <TaskSheet

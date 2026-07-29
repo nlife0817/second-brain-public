@@ -155,7 +155,7 @@ function MobileProjectScreen({
               <ChevronLeft className="size-5" />
             </Link>
             <ProjectIcon name={project.icon} color={project.color} className="size-4 shrink-0" />
-            <h1 className="max-w-[40vw] truncate text-base font-semibold">{project.name}</h1>
+            <h1 className="max-w-[40vw] truncate font-heading text-lg font-semibold tracking-tight">{project.name}</h1>
           </>
         }
         actionsSlot={

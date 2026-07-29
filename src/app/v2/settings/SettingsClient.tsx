@@ -40,7 +40,7 @@ import type {
 } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { AuditList } from "@/components/v2/AuditList";
-import { Avatar } from "@/components/v2/bits";
+import { Avatar, chipStyle } from "@/components/v2/bits";
 import { OrgSwitcher } from "@/components/v2/OrgSwitcher";
 
 const PROJECT_ROLE_LABELS: Record<ProjectRole, string> = {
@@ -195,7 +195,7 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-border px-6 py-3.5">
-        <h1 className="text-base font-semibold">Настройки организации</h1>
+        <h1 className="font-heading text-xl font-semibold tracking-tight">Настройки организации</h1>
         {orgRole && (
           <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
             {ORG_ROLE_LABELS[orgRole]}
@@ -491,8 +491,8 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
                 {tags.map((t) => (
                   <span
                     key={t.id}
-                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-                    style={{ backgroundColor: `${t.color}1a`, color: t.color }}
+                    className="tinted-chip inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+                    style={chipStyle(t.color)}
                   >
                     {t.name}
                     {canManageTags && (
