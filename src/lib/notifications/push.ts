@@ -1,5 +1,4 @@
 import webpush from "web-push";
-import { prepare } from "../sql";
 
 let configured = false;
 
@@ -48,14 +47,6 @@ export type PushPayload = {
   unread?: number;
 };
 
-type SubscriptionRow = {
-  id: string;
-  user_email: string;
-  endpoint: string;
-  p256dh: string;
-  auth: string;
-};
-
 /**
  * Отправка в один endpoint. "dead" — подписка протухла (404/410): вызывающий
  * обязан удалить её из своей таблицы, иначе очередь копит мёртвые адреса.
@@ -81,49 +72,4 @@ export async function sendWebPush(
     console.error(`[push] send failed for ${sub.endpoint.slice(0, 60)}:`, err);
     return "failed";
   }
-}
-
-export async function sendPushToEmail(
-  email: string,
-  payload: PushPayload
-): Promise<{ sent: number; removed: number }> {
-  configure();
-  const subs = await prepare<SubscriptionRow>(
-    "SELECT id, user_email, endpoint, p256dh, auth FROM push_subscriptions WHERE user_email = ?"
-  ).all(email);
-
-  let sent = 0;
-  let removed = 0;
-
-  for (const sub of subs) {
-    const result = await sendWebPush(sub, payload);
-    if (result === "sent") sent++;
-    if (result === "dead") {
-      await prepare("DELETE FROM push_subscriptions WHERE id = ?").run(sub.id);
-      removed++;
-    }
-  }
-  return { sent, removed };
-}
-
-export async function sendPushToAllSubscribers(
-  payload: PushPayload
-): Promise<{ sent: number; removed: number }> {
-  configure();
-  const subs = await prepare<SubscriptionRow>(
-    "SELECT id, user_email, endpoint, p256dh, auth FROM push_subscriptions"
-  ).all();
-
-  let sent = 0;
-  let removed = 0;
-
-  for (const sub of subs) {
-    const result = await sendWebPush(sub, payload);
-    if (result === "sent") sent++;
-    if (result === "dead") {
-      await prepare("DELETE FROM push_subscriptions WHERE id = ?").run(sub.id);
-      removed++;
-    }
-  }
-  return { sent, removed };
 }

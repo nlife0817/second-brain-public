@@ -4,6 +4,7 @@
 #   ./migrate.sh             применить всё непринятое
 #   ./migrate.sh --dry-run   показать, что будет применено, и выйти
 #   ./migrate.sh --baseline  отметить существующие файлы применёнными, НЕ выполняя их
+#   ./migrate.sh --run FILE  выполнить один файл поимённо (в том числе ручной)
 #
 # --baseline нужен ровно один раз — когда скрипт подключают к базе, где миграции
 # уже накатаны руками. Без него первый же выкат попытался бы прогнать всю историю
@@ -13,9 +14,17 @@
 # supabase_migrations.schema_migrations осталась от Supabase и здесь не участвует:
 # в ней timestamp-версии, которые с номерами файлов никогда не совпадали.
 #
-# Файл, который нельзя выполнить одной транзакцией (CREATE INDEX CONCURRENTLY и
-# подобное), помечается в первых строках комментарием:
-#   -- deploy: no-transaction
+# Два маркера в первых строках файла меняют поведение:
+#
+#   -- deploy: no-transaction   выполнить без `--single-transaction`
+#                               (CREATE INDEX CONCURRENTLY и подобное)
+#
+#   -- deploy: manual           НИКОГДА не выполнять автоматически. Для
+#                               необратимых миграций: сноса таблиц, переливки
+#                               данных, всего, что требует предполётной проверки
+#                               живыми глазами. Выкат такой файл пропускает и
+#                               остаётся зелёным; запускают его вручную через
+#                               `--run`, когда человек решил.
 
 set -euo pipefail
 
@@ -24,10 +33,17 @@ MIGRATIONS_DIR="$COMPOSE_DIR/../supabase/migrations"
 SNAPSHOTS_KEEP=10
 
 MODE=apply
+ONLY=""
 case "${1:-}" in
   "")         ;;
   --baseline) MODE=baseline ;;
   --dry-run)  MODE=dry ;;
+  --run)
+    MODE=run
+    ONLY="${2:-}"
+    [ -n "$ONLY" ] || { echo "--run требует имя файла миграции" >&2; exit 2; }
+    ONLY="$(basename "$ONLY")"
+    ;;
   *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
 esac
 
@@ -91,8 +107,44 @@ if [ ${#pending[@]} -eq 0 ]; then
   exit 0
 fi
 
-echo "миграции: непринятых — ${#pending[@]}"
-printf '  %s\n' "${pending[@]##*/}"
+# Ручные миграции откладываем в сторону. Они остаются непринятыми сколько угодно
+# долго и выкат не роняют: это не ошибка, а сознательно отложенное решение.
+manual=()
+auto=()
+for file in "${pending[@]}"; do
+  if head -n 10 "$file" | grep -qiE '^-- *deploy: *manual'; then
+    manual+=("$file")
+  else
+    auto+=("$file")
+  fi
+done
+
+if [ ${#manual[@]} -gt 0 ]; then
+  echo "миграции: ждут ручного запуска — ${#manual[@]}"
+  for file in "${manual[@]}"; do
+    printf '  %s  →  ./migrate.sh --run %s\n' "${file##*/}" "${file##*/}"
+  done
+fi
+
+# --run выполняет один названный файл, даже помеченный ручным: это и есть способ
+# запустить его, когда человек решил.
+if [ "$MODE" = run ]; then
+  chosen=""
+  for file in "${pending[@]}"; do
+    if [ "$(basename "$file")" = "$ONLY" ]; then chosen="$file"; break; fi
+  done
+  [ -n "$chosen" ] || { echo "✗ $ONLY нет среди непринятых миграций" >&2; exit 1; }
+  pending=("$chosen")
+else
+  pending=()
+  if [ ${#auto[@]} -gt 0 ]; then pending=("${auto[@]}"); fi
+  if [ ${#pending[@]} -eq 0 ]; then
+    echo "миграции: автоматически применять нечего"
+    exit 0
+  fi
+  echo "миграции: к применению — ${#pending[@]}"
+  printf '  %s\n' "${pending[@]##*/}"
+fi
 
 if [ "$MODE" = dry ]; then
   exit 0

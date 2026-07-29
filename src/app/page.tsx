@@ -1,63 +1,9 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { useEffect } from "react";
-import { useBrainStore } from "@/lib/store";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { Header } from "@/components/layout/Header";
-import { KanbanBoard } from "@/components/kanban/Board";
-import { ListView } from "@/components/list/ListView";
-import { TaskDetailModal, TaskDetailPanel } from "@/components/task/TaskDetailSheet";
-import { CreateTaskDialog } from "@/components/task/CreateTaskDialog";
-import { ClientsView } from "@/components/clients/ClientsView";
-import { ClientDetailModal, ClientDetailPanel } from "@/components/clients/ClientDetailModal";
-import { CreateClientDialog } from "@/components/clients/CreateClientDialog";
-import { SettingsView } from "@/components/settings/SettingsView";
-import { StagingView } from "@/components/staging/StagingView";
-import { TimingView } from "@/components/timing/TimingView";
-
+// Корень сохранён как редирект: на него завязаны start_url установленных PWA,
+// дефолт push-уведомлений в sw.js и `next` по умолчанию в /login и /auth/callback.
+// В обычном потоке сюда не доходит — proxy уводит "/" раньше (legacyTarget), —
+// но без этого файла у приложения не было бы корневой страницы вовсе.
 export default function Home() {
-  const fetchInit = useBrainStore((s) => s.fetchInit);
-  const viewMode = useBrainStore((s) => s.viewMode);
-  const detailMode = useBrainStore((s) => s.detailMode);
-  const isDetailOpen = useBrainStore((s) => s.isDetailOpen);
-  const isClientDetailOpen = useBrainStore((s) => s.isClientDetailOpen);
-  const appSection = useBrainStore((s) => s.appSection);
-
-  useEffect(() => {
-    fetchInit();
-  }, [fetchInit]);
-
-  return (
-    <div className="flex h-screen bg-background">
-      <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0">
-        {appSection === "tasks" && <Header />}
-        <div className="flex-1 flex min-h-0">
-          <main className="flex-1 overflow-auto min-w-0">
-            {appSection === "settings" ? (
-              <SettingsView />
-            ) : appSection === "timing" ? (
-              <TimingView />
-            ) : appSection === "staging" ? (
-              <StagingView />
-            ) : appSection === "clients" ? (
-              <ClientsView />
-            ) : viewMode === "kanban" ? (
-              <KanbanBoard />
-            ) : (
-              <ListView />
-            )}
-          </main>
-          {appSection === "tasks" && detailMode === "panel" && isDetailOpen && <TaskDetailPanel />}
-          {appSection === "clients" && detailMode === "panel" && isClientDetailOpen && <ClientDetailPanel />}
-        </div>
-      </div>
-      {appSection === "tasks" && detailMode === "modal" && <TaskDetailModal />}
-      {appSection === "tasks" && <CreateTaskDialog />}
-      {(appSection === "clients" || appSection === "tasks") && <ClientDetailModal />}
-      {appSection === "clients" && <CreateClientDialog />}
-      {/* Task detail modal opened from Clients section (e.g. via relations) */}
-      {(appSection === "clients" || appSection === "timing") && isDetailOpen && <TaskDetailModal forceModal />}
-    </div>
-  );
+  redirect("/v2/my");
 }

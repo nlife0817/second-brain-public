@@ -12,8 +12,8 @@ import {
   type PushState,
 } from "@/lib/notifications/client";
 
-// Подписка v2: авторизация по core-identity, а не по whitelist v1 — иначе
-// приглашённый участник получит 401 при попытке включить уведомления.
+// Подписка авторизуется по core-identity: приглашённый участник должен уметь
+// включить уведомления, не будучи заведённым где-то ещё.
 const V2_PUSH = { subscribeUrl: "/api/v2/push/subscribe" };
 
 function describe(state: PushState): string {

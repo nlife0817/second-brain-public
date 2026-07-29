@@ -1,8 +1,4 @@
-// Push-подписка пользователя v2 (устройство ↔ core.users).
-//
-// v1-endpoint /api/push/subscribe не годится: он авторизует по whitelist
-// public.users, а участник организации v2 может там отсутствовать. Пишем в
-// core.push_subscriptions; диспетчер (lib/core/push.ts) читает обе таблицы.
+// Push-подписка пользователя (устройство ↔ core.users).
 
 import { NextRequest, NextResponse } from "next/server";
 import { prepare } from "@/lib/sql";
@@ -32,15 +28,8 @@ export const POST = withUser(async (request: NextRequest, user) => {
 export const DELETE = withUser(async (request: NextRequest, user) => {
   const endpoint = request.nextUrl.searchParams.get("endpoint");
   if (!endpoint) return jsonError(400, "endpoint query param required");
-  // Диспетчер шлёт в объединение core + v1: чистим этот endpoint в обеих
-  // таблицах, иначе отписанное устройство продолжит получать пуши по старой
-  // v1-строке.
   await prepare(`DELETE FROM core.push_subscriptions WHERE user_id = ? AND endpoint = ?`).run(
     user.id,
-    endpoint,
-  );
-  await prepare(`DELETE FROM public.push_subscriptions WHERE user_email = ? AND endpoint = ?`).run(
-    user.email,
     endpoint,
   );
   return NextResponse.json({ ok: true });

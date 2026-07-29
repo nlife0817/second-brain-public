@@ -8,7 +8,7 @@ export const GET = withOrg(async (_request, { auth }) => {
   return new NextResponse(JSON.stringify(data, null, 2), {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Content-Disposition": `attachment; filename="second-brain-export-${auth.orgId}.json"`,
+      "Content-Disposition": `attachment; filename="export-${auth.orgId}.json"`,
     },
   });
 });

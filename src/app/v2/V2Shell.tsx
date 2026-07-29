@@ -14,7 +14,6 @@ import {
   CheckCircle2,
   ChevronsUpDown,
   Clock,
-  FolderKanban,
   ListChecks,
   Plus,
   Repeat,
@@ -176,9 +175,6 @@ export function V2Shell({
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-2">
         <p className="text-sm text-destructive">{store.error ?? "Нет доступа"}</p>
-        <Link className="text-sm text-primary underline" href="/">
-          Вернуться в старый интерфейс
-        </Link>
       </div>
     );
   }
@@ -345,13 +341,6 @@ export function V2Shell({
               className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
             >
               <Smartphone className="size-4" />
-            </Link>
-            <Link
-              href="/"
-              title="Старый интерфейс"
-              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <FolderKanban className="size-4" />
             </Link>
           </div>
         </div>

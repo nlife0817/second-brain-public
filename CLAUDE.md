@@ -5,32 +5,31 @@
 - Next.js 16 (App Router, `proxy.ts` вместо `middleware.ts`), React 19, TypeScript
 - Postgres напрямую через `postgres.js` ([src/lib/sql.ts](src/lib/sql.ts)), без ORM
 - Вход через Google OAuth своими силами ([src/lib/auth/](src/lib/auth/)), сессия — подписанная cookie
-- UI: Base UI (`@base-ui/react`), Tailwind v4, shadcn, Tiptap, dnd-kit, Zustand
+- UI: Base UI (`@base-ui/react`), Tailwind v4, shadcn, Tiptap, `@dnd-kit/core`, Zustand
 - Push: `web-push` + Service Worker (`/sw.js`)
 - Деплой: собственный VPS, Docker Compose ([deploy/](deploy/)) — см. [docs/VPS-MIGRATION.md](docs/VPS-MIGRATION.md)
 
-Команды: `npm run dev` · `npm run build` · `npm run lint`
+Команды: `npm run dev` · `npm run build` · `npm run lint` · `npm run test`
 
-# Две версии приложения
+# Приложение
 
-В репозитории живут одновременно:
+Командный трекер: мультитенантное ядро на схеме `core`, экраны `/v2/*`, API `/api/v2/**`, доменный слой [src/lib/core/](src/lib/core/) с единым policy-слоем. Правила и конвенции ядра — в [src/lib/core/CLAUDE.md](src/lib/core/CLAUDE.md), читай их перед любой правкой домена.
 
-- **v1** (наследие) — персональный «второй мозг»: `/` и `/m/*`, таблицы в схеме `public`, доступ через [src/lib/db.ts](src/lib/db.ts), whitelist-авторизация в [src/lib/auth.ts](src/lib/auth.ts).
-- **v2** (командный трекер) — мультитенантное ядро: `/v2/*`, схема `core`, API `/api/v2/**`, доменный слой [src/lib/core/](src/lib/core/) с единым policy-слоем. Правила и конвенции — в [src/lib/core/CLAUDE.md](src/lib/core/CLAUDE.md).
+Наследие v1 (персональный «второй мозг» на схеме `public`) удалено из кода целиком. Если встретишь упоминание `public.items`, `src/lib/db.ts`, Kaiten или whitelist-авторизации — это устаревший след, а не действующий код.
 
-Экран целиком принадлежит одной версии — смешивать v1 и v2 в одном компоненте нельзя. Новые командные фичи делаем в v2.
+Таблицы v1 **пока живы в базе**: миграция [0037_drop_v1_public.sql](supabase/migrations/0037_drop_v1_public.sql) помечена `-- deploy: manual` и автовыкатом не применяется. Данные там необратимо теряются (weekly plans, Kaiten, `time_entries`, вложения — аналогов в `core` нет), а сам файл писался под Supabase и на нашем Postgres требует правки.
 
 # Структура и ключевые модули
 
-- [src/app/](src/app/) — App Router. Корень `/` — десктоп; `/m/*` (tasks/notes/inbox/settings) — мобильный UI; `/planning/` — недельное планирование; `/login/`, `/auth/callback/` — auth
-- [src/app/api/](src/app/api/) — REST endpoints. Крупные подсистемы: `kaiten/*` (двусторонняя синхронизация с Kaiten + cron), `weekly-plans/*` (план + entries + отчёты), `staging/*` (inbox), `push/*` + `notifications/dispatch` (web-push), `clients`, `items`, `relations`, `comments`
-- [src/lib/](src/lib/) — `sql.ts` (доступ к БД), `db.ts` (домен-запросы), `auth/` (вход через Google + сессия), `auth.ts`/`api-auth.ts` (`withAuth`/`withAdminOnly` обёртки), `store.ts` (Zustand)
-- [supabase/migrations/](supabase/migrations/) — SQL миграции (см. правило ниже). Каталог сохранил историческое имя, хотя Supabase больше не используется
-- [deploy/](deploy/) — docker-compose, Caddyfile, контейнер расписаний, шаблон `.env`
+- [src/app/](src/app/) — App Router. `/v2/*` — десктопные экраны, `/v2/m/*` — мобильная PWA, `/login/` и `/auth/callback/` — вход, `/invite/[token]` — приглашение. Корень `/` — редирект на `/v2/my`
+- [src/app/api/v2/](src/app/api/v2/) — REST endpoints, тонкие: zod → policy → сервис ядра. SQL в роутах не пишем
+- [src/lib/](src/lib/) — `sql.ts` (единственный доступ к Postgres, `prepare()` конвертит `?` → `$N`), `core/` (домен), `auth/` (вход через Google + подпись сессии), `notifications/` (web-push), `sanitize.ts`, `utils.ts`
+- [supabase/migrations/](supabase/migrations/) — SQL миграции (см. правило ниже). Каталог сохранил историческое имя, хотя Supabase больше не используется. `0001`–`0022` создавали схему `public` (первая версия), `0023`+ — схему `core`
+- [deploy/](deploy/) — docker-compose, Caddyfile, контейнер расписаний, скрипты выката и уборки, шаблон `.env`
 
-## Наследие Supabase
+## Остатки Supabase
 
-Проект переехал с Vercel + Supabase Cloud на собственный VPS. Не используются, но оставлены в репозитории: `src/lib/supabase/*`, `src/lib/realtime.ts`, `src/components/RealtimeProvider.tsx`. Загрузка вложений v1 (`src/lib/storage.ts`) отвечает ошибкой — Storage не переносился. Новый код не должен импортировать эти модули.
+`src/lib/supabase/*` и пакеты `@supabase/*` в `package.json` больше никем не используются — вход переписан на свой Google OAuth. Модули оставлены в репозитории до отдельного решения; новый код не должен их импортировать.
 
 # Правило: уточняющие вопросы перед кодом
 
@@ -85,7 +84,9 @@
 
 Новая миграция — просто файл `supabase/migrations/NNNN_<name>.sql` (следующий свободный номер — **0038**). Выкат применяет непринятые файлы сам, по одному, каждый в своей транзакции; учёт — в `public._deploy_migrations`. Подробности и ручные режимы — [docs/DEPLOY.md](docs/DEPLOY.md).
 
-**Миграция обязана быть совместимой с текущим кодом**: она применяется до перезапуска приложения, то есть минуту-другую старый код работает с новой схемой. Добавить колонку или таблицу — безопасно. Удалить или переименовать — только следующим выкатом, когда код уже перестал их использовать. Файлу, который нельзя выполнить в транзакции (`CREATE INDEX CONCURRENTLY`), нужна пометка `-- deploy: no-transaction` в первых строках.
+**Миграция обязана быть совместимой с текущим кодом**: она применяется до перезапуска приложения, то есть минуту-другую старый код работает с новой схемой. Добавить колонку или таблицу — безопасно. Удалить или переименовать — только следующим выкатом, когда код уже перестал их использовать.
+
+Маркеры в первых строках файла: `-- deploy: no-transaction` — выполнить без единой транзакции (`CREATE INDEX CONCURRENTLY`); `-- deploy: manual` — **никогда не выполнять автоматически**, для необратимого (снос таблиц, переливка данных). Ручную запускают отдельно: `deploy/migrate.sh --run <файл>`.
 
 ## Атомарность изменений схемы
 
@@ -99,9 +100,9 @@
 2. Добавь путь в `config.matcher` exclusion list в [src/proxy.ts](src/proxy.ts)
 3. Иначе запрос получит 307 на /login и до твоего кода не дойдёт
 
-Источник правды — `config.matcher` в [src/proxy.ts](src/proxy.ts). На текущий момент из proxy исключены `api/cron`, `api/v2/cron`, `api/notifications/dispatch`, `api/timing/watchdog`, `api/mcp`, `api/v2/invitations` (плюс статика: `_next`, `icons`, `favicon`, `manifest`, `sw.js`). Все остальные `/api/*` проходят проверку сессии в proxy — отдельный `withAuth` в роуте не обязателен, но допустим (см. [src/lib/api-auth.ts](src/lib/api-auth.ts) для ролевых ограничений).
+Источник правды — `config.matcher` в [src/proxy.ts](src/proxy.ts). На текущий момент из proxy исключены `api/v2/cron` и `api/v2/invitations` (плюс статика: `_next`, `icons`, `favicon`, `manifest`, `sw.js`, `offline.html`). Все остальные `/api/*` проходят проверку сессии в proxy; ролевые ограничения — в `withOrg`/`withUser` из [src/lib/core/context.ts](src/lib/core/context.ts).
 
-Дополнительно proxy редиректит мобильные UA: `/` → `/m/tasks` (v1) и `/v2/*` → `/v2/m/*` (v2), обойти — `?desktop` (липкая cookie).
+Дополнительно proxy редиректит мобильные UA с десктопных экранов на `/v2/m/*` (включая корень `/`), обойти — `?desktop` (липкая cookie), вернуть — `?mobile`.
 
 # Хостинг
 

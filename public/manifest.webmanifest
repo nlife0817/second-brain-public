@@ -1,12 +1,17 @@
 {
-  "name": "Second Brain",
-  "short_name": "Brain",
-  "description": "AI-powered task management",
-  "start_url": "/",
+  "id": "/",
+  "name": "Задачи — командный трекер",
+  "short_name": "Задачи",
+  "description": "Задачи, проекты и уведомления команды",
+  "lang": "ru",
+  "dir": "ltr",
+  "start_url": "/v2/my",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#7c3aed",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
   "orientation": "any",
+  "categories": ["productivity", "business"],
   "icons": [
     {
       "src": "/icons/icon-192.png",

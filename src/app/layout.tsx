@@ -3,7 +3,6 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
-import { LegacyRuntimeGate } from "@/components/LegacyRuntimeGate";
 import "./globals.css";
 
 const inter = Inter({
@@ -17,13 +16,13 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Second Brain",
-  description: "Your AI-powered second brain for task management",
+  title: "Задачи — командный трекер",
+  description: "Задачи, проекты и уведомления команды",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Second Brain",
+    title: "Задачи",
   },
   icons: {
     icon: [
@@ -36,7 +35,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#7c3aed",
+  themeColor: "#ffffff",
   width: "device-width",
   initialScale: 1,
 };
@@ -57,8 +56,6 @@ export default function RootLayout({
             {children}
           </TooltipProvider>
           <ServiceWorkerRegister />
-          {/* Realtime и тайм-трекинг v1 — только на экранах v1 (см. гейт). */}
-          <LegacyRuntimeGate />
         </ErrorBoundary>
       </body>
     </html>

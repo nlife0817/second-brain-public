@@ -32,7 +32,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="w-full max-w-sm px-6 py-10 rounded-2xl border bg-card shadow-sm">
-        <h1 className="text-2xl font-semibold mb-2">Second Brain</h1>
+        <h1 className="text-2xl font-semibold mb-2">Задачи</h1>
         <p className="text-sm text-muted-foreground mb-6">
           Войдите через Google, чтобы продолжить.
         </p>

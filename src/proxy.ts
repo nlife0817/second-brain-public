@@ -54,11 +54,13 @@ function mobileRedirect(request: NextRequest): NextResponse | null {
 }
 
 /**
- * Куда ведёт адрес v1 в v2 (десктопный путь; мобильный подберётся следом).
- * null — адрес к v1 отношения не имеет.
+ * Куда ведёт старый адрес первой версии (десктопный путь; мобильный подберётся
+ * следом). null — адрес к наследию отношения не имеет.
  *
- * v1 выключен: страницы уводим в v2, а не показываем. Код страниц остаётся в
- * репозитории, но через сеть до него не добраться.
+ * Самих страниц в репозитории больше нет. Слой оставлен как совместимость:
+ * на эти адреса указывают закладки, доставленные ранее push-уведомления
+ * (`/?item=…`) и установленные на телефонах ярлыки старой PWA — без него они
+ * упёрлись бы в 404.
  */
 function legacyTarget(pathname: string): string | null {
   if (pathname === "/") return "/v2/my";
@@ -74,13 +76,15 @@ function legacyTarget(pathname: string): string | null {
 }
 
 /**
- * Отсечение v1. Страницы — редирект в v2, API — 410 Gone.
+ * Отсечение старых адресов. Страницы — редирект в v2, API — 410 Gone.
  *
  * Проверка идёт до разрешения сессии: незачем ходить за пользователем ради
  * запроса, который всё равно будет перенаправлен.
  *
- * Роуты, исключённые из `config.matcher` (cron, dispatch, watchdog, mcp), сюда
- * не попадают — их останавливает выключение cron-задач в Postgres.
+ * Под 410 попадают и внешние точки входа первой версии (`/api/cron/*`,
+ * `/api/notifications/dispatch`, `/api/timing/watchdog`, `/api/mcp`): их
+ * исключения убраны из `config.matcher` вместе с самими роутами, так что
+ * отставшее расписание или забытый клиент получат внятный ответ, а не 404.
  */
 function legacyResponse(request: NextRequest): NextResponse | null {
   const { pathname } = request.nextUrl;
@@ -118,7 +122,7 @@ function applyDesktopModeCookie(request: NextRequest, response: NextResponse): v
 
 // /invite/* открыт до входа: страница сама показывает кнопку «Войти» с возвратом.
 // /api/auth/* — сам вход: редирект на Google и возврат от него идут без сессии.
-const PUBLIC_PATHS = ["/login", "/auth/callback", "/api/auth", "/mockup", "/invite"];
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/api/auth", "/invite"];
 
 // Local-only dev bypass. Active iff both conditions hold:
 //   1) NODE_ENV !== "production"  (production builds always set this to "production")
@@ -160,7 +164,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // Мобильные UA: корень v1 → /m/tasks, десктопные экраны v2 → /v2/m/*
+  // Мобильные UA: десктопные экраны → /v2/m/*
   // (только для авторизованных; обход — ?desktop, возврат — ?mobile).
   if (session) {
     const redirect = mobileRedirect(request);
@@ -183,6 +187,6 @@ export const config = {
   matcher: [
     // api/v2/invitations исключён: GET показывает приглашение до входа, POST
     // сам требует сессию через withUser.
-    "/((?!_next|api/cron|api/v2/cron|api/notifications/dispatch|api/timing/watchdog|api/mcp|api/v2/invitations|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
+    "/((?!_next|api/v2/cron|api/v2/invitations|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
   ],
 };
