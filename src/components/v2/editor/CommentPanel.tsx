@@ -270,7 +270,8 @@ function Message({
   message: DocCommentThread["messages"][number];
   isRoot: boolean;
   mine: boolean;
-  onEdit: (text: string) => void;
+  /** Признак успеха: по нему решаем, закрывать ли поле правки. */
+  onEdit: (html: string) => Promise<boolean>;
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -331,9 +332,13 @@ function Message({
               value={message.body}
               submitLabel="Сохранить"
               onCancel={() => setEditing(false)}
-              onSubmit={(html) => {
-                onEdit(html);
-                setEditing(false);
+              // Поле закрываем только при успехе и обязательно дожидаемся
+              // ответа: без await правка «сохранялась» на экране и при отказе
+              // сервера, а набранный текст исчезал вместе с полем.
+              onSubmit={async (html) => {
+                const ok = await onEdit(html);
+                if (ok) setEditing(false);
+                return ok;
               }}
             />
           </div>
