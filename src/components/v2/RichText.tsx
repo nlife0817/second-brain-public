@@ -14,8 +14,8 @@ import { useDocEditor } from "./editor/useDocEditor";
 export function RichText({
   value,
   onSave,
-  orgId,
-  taskId,
+  orgId = null,
+  taskId = null,
   placeholder = "Добавьте описание…",
   editable = true,
   onExpand,
@@ -23,8 +23,12 @@ export function RichText({
 }: {
   value: string;
   onSave: (html: string) => void;
-  orgId: string | null;
-  taskId: string | null;
+  /**
+   * Задача, к которой крепятся вложения. У черновика (`TaskDraftPanel`) её ещё
+   * нет — прикрепить файл не к чему, поэтому кнопки загрузки не рисуются.
+   */
+  orgId?: string | null;
+  taskId?: string | null;
   placeholder?: string;
   editable?: boolean;
   /** Открыть полноэкранный режим. Без обработчика кнопка не рисуется. */
@@ -73,7 +77,9 @@ export function RichText({
             <EditorToolbar
               editor={doc.editor}
               variant="compact"
-              onFiles={(files) => void doc.uploadFiles(files)}
+              onFiles={
+                orgId && taskId ? (files) => void doc.uploadFiles(files) : undefined
+              }
             />
           </div>
         )}

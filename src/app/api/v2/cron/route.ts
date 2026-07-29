@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { purgeOrphanAttachments } from "@/lib/core/attachments";
 import { dispatchPendingPush } from "@/lib/core/push";
 import { materializeDueRules } from "@/lib/core/recurring";
+import { purgeOldReminderMarks, runDueReminders } from "@/lib/core/reminders";
 import { deliverWebhooks } from "@/lib/core/saas";
 import { closeStaleTimers } from "@/lib/core/time";
 
@@ -32,6 +33,10 @@ export async function POST(request: NextRequest) {
   // Шаги независимы: сбой одного не должен обнулять остальные и весь тик.
   // Push здесь — страховка: основную доставку делает after() в withOrg/withUser
   // сразу после мутации; cron добирает то, что не дошло (см. lib/core/push.ts).
+  // Напоминания идут до рассылки: созданные ими уведомления уедут этим же
+  // тиком, а не будут ждать следующего.
+  const reminders = await runDueReminders().catch((e) => ({ error: String(e) }));
+
   const [push, recurring, timers, webhooks, attachments] = await Promise.all([
     dispatchPendingPush().catch((e) => ({ error: String(e) })),
     materializeDueRules(today).catch((e) => ({ error: String(e) })),
@@ -41,7 +46,9 @@ export async function POST(request: NextRequest) {
     // выброшенный из описания, нельзя оставлять в таблице навсегда.
     purgeOrphanAttachments().catch((e) => ({ error: String(e) })),
   ]);
-  return NextResponse.json({ push, recurring, timers, webhooks, attachments });
+  // Отметки старше месяца чистим редко и молча — ошибка тут не повод портить ответ.
+  const purged = await purgeOldReminderMarks().catch(() => 0);
+  return NextResponse.json({ reminders, push, recurring, timers, webhooks, purged, attachments });
 }
 
 export const GET = POST;

@@ -81,6 +81,17 @@ self.addEventListener("push", (event) => {
     actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : undefined,
   };
   const jobs = [self.registration.showNotification(title, options)];
+  // Открытые вкладки узнают об изменении сразу, а не из опроса раз в 30 секунд:
+  // счётчик обновляется, десктопная оболочка показывает карточку в углу.
+  jobs.push(
+    broadcast({
+      type: "sb:push",
+      title,
+      body: options.body,
+      url: options.data.url,
+      unread: data.unread,
+    })
+  );
   // Счётчик на иконке установленного приложения (Android / iOS 16.4+).
   if (typeof data.unread === "number" && "setAppBadge" in self.navigator) {
     jobs.push(
@@ -92,6 +103,53 @@ self.addEventListener("push", (event) => {
   }
   event.waitUntil(Promise.all(jobs));
 });
+
+// ---- Прочитано в приложении ----
+//
+// Уведомление, показанное этим браузером, живёт в шторке ОС, пока его не
+// закроют вручную. Приложение знает, что запись прочитана (в том числе с
+// другого устройства — счётчик приезжает с сервера), и просит убрать её:
+// иначе на ноутбуке неделю висит то, что давно разобрано с телефона.
+self.addEventListener("message", (event) => {
+  const data = event.data;
+  if (!data || typeof data !== "object") return;
+
+  if (data.type === "sb:read") {
+    event.waitUntil(closeNotifications(data.tag).then(() => applyBadge(data.unread)));
+  }
+});
+
+/** Закрывает уведомления приложения: с этим тегом либо все сразу. */
+async function closeNotifications(tag) {
+  // getNotifications({tag}) в части браузеров игнорирует пустой тег, поэтому
+  // фильтруем сами: лишний проход по нескольким уведомлениям ничего не стоит.
+  const shown = await self.registration.getNotifications();
+  for (const notification of shown) {
+    if (!tag || notification.tag === tag) notification.close();
+  }
+}
+
+async function applyBadge(unread) {
+  if (typeof unread !== "number" || !("setAppBadge" in self.navigator)) return;
+  try {
+    if (unread > 0) await self.navigator.setAppBadge(unread);
+    else await self.navigator.clearAppBadge();
+  } catch {
+    // бейдж поддержан не везде — не повод падать
+  }
+}
+
+/** Сообщение всем окнам приложения; закрытые вкладки просто никого не получат. */
+async function broadcast(message) {
+  const clientList = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  for (const client of clientList) {
+    try {
+      client.postMessage(message);
+    } catch {
+      // окно закрывается прямо сейчас — не мешает остальным
+    }
+  }
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

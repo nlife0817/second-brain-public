@@ -17,15 +17,12 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { PRIORITY_LABELS } from "@/components/v2/bits";
 import { BulkBar } from "@/components/v2/tasks/BulkBar";
 import { FilterBuilder } from "@/components/v2/tasks/FilterBuilder";
+import { TaskComposer } from "@/components/v2/tasks/TaskComposer";
 import { TaskTable, resolveColumns, type GroupLabel } from "@/components/v2/tasks/TaskTable";
-import {
-  ColumnsPopover,
-  GroupByPopover,
-  SavedViewsMenu,
-  SubtaskModePopover,
-} from "@/components/v2/tasks/ViewControls";
+import { ViewSettingsPopover } from "@/components/v2/tasks/ViewControls";
 import { api } from "@/lib/core/client";
 import { invalidate } from "@/lib/core/query";
+import { emptyDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type { TaskDetail, TaskPriority, TaskRow } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
@@ -38,6 +35,7 @@ import {
   compareTasks,
   makeMatchContext,
   matchesGroups,
+  showsArchived,
   type GroupByField,
   type SortColumn,
 } from "@/lib/core/views";
@@ -96,8 +94,15 @@ export interface TaskTableViewProps {
   loading?: boolean;
   /** Ответ упёрся в потолок выборки — предупреждаем, а не режем молча. */
   truncated?: boolean;
-  /** Строка быстрого добавления; без обработчика её нет. */
-  onQuickAdd?: (title: string) => Promise<void>;
+  /**
+   * Создание задачи из строки добавления; без обработчика строки нет.
+   * Черновик приходит целиком — вместе с кастомными полями, которые API
+   * принимает только после создания задачи.
+   */
+  onCreateTask?: (draft: TaskDraft) => Promise<void>;
+  /** Что экран проставляет в новый черновик (свой проект и т.п.). */
+  draftDefaults?: Partial<TaskDraft>;
+  /** Узкая версия строки добавления: одно поле названия. */
   quickAddPlaceholder?: string;
   /** Текст, когда задач нет вовсе (фильтр ни при чём). */
   emptyText?: string;
@@ -118,7 +123,8 @@ export function TaskTableView({
   actionsSlot,
   loading = false,
   truncated = false,
-  onQuickAdd,
+  onCreateTask,
+  draftDefaults,
   quickAddPlaceholder = "Быстро добавить задачу…",
   emptyText = "Задач пока нет.",
   compact = false,
@@ -302,9 +308,18 @@ export function TaskTableView({
 
   const matchCtx = useMemo(() => makeMatchContext(me?.id ?? null), [me?.id]);
 
+  // Архивные статусы прячутся до явного «Архив = Показать»: иначе архив
+  // всплывает в каждой группировке и в счётчиках групп.
+  const archivedStatusIds = useMemo(
+    () => new Set(statuses.filter((s) => s.kind === "archived").map((s) => s.id)),
+    [statuses],
+  );
+  const withArchived = showsArchived(filterGroups);
+
   const visibleTasks = useMemo(() => {
     const needle = search.trim().toLowerCase();
     const filtered = tasks.filter((t) => {
+      if (!withArchived && t.status_id && archivedStatusIds.has(t.status_id)) return false;
       if (needle && !t.title.toLowerCase().includes(needle)) return false;
       return matchesGroups(t, filterGroups, matchCtx);
     });
@@ -314,7 +329,7 @@ export function TaskTableView({
     return [...filtered].sort((a, b) =>
       compareTasks(a, b, sort, { statusPosition, projectPosition, projectName }),
     );
-  }, [tasks, search, filterGroups, matchCtx, sort, statuses, projects]);
+  }, [tasks, search, filterGroups, matchCtx, sort, statuses, projects, withArchived, archivedStatusIds]);
 
   const columns = useMemo(
     () => resolveColumns(columnsOrder, widths, fields),
@@ -471,9 +486,9 @@ export function TaskTableView({
   }, [selectedTasks, orgId, reload, refreshProjects]);
 
   async function quickAdd() {
-    if (!onQuickAdd || !quickTitle.trim()) return;
+    if (!onCreateTask || !quickTitle.trim()) return;
     try {
-      await onQuickAdd(quickTitle.trim());
+      await onCreateTask(emptyDraft({ ...draftDefaults, title: quickTitle.trim() }));
       setQuickTitle("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось создать задачу");
@@ -544,11 +559,6 @@ export function TaskTableView({
           </PopoverContent>
         </Popover>
 
-        <GroupByPopover />
-        <SubtaskModePopover />
-        <ColumnsPopover customFields={fields} />
-        <SavedViewsMenu />
-
         {!compact && (
           <div className="flex items-center gap-0.5">
             <Button
@@ -576,9 +586,14 @@ export function TaskTableView({
 
         {!compact && actionsSlot}
         {loading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+        {/* Настройки — последними у правого края: открывают их редко, а место
+            в начале шапки нужно поиску и фильтрам. */}
+        <ViewSettingsPopover customFields={fields} />
       </header>
 
-      {onQuickAdd && (
+      {/* На телефоне строка со всеми колонками бессмысленна — там остаётся
+          прежний ввод одного названия. */}
+      {onCreateTask && canEdit && compact && (
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-1.5">
           <Plus className="size-3.5 text-muted-foreground" />
           <input
@@ -612,36 +627,47 @@ export function TaskTableView({
         </p>
       )}
 
+      {/* Таблица рисуется всегда, даже пока грузится и пока пусто: в ней живёт
+          строка добавления, и размонтировать её — значит потерять набранный
+          черновик на ровном месте. */}
       <div className="min-h-0 flex-1">
-        {loading && tasks.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-muted-foreground">Загрузка…</p>
-        ) : visibleTasks.length === 0 ? (
-          <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-            {tasks.length === 0
-              ? emptyText
-              : `Ни одна задача не подходит под фильтр${search ? ` «${search}»` : ""}.`}
-          </p>
-        ) : (
-          <TaskTable
-            tasks={visibleTasks}
-            columns={columns}
-            ctx={cellCtx}
-            groupBy={groupBy}
-            matchCtx={matchCtx}
-            subtaskMode={subtaskMode}
-            sort={sort}
-            onToggleSort={toggleSort}
-            onResize={setWidth}
-            selected={selected}
-            onToggleSelected={toggleSelected}
-            onSelectMany={selectMany}
-            collapsed={collapsed}
-            onToggleCollapsed={toggleCollapsed}
-            onOpen={onOpenTask}
-            labelForGroup={labelForGroup}
-            groupOrder={groupOrder}
-          />
-        )}
+        <TaskTable
+          tasks={visibleTasks}
+          columns={columns}
+          ctx={cellCtx}
+          groupBy={groupBy}
+          matchCtx={matchCtx}
+          subtaskMode={subtaskMode}
+          sort={sort}
+          onToggleSort={toggleSort}
+          onResize={setWidth}
+          selected={selected}
+          onToggleSelected={toggleSelected}
+          onSelectMany={selectMany}
+          collapsed={collapsed}
+          onToggleCollapsed={toggleCollapsed}
+          onOpen={onOpenTask}
+          labelForGroup={labelForGroup}
+          groupOrder={groupOrder}
+          composer={
+            // Гостю строка создания не нужна: сервер всё равно откажет.
+            onCreateTask && canEdit && !compact ? (
+              <TaskComposer columns={columns} defaults={draftDefaults} onCreate={onCreateTask} />
+            ) : undefined
+          }
+          emptyState={
+            // sticky left-0 — иначе при горизонтальной прокрутке подпись уезжает
+            // вместе с колонками. w-max обязателен: блок во всю ширину таблицы
+            // смещать некуда, и sticky на нём молча не работает.
+            <p className="sticky left-0 w-max px-4 py-8 text-sm text-muted-foreground">
+              {loading && tasks.length === 0
+                ? "Загрузка…"
+                : tasks.length === 0
+                  ? emptyText
+                  : `Ни одна задача не подходит под фильтр${search ? ` «${search}»` : ""}.`}
+            </p>
+          }
+        />
       </div>
 
       {selected.size > 0 && canEdit && (

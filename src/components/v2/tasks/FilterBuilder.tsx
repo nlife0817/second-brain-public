@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
 import {
+  ARCHIVE_HIDE,
+  ARCHIVE_SHOW,
   BASE_FILTER_FIELDS,
   ME_VALUE,
   NONE_VALUE,
@@ -76,6 +78,13 @@ export function FilterBuilder() {
         return [
           { value: "yes", label: "Да" },
           { value: "no", label: "Нет" },
+        ];
+      case "archive":
+        // Задачи в статусах вида «архив» скрыты всегда — показать их можно
+        // только этим условием.
+        return [
+          { value: ARCHIVE_HIDE, label: "Скрыть" },
+          { value: ARCHIVE_SHOW, label: "Показать" },
         ];
       default: {
         const id = field.startsWith("field:") ? field.slice("field:".length) : null;

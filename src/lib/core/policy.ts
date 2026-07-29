@@ -27,7 +27,8 @@ export type OrgAction =
   | "statuses.manage"     // справочники org-уровня (статусы задач)
   | "fields.manage"       // кастомные поля org-уровня
   | "tags.manage"
-  | "audit.view";         // org-лента событий (фаза 3)
+  | "audit.view"          // org-лента событий (фаза 3)
+  | "settings.sections.manage"; // состав экрана настроек по ролям — только владелец
 
 const MIN_ORG_ROLE: Record<OrgAction, OrgRole> = {
   "org.view": "guest",
@@ -44,6 +45,7 @@ const MIN_ORG_ROLE: Record<OrgAction, OrgRole> = {
   "fields.manage": "member",
   "tags.manage": "member",
   "audit.view": "admin",
+  "settings.sections.manage": "owner",
 };
 
 export function canOrg(ctx: AuthContext, action: OrgAction): boolean {

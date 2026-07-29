@@ -1,4 +1,9 @@
-// SaaS-обвязка: лимиты плана, вебхуки, аудит-лента и экспорт данных организации.
+// SaaS-обвязка: вебхуки, аудит-лента и экспорт данных организации.
+//
+// Тарифов и лимитов здесь больше нет. Колонки `plan`/`entitlements` остались в
+// базе, но ничего не ограничивают: продукт не продаётся по планам, а код,
+// который считал участников и проекты перед каждым созданием, стоил лишнего
+// похода в базу на ровном месте.
 
 import { createHmac, randomBytes } from "node:crypto";
 import { prepare } from "@/lib/sql";
@@ -6,72 +11,10 @@ import { DomainError } from "./http";
 import { assertOrg, canOrg, effectiveProjectRole } from "./policy";
 import type { AuthContext, CoreEvent, PolicyProject } from "./types";
 
-// --- Лимиты плана ------------------------------------------------------------------
-
-export type Plan = "free" | "team" | "business";
-
-export interface Limits {
-  members: number;
-  projects: number;
-  guests: number;
-  webhooks: number;
-}
-
-// Лимиты подобраны так, чтобы ни одна функция продукта не оказалась полностью
-// недоступной на бесплатном плане: иначе фича существует только в коде.
-const PLAN_LIMITS: Record<Plan, Limits> = {
-  free: { members: 10, projects: 20, guests: 3, webhooks: 1 },
-  team: { members: 50, projects: 200, guests: 25, webhooks: 5 },
-  business: { members: 500, projects: 2000, guests: 250, webhooks: 50 },
-};
-
-export interface OrgUsage {
-  plan: Plan;
-  limits: Limits;
-  usage: { members: number; projects: number; guests: number; webhooks: number };
-}
-
-export async function getOrgUsage(ctx: AuthContext): Promise<OrgUsage> {
-  // Тариф, лимиты и численность организации — внутренняя информация.
-  assertOrg(ctx, "clients.view");
-  const row = await prepare<{ plan: Plan; entitlements: Partial<Limits> }>(
-    `SELECT plan, entitlements FROM core.organizations WHERE id = ?`,
-  ).get(ctx.orgId);
-  const plan = row?.plan ?? "free";
-  // entitlements — точечные надбавки поверх плана (ручные, для отдельных клиентов).
-  const limits = { ...PLAN_LIMITS[plan], ...(row?.entitlements ?? {}) };
-
-  const usage = await prepare<{ members: number; guests: number; projects: number; webhooks: number }>(
-    `SELECT
-       (SELECT count(*)::int FROM core.org_members WHERE org_id = ?) AS members,
-       (SELECT count(*)::int FROM core.org_members WHERE org_id = ? AND role = 'guest') AS guests,
-       (SELECT count(*)::int FROM core.projects WHERE org_id = ? AND archived_at IS NULL) AS projects,
-       (SELECT count(*)::int FROM core.webhooks WHERE org_id = ?) AS webhooks`,
-  ).get(ctx.orgId, ctx.orgId, ctx.orgId, ctx.orgId);
-
-  return {
-    plan,
-    limits,
-    usage: usage ?? { members: 0, projects: 0, guests: 0, webhooks: 0 },
-  };
-}
-
-const LIMIT_MESSAGES: Record<keyof Limits, string> = {
-  members: "Достигнут лимит участников для текущего плана",
-  projects: "Достигнут лимит проектов для текущего плана",
-  guests: "Достигнут лимит гостевых участников для текущего плана",
-  webhooks: "Достигнут лимит вебхуков для текущего плана",
-};
-
-/** Бросает 402, если добавление ещё одной единицы вышло бы за лимит плана. */
-export async function assertWithinLimit(ctx: AuthContext, key: keyof Limits): Promise<void> {
-  const { limits, usage } = await getOrgUsage(ctx);
-  if (usage[key] >= limits[key]) {
-    throw new DomainError(402, LIMIT_MESSAGES[key]);
-  }
-}
-
 // --- Аудит-лента организации ---------------------------------------------------------
+
+/** Потолок одной выборки журнала: столько же показывает экран «все действия». */
+export const AUDIT_MAX_LIMIT = 1000;
 
 /**
  * Журнал действий организации: кто и что делал. Для сущностей, которых админ
@@ -93,7 +36,7 @@ export async function listOrgAudit(
      WHERE e.org_id = ? AND (?::bigint IS NULL OR e.id < ?::bigint)
      ORDER BY e.id DESC
      LIMIT ?`,
-  ).all(ctx.orgId, opts.before ?? null, opts.before ?? null, Math.min(opts.limit ?? 100, 500));
+  ).all(ctx.orgId, opts.before ?? null, opts.before ?? null, Math.min(opts.limit ?? 100, AUDIT_MAX_LIMIT));
 
   const projectIds = [
     ...new Set([
@@ -193,7 +136,6 @@ export async function createWebhook(
   if (!isPublicHttpsUrl(input.url)) {
     throw new DomainError(422, "Нужен публичный https-адрес");
   }
-  await assertWithinLimit(ctx, "webhooks");
   // Секрет показывается один раз — им подписывается тело запроса (HMAC-SHA256).
   const secret = randomBytes(24).toString("base64url");
   const row = await prepare<Webhook>(
@@ -380,7 +322,7 @@ export async function exportOrg(ctx: AuthContext): Promise<Record<string, unknow
     )`;
 
   const [org, members, tasks, placements, comments, clients] = await Promise.all([
-    prepare(`SELECT id, name, slug, plan, created_at FROM core.organizations WHERE id = ?`).get(ctx.orgId),
+    prepare(`SELECT id, name, slug, created_at FROM core.organizations WHERE id = ?`).get(ctx.orgId),
     prepare(
       `SELECT u.email, u.name, m.role, m.created_at
        FROM core.org_members m JOIN core.users u ON u.id = m.user_id WHERE m.org_id = ?`,

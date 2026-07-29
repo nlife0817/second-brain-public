@@ -4,6 +4,7 @@ import { withOrg } from "@/lib/core/context";
 import { listDocComments } from "@/lib/core/doc-comments";
 import { listEntityFeed } from "@/lib/core/events";
 import { isUuid, jsonError } from "@/lib/core/http";
+import { getTaskRule } from "@/lib/core/recurring";
 import { listRelations, listRelationTypes } from "@/lib/core/relations";
 import { getTaskDetail, listSubtasks, requireTaskAccess } from "@/lib/core/tasks";
 
@@ -25,7 +26,7 @@ export const GET = withOrg(async (_request, { params, auth }) => {
   // Один общий чек доступа — дальше выборки идут без повторной проверки прав.
   await requireTaskAccess(auth, taskId, "view");
 
-  const [task, comments, feed, subtasks, relations, relation_types, doc_comments] =
+  const [task, comments, feed, subtasks, relations, relation_types, recurrence, doc_comments] =
     await Promise.all([
       getTaskDetail(auth, taskId),
       listTaskComments(auth, taskId),
@@ -33,6 +34,9 @@ export const GET = withOrg(async (_request, { params, auth }) => {
       listSubtasks(auth, taskId),
       listRelations(auth, "task", taskId),
       listRelationTypes(auth),
+      // Повтор — свойство задачи и живёт в её карточке: отдельным запросом это
+      // был бы седьмой поход туда же.
+      getTaskRule(taskId, auth.orgId),
       // Комментарии к описанию едут вместе с карточкой: их количество рисуется
       // на кнопке «развернуть», то есть нужно ещё до открытия документа.
       listDocComments(auth, taskId),
@@ -45,6 +49,7 @@ export const GET = withOrg(async (_request, { params, auth }) => {
     subtasks,
     relations,
     relation_types,
+    recurrence,
     doc_comments,
   });
 });

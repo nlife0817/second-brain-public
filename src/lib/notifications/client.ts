@@ -74,6 +74,20 @@ export async function enablePushNotifications(opts?: PushClientOptions): Promise
   }
 }
 
+/**
+ * Просит service worker убрать из шторки прочитанное и поправить бейдж.
+ * Без тега закрывает все уведомления приложения — это случай «непрочитанных
+ * не осталось», в том числе когда их разобрали на другом устройстве: сюда
+ * приложение приходит, увидев обнулившийся счётчик.
+ *
+ * Сообщение уходит контроллеру страницы; если его ещё нет, то и уведомлений
+ * этого браузера в шторке нет.
+ */
+export function syncReadState(state: { tag?: string; unread?: number }): void {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.controller?.postMessage({ type: "sb:read", ...state });
+}
+
 export async function disablePushNotifications(opts?: PushClientOptions): Promise<void> {
   const subscribeUrl = opts?.subscribeUrl ?? DEFAULT_SUBSCRIBE_URL;
   if (!("serviceWorker" in navigator)) return;

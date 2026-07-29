@@ -13,10 +13,15 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nextPath, setNextPath] = useState<string>("/");
+  const [signedOut, setSignedOut] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setNextPath(params.get("next") ?? "/");
+    // После выхода возвращать на закрытый экран нельзя: следующим войти может
+    // другой человек, и «продолжить с того же места» — это чужое место.
+    const wasSignedOut = params.has("signedout");
+    setSignedOut(wasSignedOut);
+    setNextPath(wasSignedOut ? "/" : (params.get("next") ?? "/"));
     const code = params.get("error");
     if (code) setError(ERRORS[code] ?? ERRORS.oauth);
   }, []);
@@ -33,6 +38,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="w-full max-w-sm px-6 py-10 rounded-2xl border bg-card shadow-sm">
         <h1 className="text-2xl font-semibold mb-2">Задачи</h1>
+        {signedOut && <p className="text-sm font-medium mb-1">Вы вышли из аккаунта</p>}
         <p className="text-sm text-muted-foreground mb-6">
           Войдите через Google, чтобы продолжить.
         </p>

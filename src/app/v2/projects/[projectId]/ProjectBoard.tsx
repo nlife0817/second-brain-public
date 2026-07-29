@@ -22,6 +22,8 @@ import { api } from "@/lib/core/client";
 import { invalidate } from "@/lib/core/query";
 import type { TaskDetail, TaskRow, TaskStatus } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
+import { useViewStore } from "@/lib/core/view-store";
+import { showsArchived } from "@/lib/core/views";
 
 /** Общая пустая колонка: новый [] на каждый рендер ломал бы memo карточек. */
 const EMPTY_TASKS: TaskRow[] = [];
@@ -132,7 +134,6 @@ export function ProjectBoard({
   tasks,
   setTasks,
   canEdit,
-  showDone,
   onOpenTask,
   onAddTask,
 }: {
@@ -142,11 +143,13 @@ export function ProjectBoard({
   tasks: TaskRow[];
   setTasks: Dispatch<SetStateAction<TaskRow[]>>;
   canEdit: boolean;
-  showDone: boolean;
   onOpenTask: (id: string) => void;
   onAddTask: (statusId: string | null) => void;
 }) {
   const { orgId, statuses, refreshProjects } = useV2Store();
+  // Фильтры у доски и таблицы общие (один ViewScope проекта) — архив
+  // показывается там и там по одному и тому же условию «Архив = Показать».
+  const withArchived = showsArchived(useViewStore((s) => s.groups));
   const [dragTask, setDragTask] = useState<TaskRow | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -156,9 +159,12 @@ export function ProjectBoard({
   // семи статусах это тысячи проходов за перетаскивание.
   const columns = useMemo(() => {
     const known = new Set(statuses.map((s) => s.id));
+    const archived = new Set(statuses.filter((s) => s.kind === "archived").map((s) => s.id));
     const byStatus = new Map<string, TaskRow[]>();
     const noStatusTasks: TaskRow[] = [];
     for (const t of tasks) {
+      // Архив не просто прячет колонку: сама задача не должна всплыть нигде.
+      if (!withArchived && t.status_id && archived.has(t.status_id)) continue;
       if (t.status_id && known.has(t.status_id)) {
         const bucket = byStatus.get(t.status_id);
         if (bucket) bucket.push(t);
@@ -167,13 +173,9 @@ export function ProjectBoard({
         noStatusTasks.push(t);
       }
     }
-    // Архивные колонки скрыты, пока в них нет задач — иначе задача, отправленная
-    // в архив из карточки, пропала бы с доски без следа.
-    const visible = statuses.filter(
-      (s) => showDone || s.kind !== "archived" || (byStatus.get(s.id)?.length ?? 0) > 0,
-    );
+    const visible = statuses.filter((s) => withArchived || s.kind !== "archived");
     return { visible, byStatus, noStatusTasks };
-  }, [statuses, tasks, showDone]);
+  }, [statuses, tasks, withArchived]);
 
   const openNoStatusAdd = useCallback(() => onAddTask(null), [onAddTask]);
 

@@ -76,6 +76,23 @@ function legacyTarget(pathname: string): string | null {
 }
 
 /**
+ * Живые API приложения — всё остальное под `/api/` относится к первой версии.
+ *
+ * Кроме `/api/v2/*` сюда входит `/api/auth/*`: свой вход через Google появился
+ * уже после отключения v1 и к наследию отношения не имеет. Без этой оговорки
+ * `/api/auth/google` отвечал 410 и войти было невозможно — ни на мобильной
+ * версии, ни на десктопе (там ошибка не бросалась в глаза, пока жила cookie
+ * сессии).
+ */
+function isLiveApi(pathname: string): boolean {
+  return (
+    pathname.startsWith("/api/v2/") ||
+    pathname === "/api/auth" ||
+    pathname.startsWith("/api/auth/")
+  );
+}
+
+/**
  * Отсечение старых адресов. Страницы — редирект в v2, API — 410 Gone.
  *
  * Проверка идёт до разрешения сессии: незачем ходить за пользователем ради
@@ -89,7 +106,7 @@ function legacyTarget(pathname: string): string | null {
 function legacyResponse(request: NextRequest): NextResponse | null {
   const { pathname } = request.nextUrl;
 
-  if (pathname.startsWith("/api/") && !pathname.startsWith("/api/v2/")) {
+  if (pathname.startsWith("/api/") && !isLiveApi(pathname)) {
     return NextResponse.json(
       { error: "API v1 отключён — используйте /api/v2/*" },
       { status: 410 },
