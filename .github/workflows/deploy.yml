@@ -1,0 +1,92 @@
+name: Прод
+
+# Всё, что попало в продакшн-ветку, едет на сервер. Тесты и сборка идут здесь, на
+# раннере GitHub: у сервера 3.8 ГБ памяти, и заведомо нерабочий коммит не должен
+# тратить их на сборку. Собранный здесь бандл никуда не уезжает — сервер соберёт
+# свой, со своими NEXT_PUBLIC_* из deploy/.env; этот прогон нужен как проверка.
+#
+# Разовая настройка (ключ, секреты, сервер) — docs/DEPLOY.md.
+
+on:
+  push:
+    branches: [v2-master]
+  # Ручной запуск из вкладки Actions: выкатывает ту ветку, которую выберете в
+  # выпадающем списке. Так можно вернуть прод на прежний коммит, не заходя на сервер.
+  workflow_dispatch:
+
+# Выкаты выстраиваются в очередь. Не отменяем уже идущий: прерванный на середине
+# оставил бы сервер с новой схемой базы и старым кодом.
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Тесты и сборка
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # .npmrc с legacy-peer-deps лежит в репозитории — без него ci падает на
+      # конфликте peer-зависимостей mcp-handler.
+      - name: Зависимости
+        run: npm ci
+
+      - name: Тесты
+        run: npm test
+
+      # Линтер намеренно не блокирует выкат: в коде есть предсуществующие ошибки
+      # (загрузка данных в useEffect), это отдельная задача. Смотреть на результат
+      # стоит, срывать из-за него выкат — нет.
+      - name: Линтер
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Кеш сборки Next
+        uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: next-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: next-${{ hashFiles('package-lock.json') }}-
+
+      # next build заодно проверяет типы своим чекером — отдельный tsc не нужен.
+      # Значения NEXT_PUBLIC_* заведомо ненастоящие, этот бандл никуда не едет.
+      - name: Сборка
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_APP_URL: https://ci.invalid
+          NEXT_PUBLIC_VAPID_PUBLIC_KEY: BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U
+
+  deploy:
+    name: Выкат на сервер
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Выкат по SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY"     > ~/.ssh/deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # Отпечаток сервера берётся из секрета, а не подбирается на месте:
+          # ssh-keyscan прямо в момент подключения доверял бы кому угодно.
+          #
+          # Аргумент уходит в SSH_ORIGINAL_COMMAND. Выполнить его нельзя: ключ на
+          # сервере прибит forced command к deploy/deploy.sh, который принимает
+          # только имя коммита.
+          ssh -i ~/.ssh/deploy \
+              -o IdentitiesOnly=yes -o BatchMode=yes \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+              "root@$DEPLOY_HOST" "$GITHUB_SHA"

@@ -43,6 +43,9 @@ next-env.d.ts
 # playwright mcp
 .playwright-mcp/
 
+# дампы базы на сервере: ежедневные из backup.sh и снимки перед миграциями
+deploy/backups/
+
 # SQLite database and runtime artifacts
 data/brain.db
 data/brain.db-shm

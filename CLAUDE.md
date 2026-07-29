@@ -83,10 +83,9 @@
 
 БД — Postgres в контейнере `db` на VPS (не SQLite). Доступ через `prepare()` из [src/lib/sql.ts](src/lib/sql.ts), который конвертит `?` → `$N` плейсхолдеры.
 
-Новая миграция:
-1. Создай `supabase/migrations/NNNN_<name>.sql` (порядковый номер)
-2. Применить на сервере: `docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < supabase/migrations/NNNN_<name>.sql`
-3. Миграции **не катятся автоматически** при деплое — это отдельный шаг
+Новая миграция — просто файл `supabase/migrations/NNNN_<name>.sql` (следующий свободный номер — **0038**). Выкат применяет непринятые файлы сам, по одному, каждый в своей транзакции; учёт — в `public._deploy_migrations`. Подробности и ручные режимы — [docs/DEPLOY.md](docs/DEPLOY.md).
+
+**Миграция обязана быть совместимой с текущим кодом**: она применяется до перезапуска приложения, то есть минуту-другую старый код работает с новой схемой. Добавить колонку или таблицу — безопасно. Удалить или переименовать — только следующим выкатом, когда код уже перестал их использовать. Файлу, который нельзя выполнить в транзакции (`CREATE INDEX CONCURRENTLY`), нужна пометка `-- deploy: no-transaction` в первых строках.
 
 ## Атомарность изменений схемы
 
@@ -115,11 +114,12 @@
 | `caddy` | TLS (авто-Let's Encrypt) + reverse proxy, единственный с портами 80/443 |
 | `cron` | busybox crond + curl вместо pg_cron |
 
-**Деплой** — `git pull && docker compose build app && docker compose up -d app` из `/srv/secondbrain/deploy`. Образ собирается на сервере (сборка требует ~2–3 ГБ, поэтому там подключён swap).
+**Деплой автоматический**: push в `v2-master` → [GitHub Actions](.github/workflows/deploy.yml) прогоняет тесты и сборку → по SSH запускает [deploy/deploy.sh](deploy/deploy.sh), который пересобирает образ на сервере (сборка требует ~2–3 ГБ, поэтому там подключён swap), применяет миграции, ждёт healthcheck и при неудаче возвращает предыдущий образ. Руками с сервера — `deploy/deploy.sh <ветка|sha>`. Порядок настройки, откат и разбор падений — [docs/DEPLOY.md](docs/DEPLOY.md).
 
 - **Расписания** — задания в [deploy/cron/crontab](deploy/cron/crontab), время в UTC. Активен только тик ядра v2 (`*/10`), задания v1 закомментированы. Секрет `CRON_SECRET` из `.env`
 - **Секреты** — `deploy/.env` на сервере (шаблон: [deploy/env.example](deploy/env.example)), в git не попадает. `NEXT_PUBLIC_*` вшиваются в бандл при сборке образа — менять их можно только пересборкой, правка `.env` не подействует
-- **Миграции** — вручную: `docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < supabase/migrations/NNNN_*.sql`
+- **Миграции** — применяются выкатом автоматически ([deploy/migrate.sh](deploy/migrate.sh)), перед первой снимается дамп в `deploy/backups/pre-migrate-*.pgc`
 - **Бэкапы** — [deploy/backup.sh](deploy/backup.sh) в системном cron хоста, ежедневно в 03:20 UTC, хранение 14 дней
+- **Диск** — [deploy/cleanup.sh](deploy/cleanup.sh) раз в неделю чистит неиспользуемые образы и кеш сборки; тома не трогает никогда
 - **Docker Hub** отдаёт 429 анонимным клиентам с IP дата-центра — в `/etc/docker/daemon.json` прописано зеркало `mirror.gcr.io`, там же ограничение размера логов контейнеров
 - Порядок первичного развёртывания и грабли — [docs/VPS-MIGRATION.md](docs/VPS-MIGRATION.md)

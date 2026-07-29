@@ -26,6 +26,10 @@ services:
     # С ноутбука — через `ssh -L 5433:localhost:5432 user@server` + `docker compose port`.
 
   app:
+    # Имя задано явно, хотя compose и сам собрал бы его из имени проекта и
+    # сервиса: deploy.sh вешает на прежнюю сборку тег secondbrain-app:rollback,
+    # и полагаться на угаданное имя там нельзя.
+    image: secondbrain-app:latest
     build:
       context: ..
       dockerfile: Dockerfile
@@ -47,6 +51,19 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Проверка нужна не столько для перезапусков, сколько для выката: deploy.sh
+    # запускает `up -d --wait` и по ней понимает, поднялась новая версия или пора
+    # возвращать прежний образ.
+    #
+    # node вместо curl: в образе на node:22-bookworm-slim curl нет, и тянуть его
+    # ради одной проверки не стоит. Дёргаем /login — серверный рендер реальной
+    # страницы, то есть ловим и невзлетевший сервер, и падение на рендере.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
     # after() дописывает пуши уже после ответа клиенту — даём процессу успеть
     # доработать их перед SIGKILL.
     stop_grace_period: 30s
