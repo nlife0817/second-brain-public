@@ -10,7 +10,11 @@
 # ---- deps -------------------------------------------------------------------
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
-COPY package.json package-lock.json ./
+# .npmrc обязателен: в нём legacy-peer-deps=true, без которого npm ci падает на
+# конфликте peer-зависимостей (mcp-handler требует ровно @modelcontextprotocol/sdk
+# 1.26.0, в проекте — 1.29.0). Состав пакетов при этом задаёт lock-файл, флаг лишь
+# снимает проверку peer-диапазонов.
+COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 
 # ---- builder ----------------------------------------------------------------
