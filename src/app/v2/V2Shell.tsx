@@ -25,7 +25,7 @@ import { CreateProjectDialog, GlobalSearch, OrgOnboarding, TaskSheet } from "@/c
 import { GlobalTimer } from "@/components/v2/GlobalTimer";
 import { Avatar } from "@/components/v2/bits";
 import { ProjectIcon } from "@/components/v2/project-icons";
-import { ACTIVE_ORG_COOKIE_MAX_AGE, SIDEBAR_COLLAPSED_COOKIE } from "@/lib/core/keys";
+import { SIDEBAR_COLLAPSED_COOKIE, SIDEBAR_COLLAPSED_COOKIE_MAX_AGE } from "@/lib/core/keys";
 import {
   readActiveOrgCookie,
   takeLegacyActiveOrg,
@@ -127,7 +127,7 @@ export function V2Shell({
       const next = !prev;
       // Значение читает серверный layout — иначе следующая полная загрузка
       // вернула бы панель в прежнее состояние.
-      document.cookie = `${SIDEBAR_COLLAPSED_COOKIE}=${next ? "1" : "0"}; path=/; max-age=${ACTIVE_ORG_COOKIE_MAX_AGE}; samesite=lax`;
+      document.cookie = `${SIDEBAR_COLLAPSED_COOKIE}=${next ? "1" : "0"}; path=/; max-age=${SIDEBAR_COLLAPSED_COOKIE_MAX_AGE}; samesite=lax`;
       return next;
     });
   }, []);
@@ -233,7 +233,7 @@ export function V2Shell({
           </button>
         </div>
 
-        <div className={cn("pb-1", collapsed ? "px-2" : "px-2")}>
+        <div className="px-2 pb-1">
           <button
             onClick={() => setSearchOpen(true)}
             title={collapsed ? "Поиск" : undefined}

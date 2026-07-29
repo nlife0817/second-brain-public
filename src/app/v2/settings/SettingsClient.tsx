@@ -10,6 +10,7 @@
 // сотруднику вебхуки» галочкой невозможно.
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -708,6 +709,7 @@ function SectionsAccess({
   initialConfig: Record<SettingsSectionId, OrgRole[]>;
   onError: (message: string | null) => void;
 }) {
+  const router = useRouter();
   const [config, setConfig] = useState(initialConfig);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -730,6 +732,9 @@ function SectionsAccess({
       await api.put(`/orgs/${orgId}/settings-sections`, { sections: config });
       onError(null);
       setSaved(true);
+      // Состав разделов считает сервер — без обновления рендера экран остался
+      // бы прежним до следующего перехода.
+      router.refresh();
     } catch (e) {
       onError(e instanceof Error ? e.message : "Не удалось сохранить доступ к разделам");
     } finally {
@@ -791,7 +796,7 @@ function SectionsAccess({
         <Button size="sm" onClick={() => void save()} disabled={saving}>
           {saving ? "Сохраняю…" : "Сохранить"}
         </Button>
-        {saved && <span className="text-xs text-muted-foreground">Сохранено — экран обновится при переходе</span>}
+        {saved && <span className="text-xs text-muted-foreground">Сохранено</span>}
       </div>
     </Section>
   );
