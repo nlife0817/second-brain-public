@@ -46,8 +46,5 @@ next-env.d.ts
 # дампы базы на сервере: ежедневные из backup.sh и снимки перед миграциями
 deploy/backups/
 
-# SQLite database and runtime artifacts
-data/brain.db
-data/brain.db-shm
-data/brain.db-wal
+# локальные дампы базы (scripts/db-dump-from-supabase.sh пишет сюда)
 data/backups/
