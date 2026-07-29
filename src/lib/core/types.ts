@@ -3,6 +3,12 @@
 export type OrgRole = "owner" | "admin" | "member" | "guest";
 export type ProjectRole = "admin" | "editor" | "commenter" | "viewer";
 export type ProjectVisibility = "org" | "private";
+/**
+ * Базовая роль проекта: её получает сотрудник организации без явной записи в
+ * project_members. `null` — закрытый проект (только явные участники). «admin»
+ * недоступен: иначе любой сотрудник менял бы настройки проекта и удалял его.
+ */
+export type ProjectDefaultRole = "viewer" | "commenter" | "editor";
 
 export interface CoreUser {
   id: string;
@@ -75,7 +81,8 @@ export interface AuthContext {
 export interface PolicyProject {
   id: string;
   org_id: string;
-  visibility: ProjectVisibility;
+  /** Источник истины доступа. `null` = закрытый проект (см. ProjectDefaultRole). */
+  default_role: ProjectDefaultRole | null;
 }
 
 // --- Задачи и проекты -----------------------------------------------------------
@@ -100,6 +107,8 @@ export interface Project {
   description: string;
   color: string;
   icon: string;
+  default_role: ProjectDefaultRole | null;
+  /** Производная от `default_role` (generated-колонка): `private` ⇔ default_role is null. */
   visibility: ProjectVisibility;
   position: number;
   archived_at: string | null;
@@ -204,12 +213,53 @@ export interface TaskMeta {
  */
 export interface TaskListItem extends Omit<CoreTask, "description">, TaskMeta {}
 
+/**
+ * Строка сводного списка «Все задачи»: элемент списка + значения кастомных
+ * полей. Поля нужны как колонки таблицы — в v1 их роль играли «категория»,
+ * «этап разработки» и «участники», зашитые в схему.
+ */
+export interface TaskRow extends TaskListItem {
+  field_values: Record<string, unknown>;
+}
+
+/** Ответ сводного списка: `truncated` честно сообщает об упёршемся лимите. */
+export interface AllTasksResult {
+  tasks: TaskRow[];
+  truncated: boolean;
+}
+
 export interface TaskWithMeta extends CoreTask, TaskMeta {}
 
 export interface TaskDetail extends TaskWithMeta {
   followers: UserBrief[];
   field_values: Record<string, unknown>;
   creator: UserBrief | null;
+}
+
+// --- Связи между сущностями ------------------------------------------------------
+
+export type RelationEntityType = "task" | "client" | "project";
+
+export interface RelationType {
+  id: string;
+  org_id: string;
+  name: string;
+  color: string;
+  icon: string;
+  position: number;
+}
+
+/** Связь глазами конкретной карточки: «дальняя» сторона уже разрешена. */
+export interface RelationWithTarget {
+  id: string;
+  relation_type_id: string | null;
+  /** outgoing — связь заведена из этой карточки, incoming — на неё сослались. */
+  direction: "outgoing" | "incoming";
+  entity_type: RelationEntityType;
+  entity_id: string;
+  title: string;
+  color: string | null;
+  created_at: string;
 }
 
 export interface CoreComment {

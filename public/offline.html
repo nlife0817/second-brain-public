@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Нет сети</title>
+    <!-- Страница показывается service worker'ом, когда запрос не дошёл до
+         сервера. Без неё установленное приложение открывалось бы браузерной
+         ошибкой и выглядело сломанным. Всё внутри одного файла: сеть недоступна
+         по определению. -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #0a0a0a;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0a0a0a;
+          --fg: #fafafa;
+          --muted: #9ca3af;
+          --border: #27272a;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 24px calc(24px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom))
+          calc(24px + env(safe-area-inset-left));
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        text-align: center;
+      }
+      h1 {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 600;
+      }
+      p {
+        margin: 0;
+        max-width: 22rem;
+        font-size: 14px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+      button {
+        margin-top: 8px;
+        padding: 10px 18px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        font-size: 14px;
+      }
+      svg {
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M2 2l20 20" />
+      <path d="M8.5 16.5a5 5 0 0 1 7 0" />
+      <path d="M2 8.82a15 15 0 0 1 4.17-2.65" />
+      <path d="M10.66 5c4.01-.36 8.14.9 11.34 3.76" />
+      <path d="M16.85 11.25a10 10 0 0 1 2.22 1.68" />
+      <path d="M5 12.86a10 10 0 0 1 5.17-2.7" />
+      <path d="M12 20h.01" />
+    </svg>
+    <h1>Нет подключения</h1>
+    <p>Задачи и уведомления появятся, как только вернётся сеть. Уже открытые экраны продолжают работать.</p>
+    <button type="button" onclick="location.reload()">Повторить</button>
+  </body>
+</html>

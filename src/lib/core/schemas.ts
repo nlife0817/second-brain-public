@@ -28,12 +28,18 @@ export const invitationCreateSchema = z.object({
 
 // --- Проекты и секции -------------------------------------------------------------
 
+/**
+ * Базовая роль сотрудников организации в проекте; `null` — закрытый проект.
+ * Источник истины доступа (см. core.projects.default_role и policy.ts).
+ */
+const projectDefaultRoleSchema = z.enum(["viewer", "commenter", "editor"]).nullable();
+
 export const projectCreateSchema = z.object({
   name: z.string().trim().min(1).max(200),
   description: z.string().max(4000).optional(),
   color: z.string().trim().max(32).optional(),
   icon: z.string().trim().max(64).optional(),
-  visibility: z.enum(["org", "private"]).optional(),
+  default_role: projectDefaultRoleSchema.optional(),
 });
 
 export const projectPatchSchema = z
@@ -42,7 +48,7 @@ export const projectPatchSchema = z
     description: z.string().max(4000).optional(),
     color: z.string().trim().max(32).optional(),
     icon: z.string().trim().max(64).optional(),
-    visibility: z.enum(["org", "private"]).optional(),
+    default_role: projectDefaultRoleSchema.optional(),
     position: z.number().finite().optional(),
     archived: z.boolean().optional(),
     team_id: z.uuid().nullable().optional(),
@@ -141,6 +147,37 @@ export const tagPatchSchema = z
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
+// --- Связи между сущностями ------------------------------------------------------
+
+const relationEntitySchema = z.enum(["task", "client", "project"]);
+
+export const relationCreateSchema = z.object({
+  source_type: relationEntitySchema,
+  source_id: z.uuid(),
+  target_type: relationEntitySchema,
+  target_id: z.uuid(),
+  relation_type_id: z.uuid().nullish(),
+});
+
+export const relationQuerySchema = z.object({
+  entity_type: relationEntitySchema,
+  entity_id: z.uuid(),
+});
+
+export const relationTypeCreateSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  color: z.string().trim().max(32).optional(),
+  icon: z.string().trim().max(64).optional(),
+});
+export const relationTypePatchSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    color: z.string().trim().max(32).optional(),
+    icon: z.string().trim().max(64).optional(),
+    position: z.number().finite().optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
 export const fieldOptionSchema = z.object({
   id: z.string().max(64).optional(),
   label: z.string().trim().min(1).max(200),
@@ -235,6 +272,15 @@ export const manualTimeEntrySchema = z.object({
   note: z.string().max(500).optional(),
 });
 
+export const timeEntryPatchSchema = z
+  .object({
+    started_at: z.string().min(10).max(40).optional(),
+    // null допустим: так активный таймер остаётся активным после правки начала.
+    ended_at: z.string().min(10).max(40).nullable().optional(),
+    note: z.string().max(500).optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
 // --- Повторяющиеся задачи -------------------------------------------------------------
 
 // --- SaaS: команды, вебхуки ---------------------------------------------------------
@@ -276,3 +322,24 @@ export const recurringCreateSchema = z.object({
   start_date: dateSchema,
   until_date: dateSchema.nullish(),
 });
+
+export const recurringPatchSchema = z
+  .object({
+    template: z
+      .object({
+        title: z.string().trim().min(1).max(500),
+        description: z.string().max(20_000).optional(),
+        priority: prioritySchema.optional(),
+        status_id: z.uuid().nullish(),
+        project_id: z.uuid().nullish(),
+        assignee_ids: z.array(z.uuid()).max(20).optional(),
+      })
+      .optional(),
+    freq: z.enum(["daily", "weekdays", "weekly", "monthly"]).optional(),
+    interval: z.number().int().min(1).max(365).optional(),
+    byweekday: z.array(z.number().int().min(0).max(6)).max(7).nullish(),
+    bymonthday: z.number().int().min(1).max(28).nullish(),
+    start_date: dateSchema.optional(),
+    until_date: dateSchema.nullish(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });

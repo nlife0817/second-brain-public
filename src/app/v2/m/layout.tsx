@@ -5,6 +5,7 @@
 
 import type { Metadata, Viewport } from "next";
 import { MobileShell } from "@/components/v2/mobile/MobileShell";
+import { INSTALL_CAPTURE_SNIPPET } from "@/components/v2/mobile/install-capture";
 
 export const metadata: Metadata = {
   title: "Задачи",
@@ -28,5 +29,12 @@ export const viewport: Viewport = {
 };
 
 export default function V2MobileLayout({ children }: { children: React.ReactNode }) {
-  return <MobileShell>{children}</MobileShell>;
+  return (
+    <>
+      {/* Выполняется при разборе разметки — раньше гидрации: иначе событие
+          установки успевает пройти мимо и баннер не появляется. */}
+      <script dangerouslySetInnerHTML={{ __html: INSTALL_CAPTURE_SNIPPET }} />
+      <MobileShell>{children}</MobileShell>
+    </>
+  );
 }

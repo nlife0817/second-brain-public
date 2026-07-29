@@ -1,0 +1,339 @@
+"use client";
+
+// Настройки таблицы задач: колонки, сортировка, группировка, фильтры и
+// именованные представления. Персистится в localStorage — как
+// listColumnOrder/savedFilters в v1: набор колонок это рабочая привычка,
+// терять её при перезагрузке нельзя.
+//
+// Стор не один: у сводного списка «Все задачи» и у каждого проекта он свой.
+// Колонки и фильтры проекта — это другой рабочий срез, чем «всё сразу», и общий
+// стор заставлял бы перенастраивать экран после каждого перехода. Отсюда
+// фабрика + контекст вместо модульного синглтона.
+
+import { createContext, createElement, useContext, type ReactNode } from "react";
+import { create, createStore, useStore } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
+import type { FilterGroup, GroupByConfig, SortState, SubtaskMode } from "./views";
+
+export interface ColumnDef {
+  id: string;
+  label: string;
+  /** Короткая подпись в шапке, если полная не влезает. */
+  headerLabel?: string;
+  width: number;
+  sortable: boolean;
+  /** Колонка редактируется прямо в таблице. */
+  editable: boolean;
+}
+
+export const BASE_COLUMNS: ColumnDef[] = [
+  { id: "priority", label: "Приоритет", headerLabel: "P", width: 44, sortable: true, editable: true },
+  { id: "title", label: "Название", width: 380, sortable: true, editable: true },
+  { id: "status", label: "Статус", width: 132, sortable: true, editable: true },
+  { id: "project", label: "Проект", width: 150, sortable: true, editable: false },
+  { id: "assignees", label: "Исполнители", width: 116, sortable: false, editable: true },
+  { id: "tags", label: "Теги", width: 150, sortable: false, editable: true },
+  { id: "due_date", label: "Дедлайн", width: 116, sortable: true, editable: true },
+  { id: "estimated_minutes", label: "Оценка", width: 88, sortable: true, editable: true },
+  { id: "subtasks", label: "Подзадачи", headerLabel: "Подз.", width: 76, sortable: true, editable: false },
+  { id: "comments", label: "Комментарии", headerLabel: "Комм.", width: 68, sortable: false, editable: false },
+  { id: "created_at", label: "Создана", width: 104, sortable: true, editable: false },
+  { id: "updated_at", label: "Обновлена", width: 104, sortable: true, editable: false },
+];
+
+export const DEFAULT_COLUMNS = [
+  "priority",
+  "title",
+  "status",
+  "project",
+  "assignees",
+  "tags",
+  "due_date",
+  "estimated_minutes",
+  "subtasks",
+];
+
+export const COLUMN_MIN_WIDTH = 44;
+export const COLUMN_MAX_WIDTH = 640;
+
+// --- Область настроек ---------------------------------------------------------
+
+/** Чьи это настройки: сводного списка или конкретного проекта. */
+export type ViewScope = "all" | `project:${string}`;
+
+export function projectScope(projectId: string): ViewScope {
+  return `project:${projectId}`;
+}
+
+/**
+ * Ключ в localStorage. У сводного списка он прежний: иначе выкатка стёрла бы
+ * сохранённые представления и порядок колонок у всех, кто их настроил.
+ */
+function storageKey(scope: ViewScope): string {
+  return scope === "all" ? "sb.v2.tasksView" : `sb.v2.view.${scope}`;
+}
+
+/** Как экран проекта показывает задачи. */
+export type ProjectViewMode = "table" | "board";
+
+/** Снимок настроек, который сохраняется как именованное представление. */
+export interface ViewSnapshot {
+  columns: string[];
+  widths: Record<string, number>;
+  sort: SortState;
+  groupBy: GroupByConfig;
+  groups: FilterGroup[];
+  search: string;
+  showDone: boolean;
+  showArchivedProjects: boolean;
+  subtaskMode: SubtaskMode;
+}
+
+export interface SavedView extends ViewSnapshot {
+  id: string;
+  name: string;
+}
+
+export interface ViewState extends ViewSnapshot {
+  savedViews: SavedView[];
+  activeViewId: string | null;
+  /** Свёрнутые группы — по ключу «уровень1/уровень2». */
+  collapsed: string[];
+  /** Таблица или доска — только для экрана проекта. */
+  mode: ProjectViewMode;
+
+  setMode: (mode: ProjectViewMode) => void;
+  setColumns: (columns: string[]) => void;
+  setWidth: (columnId: string, width: number) => void;
+  toggleSort: (column: SortState["column"]) => void;
+  setGroupBy: (config: GroupByConfig) => void;
+  setGroups: (groups: FilterGroup[]) => void;
+  setSearch: (search: string) => void;
+  setShowDone: (show: boolean) => void;
+  setShowArchivedProjects: (show: boolean) => void;
+  setSubtaskMode: (mode: SubtaskMode) => void;
+  toggleCollapsed: (key: string) => void;
+
+  saveView: (name: string) => void;
+  applyView: (id: string) => void;
+  updateActiveView: () => void;
+  deleteView: (id: string) => void;
+  resetView: () => void;
+}
+
+const DEFAULT_SNAPSHOT: ViewSnapshot = {
+  columns: DEFAULT_COLUMNS,
+  widths: {},
+  sort: { column: "due_date", direction: "asc" },
+  groupBy: ["status", "none"],
+  groups: [],
+  search: "",
+  showDone: false,
+  showArchivedProjects: false,
+  subtaskMode: "nested",
+};
+
+/** В проекте колонка «Проект» повторяет заголовок экрана — её там нет. */
+const PROJECT_DEFAULT_COLUMNS = DEFAULT_COLUMNS.filter((c) => c !== "project");
+
+function defaultSnapshot(scope: ViewScope): ViewSnapshot {
+  if (scope === "all") return DEFAULT_SNAPSHOT;
+  return { ...DEFAULT_SNAPSHOT, columns: PROJECT_DEFAULT_COLUMNS };
+}
+
+function snapshotOf(state: ViewSnapshot): ViewSnapshot {
+  return {
+    columns: state.columns,
+    widths: state.widths,
+    sort: state.sort,
+    groupBy: state.groupBy,
+    groups: state.groups,
+    search: state.search,
+    showDone: state.showDone,
+    showArchivedProjects: state.showArchivedProjects,
+    subtaskMode: state.subtaskMode,
+  };
+}
+
+/**
+ * Ручная правка настроек отвязывает от представления: иначе кнопка «обновить»
+ * молча перезаписала бы сохранённое чужими изменениями.
+ */
+function edit(patch: Partial<ViewSnapshot>): Partial<ViewState> {
+  return { ...patch, activeViewId: null };
+}
+
+function newId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `v${Date.now()}${Math.round(Math.random() * 1e6)}`;
+}
+
+function createViewStore(scope: ViewScope) {
+  const defaults = defaultSnapshot(scope);
+  return createStore<ViewState>()(
+    persist(
+      (set, get) => ({
+        ...defaults,
+        savedViews: [],
+        activeViewId: null,
+        collapsed: [],
+        mode: "table",
+
+        setMode: (mode) => set({ mode }),
+        setColumns: (columns) => set(edit({ columns })),
+        setWidth: (columnId, width) =>
+          set((s) => ({
+            ...edit({
+              widths: {
+                ...s.widths,
+                [columnId]: Math.min(COLUMN_MAX_WIDTH, Math.max(COLUMN_MIN_WIDTH, Math.round(width))),
+              },
+            }),
+          })),
+        toggleSort: (column) =>
+          set((s) => ({
+            ...edit({
+              sort:
+                s.sort.column === column
+                  ? { column, direction: s.sort.direction === "asc" ? "desc" : "asc" }
+                  : { column, direction: "asc" },
+            }),
+          })),
+        setGroupBy: (groupBy) => set(edit({ groupBy })),
+        setGroups: (groups) => set(edit({ groups })),
+        setSearch: (search) => set({ search }),
+        setShowDone: (showDone) => set(edit({ showDone })),
+        setShowArchivedProjects: (showArchivedProjects) => set(edit({ showArchivedProjects })),
+        setSubtaskMode: (subtaskMode) => set(edit({ subtaskMode })),
+        toggleCollapsed: (key) =>
+          set((s) => ({
+            collapsed: s.collapsed.includes(key) ? s.collapsed.filter((k) => k !== key) : [...s.collapsed, key],
+          })),
+
+        saveView: (name) => {
+          const view: SavedView = { id: newId(), name, ...snapshotOf(get()) };
+          set((s) => ({ savedViews: [...s.savedViews, view], activeViewId: view.id }));
+        },
+        applyView: (id) => {
+          const view = get().savedViews.find((v) => v.id === id);
+          if (!view) return;
+          set({ ...snapshotOf(view), activeViewId: id });
+        },
+        updateActiveView: () => {
+          const { activeViewId } = get();
+          if (!activeViewId) return;
+          const snapshot = snapshotOf(get());
+          set((s) => ({
+            savedViews: s.savedViews.map((v) => (v.id === activeViewId ? { ...v, ...snapshot } : v)),
+          }));
+        },
+        deleteView: (id) =>
+          set((s) => ({
+            savedViews: s.savedViews.filter((v) => v.id !== id),
+            activeViewId: s.activeViewId === id ? null : s.activeViewId,
+          })),
+        resetView: () => set({ ...defaults, activeViewId: null }),
+      }),
+      {
+        name: storageKey(scope),
+        storage: createJSONStorage(() => localStorage),
+        // collapsed не персистим: свёрнутые группы — состояние сессии, а не
+        // настройка. Иначе после смены группировки половина списка «пропадает».
+        partialize: (s) => ({
+          ...snapshotOf(s),
+          savedViews: s.savedViews,
+          activeViewId: s.activeViewId,
+          mode: s.mode,
+        }),
+        version: 1,
+      },
+    ),
+  );
+}
+
+export type ViewStoreApi = ReturnType<typeof createViewStore>;
+
+const stores = new Map<ViewScope, ViewStoreApi>();
+
+/**
+ * Экземпляр стора на область. Кэш живёт только в браузере: на сервере модульная
+ * карта общая для всех одновременных запросов и росла бы по числу проектов, а
+ * localStorage там всё равно нет — стор отдаёт умолчания, и свежий экземпляр
+ * ничем не хуже сохранённого.
+ */
+function getViewStore(scope: ViewScope): ViewStoreApi {
+  if (typeof window === "undefined") return createViewStore(scope);
+  const existing = stores.get(scope);
+  if (existing) return existing;
+  const created = createViewStore(scope);
+  stores.set(scope, created);
+  return created;
+}
+
+const ViewStoreContext = createContext<ViewStoreApi | null>(null);
+
+export function ViewStoreProvider({ scope, children }: { scope: ViewScope; children: ReactNode }) {
+  // Без useState/useRef намеренно: кэш по области уже даёт стабильную ссылку, а
+  // переход между проектами меняет область — состояние компонента здесь только
+  // мешало бы отдать стор нового проекта.
+  return createElement(ViewStoreContext.Provider, { value: getViewStore(scope) }, children);
+}
+
+export function useViewStore<T>(selector: (state: ViewState) => T): T {
+  const store = useContext(ViewStoreContext);
+  if (!store) throw new Error("useViewStore вне <ViewStoreProvider>");
+  return useStore(store, selector);
+}
+
+// --- Карточка доски ---------------------------------------------------------------
+
+/** Поля, которые карточка задачи может показывать. Порядок = порядок отрисовки. */
+export const CARD_FIELDS = [
+  { id: "priority", label: "Приоритет" },
+  { id: "project", label: "Проект" },
+  { id: "tags", label: "Теги" },
+  { id: "due_date", label: "Дедлайн" },
+  { id: "estimated_minutes", label: "Оценка" },
+  { id: "subtasks", label: "Подзадачи" },
+  { id: "comments", label: "Комментарии" },
+  { id: "assignees", label: "Исполнители" },
+] as const;
+
+export type CardFieldId = (typeof CARD_FIELDS)[number]["id"];
+
+/** Значение по умолчанию — общая константа, иначе memo карточек ломается. */
+export const DEFAULT_CARD_FIELDS: CardFieldId[] = [
+  "priority",
+  "tags",
+  "due_date",
+  "subtasks",
+  "comments",
+  "assignees",
+];
+
+interface CardState {
+  cardFields: CardFieldId[];
+  setCardFields: (fields: CardFieldId[]) => void;
+  toggleCardField: (field: CardFieldId) => void;
+}
+
+export const useCardStore = create<CardState>()(
+  persist(
+    (set, get) => ({
+      cardFields: DEFAULT_CARD_FIELDS,
+      setCardFields: (cardFields) => set({ cardFields }),
+      toggleCardField: (field) => {
+        const current = get().cardFields;
+        set({
+          // Порядок фиксирован CARD_FIELDS: карточка должна выглядеть
+          // одинаково независимо от того, в каком порядке галки ставили.
+          cardFields: CARD_FIELDS.map((f) => f.id).filter((id) =>
+            id === field ? !current.includes(id) : current.includes(id),
+          ),
+        });
+      },
+    }),
+    { name: "sb.v2.cardFields", storage: createJSONStorage(() => localStorage), version: 1 },
+  ),
+);

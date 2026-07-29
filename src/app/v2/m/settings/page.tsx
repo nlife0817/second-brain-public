@@ -4,11 +4,11 @@
 // Администрирование (участники, приглашения, статусы, поля) — на десктопе.
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { Check, ChevronsUpDown, Monitor, Smartphone } from "lucide-react";
+import { Check, CheckCircle2, ChevronsUpDown, Download, Monitor, Smartphone } from "lucide-react";
 import { Avatar } from "@/components/v2/bits";
 import { PushToggle } from "@/components/v2/PushToggle";
-import { isStandalone } from "@/components/v2/mobile/InstallPrompt";
+import { IosInstallSteps, useInstallState } from "@/components/v2/mobile/InstallPrompt";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,15 +35,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export default function MobileSettingsPage() {
   const { me, orgs, orgId, orgName, orgRole, switchOrg } = useV2Store();
-  // Признак standalone стабилен только в браузере — вычисляем после монтирования
-  // (отложенным тиком, чтобы не каскадить рендер setState'ом в теле эффекта).
-  const [installed, setInstalled] = useState(false);
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      if (isStandalone()) setInstalled(true);
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, []);
+  const { standalone, ios, canInstall, install } = useInstallState();
 
   if (!me) return null;
 
@@ -101,20 +93,42 @@ export default function MobileSettingsPage() {
 
           <Section title="Уведомления на этом устройстве">
             <PushToggle />
-            {!installed && (
+            {!standalone && ios && (
               <p className="mt-2 text-xs text-muted-foreground">
-                На iPhone уведомления работают только из установленного приложения:
-                Safari → «Поделиться» → «На экран “Домой”».
+                На iPhone уведомления работают только из установленного приложения — установите его ниже.
               </p>
             )}
           </Section>
 
           <Section title="Приложение">
-            <div className="flex flex-col gap-2.5 text-sm">
-              <p className="flex items-center gap-2 text-muted-foreground">
-                <Smartphone className="size-4" />
-                {installed ? "Открыто как установленное приложение" : "Открыто в браузере"}
-              </p>
+            <div className="flex flex-col gap-3 text-sm">
+              {standalone ? (
+                <p className="flex items-center gap-2 text-muted-foreground">
+                  <CheckCircle2 className="size-4 text-emerald-500" />
+                  Установлено и открыто с домашнего экрана
+                </p>
+              ) : (
+                <>
+                  <p className="flex items-center gap-2 text-muted-foreground">
+                    <Smartphone className="size-4" />
+                    Открыто во вкладке браузера
+                  </p>
+                  {canInstall && (
+                    <Button size="sm" className="w-full" onClick={() => void install()}>
+                      <Download className="size-4" />
+                      Установить приложение
+                    </Button>
+                  )}
+                  {/* На iOS программной установки нет ни в каком браузере. */}
+                  {!canInstall && ios && <IosInstallSteps />}
+                  {!canInstall && !ios && (
+                    <p className="text-xs text-muted-foreground">
+                      Этот браузер не умеет устанавливать приложения. Откройте сайт в Chrome
+                      (Android) или Safari (iPhone).
+                    </p>
+                  )}
+                </>
+              )}
               <Link
                 href="/v2/my?desktop"
                 className="flex items-center gap-2 text-primary underline underline-offset-2"

@@ -14,16 +14,19 @@ import {
 } from "./policy";
 import { requireProject } from "./projects";
 import type {
+  AllTasksResult,
   AuthContext,
   CoreTag,
   CoreTask,
   Project,
+  ProjectDefaultRole,
   ProjectRole,
   TaskDetail,
   TaskListItem,
   TaskMeta,
   TaskPlacement,
   TaskPriority,
+  TaskRow,
   TaskStatus,
   UserBrief,
 } from "./types";
@@ -85,9 +88,14 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
        UNION ALL
        SELECT task_id, 'follower' AS src FROM core.task_followers WHERE user_id = ? AND task_id IN (${ph})`,
     ).all(ctx.user.id, chainIds, ctx.user.id, chainIds),
-    prepare<{ task_id: string; project_id: string; section_id: string | null; position: number } & { p_org_id: string; p_visibility: "org" | "private" }>(
+    prepare<
+      { task_id: string; project_id: string; section_id: string | null; position: number } & {
+        p_org_id: string;
+        p_default_role: ProjectDefaultRole | null;
+      }
+    >(
       `SELECT tp.task_id, tp.project_id, tp.section_id, tp.position,
-              p.org_id AS p_org_id, p.visibility AS p_visibility
+              p.org_id AS p_org_id, p.default_role AS p_default_role
        FROM core.task_projects tp
        JOIN core.projects p ON p.id = tp.project_id
        WHERE tp.task_id IN (${ph})`,
@@ -99,14 +107,18 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
   const isChainAssignee = myLinks.some((l) => l.src === "assignee");
   const isChainFollower = myLinks.some((l) => l.src === "follower");
 
-  const roleOf = (projectId: string, orgId: string, visibility: "org" | "private"): ProjectRole | null =>
-    effectiveProjectRole(ctx, { id: projectId, org_id: orgId, visibility });
+  const roleOf = (
+    projectId: string,
+    orgId: string,
+    defaultRole: ProjectDefaultRole | null,
+  ): ProjectRole | null =>
+    effectiveProjectRole(ctx, { id: projectId, org_id: orgId, default_role: defaultRole });
 
-  const chainProjectRoles = chainPlacements.map((pl) => roleOf(pl.project_id, pl.p_org_id, pl.p_visibility));
+  const chainProjectRoles = chainPlacements.map((pl) => roleOf(pl.project_id, pl.p_org_id, pl.p_default_role));
   const anyProjectView = chainProjectRoles.some((r) => r !== null);
 
   const directPlacementRows = chainPlacements.filter((pl) => pl.task_id === task.id);
-  const directRoles = directPlacementRows.map((pl) => roleOf(pl.project_id, pl.p_org_id, pl.p_visibility));
+  const directRoles = directPlacementRows.map((pl) => roleOf(pl.project_id, pl.p_org_id, pl.p_default_role));
   const allDirectEditor =
     directRoles.length > 0 && directRoles.every((r) => r !== null && PROJECT_ROLE_RANK[r] >= PROJECT_ROLE_RANK.editor);
   const anyChainEditor = chainProjectRoles.some(
@@ -243,13 +255,36 @@ async function enrichTasks<T extends { id: string }>(rows: T[]): Promise<Array<T
   }));
 }
 
+/**
+ * Значения кастомных полей — одним запросом на весь список: они играют роль
+ * колонок, которые в v1 были зашиты в схему (категория, этап, участники).
+ * Нужны везде, где список рисуется таблицей — и в сводном виде, и в проекте.
+ */
+async function attachFieldValues<T extends { id: string }>(
+  rows: T[],
+): Promise<Array<T & { field_values: Record<string, unknown> }>> {
+  if (rows.length === 0) return [];
+  const ph = rows.map(() => "?").join(",");
+  const values = await prepare<{ task_id: string; field_id: string; value: unknown }>(
+    `SELECT task_id, field_id, value FROM core.task_field_values WHERE task_id IN (${ph})`,
+  ).all(rows.map((t) => t.id));
+
+  const byTask = new Map<string, Record<string, unknown>>();
+  for (const v of values) {
+    const bucket = byTask.get(v.task_id) ?? {};
+    bucket[v.field_id] = v.value;
+    byTask.set(v.task_id, bucket);
+  }
+  return rows.map((t) => ({ ...t, field_values: byTask.get(t.id) ?? {} }));
+}
+
 // --- Списки ---------------------------------------------------------------------------
 
 export async function listProjectTasks(
   ctx: AuthContext,
   projectId: string,
   opts: { includeDone?: boolean } = {},
-): Promise<TaskListItem[]> {
+): Promise<TaskRow[]> {
   await requireProject(ctx, projectId, "project.view");
   const rows = await prepare<Omit<CoreTask, "description">>(
     `SELECT ${TASK_LIST_COLUMNS} FROM core.task_projects tp
@@ -258,7 +293,9 @@ export async function listProjectTasks(
        AND (?::boolean OR t.completed_at IS NULL OR t.completed_at > now() - interval '14 days')
      ORDER BY tp.position, t.created_at`,
   ).all(projectId, opts.includeDone ?? false);
-  return enrichTasks(rows);
+  // Экран проекта рисует те же колонки, что и сводный список, — включая
+  // кастомные поля: без значений они были бы пустыми на всех строках.
+  return attachFieldValues(await enrichTasks(rows));
 }
 
 export async function listMyTasks(
@@ -282,6 +319,136 @@ export async function listMyTasks(
      ORDER BY t.due_date NULLS LAST, t.created_at DESC`,
   ).all(ctx.user.id, ctx.orgId, ctx.user.id, opts.includeDone ?? false);
   return enrichTasks(rows);
+}
+
+/**
+ * Потолок сводного списка. Фильтрация, сортировка и группировка в «Все задачи»
+ * идут на клиенте (как в списке v1) — иначе счётчики групп врут при пагинации.
+ * Чтобы это оставалось честным, ответ ограничен и помечается `truncated`.
+ */
+const ALL_TASKS_CAP = 3000;
+
+/** Проекты организации, которые пользователь вправе видеть (решает policy). */
+export async function visibleProjectIds(
+  ctx: AuthContext,
+  opts: { includeArchived?: boolean } = {},
+): Promise<string[]> {
+  const rows = await prepare<{ id: string; org_id: string; default_role: ProjectDefaultRole | null }>(
+    `SELECT id, org_id, default_role FROM core.projects
+     WHERE org_id = ? AND (?::boolean OR archived_at IS NULL)`,
+  ).all(ctx.orgId, opts.includeArchived ?? false);
+  return rows.filter((p) => effectiveProjectRole(ctx, p) !== null).map((p) => p.id);
+}
+
+/**
+ * Пакетная версия правил из `loadTaskAccess` — одним SQL вместо запроса на
+ * задачу. Возвращает готовые куски запроса, чтобы правило видимости жило в
+ * одном месте: разъехавшиеся копии этой логики и есть класс ошибок, ради
+ * которого policy сделан единственным источником истины.
+ *
+ * Параметры отдаются в порядке появления `?` в тексте: сперва `cteParams`
+ * (CTE идёт первым), затем — там, где вставлен `clause`, его `clauseParams`.
+ */
+function taskVisibility(
+  ctx: AuthContext,
+  projectIds: string[],
+): { cte: string; cteParams: unknown[]; clause: string; clauseParams: unknown[] } {
+  const projectClause = projectIds.length
+    ? `EXISTS (SELECT 1 FROM placed pl WHERE pl.task_id = t.id
+                 AND pl.project_id IN (${projectIds.map(() => "?").join(",")}))`
+    : `FALSE`;
+  return {
+    cte: `WITH RECURSIVE up AS (
+       SELECT t.id AS task_id, t.id AS node_id, t.parent_task_id, 0 AS depth
+       FROM core.tasks t WHERE t.org_id = ?
+       UNION ALL
+       SELECT u.task_id, p.id, p.parent_task_id, u.depth + 1
+       FROM up u JOIN core.tasks p ON p.id = u.parent_task_id
+       WHERE u.depth < 8
+     ),
+     placed AS (
+       SELECT DISTINCT u.task_id, tp.project_id
+       FROM up u JOIN core.task_projects tp ON tp.task_id = u.node_id
+     ),
+     mine AS (
+       SELECT DISTINCT u.task_id
+       FROM up u
+       JOIN core.tasks n ON n.id = u.node_id
+       LEFT JOIN core.task_assignees a ON a.task_id = u.node_id AND a.user_id = ?
+       WHERE n.created_by = ? OR a.user_id IS NOT NULL
+     ),
+     followed AS (
+       SELECT DISTINCT u.task_id
+       FROM up u JOIN core.task_followers f ON f.task_id = u.node_id AND f.user_id = ?
+     )`,
+    cteParams: [ctx.orgId, ctx.user.id, ctx.user.id, ctx.user.id],
+    // Подписка на задачу В ПРОЕКТЕ доступа не даёт (правило 4 в CLAUDE.md ядра):
+    // иначе исключённый из проекта сохранял бы доступ через самоподписку.
+    clause: `(
+         ${projectClause}
+         OR EXISTS (SELECT 1 FROM mine m WHERE m.task_id = t.id)
+         OR (NOT EXISTS (SELECT 1 FROM placed pl2 WHERE pl2.task_id = t.id)
+             AND EXISTS (SELECT 1 FROM followed f2 WHERE f2.task_id = t.id))
+       )`,
+    clauseParams: projectIds.length ? [projectIds] : [],
+  };
+}
+
+/**
+ * Отсев недоступных задач из готового списка id. Нужен каналам, которые
+ * ссылаются на задачи в обход обычной проверки — например связям.
+ */
+export async function filterVisibleTaskIds(ctx: AuthContext, ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const projects = await visibleProjectIds(ctx, { includeArchived: true });
+  const vis = taskVisibility(ctx, projects);
+  const rows = await prepare<{ id: string }>(
+    `${vis.cte}
+     SELECT t.id FROM core.tasks t
+     WHERE t.org_id = ? AND t.id IN (${ids.map(() => "?").join(",")}) AND ${vis.clause}`,
+  ).all(...vis.cteParams, ctx.orgId, ids, ...vis.clauseParams);
+  return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * Задачи всех доступных проектов организации + личные — для сводного экрана.
+ *
+ * Видимость повторяет `loadTaskAccess`, но пакетно:
+ *  - `up` поднимает каждую задачу по цепочке родителей (multi-homing наследуется);
+ *  - задача в проекте видна при роли в любом проекте цепочки, авторстве или
+ *    назначении где-то в цепочке;
+ *  - «свободная» задача (нет размещений во всей цепочке) — ещё и подписчику.
+ * Подписка на задачу В ПРОЕКТЕ доступа не даёт: см. правило 4 в CLAUDE.md ядра.
+ */
+export async function listAllTasks(
+  ctx: AuthContext,
+  opts: { includeDone?: boolean; includeArchivedProjects?: boolean } = {},
+): Promise<AllTasksResult> {
+  const projects = await visibleProjectIds(ctx, { includeArchived: opts.includeArchivedProjects });
+  const vis = taskVisibility(ctx, projects);
+
+  const rows = await prepare<Omit<CoreTask, "description">>(
+    `${vis.cte}
+     SELECT ${TASK_LIST_COLUMNS}
+     FROM core.tasks t
+     WHERE t.org_id = ?
+       AND (?::boolean OR t.completed_at IS NULL)
+       AND ${vis.clause}
+     ORDER BY t.due_date NULLS LAST, t.created_at DESC
+     LIMIT ?`,
+    // Параметры — строго в порядке появления `?` в тексте запроса.
+  ).all(
+    ...vis.cteParams,
+    ctx.orgId,
+    opts.includeDone ?? false,
+    ...vis.clauseParams,
+    ALL_TASKS_CAP + 1,
+  );
+
+  const truncated = rows.length > ALL_TASKS_CAP;
+  const page = truncated ? rows.slice(0, ALL_TASKS_CAP) : rows;
+
+  return { tasks: await attachFieldValues(await enrichTasks(page)), truncated };
 }
 
 export async function listSubtasks(ctx: AuthContext, parentTaskId: string): Promise<TaskListItem[]> {

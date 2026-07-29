@@ -12,6 +12,7 @@
 // подтверждённый (lib/auth/google.ts отвергает email_verified !== true).
 // Старые значения auth_user_id остаются в базе как след прежней системы входа.
 
+import { cache } from "react";
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
@@ -51,8 +52,13 @@ async function provisionFromWhitelist(
   return user;
 }
 
-/** Текущий пользователь v2 или null (неавторизован / нет доступа). */
-export async function getCoreUser(): Promise<CoreUser | null> {
+/**
+ * Текущий пользователь v2 или null (неавторизован / нет доступа).
+ *
+ * Не вызывать напрямую из кода, который может отработать несколько раз за один
+ * запрос — для этого есть `getRequestUser` ниже.
+ */
+async function resolveCoreUser(): Promise<CoreUser | null> {
   const devEmail = process.env.DEV_USER_EMAIL?.toLowerCase().trim();
   if (process.env.NODE_ENV !== "production" && devEmail) {
     const existing = await getUserByEmail(devEmail);
@@ -89,18 +95,39 @@ async function loadProjectRoles(orgId: string, userId: string): Promise<Map<stri
   return new Map(rows.map((r) => [r.project_id, r.role]));
 }
 
+/**
+ * Пользователь запроса. `cache` из React мемоизирует результат на время одного
+ * запроса: серверный рендер экрана v2 собирает разом оболочку и данные страницы
+ * и без этого резолвил бы пользователя (сессия + запросы к `core.users`) по разу
+ * на каждый источник данных.
+ */
+export const getCoreUser = cache(resolveCoreUser);
+
+/**
+ * AuthContext организации или null. Мемоизирован по той же причине, что и
+ * `getCoreUser`: членство и роли проектов — два запроса к БД, а за один рендер
+ * контекст нужен и оболочке, и странице.
+ */
+export const getOrgAuth = cache(async (orgId: string): Promise<AuthContext | null> => {
+  const user = await getCoreUser();
+  if (!user) return null;
+  if (!isUuid(orgId)) return null;
+  const orgRole = await getMembershipRole(orgId, user.id);
+  if (!orgRole) return null;
+  const projectRoles = await loadProjectRoles(orgId, user.id);
+  return { user, orgId, orgRole, projectRoles };
+});
+
 /** Собирает AuthContext для организации или отвечает причиной отказа. */
 export async function resolveOrgContext(
   orgId: string,
 ): Promise<{ auth: AuthContext } | { failure: NextResponse }> {
   const user = await getCoreUser();
   if (!user) return { failure: jsonError(401, "Unauthorized") };
-  if (!isUuid(orgId)) return { failure: jsonError(404, "Not found") };
-  const orgRole = await getMembershipRole(orgId, user.id);
+  const auth = await getOrgAuth(orgId);
   // 404, а не 403: не подтверждаем существование чужой организации.
-  if (!orgRole) return { failure: jsonError(404, "Not found") };
-  const projectRoles = await loadProjectRoles(orgId, user.id);
-  return { auth: { user, orgId, orgRole, projectRoles } };
+  if (!auth) return { failure: jsonError(404, "Not found") };
+  return { auth };
 }
 
 /**

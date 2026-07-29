@@ -3,15 +3,21 @@
 // Список проектов организации: вход в мобильный просмотр досок.
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { ChevronRight, Plus } from "lucide-react";
-import { CreateProjectDialog } from "@/components/v2/CreateProjectDialog";
+import { CreateProjectDialog } from "@/components/v2/lazy";
+import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
+import { useAppResume, useBackDismiss } from "@/components/v2/mobile/hooks";
 import { useV2Store } from "@/lib/core/ui-store";
 
 export default function MobileProjectsPage() {
-  const { projects, metaLoading, orgRole } = useV2Store();
+  const { projects, metaLoading, orgRole, refreshProjects } = useV2Store();
   const [createOpen, setCreateOpen] = useState(false);
   const isGuest = orgRole === "guest";
+
+  const closeCreate = useCallback(() => setCreateOpen(false), []);
+  useAppResume(refreshProjects);
+  useBackDismiss(createOpen, closeCreate);
 
   return (
     <div className="flex h-full flex-col">
@@ -20,7 +26,7 @@ export default function MobileProjectsPage() {
         {!isGuest && (
           <button
             onClick={() => setCreateOpen(true)}
-            className="rounded-lg p-1.5 text-muted-foreground"
+            className="rounded-lg p-2 text-muted-foreground active:bg-muted"
             aria-label="Новый проект"
           >
             <Plus className="size-5" />
@@ -28,7 +34,7 @@ export default function MobileProjectsPage() {
         )}
       </header>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain px-2 py-2">
+      <PullToRefresh onRefresh={refreshProjects} className="px-2 py-2">
         {projects.map((p) => (
           <Link
             key={p.id}
@@ -55,7 +61,7 @@ export default function MobileProjectsPage() {
             {isGuest ? "Вам ещё не открыли ни одного проекта" : "Пока нет проектов"}
           </p>
         )}
-      </div>
+      </PullToRefresh>
 
       <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>

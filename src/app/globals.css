@@ -192,3 +192,31 @@
     @apply font-sans;
   }
 }
+
+/* ---- Мобильная версия v2 ----
+   Признак ставит MobileShell на <html>, а не на своё дерево: карточка задачи,
+   диалоги и выпадающие списки рендерятся порталами в body и иначе остались бы
+   без этих правил. */
+
+[data-mobile-v2] {
+  /* Серая вспышка на каждом касании ссылки выдаёт «сайт в браузере». */
+  -webkit-tap-highlight-color: transparent;
+}
+
+[data-mobile-v2] button,
+[data-mobile-v2] a,
+[data-mobile-v2] [role="button"] {
+  /* Убирает задержку двойного тапа на масштабирование. */
+  touch-action: manipulation;
+}
+
+@media (max-width: 767px) {
+  /* Safari на iOS зумит страницу при фокусе в поле мельче 16px и обратно уже
+     не отматывает — экран остаётся увеличенным и съехавшим. Поля карточки
+     задачи (text-sm) попадали под это правило браузера. */
+  [data-mobile-v2] input,
+  [data-mobile-v2] textarea,
+  [data-mobile-v2] select {
+    font-size: 16px;
+  }
+}

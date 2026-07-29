@@ -34,21 +34,77 @@ function mobileV2Target(url: URL): string | null {
 /** Липкий «режим полной версии»: сессионная cookie, ставится по ?desktop. */
 const DESKTOP_COOKIE = "sb_desktop";
 
-/** Общий для dev-байпаса и обычного пути редирект мобильных UA. */
-function mobileRedirect(request: NextRequest): NextResponse | null {
-  const ua = request.headers.get("user-agent") ?? "";
-  if (!isMobileUserAgent(ua)) return null;
+/** Показывать ли мобильные экраны: телефон и не включён режим полной версии. */
+function wantsMobile(request: NextRequest): boolean {
+  if (!isMobileUserAgent(request.headers.get("user-agent") ?? "")) return false;
   // ?desktop действует на всю сессию браузера, а не на один переход: иначе
   // администрирование в полной версии недостижимо с телефона — любой клик
   // по сайдбару снова уводил бы на /v2/m/*.
-  if (request.nextUrl.searchParams.has("desktop")) return null;
-  if (request.cookies.has(DESKTOP_COOKIE)) return null;
-  if (request.nextUrl.pathname === "/") {
-    return NextResponse.redirect(new URL("/m/tasks", request.url));
-  }
+  if (request.nextUrl.searchParams.has("desktop")) return false;
+  if (request.cookies.has(DESKTOP_COOKIE)) return false;
+  return true;
+}
+
+/** Общий для dev-байпаса и обычного пути редирект мобильных UA. */
+function mobileRedirect(request: NextRequest): NextResponse | null {
+  if (!wantsMobile(request)) return null;
   const v2 = mobileV2Target(request.nextUrl);
   if (v2) return NextResponse.redirect(new URL(v2, request.url));
   return null;
+}
+
+/**
+ * Куда ведёт адрес v1 в v2 (десктопный путь; мобильный подберётся следом).
+ * null — адрес к v1 отношения не имеет.
+ *
+ * v1 выключен: страницы уводим в v2, а не показываем. Код страниц остаётся в
+ * репозитории, но через сеть до него не добраться.
+ */
+function legacyTarget(pathname: string): string | null {
+  if (pathname === "/") return "/v2/my";
+  if (pathname === "/timing") return "/v2/time";
+  // Заметок в v2 нет — ведём в «Мои задачи».
+  if (pathname === "/m" || pathname === "/m/tasks" || pathname === "/m/notes") return "/v2/my";
+  if (pathname === "/m/inbox") return "/v2/inbox";
+  if (pathname === "/m/timing") return "/v2/time";
+  if (pathname === "/m/settings") return "/v2/settings";
+  // Недельное планирование убрано вместе с остальным v1.
+  if (pathname === "/planning" || pathname.startsWith("/planning/")) return "/v2/my";
+  return null;
+}
+
+/**
+ * Отсечение v1. Страницы — редирект в v2, API — 410 Gone.
+ *
+ * Проверка идёт до разрешения сессии: незачем ходить за пользователем ради
+ * запроса, который всё равно будет перенаправлен.
+ *
+ * Роуты, исключённые из `config.matcher` (cron, dispatch, watchdog, mcp), сюда
+ * не попадают — их останавливает выключение cron-задач в Postgres.
+ */
+function legacyResponse(request: NextRequest): NextResponse | null {
+  const { pathname } = request.nextUrl;
+
+  if (pathname.startsWith("/api/") && !pathname.startsWith("/api/v2/")) {
+    return NextResponse.json(
+      { error: "API v1 отключён — используйте /api/v2/*" },
+      { status: 410 },
+    );
+  }
+
+  const target = legacyTarget(pathname);
+  if (!target) return null;
+
+  // Параметры переносим: push-уведомления несут ?task=<id>.
+  const desktopUrl = new URL(target, request.url);
+  desktopUrl.search = request.nextUrl.search;
+  const mobile = wantsMobile(request) ? mobileV2Target(desktopUrl) : null;
+  if (!mobile) return NextResponse.redirect(desktopUrl);
+
+  const mobileUrl = new URL(mobile, request.url);
+  // mobileV2Target сам переносит ?task=…; остальные параметры — здесь.
+  if (!mobileUrl.search) mobileUrl.search = request.nextUrl.search;
+  return NextResponse.redirect(mobileUrl);
 }
 
 /** Проставляет/снимает cookie режима полной версии по ?desktop / ?mobile. */
@@ -75,6 +131,14 @@ const DEV_BYPASS_ACTIVE =
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // v1 отключён — до разрешения сессии, чтобы не ходить за пользователем ради
+  // запроса, который всё равно уедет в v2.
+  const legacy = legacyResponse(request);
+  if (legacy) return legacy;
+
+  // Раньше здесь было `let`: клиент Supabase переприсваивал ответ в setAll,
+  // дописывая обновлённые cookie. Своей сессии это не нужно — она подписана и
+  // продлевается одной записью cookie ниже.
   const response = NextResponse.next({ request });
 
   if (DEV_BYPASS_ACTIVE) {
@@ -119,6 +183,6 @@ export const config = {
   matcher: [
     // api/v2/invitations исключён: GET показывает приглашение до входа, POST
     // сам требует сессию через withUser.
-    "/((?!_next|api/cron|api/v2/cron|api/notifications/dispatch|api/timing/watchdog|api/mcp|api/v2/invitations|icons|favicon|manifest|sw\\.js).*)",
+    "/((?!_next|api/cron|api/v2/cron|api/notifications/dispatch|api/timing/watchdog|api/mcp|api/v2/invitations|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
   ],
 };

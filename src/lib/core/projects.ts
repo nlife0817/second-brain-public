@@ -1,6 +1,6 @@
 // Доменный сервис проектов: список с учётом видимости, CRUD, секции, участники.
 
-import { prepare, transaction } from "@/lib/sql";
+import { prepare, transaction, type TxContext } from "@/lib/sql";
 import { emitEvent, notifyUsers } from "./events";
 import { DomainError } from "./http";
 import {
@@ -15,6 +15,7 @@ import type {
   AuthContext,
   PolicyProject,
   Project,
+  ProjectDefaultRole,
   ProjectMemberWithUser,
   ProjectRole,
   ProjectWithMeta,
@@ -75,14 +76,24 @@ export async function listProjects(ctx: AuthContext, opts: { archived?: boolean 
 
 export async function createProject(
   ctx: AuthContext,
-  input: { name: string; description?: string; color?: string; icon?: string; visibility?: "org" | "private" },
+  input: {
+    name: string;
+    description?: string;
+    color?: string;
+    icon?: string;
+    /** Базовая роль сотрудников; `null` — закрытый проект. По умолчанию editor. */
+    default_role?: ProjectDefaultRole | null;
+  },
 ): Promise<ProjectWithMeta> {
   assertOrg(ctx, "project.create");
   await assertWithinLimit(ctx, "projects");
+  // Гость не может создать проект (project.create), поэтому проверка
+  // «доступом организации управляют только сотрудники» здесь избыточна.
   const project = await transaction(async (tx) => {
     const row = await tx
       .prepare<Project>(
-        `INSERT INTO core.projects (org_id, name, description, color, icon, visibility, position, created_by)
+        // visibility — generated-колонка, она вычисляется из default_role.
+        `INSERT INTO core.projects (org_id, name, description, color, icon, default_role, position, created_by)
          VALUES (?, ?, ?, ?, ?, ?,
                  COALESCE((SELECT max(position) + 1 FROM core.projects WHERE org_id = ?), 1),
                  ?)
@@ -94,7 +105,7 @@ export async function createProject(
         input.description ?? "",
         input.color ?? "#6b7280",
         input.icon ?? "Folder",
-        input.visibility ?? "org",
+        input.default_role === undefined ? "editor" : input.default_role,
         ctx.orgId,
         ctx.user.id,
       );
@@ -118,16 +129,26 @@ export async function createProject(
 export async function updateProject(
   ctx: AuthContext,
   projectId: string,
-  patch: Partial<{ name: string; description: string; color: string; icon: string; visibility: "org" | "private"; position: number }>,
+  patch: Partial<{
+    name: string;
+    description: string;
+    color: string;
+    icon: string;
+    default_role: ProjectDefaultRole | null;
+    position: number;
+  }>,
 ): Promise<Project> {
   const project = await requireProject(ctx, projectId, "project.update");
-  const visibilityChanged = patch.visibility !== undefined && patch.visibility !== project.visibility;
-  if (visibilityChanged) assertProject(ctx, "project.visibility", project);
+  const accessChanged = patch.default_role !== undefined && patch.default_role !== project.default_role;
+  if (accessChanged) assertProject(ctx, "project.access", project);
   const next = { ...project, ...patch };
   const updated = await transaction(async (tx) => {
-    // org → private: приватный проект живёт только на явных участниках, поэтому
+    // Закрытие проекта: закрытый проект живёт только на явных участниках, поэтому
     // гарантируем хотя бы одного admin — иначе проект осиротеет безвозвратно.
-    if (visibilityChanged && patch.visibility === "private") {
+    if (accessChanged && patch.default_role === null) {
+      if (project.default_role) {
+        await preserveAssigneesOnClose(tx, projectId, ctx.orgId, project.default_role);
+      }
       const admins = await tx
         .prepare<{ n: number }>(
           `SELECT count(*)::int AS n FROM core.project_members WHERE project_id = ? AND role = 'admin'`,
@@ -145,11 +166,11 @@ export async function updateProject(
     const row = await tx
       .prepare<Project>(
         `UPDATE core.projects
-         SET name = ?, description = ?, color = ?, icon = ?, visibility = ?, position = ?
+         SET name = ?, description = ?, color = ?, icon = ?, default_role = ?, position = ?
          WHERE id = ?
          RETURNING *`,
       )
-      .get(next.name, next.description, next.color, next.icon, next.visibility, next.position, projectId);
+      .get(next.name, next.description, next.color, next.icon, next.default_role, next.position, projectId);
     if (!row) throw new DomainError(500, "Failed to update project");
     await emitEvent(tx, {
       orgId: ctx.orgId,
@@ -162,6 +183,68 @@ export async function updateProject(
     return row;
   });
   return updated;
+}
+
+/**
+ * Закрытие проекта отбирает доступ у всех сотрудников без явной записи — включая
+ * тех, на кого назначены задачи этого проекта. Исполнитель всё равно сохранил бы
+ * доступ к своим задачам через `task_assignees`, поэтому вместо невидимого
+ * «остаточного» доступа фиксируем таких людей явными участниками: список
+ * участников снова описывает всех, кто видит проект, а лишних админ убирает
+ * оттуда одним действием (и тогда `removeProjectMember` снимет назначения).
+ *
+ * Подписчиков не переносим: подписка доступа к задаче в проекте не даёт
+ * (правило 4 в core/CLAUDE.md), гостей — тоже: они и так только по явной записи.
+ */
+async function preserveAssigneesOnClose(
+  tx: TxContext,
+  projectId: string,
+  orgId: string,
+  previousDefaultRole: ProjectDefaultRole,
+): Promise<void> {
+  await tx
+    .prepare(
+      `INSERT INTO core.project_members (project_id, user_id, role)
+       SELECT DISTINCT tp.project_id,
+              a.user_id,
+              (CASE WHEN m.role IN ('owner','admin') THEN 'admin' ELSE ? END)::core.project_role
+       FROM core.task_assignees a
+       JOIN core.task_projects tp ON tp.task_id = a.task_id
+       JOIN core.org_members m ON m.user_id = a.user_id AND m.org_id = ?
+       WHERE tp.project_id = ? AND m.role <> 'guest'
+       ON CONFLICT (project_id, user_id) DO NOTHING`,
+    )
+    .run(previousDefaultRole, orgId, projectId);
+}
+
+/**
+ * Удаление проекта. Задачи не трогаем: при multi-homing задача может лежать и в
+ * других проектах, а оставшиеся без размещений возвращаются авторам в инбокс —
+ * потеря данных здесь была бы необратимой. Каскадом уходят участники, секции,
+ * размещения и кастомные поля проекта; связи полиморфные, их чистим руками.
+ */
+export async function deleteProject(ctx: AuthContext, projectId: string): Promise<void> {
+  const project = await requireProject(ctx, projectId, "project.delete");
+  await transaction(async (tx) => {
+    await tx
+      .prepare(
+        `DELETE FROM core.relations
+         WHERE org_id = ?
+           AND ((source_type = 'project' AND source_id = ?) OR (target_type = 'project' AND target_id = ?))`,
+      )
+      .run(ctx.orgId, projectId, projectId);
+    // Событие пишем до удаления: emitEvent ссылается на org, а не на проект,
+    // но лента должна получить имя удалённого проекта.
+    await emitEvent(tx, {
+      orgId: ctx.orgId,
+      actorId: ctx.user.id,
+      entityType: "project",
+      entityId: projectId,
+      verb: "project.deleted",
+      payload: { name: project.name },
+    });
+    await tx.prepare(`DELETE FROM core.projects WHERE id = ? AND org_id = ?`).run(projectId, ctx.orgId);
+  });
 }
 
 export async function setProjectArchived(ctx: AuthContext, projectId: string, archived: boolean): Promise<void> {
@@ -294,8 +377,8 @@ export async function upsertProjectMember(
 
 export async function removeProjectMember(ctx: AuthContext, projectId: string, userId: string): Promise<void> {
   const project = await requireProject(ctx, projectId, "project.members.manage");
-  // Последнего admin не удаляем при любой видимости: в приватном проекте org-админ
-  // не имеет неявного доступа, а в org-видимом проект остался бы без хозяина.
+  // Последнего admin не удаляем при любом доступе: в закрытом проекте org-админ
+  // не имеет неявного доступа, а в открытом проект остался бы без хозяина.
   await assertNotLastProjectAdmin(projectId, userId);
 
   await transaction(async (tx) => {
@@ -314,11 +397,11 @@ export async function removeProjectMember(ctx: AuthContext, projectId: string, u
     });
   });
 
-  // Если после удаления доступ к проекту всё равно остаётся (org-видимый проект
-  // и человек — сотрудник), назначения и подписки трогать нельзя: иначе снятие
-  // лишней явной роли молча стирает его задачи. Чистим только при реальной
-  // потере доступа — у гостей и в приватных проектах.
-  await revokeProjectTaskLinks(projectId, userId, project.org_id, project.visibility);
+  // Если после удаления доступ к проекту всё равно остаётся (у проекта есть
+  // базовая роль и человек — сотрудник), назначения и подписки трогать нельзя:
+  // иначе снятие лишней явной роли молча стирает его задачи. Чистим только при
+  // реальной потере доступа — у гостей и в закрытых проектах.
+  await revokeProjectTaskLinks(projectId, userId, project.org_id, project.default_role);
 }
 
 /** Снимает назначения и подписки по задачам проекта, если доступ действительно утрачен. */
@@ -326,9 +409,9 @@ async function revokeProjectTaskLinks(
   projectId: string,
   userId: string,
   orgId: string,
-  visibility: "org" | "private",
+  defaultRole: ProjectDefaultRole | null,
 ): Promise<void> {
-  if (visibility === "org") {
+  if (defaultRole) {
     const membership = await prepare<{ role: string }>(
       `SELECT role FROM core.org_members WHERE org_id = ? AND user_id = ?`,
     ).get(orgId, userId);

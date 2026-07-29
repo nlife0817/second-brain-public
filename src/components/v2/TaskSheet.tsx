@@ -28,18 +28,22 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/core/client";
+import type { TaskChange } from "@/lib/core/task-change";
 import type {
   CoreComment,
   CoreEvent,
   CustomField,
+  RelationType,
+  RelationWithTarget,
   TaskDetail,
   TaskPriority,
   TaskListItem,
 } from "@/lib/core/types";
-import { useV2Store } from "@/lib/core/ui-store";
+import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, StatusPill } from "./bits";
 import { MemberPicker } from "./MemberPicker";
+import { RelationsList } from "./RelationsList";
 // Tiptap — самая тяжёлая зависимость интерфейса (≈370 КБ). Статический импорт
 // тянул её в бандл каждой страницы v2, хотя редактор нужен только когда открыта
 // карточка задачи. Грузим чанк при первом открытии.
@@ -77,6 +81,16 @@ function eventLabel(e: CoreEvent): string {
   return base;
 }
 
+/** Ответ /tasks/:id/bundle — всё содержимое карточки за один запрос. */
+interface TaskBundle {
+  task: TaskDetail;
+  comments: CoreComment[];
+  feed: CoreEvent[];
+  subtasks: TaskListItem[];
+  relations: RelationWithTarget[];
+  relation_types: RelationType[];
+}
+
 export function TaskSheet({
   taskId,
   onClose,
@@ -84,11 +98,14 @@ export function TaskSheet({
 }: {
   taskId: string | null;
   onClose: () => void;
-  onChanged?: () => void;
+  onChanged?: (change: TaskChange) => void;
 }) {
   // Кастомные поля — справочник организации из стора: раньше карточка тянула
   // /fields при каждом открытии.
-  const { orgId, statuses, tags, projects, me, fields } = useV2Store();
+  const { orgId, statuses, tags, projects, me, fields, orgRole } = useV2Store();
+  const storeApi = useV2StoreApi();
+  // Гость связями не управляет; более тонкие права проверит сервер.
+  const canEdit = orgRole !== null && orgRole !== "guest";
   const [loaded, setLoaded] = useState<TaskDetail | null>(null);
   // Пока грузится новая задача, старую не показываем — сравнение по id вместо
   // сброса состояния в эффекте (тот вызывает каскадный ре-рендер).
@@ -97,6 +114,8 @@ export function TaskSheet({
   const [comments, setComments] = useState<CoreComment[]>([]);
   const [feed, setFeed] = useState<CoreEvent[]>([]);
   const [subtasks, setSubtasks] = useState<TaskListItem[]>([]);
+  const [relations, setRelations] = useState<RelationWithTarget[]>([]);
+  const [relationTypes, setRelationTypes] = useState<RelationType[]>([]);
   const [tab, setTab] = useState<"comments" | "feed">("comments");
   const [commentText, setCommentText] = useState("");
   const [subtaskTitle, setSubtaskTitle] = useState("");
@@ -108,17 +127,16 @@ export function TaskSheet({
   const load = useCallback(async () => {
     if (!orgId || !taskId) return;
     try {
-      const [detail, cs, ev, subs] = await Promise.all([
-        api.get<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`),
-        api.get<CoreComment[]>(`/orgs/${orgId}/tasks/${taskId}/comments`),
-        api.get<CoreEvent[]>(`/orgs/${orgId}/tasks/${taskId}/feed`),
-        api.get<TaskListItem[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`),
-      ]);
+      // Один запрос вместо шести: карточка, комментарии, лента, подзадачи и
+      // блок связей считаются на сервере параллельно под общей авторизацией.
+      const b = await api.get<TaskBundle>(`/orgs/${orgId}/tasks/${taskId}/bundle`);
       if (currentTaskRef.current !== taskId) return;
-      setTask(detail);
-      setComments(cs);
-      setFeed(ev);
-      setSubtasks(subs);
+      setTask(b.task);
+      setComments(b.comments);
+      setFeed(b.feed);
+      setSubtasks(b.subtasks);
+      setRelations(b.relations);
+      setRelationTypes(b.relation_types);
       setError(null);
     } catch (e) {
       if (currentTaskRef.current !== taskId) return;
@@ -141,14 +159,59 @@ export function TaskSheet({
     }
   }
 
-  async function patch(body: Record<string, unknown>) {
-    if (!orgId || !taskId) return;
-    await run(async () => {
+  /**
+   * Предсказание ответа сервера для мгновенной перерисовки. Поля, которые
+   * сервер выводит сам (метка завершения — по виду статуса), считаем по тем же
+   * правилам; расхождение поправит настоящий ответ через мгновение.
+   */
+  function previewPatch(prev: TaskDetail, body: Record<string, unknown>): TaskDetail {
+    const next: TaskDetail = { ...prev };
+    if (typeof body.title === "string") next.title = body.title;
+    if (typeof body.description === "string") next.description = body.description;
+    if (typeof body.priority === "string") next.priority = body.priority as TaskPriority;
+    if ("due_date" in body) next.due_date = body.due_date as string | null;
+    if ("due_time" in body) next.due_time = body.due_time as string | null;
+    if (typeof body.status_id === "string") {
+      next.status_id = body.status_id;
+      const kind = statuses.find((s) => s.id === body.status_id)?.kind;
+      if (kind === "done") next.completed_at = prev.completed_at ?? new Date().toISOString();
+      else if (kind === "open") next.completed_at = null;
+    }
+    if (Array.isArray(body.tag_ids)) {
+      const ids = body.tag_ids as string[];
+      next.tags = ids
+        .map((id) => tags.find((t) => t.id === id))
+        .filter((t): t is NonNullable<typeof t> => !!t);
+    }
+    return next;
+  }
+
+  /**
+   * Правка задачи. Карточка и список за ней перерисовываются сразу, запрос уходит
+   * следом; при отказе состояние возвращается на место.
+   */
+  async function patch(
+    body: Record<string, unknown>,
+    preview?: (task: TaskDetail) => TaskDetail,
+  ) {
+    if (!orgId || !taskId || !task) return;
+    const previous = task;
+    const base = previewPatch(task, body);
+    const optimistic = preview ? preview(base) : base;
+    setTask(optimistic);
+    onChanged?.({ type: "patched", task: optimistic, confirmed: false });
+    try {
       const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`, body);
       if (currentTaskRef.current !== taskId) return;
       setTask(updated);
-      onChanged?.();
-    });
+      onChanged?.({ type: "patched", task: updated, confirmed: true });
+      setError(null);
+    } catch (e) {
+      if (currentTaskRef.current !== taskId) return;
+      setTask(previous);
+      onChanged?.({ type: "patched", task: previous, confirmed: true });
+      setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+    }
   }
 
   /** Многострочный ввод → HTML: иначе переносы строк теряются при рендере. */
@@ -163,23 +226,40 @@ export function TaskSheet({
 
   async function addComment() {
     if (!orgId || !taskId || !commentText.trim()) return;
+    const text = commentText.trim();
+    // Поле очищаем сразу: ждать ответа сервера, чтобы убрать свой же текст,
+    // выглядит как зависшая кнопка.
+    setCommentText("");
     await run(async () => {
       const comment = await api.post<CoreComment>(`/orgs/${orgId}/tasks/${taskId}/comments`, {
-        body: textToHtml(commentText.trim()),
+        body: textToHtml(text),
       });
+      if (currentTaskRef.current !== taskId) return;
       setComments((prev) => [...prev, comment]);
-      setCommentText("");
-      onChanged?.();
+      setTask((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev, comment_count: prev.comment_count + 1 };
+        onChanged?.({ type: "patched", task: next, confirmed: true });
+        return next;
+      });
     });
   }
 
   async function addSubtask() {
     if (!orgId || !taskId || !subtaskTitle.trim()) return;
+    const title = subtaskTitle.trim();
+    setSubtaskTitle("");
     await run(async () => {
-      await api.post(`/orgs/${orgId}/tasks`, { title: subtaskTitle.trim(), parent_task_id: taskId });
-      setSubtaskTitle("");
-      setSubtasks(await api.get<TaskListItem[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`));
-      onChanged?.();
+      // Ответ на создание — сама подзадача: отдельный перечит списка не нужен.
+      const created = await api.post<TaskDetail>(`/orgs/${orgId}/tasks`, {
+        title,
+        parent_task_id: taskId,
+      });
+      if (currentTaskRef.current !== taskId) return;
+      setSubtasks((prev) => [...prev, created]);
+      setTask((prev) => (prev ? { ...prev, subtask_count: prev.subtask_count + 1 } : prev));
+      // В списках экрана появилась новая задача — их надо перечитать.
+      onChanged?.({ type: "reload" });
     });
   }
 
@@ -189,11 +269,38 @@ export function TaskSheet({
     const openStatus = reopenStatus();
     const target = sub.completed_at ? openStatus : doneStatus;
     if (!target) return;
-    await run(async () => {
-      await api.patch(`/orgs/${orgId}/tasks/${sub.id}`, { status_id: target.id });
-      setSubtasks(await api.get<TaskListItem[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks`));
-      onChanged?.();
+    const wasDone = !!sub.completed_at;
+    const previous = subtasks;
+    // Галочка переключается сразу; раньше это стоило двух походов на сервер
+    // подряд — правки и полного перечита списка подзадач.
+    setSubtasks((prev) =>
+      prev.map((s) =>
+        s.id === sub.id
+          ? { ...s, status_id: target.id, completed_at: wasDone ? null : new Date().toISOString() }
+          : s,
+      ),
+    );
+    setTask((prev) => {
+      if (!prev) return prev;
+      const next = {
+        ...prev,
+        subtask_done_count: prev.subtask_done_count + (wasDone ? -1 : 1),
+      };
+      onChanged?.({ type: "patched", task: next, confirmed: false });
+      return next;
     });
+    try {
+      await api.patch(`/orgs/${orgId}/tasks/${sub.id}`, { status_id: target.id });
+      setError(null);
+    } catch (e) {
+      setSubtasks(previous);
+      setTask((prev) =>
+        prev
+          ? { ...prev, subtask_done_count: prev.subtask_done_count + (wasDone ? 1 : -1) }
+          : prev,
+      );
+      setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+    }
   }
 
   async function setPlacements(projectIds: string[]) {
@@ -202,42 +309,69 @@ export function TaskSheet({
       const existing = task.placements.find((p) => p.project_id === pid);
       return { project_id: pid, section_id: existing?.section_id ?? null };
     });
-    await run(async () => {
+    const previous = task;
+    const optimistic: TaskDetail = {
+      ...task,
+      placements: placements.map((p) => ({
+        ...(task.placements.find((x) => x.project_id === p.project_id) ?? {
+          project_id: p.project_id,
+          section_id: p.section_id,
+          position: 0,
+        }),
+      })),
+    };
+    setTask(optimistic);
+    onChanged?.({ type: "patched", task: optimistic, confirmed: false });
+    try {
       const updated = await api.put<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}/placements`, { placements });
       if (currentTaskRef.current !== taskId) return;
       setTask(updated);
-      onChanged?.();
-    });
+      onChanged?.({ type: "patched", task: updated, confirmed: true });
+      setError(null);
+    } catch (e) {
+      if (currentTaskRef.current !== taskId) return;
+      setTask(previous);
+      onChanged?.({ type: "patched", task: previous, confirmed: true });
+      setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+    }
   }
 
   async function setFieldValue(fieldId: string, value: unknown) {
-    if (!orgId || !taskId) return;
-    await run(async () => {
+    if (!orgId || !taskId || !task) return;
+    const previous = task;
+    setTask((prev) =>
+      prev ? { ...prev, field_values: { ...prev.field_values, [fieldId]: value } } : prev,
+    );
+    try {
       await api.put(`/orgs/${orgId}/tasks/${taskId}/fields/${fieldId}`, { value });
-      setTask((prev) =>
-        prev ? { ...prev, field_values: { ...prev.field_values, [fieldId]: value } } : prev,
-      );
-    });
+      setError(null);
+    } catch (e) {
+      if (currentTaskRef.current !== taskId) return;
+      setTask(previous);
+      setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+    }
   }
 
   /** Список исполнителей меняем оптимистично: иначе быстрый второй выбор
    *  посчитается от старого списка и снимет только что назначенного. */
   async function setAssignees(ids: string[]) {
-    const { members } = useV2Store.getState();
+    const { members } = storeApi.getState();
     const optimistic = ids
       .map((id) => members.find((m) => m.user_id === id))
       .filter((m): m is NonNullable<typeof m> => !!m)
       .map((m) => ({ id: m.user_id, email: m.email, name: m.name, avatar_url: m.avatar_url }));
-    setTask((prev) => (prev ? { ...prev, assignees: optimistic } : prev));
-    await patch({ assignee_ids: ids });
+    // Через preview, а не отдельным setTask: иначе откат по ошибке вернул бы
+    // состояние, посчитанное до этой правки, и исполнители «прыгнули» бы назад.
+    await patch({ assignee_ids: ids }, (t) => ({ ...t, assignees: optimistic }));
   }
 
   async function removeTask() {
     if (!orgId || !taskId) return;
     if (!window.confirm("Удалить задачу безвозвратно?")) return;
+    const removedId = taskId;
     await run(async () => {
-      await api.del(`/orgs/${orgId}/tasks/${taskId}`);
-      onChanged?.();
+      await api.del(`/orgs/${orgId}/tasks/${removedId}`);
+      onChanged?.({ type: "deleted", taskId: removedId });
       onClose();
     });
   }
@@ -264,12 +398,26 @@ export function TaskSheet({
   const amFollower = !!task && !!me && task.followers.some((f) => f.id === me.id);
 
   async function toggleFollow() {
-    if (!orgId || !taskId) return;
-    await run(async () => {
-      if (amFollower) await api.del(`/orgs/${orgId}/tasks/${taskId}/follow`);
-      else await api.post(`/orgs/${orgId}/tasks/${taskId}/follow`);
-      await load();
+    if (!orgId || !taskId || !task || !me) return;
+    const previous = task;
+    const wasFollower = amFollower;
+    // Колокольчик переключается сразу. Раньше за ним шла правка и следом полный
+    // перечит карточки — шесть запросов ради одной иконки.
+    setTask({
+      ...task,
+      followers: wasFollower
+        ? task.followers.filter((f) => f.id !== me.id)
+        : [...task.followers, { id: me.id, email: me.email, name: me.name, avatar_url: me.avatar_url }],
     });
+    try {
+      if (wasFollower) await api.del(`/orgs/${orgId}/tasks/${taskId}/follow`);
+      else await api.post(`/orgs/${orgId}/tasks/${taskId}/follow`);
+      setError(null);
+    } catch (e) {
+      if (currentTaskRef.current !== taskId) return;
+      setTask(previous);
+      setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+    }
   }
 
   const doneStatus = statuses.find((s) => s.kind === "done");
@@ -283,7 +431,10 @@ export function TaskSheet({
       <SheetContent
         side="right"
         showCloseButton={false}
-        className="flex flex-col gap-0 overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-xl"
+        // На телефоне карточка занимает весь экран и рисуется поверх оболочки:
+        // без отступов безопасной зоны шапка уезжает под чёлку, а комментарии —
+        // под домашний индикатор.
+        className="flex flex-col gap-0 overflow-hidden p-0 pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] data-[side=right]:w-full data-[side=right]:sm:max-w-xl sm:pb-0 sm:pt-0"
       >
         {!task ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -291,11 +442,13 @@ export function TaskSheet({
           </div>
         ) : (
           <>
+            {/* Кнопки шапки на телефоне крупнее: 28 px мышью попадаются, пальцем — нет. */}
             <SheetHeader className="border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <Button
                   variant={isDone ? "secondary" : "outline"}
                   size="sm"
+                  className="h-9 sm:h-7"
                   onClick={() => {
                     const target = isDone ? reopenStatus() : doneStatus;
                     if (target) void patch({ status_id: target.id });
@@ -308,19 +461,32 @@ export function TaskSheet({
                 <Button
                   variant="outline"
                   size="sm"
+                  className="h-9 sm:h-7"
                   onClick={() => void startTimerHere()}
                   title="Начать отсчёт времени по этой задаче"
                 >
                   <Play className="size-4" />
                   Таймер
                 </Button>
-                <Button variant="ghost" size="icon-sm" onClick={() => void toggleFollow()} title={amFollower ? "Не следить" : "Следить"}>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-9 sm:size-7"
+                  onClick={() => void toggleFollow()}
+                  title={amFollower ? "Не следить" : "Следить"}
+                >
                   {amFollower ? <BellOff className="size-4" /> : <Bell className="size-4" />}
                 </Button>
-                <Button variant="ghost" size="icon-sm" onClick={() => void removeTask()} title="Удалить">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-9 sm:size-7"
+                  onClick={() => void removeTask()}
+                  title="Удалить"
+                >
                   <Trash2 className="size-4" />
                 </Button>
-                <Button variant="ghost" size="icon-sm" onClick={onClose}>
+                <Button variant="ghost" size="icon-sm" className="size-9 sm:size-7" onClick={onClose}>
                   <X className="size-4" />
                 </Button>
               </div>
@@ -531,6 +697,14 @@ export function TaskSheet({
                     </div>
                   </div>
                 </div>
+
+                <RelationsList
+                  entityType="task"
+                  entityId={task.id}
+                  canEdit={canEdit}
+                  initialRelations={relations}
+                  initialTypes={relationTypes}
+                />
               </div>
 
               <div className="border-t border-border">

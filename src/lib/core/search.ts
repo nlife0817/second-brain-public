@@ -41,7 +41,7 @@ export async function search(ctx: AuthContext, query: string, limit = 20): Promi
   if (projectIds.length > 0) {
     const ph = projectIds.map(() => "?").join(",");
     const projects = await prepare<PolicyProject & { name: string }>(
-      `SELECT id, org_id, visibility, name FROM core.projects WHERE id IN (${ph})`,
+      `SELECT id, org_id, default_role, name FROM core.projects WHERE id IN (${ph})`,
     ).all(projectIds);
     for (const p of projects) projectMap.set(p.id, p);
   }
