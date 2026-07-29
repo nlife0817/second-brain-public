@@ -3,74 +3,137 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Карточка задачи — детальная проработка</title>
+<title>Карточка задачи — полный интерактив</title>
 <link rel="stylesheet" href="sb.css">
 <script src="sb.js" defer></script>
 <style>
-/* Специфика карточки задачи — поверх sb.css, как per-screen CSS в референсе */
+/* Специфика карточки задачи — поверх sb.css */
 .tc-stage { min-height: calc(100vh - 37px); position: relative; background: var(--bg); overflow: hidden; }
 .tc-controls {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 14px 20px; border-bottom: 1px solid var(--border);
-  background: var(--surface); position: relative; z-index: 10;
+  padding: 12px 20px; border-bottom: 1px solid var(--border);
+  background: var(--surface); position: relative; z-index: 20;
 }
 .tc-seg { display: flex; border: 1.5px solid var(--border-input); border-radius: 9px; overflow: hidden; }
 .tc-seg button { border: none; background: none; padding: 6px 13px; font-size: 12.5px; font-weight: 500; cursor: pointer; font-family: var(--font-main); color: var(--text-secondary); }
 .tc-seg button.is-on { background: var(--text-primary); color: #fff; font-weight: 600; }
 
-/* Контейнеры: панель справа или модалка по центру */
+/* Аннотации UX-улучшений */
+.ux-panel {
+  position: absolute; top: 76px; left: 16px; width: 292px; z-index: 15;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: var(--shadow-md); overflow: hidden;
+  max-height: calc(100% - 96px); display: flex; flex-direction: column;
+}
+.ux-panel__head { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border-divider); font-size: 12.5px; font-weight: 700; }
+.ux-panel__body { overflow-y: auto; padding: 6px; }
+.ux-item {
+  display: flex; gap: 9px; padding: 8px 9px; border-radius: 10px; cursor: pointer;
+  font-size: 12px; line-height: 1.45; color: var(--text-secondary); transition: .15s;
+}
+.ux-item:hover { background: var(--accent-soft); color: var(--text-primary); }
+.ux-item b { color: var(--text-primary); display: block; font-size: 12px; }
+.ux-item .n {
+  width: 18px; height: 18px; border-radius: 6px; flex: none;
+  background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700;
+  display: grid; place-items: center; margin-top: 1px;
+}
+.ux-hl { outline: 2px solid var(--accent) !important; outline-offset: 3px; border-radius: 8px; }
+@media (max-width: 1150px) { .ux-panel { display: none; } }
+
+/* Карточка: панель или модалка */
 .tc-card {
   position: absolute; display: flex; flex-direction: column;
   background: var(--surface-sheet); z-index: 5;
-  transition: all .35s var(--ease-sheet);
+  transition: transform .4s var(--ease-sheet), width .35s var(--ease-sheet);
 }
 .tc-stage[data-mode="sheet"] .tc-card {
-  top: 65px; right: 0; bottom: 0; width: min(576px, 100%);
+  top: 61px; right: 0; bottom: 0; width: min(576px, 100%);
   border-left: 1px solid var(--border); border-radius: 0;
   box-shadow: var(--shadow-sheet);
 }
 .tc-stage[data-mode="modal"] .tc-card {
   top: 50%; left: 50%; right: auto; bottom: auto;
   transform: translate(-50%, -50%);
-  width: min(768px, calc(100vw - 48px)); height: min(88vh, 820px);
+  width: min(860px, calc(100vw - 340px)); height: min(88vh, 840px);
   border-radius: 18px; border: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
 }
-.tc-backdrop { position: absolute; inset: 65px 0 0; background: var(--overlay); opacity: 0; pointer-events: none; transition: .25s; }
-.tc-stage[data-mode="modal"] .tc-backdrop { opacity: 1; }
+.tc-stage.card-closed .tc-card { transform: translateX(110%); }
+.tc-stage[data-mode="modal"].card-closed .tc-card { transform: translate(-50%, 60vh) scale(.95); opacity: 0; pointer-events: none; }
+.tc-backdrop { position: absolute; inset: 61px 0 0; background: var(--overlay); opacity: 0; pointer-events: none; transition: .25s; }
+.tc-stage[data-mode="modal"]:not(.card-closed) .tc-backdrop { opacity: 1; }
+.tc-reopen { position: absolute; bottom: 24px; right: 24px; z-index: 6; display: none; }
+.tc-stage.card-closed .tc-reopen { display: inline-flex; }
 
 .tc-head {
   display: flex; align-items: center; gap: 7px; flex: none;
   padding: 11px 14px; border-bottom: 1px solid var(--border-divider);
 }
-.tc-body { flex: 1; overflow-y: auto; }
-.tc-main { padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; }
+.save-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; color: var(--success-text);
+  opacity: 0; transition: opacity .25s;
+}
+.save-chip.is-on { opacity: 1; }
+.timer-live {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent-soft); color: var(--accent-text);
+  border: none; border-radius: 8px; height: 28px; padding: 0 10px;
+  font-size: 12.5px; font-weight: 600; font-family: var(--font-mono); cursor: pointer;
+}
+.timer-live .stop { width: 9px; height: 9px; border-radius: 2.5px; background: var(--accent-text); }
+
+/* Раскладка: панель — одна колонка; модалка — контент + колонка свойств */
+.tc-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.tc-grid { display: grid; grid-template-columns: 1fr; grid-template-areas: "title" "props" "main"; }
+.tc-stage[data-mode="modal"] .tc-grid {
+  grid-template-columns: minmax(0, 1fr) 272px;
+  grid-template-areas: "title props" "main props";
+}
+#blk-title { grid-area: title; padding: 16px 20px 4px; }
+#blk-props { grid-area: props; padding: 10px 20px 4px; }
+#blk-main { grid-area: main; padding: 8px 20px 16px; display: flex; flex-direction: column; gap: 16px; }
+.tc-stage[data-mode="modal"] #blk-props {
+  background: var(--bg); border-left: 1px solid var(--border-divider);
+  padding: 18px 18px; align-self: stretch;
+}
+.tc-stage[data-mode="modal"] .tc-props { grid-template-columns: 1fr; gap: 3px 0; }
+.tc-stage[data-mode="modal"] .tc-props > .lbl { margin-top: 9px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+
 .tc-title {
-  font-family: var(--font-main); font-size: 19px; font-weight: 700; letter-spacing: -0.3px;
+  font-family: var(--font-main); font-size: 19px; font-weight: 700; letter-spacing: -0.3px; line-height: 1.3;
   border: none; background: none; outline: none; width: 100%; color: var(--text-primary);
-  border-radius: 8px; padding: 2px 4px; margin: -2px -4px;
+  border-radius: 8px; padding: 2px 4px; margin: -2px -4px; resize: none; overflow: hidden;
 }
 .tc-title:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
 .is-done .tc-title { color: var(--text-muted); text-decoration: line-through; }
 
-.tc-props { display: grid; grid-template-columns: 108px 1fr; gap: 11px 14px; align-items: center; font-size: 13px; }
-.tc-props > .lbl { color: var(--text-secondary); font-size: 12.5px; align-self: center; }
+.tc-props { display: grid; grid-template-columns: 104px 1fr; gap: 10px 12px; align-items: center; font-size: 13px; }
+.tc-props > .lbl { color: var(--text-secondary); font-size: 12.5px; }
 .prop-btn {
   display: inline-flex; align-items: center; gap: 7px;
   border: 1.5px solid transparent; background: none; border-radius: 8px;
   padding: 3px 8px; margin-left: -8px; font-size: 13px; font-family: var(--font-main);
-  color: var(--text-primary); cursor: pointer; transition: .15s; text-align: left;
+  color: var(--text-primary); cursor: pointer; transition: .15s; text-align: left; max-width: 100%;
 }
 .prop-btn:hover { border-color: var(--border-input); background: var(--surface); box-shadow: var(--shadow-xs); }
-.prop-btn .chev { color: var(--text-muted); width: 12px; height: 12px; }
+.prop-btn .chev { color: var(--text-muted); width: 12px; height: 12px; flex: none; }
+.prop-input {
+  border: 1.5px solid transparent; background: none; border-radius: 8px;
+  padding: 3px 8px; margin-left: -8px; font-size: 12.5px; font-family: var(--font-mono);
+  color: var(--text-primary); outline: none; transition: .15s; width: 110px;
+}
+.prop-input:hover { border-color: var(--border-input); background: var(--surface); }
+.prop-input:focus { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px var(--accent-soft); }
 .assignee-pill {
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 99px; padding: 2px 8px 2px 3px; font-size: 12px; font-weight: 500;
   box-shadow: var(--shadow-xs);
 }
-.assignee-pill .x { border: none; background: none; color: var(--text-muted); cursor: pointer; padding: 0; display: grid; place-items: center; }
-.assignee-pill .x:hover { color: var(--danger); }
+.assignee-pill .x, .chip-x { border: none; background: none; color: var(--text-muted); cursor: pointer; padding: 0; display: grid; place-items: center; }
+.assignee-pill .x:hover, .chip-x:hover { color: var(--danger); }
 .add-dashed {
   display: inline-flex; align-items: center; gap: 5px;
   border: 1.5px dashed var(--border-active); background: none; border-radius: 99px;
@@ -78,35 +141,21 @@
   cursor: pointer; font-family: var(--font-main); transition: .15s;
 }
 .add-dashed:hover { color: var(--accent-text); border-color: var(--accent); background: var(--accent-soft); }
-.tag-toggle { opacity: .38; transition: .15s; cursor: pointer; border: none; font-family: var(--font-main); }
-.tag-toggle.is-on { opacity: 1; }
-.tag-toggle:hover { opacity: .85; }
 
 /* Описание */
-.rich {
-  border: 1.5px solid var(--border-input); border-radius: 12px;
-  background: var(--surface); box-shadow: var(--shadow-xs);
-  transition: .18s; position: relative;
-}
+.rich { border: 1.5px solid var(--border-input); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-xs); transition: .18s; }
 .rich:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.rich__bar {
-  display: flex; align-items: center; gap: 2px;
-  padding: 6px 8px; border-bottom: 1px solid var(--border-divider);
-}
+.rich__bar { display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--border-divider); }
 .rich__bar button {
-  width: 26px; height: 26px; border: none; background: none; border-radius: 7px;
+  min-width: 26px; height: 26px; border: none; background: none; border-radius: 7px;
   display: grid; place-items: center; color: var(--text-secondary); cursor: pointer;
-  font-family: var(--font-main); font-size: 12.5px; font-weight: 700;
+  font-family: var(--font-main); font-size: 12.5px; font-weight: 700; padding: 0 4px;
 }
 .rich__bar button:hover { background: rgba(28,25,18,.06); color: var(--text-primary); }
-.rich__bar button.is-on { background: var(--accent-soft); color: var(--accent-text); }
 .rich__bar .sep { width: 1px; height: 16px; background: var(--border-divider); margin: 0 4px; }
 .rich__bar .right { margin-left: auto; display: flex; gap: 2px; }
-.rich__bar .threads {
-  width: auto; padding: 0 8px; gap: 4px; display: inline-flex; align-items: center;
-  font-size: 11px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); border-radius: 7px;
-}
-.rich__content { padding: 12px 14px; font-size: 13.5px; line-height: 1.6; min-height: 70px; outline: none; }
+.rich__bar .threads { width: auto; padding: 0 8px; gap: 4px; display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); border-radius: 7px; }
+.rich__content { padding: 12px 14px; font-size: 13.5px; line-height: 1.6; min-height: 64px; outline: none; }
 .rich__content ul { padding-left: 20px; margin: 4px 0; }
 .rich__content a { color: var(--accent-text); font-weight: 500; }
 
@@ -115,68 +164,88 @@
 .sub-progress i { display: block; height: 100%; background: var(--success); border-radius: 2px; transition: width .3s; }
 .sub-row { display: flex; align-items: center; gap: 9px; padding: 4px 6px; margin: 0 -6px; border-radius: 8px; font-size: 13.5px; }
 .sub-row:hover { background: rgba(28,25,18,.035); }
-.sub-row .ring { width: 17px; height: 17px; border-radius: 50%; border: 1.5px solid var(--border-active); background: var(--surface); cursor: pointer; display: grid; place-items: center; flex: none; transition: .15s; }
+.sub-row .ring { width: 17px; height: 17px; border-radius: 50%; border: 1.5px solid var(--border-active); background: var(--surface); cursor: pointer; display: grid; place-items: center; flex: none; transition: .15s; padding: 0; }
 .sub-row .ring svg { width: 10px; height: 10px; color: #fff; opacity: 0; }
 .sub-row.is-done .ring { background: var(--success); border-color: var(--success); }
 .sub-row.is-done .ring svg { opacity: 1; }
 .sub-row.is-done .txt { color: var(--text-muted); text-decoration: line-through; }
-.sub-row .grip { color: var(--text-muted); opacity: 0; cursor: grab; }
-.sub-row:hover .grip { opacity: .6; }
+.sub-row .del { opacity: 0; border: none; background: none; color: var(--text-muted); cursor: pointer; padding: 2px; }
+.sub-row:hover .del { opacity: .7; }
+.sub-row .del:hover { color: var(--danger); }
 
 .rel-row {
   display: flex; align-items: center; gap: 9px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-  padding: 7px 10px; font-size: 13px; box-shadow: var(--shadow-xs); cursor: pointer;
+  padding: 7px 10px; font-size: 13px; box-shadow: var(--shadow-xs);
 }
 .rel-row:hover { border-color: var(--border-active); }
+.rel-row .del { opacity: 0; border: none; background: none; color: var(--text-muted); cursor: pointer; padding: 2px; }
+.rel-row:hover .del { opacity: .7; }
+.rel-row .del:hover { color: var(--danger); }
 
-/* Табы и лента */
-.tc-tabs { display: flex; gap: 2px; padding: 12px 20px 0; border-top: 1px solid var(--border-divider); }
-.tc-tab {
-  border: none; background: none; padding: 6px 12px; border-radius: 9px;
-  font-size: 13px; font-weight: 500; font-family: var(--font-main);
-  color: var(--text-secondary); cursor: pointer;
-}
+/* Активность */
+.tc-tabs { display: flex; gap: 2px; }
+.tc-tab { border: none; background: none; padding: 6px 12px; border-radius: 9px; font-size: 13px; font-weight: 500; font-family: var(--font-main); color: var(--text-secondary); cursor: pointer; }
 .tc-tab.is-on { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
 .comment { display: flex; gap: 9px; }
-.comment__bubble {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-  border-top-left-radius: 4px; padding: 8px 12px; font-size: 13px; line-height: 1.55; flex: 1;
-}
+.comment__bubble { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; border-top-left-radius: 4px; padding: 8px 12px; font-size: 13px; line-height: 1.55; flex: 1; }
 .comment__meta { font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
 .comment__meta b { color: var(--text-primary); font-weight: 600; }
 .feed-row { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; color: var(--text-secondary); padding: 3px 0; }
 .feed-row .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--border-active); flex: none; position: relative; top: -2px; }
 .feed-row b { color: var(--text-primary); font-weight: 600; }
-.feed-row time { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted); flex: none; }
+.feed-row time { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted); flex: none; white-space: nowrap; padding-left: 10px; }
 
-/* Календарь срока */
+/* Композер закреплён внизу карточки */
+.tc-composer { flex: none; border-top: 1px solid var(--border-divider); background: var(--surface-sheet); padding: 10px 14px 12px; }
+.tc-composer .row { display: flex; gap: 8px; align-items: flex-end; }
+.tc-composer textarea {
+  flex: 1; border: 1.5px solid var(--border-input); background: var(--surface);
+  border-radius: 11px; padding: 8px 12px; font-size: 13px; font-family: var(--font-main);
+  resize: none; outline: none; min-height: 36px; max-height: 120px; transition: .18s; box-shadow: var(--shadow-xs);
+}
+.tc-composer textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tc-composer .hint { font-size: 10.5px; color: var(--text-muted); margin-top: 5px; }
+
+/* Календарь */
 .cal { width: 258px; }
 .cal__head { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 8px; font-size: 13px; font-weight: 600; }
 .cal__head button { border: none; background: none; cursor: pointer; color: var(--text-secondary); border-radius: 6px; width: 24px; height: 24px; }
 .cal__head button:hover { background: rgba(28,25,18,.06); }
 .cal__grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; padding: 0 4px; }
 .cal__grid .dow { font-size: 10px; font-weight: 700; color: var(--text-muted); text-align: center; padding: 3px 0; text-transform: uppercase; }
-.cal__grid .day {
-  aspect-ratio: 1; border: none; background: none; border-radius: 8px;
-  font-size: 12px; font-family: var(--font-main); cursor: pointer; color: var(--text-primary);
-}
+.cal__grid .day { aspect-ratio: 1; border: none; background: none; border-radius: 8px; font-size: 12px; font-family: var(--font-main); cursor: pointer; color: var(--text-primary); }
 .cal__grid .day:hover { background: rgba(28,25,18,.06); }
 .cal__grid .day.is-out { color: var(--text-muted); opacity: .5; }
 .cal__grid .day.is-today { font-weight: 700; color: var(--accent-text); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .cal__grid .day.is-sel { background: var(--accent); color: #fff; font-weight: 700; box-shadow: var(--shadow-accent); }
 .cal__quick { display: flex; gap: 5px; padding: 8px 4px 2px; }
-.cal__quick button {
-  flex: 1; border: 1px solid var(--border-input); background: var(--surface);
-  border-radius: 7px; padding: 4px 0; font-size: 11px; font-weight: 500;
-  cursor: pointer; font-family: var(--font-main); color: var(--text-secondary);
-}
+.cal__quick button { flex: 1; border: 1px solid var(--border-input); background: var(--surface); border-radius: 7px; padding: 4px 0; font-size: 11px; font-weight: 500; cursor: pointer; font-family: var(--font-main); color: var(--text-secondary); }
 .cal__quick button:hover { border-color: var(--accent); color: var(--accent-text); }
 .cal__time { display: flex; align-items: center; gap: 8px; padding: 8px 4px 2px; border-top: 1px solid var(--border-divider); margin-top: 8px; }
 
-@media (max-width: 700px) {
-  .tc-stage[data-mode="modal"] .tc-card { width: calc(100vw - 16px); height: 92vh; }
-  .tc-props { grid-template-columns: 90px 1fr; }
+/* Полноэкранный документ (DocEditor) */
+.doc {
+  position: fixed; inset: 0; z-index: 150; background: var(--surface-sheet);
+  display: none; flex-direction: column;
+}
+.doc.is-open { display: flex; }
+.doc__head { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 1px solid var(--border-divider); flex: none; }
+.doc__body { flex: 1; display: flex; min-height: 0; }
+.doc__page { flex: 1; overflow-y: auto; padding: 36px 48px; }
+.doc__page-inner { max-width: 680px; margin: 0 auto; font-size: 15px; line-height: 1.7; outline: none; }
+.doc__threads { width: 300px; flex: none; border-left: 1px solid var(--border-divider); background: var(--bg); overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.thread { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; font-size: 12.5px; box-shadow: var(--shadow-xs); }
+.thread.is-resolved { opacity: .55; }
+.thread .q { color: var(--text-secondary); font-style: italic; border-left: 2px solid var(--accent); padding-left: 8px; margin-bottom: 7px; font-size: 11.5px; }
+
+.deleted-state { display: none; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 10px; }
+.tc-card.is-deleted .deleted-state { display: flex; }
+.tc-card.is-deleted .tc-scroll, .tc-card.is-deleted .tc-composer, .tc-card.is-deleted .tc-head { display: none; }
+
+@media (max-width: 900px) {
+  .tc-stage[data-mode="modal"] .tc-card { width: calc(100vw - 24px); }
+  .tc-stage[data-mode="modal"] .tc-grid { grid-template-columns: 1fr; grid-template-areas: "title" "props" "main"; }
 }
 </style>
 </head>
@@ -195,305 +264,515 @@
   <a href="screen-login.html">Вход</a>
 </nav>
 
-<div class="tc-stage" data-mode="sheet" id="stage">
+<div class="tc-stage" data-mode="modal" id="stage">
   <div class="tc-controls">
-    <b style="font-size:13.5px">Карточка задачи · состав 1:1 с текущим v2-master</b>
-    <span class="spacer" style="flex:1"></span>
-    <span style="font-size:12px;color:var(--text-muted)">Режим открытия (настройка пользователя):</span>
+    <b style="font-size:13.5px">Карточка задачи · всё живое — правьте что угодно, история запишет</b>
+    <span style="flex:1"></span>
+    <span style="font-size:12px;color:var(--text-muted)">Режим открытия:</span>
     <div class="tc-seg">
-      <button class="is-on" id="seg-sheet" onclick="setMode('sheet')">Боковая панель</button>
-      <button id="seg-modal" onclick="setMode('modal')">Модальное окно</button>
+      <button id="seg-sheet" onclick="setMode('sheet')">Боковая панель</button>
+      <button class="is-on" id="seg-modal" onclick="setMode('modal')">Модальное окно</button>
     </div>
   </div>
 
-  <div class="tc-backdrop"></div>
+  <!-- Аннотации улучшений -->
+  <aside class="ux-panel">
+    <div class="ux-panel__head">
+      <span class="proto-nav__brand" style="margin:0;color:var(--text-primary)"><span class="dot"></span></span>
+      Что я предлагаю улучшить
+    </div>
+    <div class="ux-panel__body">
+      <div class="ux-item" data-for="blk-props"><span class="n">1</span><span><b>Модалка — двухколоночная</b>Свойства уходят в правую колонку (как в Linear): описание и обсуждение получают всю ширину, ничего не ищется прокруткой. Панель остаётся одноколоночной.</span></div>
+      <div class="ux-item" data-for="ux-composer"><span class="n">2</span><span><b>Комментарий — всегда под рукой</b>Композер закреплён внизу карточки. Сейчас до него нужно прокрутить всю карточку.</span></div>
+      <div class="ux-item" data-for="ux-due"><span class="n">3</span><span><b>Срок — календарь, а не два поля</b>Быстрые даты, время и «Убрать срок» в одном поповере + бейдж «просрочено N дн.» прямо у значения.</span></div>
+      <div class="ux-item" data-for="ux-tags"><span class="n">4</span><span><b>Теги — только выбранные</b>Сейчас в карточке видны все теги организации разом (неактивные — полупрозрачно). Показываю только надетые, добавление — через «+ тег» с поиском.</span></div>
+      <div class="ux-item" data-for="ux-subhead"><span class="n">5</span><span><b>Подзадачи — прогресс</b>Счётчик и полоска в заголовке секции; удаление по ховеру. Enter добавляет и сразу даёт печатать следующую.</span></div>
+      <div class="ux-item" data-for="ux-save"><span class="n">6</span><span><b>«Сохранено» после каждой правки</b>Тихое подтверждение в шапке вместо полной тишины — видно, что blur сработал.</span></div>
+      <div class="ux-item" data-for="ux-timer"><span class="n">7</span><span><b>Таймер живёт в шапке</b>Запущенный отсчёт виден и останавливается прямо здесь, а не только в глобальном виджете.</span></div>
+      <div class="ux-item" data-for="ux-tabs"><span class="n">8</span><span><b>История пишется на глазах</b>Каждое действие в этом прототипе реально попадает в ленту — переключите таб после пары правок.</span></div>
+    </div>
+  </aside>
+
+  <div class="tc-backdrop" onclick="closeCard()"></div>
+  <button class="btn btn--primary tc-reopen" onclick="openCard()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/></svg>
+    Открыть карточку задачи
+  </button>
 
   <div class="tc-card" id="card">
-    <!-- Шапка: как в TaskSheet.tsx — завершить, таймер, следить, удалить, закрыть -->
+    <!-- Шапка -->
     <div class="tc-head">
       <button class="btn btn--secondary btn--sm" id="btn-done" onclick="toggleDone()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
         <span>Завершить</span>
       </button>
-      <button class="btn btn--ghost btn--sm" onclick="toast('Таймер запущен по этой задаче')">
+      <span id="timer-slot"><button class="btn btn--ghost btn--sm" data-ux="ux-timer" id="btn-timer" onclick="startTimer()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>
         Таймер
-      </button>
+      </button></span>
+      <span class="save-chip" id="save-chip" data-ux="ux-save">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        Сохранено
+      </span>
       <span style="flex:1"></span>
-      <button class="btn btn--ghost btn--icon btn--sm" id="btn-follow" onclick="toggleFollow(this)" title="Следить">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-      </button>
-      <button class="btn btn--ghost btn--icon btn--sm" title="Удалить" onclick="toast('Открылось бы подтверждение удаления')">
+      <button class="btn btn--ghost btn--icon btn--sm" id="btn-follow" onclick="toggleFollow()" title="Не следить"></button>
+      <button class="btn btn--ghost btn--icon btn--sm" title="Удалить" onclick="openModal('m-del')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
       </button>
-      <button class="x-btn" onclick="toast('Карточка закрылась бы')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+      <button class="x-btn" onclick="closeCard()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
     </div>
 
-    <div class="tc-body" id="card-root">
-      <div class="tc-main">
-        <input class="tc-title" value="Согласовать необходимые работы для КВК по чат-боту">
-
-        <div class="tc-props">
-          <span class="lbl">Статус</span>
-          <span><button class="prop-btn" data-pop-trigger onclick="togglePop('pop-status', this)">
-            <span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>Входящие</span>
-            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
-          </button></span>
-
-          <span class="lbl">Приоритет</span>
-          <span><button class="prop-btn" data-pop-trigger onclick="togglePop('pop-prio', this)">
-            <span class="prio prio--high"></span>Высокий
-            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
-          </button></span>
-
-          <span class="lbl">Срок</span>
-          <span><button class="prop-btn" data-pop-trigger onclick="togglePop('pop-due', this)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" stroke-linecap="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg>
-            <span style="font-family:var(--font-mono);font-size:12.5px;color:var(--danger);font-weight:500">10 июл., 15:00</span>
-            <span class="badge badge--danger" style="font-size:10px;padding:1px 6px">просрочено 19 дн.</span>
-          </button></span>
-
-          <span class="lbl">Повтор</span>
-          <span><button class="prop-btn" data-pop-trigger onclick="togglePop('pop-repeat', this)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
-            <span style="color:var(--text-secondary)">Не повторяется</span>
-            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
-          </button></span>
-
-          <span class="lbl">Исполнители</span>
-          <span style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-            <span class="assignee-pill"><span class="avatar avatar--orange" style="width:20px;height:20px;font-size:8.5px;border-radius:7px">ПБ</span>Полина Б.<button class="x"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></span>
-            <span class="assignee-pill"><span class="avatar avatar--green" style="width:20px;height:20px;font-size:8.5px;border-radius:7px">ДУ</span>Дмитрий У.<button class="x"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></span>
-            <button class="add-dashed" data-pop-trigger onclick="togglePop('pop-member', this)">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Назначить
-            </button>
-          </span>
-
-          <span class="lbl">Теги</span>
-          <span style="display:flex;flex-wrap:wrap;gap:6px">
-            <button class="tinted-chip tag-toggle is-on" style="--chip-color:#f59e0b" onclick="this.classList.toggle('is-on')">внеплан</button>
-            <button class="tinted-chip tag-toggle" style="--chip-color:#8b5cf6" onclick="this.classList.toggle('is-on')">идея</button>
-            <button class="tinted-chip tag-toggle" style="--chip-color:#10b981" onclick="this.classList.toggle('is-on')">быстрое</button>
-          </span>
-
-          <span class="lbl">Проекты</span>
-          <span style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-            <span class="tinted-chip tinted-chip--sq" style="--chip-color:#3b82f6">Сторонние проекты <button class="x" style="border:none;background:none;cursor:pointer;color:inherit;opacity:.55;padding:0">×</button></span>
-            <button class="add-dashed" data-pop-trigger onclick="togglePop('pop-project', this)">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>В проект
-            </button>
-          </span>
-
-          <span class="lbl" title="Кастомное поле">Бюджет</span>
-          <span><button class="prop-btn"><span style="font-family:var(--font-mono);font-size:12.5px">45 000 ₽</span></button></span>
-
-          <span class="lbl" title="Кастомное поле">Согласовано</span>
-          <span style="margin-left:-2px"><label class="check"><input type="checkbox"><span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></label></span>
+    <div class="tc-scroll" id="card-root">
+      <div class="tc-grid">
+        <div id="blk-title">
+          <textarea class="tc-title" id="title" rows="1" onblur="saveTitle(this)" oninput="autoGrow(this)">Согласовать необходимые работы для КВК по чат-боту</textarea>
         </div>
 
-        <!-- Описание: rich-text с тулбаром, тредами и разворотом в документ -->
-        <div>
+        <!-- Свойства -->
+        <div id="blk-props">
+          <div class="tc-props">
+            <span class="lbl">Статус</span>
+            <span><button class="prop-btn" id="v-status" data-pop-trigger onclick="togglePop('pop-status', this)"></button></span>
+
+            <span class="lbl">Приоритет</span>
+            <span><button class="prop-btn" id="v-prio" data-pop-trigger onclick="togglePop('pop-prio', this)"></button></span>
+
+            <span class="lbl">Срок</span>
+            <span><button class="prop-btn" id="v-due" data-ux="ux-due" data-pop-trigger onclick="togglePop('pop-due', this)"></button></span>
+
+            <span class="lbl">Повтор</span>
+            <span><button class="prop-btn" id="v-repeat" data-pop-trigger onclick="togglePop('pop-repeat', this)"></button></span>
+
+            <span class="lbl">Исполнители</span>
+            <span id="v-assignees" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"></span>
+
+            <span class="lbl">Теги</span>
+            <span id="v-tags" data-ux="ux-tags" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"></span>
+
+            <span class="lbl">Проекты</span>
+            <span id="v-projects" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"></span>
+
+            <span class="lbl" title="Кастомное поле · число">Бюджет</span>
+            <span><input class="prop-input" id="f-budget" value="45 000 ₽" onblur="saveField('Бюджет', this.value)"></span>
+
+            <span class="lbl" title="Кастомное поле · чекбокс">Согласовано</span>
+            <span style="margin-left:-2px"><label class="check"><input type="checkbox" id="f-approved" onchange="saveCheck(this)"><span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></label></span>
+          </div>
+        </div>
+
+        <div id="blk-main">
+          <!-- Описание -->
           <div class="rich">
             <div class="rich__bar">
-              <button class="is-on"><b>B</b></button>
-              <button><i style="font-family:Georgia,serif">I</i></button>
-              <button><s>S</s></button>
+              <button title="Жирный (Ctrl+B)" onmousedown="event.preventDefault();fmt('bold')"><b>B</b></button>
+              <button title="Курсив (Ctrl+I)" onmousedown="event.preventDefault();fmt('italic')"><i style="font-family:Georgia,serif">I</i></button>
+              <button title="Зачёркнутый" onmousedown="event.preventDefault();fmt('strikeThrough')"><s>S</s></button>
               <span class="sep"></span>
-              <button title="Список"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg></button>
-              <button title="Чек-лист"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg></button>
-              <button title="Ссылка"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+              <button title="Список" onmousedown="event.preventDefault();fmt('insertUnorderedList')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg></button>
+              <button title="Ссылка" onmousedown="event.preventDefault();addLink()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
               <div class="right">
-                <button class="threads" title="Открытые обсуждения"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>2</button>
-                <button title="Развернуть в документ" onclick="toast('Открылся бы полноэкранный редактор')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/></svg></button>
+                <button class="threads" title="Открытые обсуждения" onclick="openDoc()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="thread-count">2</span></button>
+                <button title="Развернуть в документ" onclick="openDoc()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/></svg></button>
               </div>
             </div>
-            <div class="rich__content" contenteditable="true">
+            <div class="rich__content" id="desc" contenteditable="true" onblur="saveDesc()">
               <b>Цель:</b> зафиксировать объём работ и смету до конца недели.
               <ul>
-                <li>Согласовать этапы с <a href="#">КВК-Групп</a></li>
+                <li>Согласовать этапы с <a href="#" onclick="return false">КВК-Групп</a></li>
                 <li>Уточнить интеграцию с их CRM</li>
               </ul>
             </div>
           </div>
-        </div>
 
-        <!-- Подзадачи -->
-        <div>
-          <div class="sec-label" style="margin-bottom:8px">
-            Подзадачи
-            <span class="sub-progress"><i id="sub-bar" style="width:33%"></i></span>
-            <span style="font-family:var(--font-mono);font-weight:500;text-transform:none;letter-spacing:0" id="sub-count">1/3</span>
-          </div>
-          <div class="sub-row is-done" onclick="toggleSub(this)">
-            <span class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
-            <span class="txt" style="flex:1">Собрать требования</span>
-            <svg class="grip" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
-          </div>
-          <div class="sub-row" onclick="toggleSub(this)">
-            <span class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
-            <span class="txt" style="flex:1">Смета по этапам</span>
-            <svg class="grip" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
-          </div>
-          <div class="sub-row" onclick="toggleSub(this)">
-            <span class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
-            <span class="txt" style="flex:1">Созвон с заказчиком</span>
-            <svg class="grip" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
-          </div>
-          <div class="sub-row" style="color:var(--text-muted)">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin:1px"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-            <input placeholder="Добавить подзадачу…" style="border:none;background:none;outline:none;font-family:var(--font-main);font-size:13.5px;flex:1;color:var(--text-primary)">
-          </div>
-        </div>
-
-        <!-- Связи -->
-        <div>
-          <div class="sec-label" style="margin-bottom:8px">Связи</div>
-          <div style="display:flex;flex-direction:column;gap:6px">
-            <div class="rel-row">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
-              <span class="tinted-chip" style="--chip-color:#dc2626;font-size:10.5px;padding:1.5px 7px">блокирует</span>
-              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Обработать ТЗ по чат-боту</span>
-              <span class="tinted-chip" style="--chip-color:#94a3b8;font-size:10.5px;padding:1.5px 7px"><span class="dot"></span>Входящие</span>
+          <!-- Подзадачи -->
+          <div>
+            <div class="sec-label" id="ux-subhead" style="margin-bottom:8px">
+              Подзадачи
+              <span class="sub-progress"><i id="sub-bar"></i></span>
+              <span style="font-family:var(--font-mono);font-weight:500;text-transform:none;letter-spacing:0" id="sub-count"></span>
             </div>
-            <button class="add-dashed" style="align-self:flex-start">
+            <div id="sub-list"></div>
+            <div class="sub-row" style="color:var(--text-muted)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin:1px"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              <input id="sub-input" placeholder="Добавить подзадачу…" onkeydown="if(event.key==='Enter')addSub()" style="border:none;background:none;outline:none;font-family:var(--font-main);font-size:13.5px;flex:1;color:var(--text-primary)">
+            </div>
+          </div>
+
+          <!-- Связи -->
+          <div>
+            <div class="sec-label" style="margin-bottom:8px">Связи</div>
+            <div id="rel-list" style="display:flex;flex-direction:column;gap:6px"></div>
+            <button class="add-dashed" style="margin-top:6px" data-pop-trigger onclick="togglePop('pop-link', this)">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Связать
             </button>
           </div>
-        </div>
-      </div>
 
-      <!-- Комментарии / История -->
-      <div class="tc-tabs">
-        <button class="tc-tab is-on" id="tab-comments" onclick="switchTab('comments')">Комментарии (2)</button>
-        <button class="tc-tab" id="tab-feed" onclick="switchTab('feed')">История</button>
-      </div>
-      <div class="tc-main" id="pane-comments" style="padding-top:12px;gap:12px">
-        <div class="comment">
-          <span class="avatar avatar--green">ДУ</span>
-          <div style="flex:1;min-width:0">
-            <div class="comment__meta"><b>Дмитрий У.</b> · 28 июл., 14:52</div>
-            <div class="comment__bubble">Договор у юристов, к четвергу вернут с правками. <b>Смету пока не отправляю.</b></div>
-          </div>
-        </div>
-        <div class="comment">
-          <span class="avatar avatar--orange">ПБ</span>
-          <div style="flex:1;min-width:0">
-            <div class="comment__meta"><b>Полина Б.</b> · 29 июл., 09:15 · изменён</div>
-            <div class="comment__bubble">Ок. Тогда созвон переношу на пятницу, приглашение обновила.</div>
-          </div>
-        </div>
-        <div class="comment">
-          <span class="avatar avatar--orange">ПБ</span>
-          <div style="flex:1">
-            <div class="rich" style="border-radius:12px">
-              <div class="rich__content" contenteditable="true" style="min-height:44px;padding:9px 12px" data-placeholder="Написать комментарий…"><span style="color:var(--text-muted)">Написать комментарий…</span></div>
+          <!-- Активность -->
+          <div>
+            <div class="tc-tabs" id="ux-tabs" data-ux="ux-tabs" style="margin-bottom:10px">
+              <button class="tc-tab is-on" id="tab-comments" onclick="switchTab('comments')">Комментарии (<span id="c-count">2</span>)</button>
+              <button class="tc-tab" id="tab-feed" onclick="switchTab('feed')">История</button>
             </div>
-            <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
-              <span style="font-size:11px;color:var(--text-muted)"><kbd class="kbd" style="font-size:9.5px;padding:1px 4px">Ctrl</kbd> + <kbd class="kbd" style="font-size:9.5px;padding:1px 4px">Enter</kbd> — отправить</span>
-              <span style="flex:1"></span>
-              <button class="btn btn--primary btn--sm" onclick="toast('Комментарий отправлен')">Отправить</button>
-            </div>
+            <div id="pane-comments" style="display:flex;flex-direction:column;gap:12px"></div>
+            <div id="pane-feed" style="display:none;flex-direction:column;gap:2px"></div>
           </div>
         </div>
       </div>
-      <div class="tc-main" id="pane-feed" style="padding-top:12px;gap:2px;display:none">
-        <div class="feed-row"><span class="dot"></span><span><b>Полина Б.</b> назначила исполнителем Дмитрия У.</span><time>29 июл., 09:14</time></div>
-        <div class="feed-row"><span class="dot"></span><span><b>Дмитрий У.</b> изменил статус: Входящие → В работе → Входящие</span><time>28 июл., 14:50</time></div>
-        <div class="feed-row"><span class="dot"></span><span><b>Полина Б.</b> добавила тег «внеплан»</span><time>25 июл., 11:02</time></div>
-        <div class="feed-row"><span class="dot"></span><span><b>Полина Б.</b> создала задачу в проекте «Сторонние проекты»</span><time>10 июл., 09:30</time></div>
+    </div>
+
+    <!-- Композер: всегда внизу -->
+    <div class="tc-composer" id="ux-composer" data-ux="ux-composer">
+      <div class="row">
+        <span class="avatar avatar--orange" style="margin-bottom:5px">ПБ</span>
+        <textarea id="c-input" rows="1" placeholder="Написать комментарий…" oninput="autoGrow(this)"
+          onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){addComment()}"></textarea>
+        <button class="btn btn--primary btn--sm" id="c-send" onclick="addComment()" disabled>Отправить</button>
       </div>
+      <div class="hint"><kbd class="kbd" style="font-size:9.5px;padding:1px 4px">Ctrl</kbd> + <kbd class="kbd" style="font-size:9.5px;padding:1px 4px">Enter</kbd> — отправить</div>
+    </div>
+
+    <!-- Состояние после удаления -->
+    <div class="deleted-state">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+      <b style="font-size:14.5px">Задача удалена</b>
+      <span style="font-size:12.5px;color:var(--text-secondary)">В реальном приложении карточка закроется, а список обновится.</span>
+      <button class="btn btn--secondary btn--sm" onclick="restoreTask()">Вернуть (только в прототипе)</button>
     </div>
   </div>
 </div>
 
-<!-- Поповеры свойств -->
-<div class="pop" id="pop-status">
-  <div class="pop__label">Статус</div>
-  <button class="pop__item"><span class="proj-dot" style="background:#94a3b8;border-radius:50%"></span>Входящие<svg class="check-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M20 6 9 17l-5-5"/></svg></button>
-  <button class="pop__item"><span class="proj-dot" style="background:#3b82f6;border-radius:50%"></span>К выполнению</button>
-  <button class="pop__item"><span class="proj-dot" style="background:#f59e0b;border-radius:50%"></span>В работе</button>
-  <button class="pop__item"><span class="proj-dot" style="background:#10b981;border-radius:50%"></span>Готово</button>
+<!-- Поповеры -->
+<div class="pop" id="pop-status"><div class="pop__label">Статус</div><div id="status-items"></div>
   <div class="pop__sep"></div>
-  <button class="pop__item" style="color:var(--text-secondary)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>Снять статус</button>
+  <button class="pop__item" style="color:var(--text-secondary)" onclick="setStatus(null)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>Снять статус</button>
 </div>
-
-<div class="pop" id="pop-prio">
-  <div class="pop__label">Приоритет</div>
-  <button class="pop__item"><span class="prio prio--urgent"></span>Срочно</button>
-  <button class="pop__item"><span class="prio prio--high"></span>Высокий<svg class="check-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M20 6 9 17l-5-5"/></svg></button>
-  <button class="pop__item"><span class="prio prio--med"></span>Средний</button>
-  <button class="pop__item"><span class="prio prio--low"></span>Низкий</button>
-  <button class="pop__item" style="color:var(--text-secondary)"><span class="prio" style="border:1.5px dashed var(--border-active);background:none"></span>Без приоритета</button>
-</div>
-
+<div class="pop" id="pop-prio"><div class="pop__label">Приоритет</div><div id="prio-items"></div></div>
 <div class="pop" id="pop-due">
   <div class="cal">
-    <div class="cal__head">
-      <button>‹</button><span>Июль 2026</span><button>›</button>
-    </div>
-    <div class="cal__grid">
-      <span class="dow">пн</span><span class="dow">вт</span><span class="dow">ср</span><span class="dow">чт</span><span class="dow">пт</span><span class="dow">сб</span><span class="dow">вс</span>
-      <button class="day is-out">29</button><button class="day is-out">30</button><button class="day">1</button><button class="day">2</button><button class="day">3</button><button class="day">4</button><button class="day">5</button>
-      <button class="day">6</button><button class="day">7</button><button class="day">8</button><button class="day">9</button><button class="day is-sel">10</button><button class="day">11</button><button class="day">12</button>
-      <button class="day">13</button><button class="day">14</button><button class="day">15</button><button class="day">16</button><button class="day">17</button><button class="day">18</button><button class="day">19</button>
-      <button class="day">20</button><button class="day">21</button><button class="day">22</button><button class="day">23</button><button class="day">24</button><button class="day">25</button><button class="day">26</button>
-      <button class="day">27</button><button class="day">28</button><button class="day is-today">29</button><button class="day">30</button><button class="day">31</button><button class="day is-out">1</button><button class="day is-out">2</button>
-    </div>
+    <div class="cal__head"><button onclick="calShift(-1)">‹</button><span id="cal-title"></span><button onclick="calShift(1)">›</button></div>
+    <div class="cal__grid" id="cal-grid"></div>
     <div class="cal__quick">
-      <button>Сегодня</button><button>Завтра</button><button>Пн</button><button>Через нед.</button>
+      <button onclick="quickDue(0)">Сегодня</button><button onclick="quickDue(1)">Завтра</button><button onclick="quickDue('mon')">Пн</button><button onclick="quickDue(7)">+7 дн.</button>
     </div>
     <div class="cal__time">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      <input class="input input--sm" value="15:00" style="width:76px;font-family:var(--font-mono)">
+      <input class="input input--sm" id="due-time" value="15:00" style="width:76px;font-family:var(--font-mono)" onchange="setDueTime(this.value)">
       <span style="flex:1"></span>
-      <button class="btn btn--ghost btn--sm" style="color:var(--danger)">Убрать срок</button>
+      <button class="btn btn--ghost btn--sm" style="color:var(--danger)" onclick="clearDue()">Убрать срок</button>
     </div>
   </div>
 </div>
-
-<div class="pop" id="pop-repeat">
-  <div class="pop__label">Повтор задачи</div>
-  <button class="pop__item">Не повторяется<svg class="check-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M20 6 9 17l-5-5"/></svg></button>
-  <button class="pop__item">Каждый день</button>
-  <button class="pop__item">Каждую неделю, пн</button>
-  <button class="pop__item">Каждый месяц, 10-го</button>
+<div class="pop" id="pop-repeat"><div class="pop__label">Повтор задачи</div><div id="repeat-items"></div>
   <div class="pop__sep"></div>
-  <button class="pop__item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>Свой интервал…</button>
+  <button class="pop__item" onclick="setRepeat('Каждые 2 недели, пт')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>Свой интервал…</button>
 </div>
-
 <div class="pop" id="pop-member" style="min-width:230px">
-  <div style="padding:5px 6px 7px"><input class="input input--sm" placeholder="Найти участника…"></div>
-  <button class="pop__item"><span class="avatar avatar--pink" style="width:20px;height:20px;font-size:8.5px;border-radius:7px">НЛ</span>Нина Л.</button>
-  <button class="pop__item"><span class="avatar avatar--slate" style="width:20px;height:20px;font-size:8.5px;border-radius:7px">ИК</span>Игорь К.</button>
+  <div style="padding:5px 6px 7px"><input class="input input--sm" id="member-q" placeholder="Найти участника…" oninput="renderMemberPop()"></div>
+  <div id="member-items"></div>
+</div>
+<div class="pop" id="pop-tag" style="min-width:210px">
+  <div style="padding:5px 6px 7px"><input class="input input--sm" id="tag-q" placeholder="Найти тег…" oninput="renderTagPop()"></div>
+  <div id="tag-items"></div>
+</div>
+<div class="pop" id="pop-project"><div class="pop__label">Добавить в проект</div><div id="project-items"></div></div>
+<div class="pop" id="pop-link" style="min-width:280px">
+  <div class="pop__label">Тип связи</div>
+  <div style="display:flex;gap:5px;padding:2px 8px 8px" id="link-types"></div>
+  <div style="padding:0 6px 7px"><input class="input input--sm" id="link-q" placeholder="Найти задачу…" oninput="renderLinkPop()"></div>
+  <div id="link-items"></div>
 </div>
 
-<div class="pop" id="pop-project">
-  <div class="pop__label">Добавить в проект</div>
-  <button class="pop__item"><span class="proj-dot" style="background:#f59e0b"></span>Идеи</button>
-  <button class="pop__item"><span class="proj-dot" style="background:#8b5cf6"></span>Заметки</button>
-  <button class="pop__item"><span class="proj-dot" style="background:#14b8a6"></span>Встречи</button>
+<!-- Подтверждение удаления -->
+<div class="overlay" id="ovl" onclick="closeLayers()"></div>
+<div class="modal" id="m-del" role="dialog">
+  <div class="modal__head"><h2>Удалить задачу?</h2>
+    <button class="x-btn" onclick="closeLayers()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  </div>
+  <div class="modal__body"><p style="font-size:13.5px;line-height:1.55;color:var(--text-secondary)">Задача будет удалена вместе с подзадачами, комментариями и историей. Это действие нельзя отменить.</p></div>
+  <div class="modal__foot">
+    <button class="btn btn--ghost" onclick="closeLayers()">Отмена</button>
+    <button class="btn btn--danger-solid" onclick="deleteTask()">Удалить навсегда</button>
+  </div>
+</div>
+
+<!-- Полноэкранный документ -->
+<div class="doc" id="doc">
+  <div class="doc__head">
+    <button class="btn btn--ghost btn--sm" onclick="closeDoc()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>Назад к карточке
+    </button>
+    <b style="font-size:14px" id="doc-title">Согласовать необходимые работы для КВК по чат-боту</b>
+    <span style="flex:1"></span>
+    <span class="badge badge--neutral" style="font-size:10.5px">описание задачи · полноэкранный режим</span>
+  </div>
+  <div class="doc__body">
+    <div class="doc__page"><div class="doc__page-inner" id="doc-content" contenteditable="true"></div></div>
+    <div class="doc__threads">
+      <div class="sec-label">Обсуждения · <span id="doc-thread-count">2</span></div>
+      <div class="thread" id="th1">
+        <div class="q">«зафиксировать объём работ»</div>
+        <div style="margin-bottom:6px"><b style="font-size:11.5px">Дмитрий У.</b> · Точно успеем до пятницы?</div>
+        <button class="btn btn--secondary btn--sm" style="height:24px;font-size:11px" onclick="resolveThread('th1')">Решить</button>
+      </div>
+      <div class="thread" id="th2">
+        <div class="q">«интеграцию с их CRM»</div>
+        <div style="margin-bottom:6px"><b style="font-size:11.5px">Полина Б.</b> · У них Битрикс, API открыт.</div>
+        <button class="btn btn--secondary btn--sm" style="height:24px;font-size:11px" onclick="resolveThread('th2')">Решить</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Готово</span></div>
 
 <script>
+/* ═══ Состояние — зеркалит TaskDetail из приложения ═══ */
+const S = {
+  statuses: [
+    { id: 'in',   name: 'Входящие',     color: '#94a3b8', kind: 'open' },
+    { id: 'todo', name: 'К выполнению', color: '#3b82f6', kind: 'open' },
+    { id: 'work', name: 'В работе',     color: '#f59e0b', kind: 'open' },
+    { id: 'done', name: 'Готово',       color: '#10b981', kind: 'done' },
+  ],
+  statusId: 'in',
+  prios: [
+    { id: 'urgent', name: 'Срочно',  cls: 'prio--urgent' },
+    { id: 'high',   name: 'Высокий', cls: 'prio--high' },
+    { id: 'med',    name: 'Средний', cls: 'prio--med' },
+    { id: 'low',    name: 'Низкий',  cls: 'prio--low' },
+    { id: 'none',   name: 'Без приоритета', cls: '' },
+  ],
+  prioId: 'high',
+  due: { d: 10, m: 6, y: 2026, time: '15:00' },      /* месяцы 0-based; сегодня — 29.07.2026 */
+  today: { d: 29, m: 6, y: 2026 },
+  calView: { m: 6, y: 2026 },
+  repeat: 'Не повторяется',
+  members: [
+    { id: 'pb', name: 'Полина Б.',  init: 'ПБ', cls: 'avatar--orange' },
+    { id: 'du', name: 'Дмитрий У.', init: 'ДУ', cls: 'avatar--green' },
+    { id: 'nl', name: 'Нина Л.',    init: 'НЛ', cls: 'avatar--pink' },
+    { id: 'ik', name: 'Игорь К.',   init: 'ИК', cls: 'avatar--slate' },
+  ],
+  assignees: ['pb', 'du'],
+  orgTags: [
+    { id: 'vp', name: 'внеплан', color: '#f59e0b' },
+    { id: 'id', name: 'идея',    color: '#8b5cf6' },
+    { id: 'bs', name: 'быстрое', color: '#10b981' },
+    { id: 'kl', name: 'клиент',  color: '#3b82f6' },
+  ],
+  tags: ['vp'],
+  orgProjects: [
+    { id: 'st', name: 'Сторонние проекты', color: '#3b82f6' },
+    { id: 'ideas', name: 'Идеи',    color: '#f59e0b' },
+    { id: 'notes', name: 'Заметки', color: '#8b5cf6' },
+    { id: 'meet',  name: 'Встречи', color: '#14b8a6' },
+  ],
+  placements: ['st'],
+  subs: [
+    { t: 'Собрать требования', done: true },
+    { t: 'Смета по этапам', done: false },
+    { t: 'Созвон с заказчиком', done: false },
+  ],
+  relTypes: [
+    { id: 'block', name: 'блокирует', color: '#dc2626' },
+    { id: 'rel',   name: 'связана',   color: '#3b82f6' },
+    { id: 'dup',   name: 'дублирует', color: '#f59e0b' },
+  ],
+  linkType: 'rel',
+  orgTasks: [
+    { id: 't2', name: 'Обработать ТЗ по чат-боту', status: 'Входящие', color: '#94a3b8' },
+    { id: 't3', name: 'Создать калькулятор-будильник', status: 'В работе', color: '#f59e0b' },
+    { id: 't4', name: 'Смета и договор по этапам', status: 'Входящие', color: '#94a3b8' },
+  ],
+  relations: [ { type: 'block', taskId: 't2', dir: 'out' } ],
+  comments: [
+    { who: 'du', when: '28 июл., 14:52', html: 'Договор у юристов, к четвергу вернут с правками. <b>Смету пока не отправляю.</b>', edited: false },
+    { who: 'pb', when: '29 июл., 09:15', html: 'Ок. Тогда созвон переношу на пятницу, приглашение обновила.', edited: true },
+  ],
+  feed: [
+    { who: 'Полина Б.', what: 'назначила исполнителем Дмитрия У.', when: '29 июл., 09:14' },
+    { who: 'Дмитрий У.', what: 'изменил статус: Входящие → В работе → Входящие', when: '28 июл., 14:50' },
+    { who: 'Полина Б.', what: 'добавила тег «внеплан»', when: '25 июл., 11:02' },
+    { who: 'Полина Б.', what: 'создала задачу в проекте «Сторонние проекты»', when: '10 июл., 09:30' },
+  ],
+  done: false, follow: true, timer: null, timerSec: 0,
+};
+const M = ['янв.','фев.','мар.','апр.','мая','июн.','июл.','авг.','сен.','окт.','ноя.','дек.'];
+const MN = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+const byId = (a, id) => a.find(x => x.id === id);
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+/* ═══ Сервис ═══ */
+function saveFlash() {
+  const c = document.getElementById('save-chip');
+  c.classList.add('is-on');
+  clearTimeout(saveFlash.t);
+  saveFlash.t = setTimeout(() => c.classList.remove('is-on'), 1400);
+}
+function log(what) {
+  S.feed.unshift({ who: 'Полина Б.', what, when: 'только что' });
+  renderFeed(); saveFlash();
+}
+function autoGrow(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; if (el.id === 'c-input') document.getElementById('c-send').disabled = !el.value.trim(); }
+
+/* ═══ Режимы и открытие ═══ */
 function setMode(m) {
   document.getElementById('stage').dataset.mode = m;
   document.getElementById('seg-sheet').classList.toggle('is-on', m === 'sheet');
   document.getElementById('seg-modal').classList.toggle('is-on', m === 'modal');
 }
+function closeCard() { document.getElementById('stage').classList.add('card-closed'); }
+function openCard() { document.getElementById('stage').classList.remove('card-closed'); }
+
+/* ═══ Шапка ═══ */
 function toggleDone() {
-  const root = document.getElementById('card-root');
-  const done = root.classList.toggle('is-done');
-  const b = document.getElementById('btn-done');
-  b.querySelector('span').textContent = done ? 'Завершена' : 'Завершить';
-  b.classList.toggle('btn--dark', done);
-  b.classList.toggle('btn--secondary', !done);
-  if (done) toast('Задача завершена');
+  S.done = !S.done;
+  // Как в приложении: завершение — это перевод в статус вида done и обратно
+  S.statusId = S.done ? 'done' : 'in';
+  log(S.done ? 'завершила задачу' : 'вернула задачу в работу');
+  render();
 }
-function toggleFollow(b) {
-  b.classList.toggle('btn--secondary');
-  toast(b.classList.contains('btn--secondary') ? 'Вы следите за задачей' : 'Вы больше не следите');
+function toggleFollow() {
+  S.follow = !S.follow;
+  toast(S.follow ? 'Вы следите за задачей' : 'Вы больше не следите');
+  renderHead();
+}
+function startTimer() {
+  S.timerSec = 0;
+  document.getElementById('timer-slot').innerHTML =
+    '<button class="timer-live" onclick="stopTimer()" title="Остановить"><span class="stop"></span><span id="timer-val">0:00</span></button>';
+  S.timer = setInterval(() => {
+    S.timerSec++;
+    const m = Math.floor(S.timerSec / 60), s = String(S.timerSec % 60).padStart(2, '0');
+    document.getElementById('timer-val').textContent = m + ':' + s;
+  }, 1000);
+}
+function stopTimer() {
+  clearInterval(S.timer);
+  const m = Math.floor(S.timerSec / 60), s = String(S.timerSec % 60).padStart(2, '0');
+  document.getElementById('timer-slot').innerHTML =
+    '<button class="btn btn--ghost btn--sm" data-ux="ux-timer" id="btn-timer" onclick="startTimer()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>Таймер</button>';
+  log('записала ' + m + ':' + s + ' в учёт времени');
+  toast('Записано ' + m + ':' + s + ' — экран «Время»');
+}
+function deleteTask() { closeLayers(); document.getElementById('card').classList.add('is-deleted'); }
+function restoreTask() { document.getElementById('card').classList.remove('is-deleted'); toast('Задача восстановлена'); }
+
+/* ═══ Свойства ═══ */
+function saveTitle(el) {
+  const v = el.value.trim();
+  if (!v) { el.value = 'Согласовать необходимые работы для КВК по чат-боту'; return; }
+  document.getElementById('doc-title').textContent = v;
+  log('переименовала задачу');
+}
+function setStatus(id) {
+  S.statusId = id;
+  S.done = id ? byId(S.statuses, id).kind === 'done' : false;
+  log(id ? 'изменила статус на «' + byId(S.statuses, id).name + '»' : 'сняла статус');
+  render(); popOpen?.classList.remove('is-open');
+}
+function setPrio(id) {
+  S.prioId = id;
+  log('изменила приоритет на «' + byId(S.prios, id).name + '»');
+  render(); popOpen?.classList.remove('is-open');
+}
+function setRepeat(v) { S.repeat = v; log(v === 'Не повторяется' ? 'выключила повтор' : 'настроила повтор: ' + v.toLowerCase()); render(); popOpen?.classList.remove('is-open'); }
+function toggleAssignee(id) {
+  const i = S.assignees.indexOf(id);
+  const m = byId(S.members, id);
+  if (i >= 0) { S.assignees.splice(i, 1); log('сняла исполнителя: ' + m.name); }
+  else { S.assignees.push(id); log('назначила исполнителем ' + m.name); }
+  render(); renderMemberPop();
+}
+function toggleTag(id) {
+  const i = S.tags.indexOf(id);
+  const t = byId(S.orgTags, id);
+  if (i >= 0) { S.tags.splice(i, 1); log('сняла тег «' + t.name + '»'); }
+  else { S.tags.push(id); log('добавила тег «' + t.name + '»'); }
+  render(); renderTagPop();
+}
+function togglePlacement(id) {
+  const i = S.placements.indexOf(id);
+  const p = byId(S.orgProjects, id);
+  if (i >= 0) { S.placements.splice(i, 1); log('убрала из проекта «' + p.name + '»'); }
+  else { S.placements.push(id); log('добавила в проект «' + p.name + '»'); }
+  render(); renderProjectPop();
+}
+function saveField(name, v) { log('изменила поле «' + name + '»'); }
+function saveCheck(el) { log(el.checked ? 'отметила «Согласовано»' : 'сняла отметку «Согласовано»'); }
+
+/* ═══ Срок ═══ */
+function dueLabel() {
+  if (!S.due) return null;
+  const overdueDays = daysBetween(S.due, S.today);
+  return { text: S.due.d + ' ' + M[S.due.m] + (S.due.time ? ', ' + S.due.time : ''), overdue: overdueDays > 0 ? overdueDays : 0, today: overdueDays === 0 };
+}
+function daysBetween(a, b) { return Math.round((new Date(b.y, b.m, b.d) - new Date(a.y, a.m, a.d)) / 86400000); }
+function setDueDay(d, m, y) { S.due = { d, m, y, time: S.due?.time ?? null }; log('перенесла срок на ' + d + ' ' + M[m]); render(); renderCal(); }
+function setDueTime(v) { if (S.due) { S.due.time = v; log('установила время ' + v); render(); } }
+function clearDue() { S.due = null; log('убрала срок'); render(); popOpen?.classList.remove('is-open'); }
+function quickDue(v) {
+  const t = new Date(S.today.y, S.today.m, S.today.d);
+  if (v === 'mon') { const shift = (8 - t.getDay()) % 7 || 7; t.setDate(t.getDate() + shift); }
+  else t.setDate(t.getDate() + v);
+  setDueDay(t.getDate(), t.getMonth(), t.getFullYear());
+}
+function calShift(dir) {
+  let m = S.calView.m + dir, y = S.calView.y;
+  if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
+  S.calView = { m, y }; renderCal();
+}
+function renderCal() {
+  document.getElementById('cal-title').textContent = MN[S.calView.m] + ' ' + S.calView.y;
+  const g = document.getElementById('cal-grid');
+  let html = ['пн','вт','ср','чт','пт','сб','вс'].map(d => '<span class="dow">' + d + '</span>').join('');
+  const first = new Date(S.calView.y, S.calView.m, 1);
+  const lead = (first.getDay() + 6) % 7;
+  const dim = new Date(S.calView.y, S.calView.m + 1, 0).getDate();
+  const dimPrev = new Date(S.calView.y, S.calView.m, 0).getDate();
+  for (let i = 0; i < lead; i++) html += '<button class="day is-out">' + (dimPrev - lead + 1 + i) + '</button>';
+  for (let d = 1; d <= dim; d++) {
+    const isSel = S.due && S.due.d === d && S.due.m === S.calView.m && S.due.y === S.calView.y;
+    const isToday = S.today.d === d && S.today.m === S.calView.m && S.today.y === S.calView.y;
+    html += '<button class="day' + (isSel ? ' is-sel' : '') + (isToday ? ' is-today' : '') + '" onclick="setDueDay(' + d + ',' + S.calView.m + ',' + S.calView.y + ')">' + d + '</button>';
+  }
+  const total = lead + dim, tail = (7 - total % 7) % 7;
+  for (let i = 1; i <= tail; i++) html += '<button class="day is-out">' + i + '</button>';
+  g.innerHTML = html;
+}
+
+/* ═══ Подзадачи ═══ */
+function addSub() {
+  const inp = document.getElementById('sub-input');
+  const v = inp.value.trim();
+  if (!v) return;
+  S.subs.push({ t: v, done: false });
+  inp.value = '';
+  log('добавила подзадачу «' + v + '»');
+  render(); inp.focus();
+}
+function toggleSubAt(i) { S.subs[i].done = !S.subs[i].done; log((S.subs[i].done ? 'закрыла' : 'вернула') + ' подзадачу «' + S.subs[i].t + '»'); render(); }
+function delSub(i) { log('удалила подзадачу «' + S.subs[i].t + '»'); S.subs.splice(i, 1); render(); }
+
+/* ═══ Связи ═══ */
+function addRelation(taskId) {
+  S.relations.push({ type: S.linkType, taskId, dir: 'out' });
+  log('связала с задачей «' + byId(S.orgTasks, taskId).name + '»');
+  render(); popOpen?.classList.remove('is-open');
+}
+function delRelation(i) { log('убрала связь с «' + byId(S.orgTasks, S.relations[i].taskId).name + '»'); S.relations.splice(i, 1); render(); }
+function setLinkType(id) { S.linkType = id; renderLinkTypes(); }
+
+/* ═══ Комментарии ═══ */
+function addComment() {
+  const inp = document.getElementById('c-input');
+  const v = inp.value.trim();
+  if (!v) return;
+  S.comments.push({ who: 'pb', when: 'только что', html: esc(v), edited: false });
+  inp.value = ''; autoGrow(inp);
+  document.getElementById('c-send').disabled = true;
+  switchTab('comments'); renderComments(); saveFlash();
+  document.getElementById('card-root').scrollTop = 1e6;
 }
 function switchTab(t) {
   document.getElementById('tab-comments').classList.toggle('is-on', t === 'comments');
@@ -501,13 +780,187 @@ function switchTab(t) {
   document.getElementById('pane-comments').style.display = t === 'comments' ? 'flex' : 'none';
   document.getElementById('pane-feed').style.display = t === 'feed' ? 'flex' : 'none';
 }
-function toggleSub(row) {
-  row.classList.toggle('is-done');
-  const total = 3;
-  const done = document.querySelectorAll('.sub-row.is-done').length;
-  document.getElementById('sub-count').textContent = done + '/' + total;
-  document.getElementById('sub-bar').style.width = Math.round(done / total * 100) + '%';
+
+/* ═══ Описание и документ ═══ */
+function fmt(cmd) { document.execCommand(cmd, false); document.getElementById('desc').focus(); }
+function addLink() {
+  const url = prompt('Адрес ссылки:', 'https://');
+  if (url) document.execCommand('createLink', false, url);
 }
+function saveDesc() { log('обновила описание'); }
+function openDoc() {
+  document.getElementById('doc-content').innerHTML = document.getElementById('desc').innerHTML;
+  document.getElementById('doc').classList.add('is-open');
+}
+function closeDoc() {
+  document.getElementById('desc').innerHTML = document.getElementById('doc-content').innerHTML;
+  document.getElementById('doc').classList.remove('is-open');
+  saveFlash();
+}
+function resolveThread(id) {
+  document.getElementById(id).classList.add('is-resolved');
+  const open = document.querySelectorAll('.thread:not(.is-resolved)').length;
+  document.getElementById('thread-count').textContent = open;
+  document.getElementById('doc-thread-count').textContent = open;
+  log('решила обсуждение в описании');
+}
+
+/* ═══ Рендер ═══ */
+function renderHead() {
+  const b = document.getElementById('btn-done');
+  b.querySelector('span').textContent = S.done ? 'Завершена' : 'Завершить';
+  b.classList.toggle('btn--dark', S.done);
+  b.classList.toggle('btn--secondary', !S.done);
+  const f = document.getElementById('btn-follow');
+  f.title = S.follow ? 'Не следить' : 'Следить';
+  f.innerHTML = S.follow
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><path d="m1 1 22 22"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
+  document.getElementById('card-root').classList.toggle('is-done', S.done);
+}
+function chip(color, name, extra) {
+  return '<span class="tinted-chip' + (extra || '') + '" style="--chip-color:' + color + '"><span class="dot"></span>' + name + '</span>';
+}
+function render() {
+  renderHead();
+  // Статус
+  const st = S.statusId ? byId(S.statuses, S.statusId) : null;
+  document.getElementById('v-status').innerHTML =
+    (st ? chip(st.color, st.name) : '<span style="color:var(--text-secondary)">Без статуса</span>') + CHEV;
+  document.getElementById('status-items').innerHTML = S.statuses.map(s =>
+    '<button class="pop__item" onclick="setStatus(\'' + s.id + '\')"><span class="proj-dot" style="background:' + s.color + ';border-radius:50%"></span>' + s.name +
+    (s.id === S.statusId ? CHECK : '') + '</button>').join('');
+  // Приоритет
+  const pr = byId(S.prios, S.prioId);
+  document.getElementById('v-prio').innerHTML =
+    (pr.cls ? '<span class="prio ' + pr.cls + '"></span>' : '') + '<span' + (pr.id === 'none' ? ' style="color:var(--text-secondary)"' : '') + '>' + pr.name + '</span>' + CHEV;
+  document.getElementById('prio-items').innerHTML = S.prios.map(p =>
+    '<button class="pop__item" onclick="setPrio(\'' + p.id + '\')">' +
+    (p.cls ? '<span class="prio ' + p.cls + '"></span>' : '<span class="prio" style="border:1.5px dashed var(--border-active);background:none"></span>') + p.name +
+    (p.id === S.prioId ? CHECK : '') + '</button>').join('');
+  // Срок
+  const dl = dueLabel();
+  document.getElementById('v-due').innerHTML = dl
+    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + (dl.overdue ? 'var(--danger)' : 'var(--text-muted)') + '" stroke-width="2" stroke-linecap="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg>' +
+      '<span style="font-family:var(--font-mono);font-size:12.5px;' + (dl.overdue ? 'color:var(--danger);font-weight:500' : dl.today ? 'color:var(--warning-text);font-weight:500' : '') + '">' + dl.text + '</span>' +
+      (dl.overdue ? '<span class="badge badge--danger" style="font-size:10px;padding:1px 6px">просрочено ' + dl.overdue + ' дн.</span>' : dl.today ? '<span class="badge badge--warning" style="font-size:10px;padding:1px 6px">сегодня</span>' : '')
+    : '<span style="color:var(--text-secondary)">Указать срок</span>' + CHEV;
+  if (S.due) document.getElementById('due-time').value = S.due.time ?? '';
+  // Повтор
+  document.getElementById('v-repeat').innerHTML =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>' +
+    '<span style="color:' + (S.repeat === 'Не повторяется' ? 'var(--text-secondary)' : 'var(--text-primary)') + '">' + S.repeat + '</span>' + CHEV;
+  document.getElementById('repeat-items').innerHTML = ['Не повторяется','Каждый день','Каждую неделю, пн','Каждый месяц, 10-го'].map(r =>
+    '<button class="pop__item" onclick="setRepeat(\'' + r + '\')">' + r + (r === S.repeat ? CHECK : '') + '</button>').join('');
+  // Исполнители
+  document.getElementById('v-assignees').innerHTML = S.assignees.map(id => {
+    const m = byId(S.members, id);
+    return '<span class="assignee-pill"><span class="avatar ' + m.cls + '" style="width:20px;height:20px;font-size:8.5px;border-radius:7px">' + m.init + '</span>' + m.name +
+      '<button class="x" onclick="toggleAssignee(\'' + id + '\')" title="Снять"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></span>';
+  }).join('') + '<button class="add-dashed" data-pop-trigger onclick="togglePop(\'pop-member\', this)">' + PLUS + 'Назначить</button>';
+  renderMemberPop();
+  // Теги: только активные + добавление
+  document.getElementById('v-tags').innerHTML = S.tags.map(id => {
+    const t = byId(S.orgTags, id);
+    return '<span class="tinted-chip" style="--chip-color:' + t.color + '">' + t.name +
+      '<button class="chip-x" onclick="toggleTag(\'' + id + '\')" title="Снять тег" style="opacity:.55">×</button></span>';
+  }).join('') + '<button class="add-dashed" data-pop-trigger onclick="togglePop(\'pop-tag\', this)">' + PLUS + 'тег</button>';
+  renderTagPop();
+  // Проекты
+  document.getElementById('v-projects').innerHTML = S.placements.map(id => {
+    const p = byId(S.orgProjects, id);
+    return '<span class="tinted-chip tinted-chip--sq" style="--chip-color:' + p.color + '">' + p.name +
+      '<button class="chip-x" onclick="togglePlacement(\'' + id + '\')" title="Убрать" style="opacity:.55">×</button></span>';
+  }).join('') + '<button class="add-dashed" data-pop-trigger onclick="togglePop(\'pop-project\', this)">' + PLUS + 'В проект</button>';
+  renderProjectPop();
+  // Подзадачи
+  const done = S.subs.filter(s => s.done).length;
+  document.getElementById('sub-count').textContent = done + '/' + S.subs.length;
+  document.getElementById('sub-bar').style.width = S.subs.length ? Math.round(done / S.subs.length * 100) + '%' : '0%';
+  document.getElementById('sub-list').innerHTML = S.subs.map((s, i) =>
+    '<div class="sub-row' + (s.done ? ' is-done' : '') + '">' +
+    '<button class="ring" onclick="toggleSubAt(' + i + ')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></button>' +
+    '<span class="txt" style="flex:1">' + esc(s.t) + '</span>' +
+    '<button class="del" onclick="delSub(' + i + ')" title="Удалить"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>').join('');
+  // Связи
+  document.getElementById('rel-list').innerHTML = S.relations.map((r, i) => {
+    const t = byId(S.orgTasks, r.taskId), ty = byId(S.relTypes, r.type);
+    return '<div class="rel-row">' +
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>' +
+      '<span class="tinted-chip" style="--chip-color:' + ty.color + ';font-size:10.5px;padding:1.5px 7px">' + ty.name + '</span>' +
+      '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + t.name + '</span>' +
+      '<span class="tinted-chip" style="--chip-color:' + t.color + ';font-size:10.5px;padding:1.5px 7px"><span class="dot"></span>' + t.status + '</span>' +
+      '<button class="del" onclick="delRelation(' + i + ')" title="Убрать связь"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>';
+  }).join('') || '<span style="font-size:12.5px;color:var(--text-muted)">Связей пока нет</span>';
+  renderLinkTypes(); renderLinkPop();
+  renderComments(); renderFeed();
+}
+const CHEV = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>';
+const CHECK = '<svg class="check-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M20 6 9 17l-5-5"/></svg>';
+const PLUS = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>';
+
+function renderMemberPop() {
+  const q = (document.getElementById('member-q').value || '').toLowerCase();
+  document.getElementById('member-items').innerHTML = S.members
+    .filter(m => m.name.toLowerCase().includes(q))
+    .map(m => '<button class="pop__item" onclick="toggleAssignee(\'' + m.id + '\')">' +
+      '<span class="avatar ' + m.cls + '" style="width:20px;height:20px;font-size:8.5px;border-radius:7px">' + m.init + '</span>' + m.name +
+      (S.assignees.includes(m.id) ? CHECK : '') + '</button>').join('');
+}
+function renderTagPop() {
+  const q = (document.getElementById('tag-q').value || '').toLowerCase();
+  document.getElementById('tag-items').innerHTML = S.orgTags
+    .filter(t => t.name.toLowerCase().includes(q))
+    .map(t => '<button class="pop__item" onclick="toggleTag(\'' + t.id + '\')">' +
+      '<span class="proj-dot" style="background:' + t.color + ';border-radius:50%"></span>' + t.name +
+      (S.tags.includes(t.id) ? CHECK : '') + '</button>').join('');
+}
+function renderProjectPop() {
+  document.getElementById('project-items').innerHTML = S.orgProjects
+    .filter(p => !S.placements.includes(p.id))
+    .map(p => '<button class="pop__item" onclick="togglePlacement(\'' + p.id + '\')"><span class="proj-dot" style="background:' + p.color + '"></span>' + p.name + '</button>').join('')
+    || '<span style="display:block;padding:6px 10px;font-size:12px;color:var(--text-muted)">Задача уже во всех проектах</span>';
+}
+function renderLinkTypes() {
+  document.getElementById('link-types').innerHTML = S.relTypes.map(t =>
+    '<button class="filter-chip' + (t.id === S.linkType ? ' is-active' : '') + '" style="padding:3px 10px;font-size:11px" onclick="setLinkType(\'' + t.id + '\')">' + t.name + '</button>').join('');
+}
+function renderLinkPop() {
+  const q = (document.getElementById('link-q').value || '').toLowerCase();
+  const linked = new Set(S.relations.map(r => r.taskId));
+  document.getElementById('link-items').innerHTML = S.orgTasks
+    .filter(t => !linked.has(t.id) && t.name.toLowerCase().includes(q))
+    .map(t => '<button class="pop__item" onclick="addRelation(\'' + t.id + '\')"><span class="proj-dot" style="background:' + t.color + ';border-radius:50%"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + t.name + '</span></button>').join('')
+    || '<span style="display:block;padding:6px 10px;font-size:12px;color:var(--text-muted)">Не найдено</span>';
+}
+function renderComments() {
+  document.getElementById('c-count').textContent = S.comments.length;
+  document.getElementById('pane-comments').innerHTML = S.comments.map(c => {
+    const m = byId(S.members, c.who);
+    return '<div class="comment"><span class="avatar ' + m.cls + '">' + m.init + '</span>' +
+      '<div style="flex:1;min-width:0"><div class="comment__meta"><b>' + m.name + '</b> · ' + c.when + (c.edited ? ' · изменён' : '') + '</div>' +
+      '<div class="comment__bubble">' + c.html + '</div></div></div>';
+  }).join('');
+}
+function renderFeed() {
+  document.getElementById('pane-feed').innerHTML = S.feed.map(e =>
+    '<div class="feed-row"><span class="dot"></span><span><b>' + e.who + '</b> ' + e.what + '</span><time>' + e.when + '</time></div>').join('');
+}
+
+/* Подсветка улучшений при наведении на аннотацию */
+document.addEventListener('mouseover', e => {
+  const item = e.target.closest('.ux-item');
+  document.querySelectorAll('.ux-hl').forEach(el => el.classList.remove('ux-hl'));
+  if (item) {
+    const id = item.dataset.for;
+    (document.getElementById(id) || document.querySelector('[data-ux="' + id + '"]'))?.classList.add('ux-hl');
+  }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  render(); renderCal(); renderHead();
+  autoGrow(document.getElementById('title'));
+});
 </script>
 </body>
 </html>
