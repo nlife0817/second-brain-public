@@ -29,6 +29,10 @@ const ProjectMembersDialogImpl = dynamic(
   () => import("./ProjectMembersDialog").then((m) => m.ProjectMembersDialog),
   { ssr: false },
 );
+const CreateTaskSheetImpl = dynamic(
+  () => import("./mobile/CreateTaskSheet").then((m) => m.CreateTaskSheet),
+  { ssr: false },
+);
 
 export { OrgOnboarding } from "./OrgOnboarding";
 
@@ -76,4 +80,10 @@ export function ProjectMembersDialog(props: PropsOf<typeof ProjectMembersDialogI
   const mounted = useMountOnDemand(props.open);
   if (!mounted) return null;
   return <ProjectMembersDialogImpl {...props} />;
+}
+
+export function CreateTaskSheet(props: PropsOf<typeof CreateTaskSheetImpl>) {
+  const mounted = useMountOnDemand(props.open);
+  if (!mounted) return null;
+  return <CreateTaskSheetImpl {...props} />;
 }

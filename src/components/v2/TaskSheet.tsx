@@ -15,6 +15,7 @@ import {
   Clock,
   CornerLeftUp,
   Link2,
+  MoreVertical,
   Play,
   Plus,
   Square,
@@ -1170,7 +1171,7 @@ export function TaskSheet({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="size-9 sm:size-7"
+                className="size-9 max-sm:hidden sm:size-7"
                 onClick={() => void copyLink()}
                 title={linkCopied ? "Ссылка скопирована" : "Скопировать ссылку на задачу"}
                 aria-label="Скопировать ссылку на задачу"
@@ -1180,7 +1181,7 @@ export function TaskSheet({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="size-9 sm:size-7"
+                className="size-9 max-sm:hidden sm:size-7"
                 onClick={() => void toggleFollow()}
                 title={amFollower ? "Не следить" : "Следить"}
               >
@@ -1189,12 +1190,59 @@ export function TaskSheet({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="size-9 sm:size-7"
+                className="size-9 max-sm:hidden sm:size-7"
                 onClick={() => void removeTask()}
                 title="Удалить"
               >
                 <Trash2 className="size-4" />
               </Button>
+              {/* На телефоне редкие действия собраны в одно меню: шесть иконок
+                  подряд в узкой шапке — это промахи пальцем по соседней. */}
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="size-9 sm:hidden"
+                      aria-label="Ещё действия"
+                    />
+                  }
+                >
+                  <MoreVertical className="size-4" />
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-56 p-1">
+                  <button
+                    onClick={() => void copyLink()}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm hover:bg-muted"
+                  >
+                    {linkCopied ? (
+                      <Check className="size-4 shrink-0 text-emerald-500" />
+                    ) : (
+                      <Link2 className="size-4 shrink-0 text-muted-foreground" />
+                    )}
+                    {linkCopied ? "Ссылка скопирована" : "Скопировать ссылку"}
+                  </button>
+                  <button
+                    onClick={() => void toggleFollow()}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm hover:bg-muted"
+                  >
+                    {amFollower ? (
+                      <BellOff className="size-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <Bell className="size-4 shrink-0 text-muted-foreground" />
+                    )}
+                    {amFollower ? "Не следить" : "Следить"}
+                  </button>
+                  <button
+                    onClick={() => void removeTask()}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 className="size-4 shrink-0" />
+                    Удалить задачу
+                  </button>
+                </PopoverContent>
+              </Popover>
               <Button variant="ghost" size="icon-sm" className="size-9 sm:size-7" onClick={closeSheet}>
                 <X className="size-4" />
               </Button>
