@@ -28,13 +28,17 @@ import {
   Undo2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { promptForLink } from "./link";
 
 /**
  * Кнопка панели. `onMouseDown` с preventDefault обязателен: без него нажатие
  * снимает выделение в редакторе ещё до того, как команда успеет отработать, и
  * форматирование применяется к пустому диапазону.
+ *
+ * Экспортируется ради меню по выделению (`SelectionMenu`): там та же ловушка с
+ * выделением, и решать её вторым способом незачем.
  */
-function ToolButton({
+export function ToolButton({
   active,
   disabled,
   title,
@@ -67,7 +71,7 @@ function ToolButton({
   );
 }
 
-function Divider() {
+export function Divider() {
   return <span className="mx-0.5 h-5 w-px shrink-0 bg-border" />;
 }
 
@@ -120,17 +124,6 @@ export function EditorToolbar({
     }),
   });
 
-  function toggleLink() {
-    const previous = (editor.getAttributes("link").href as string) ?? "";
-    const href = window.prompt("Адрес ссылки", previous);
-    if (href === null) return;
-    if (!href.trim()) {
-      editor.chain().focus().unsetLink().run();
-      return;
-    }
-    editor.chain().focus().extendMarkRange("link").setLink({ href: href.trim() }).run();
-  }
-
   return (
     <div className="flex flex-col">
       <div className="flex flex-wrap items-center gap-0.5">
@@ -176,7 +169,7 @@ export function EditorToolbar({
         <ToolButton title="Моноширинный" active={state.code} onClick={() => editor.chain().focus().toggleCode().run()}>
           <Code className="size-4" />
         </ToolButton>
-        <ToolButton title="Ссылка" active={state.link} onClick={toggleLink}>
+        <ToolButton title="Ссылка" active={state.link} onClick={() => promptForLink(editor)}>
           <Link2 className="size-4" />
         </ToolButton>
         <Divider />

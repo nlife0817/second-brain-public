@@ -1,10 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { EditorContent } from "@tiptap/react";
 import { Loader2, Maximize2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SelectionMenu } from "./editor/SelectionMenu";
 import { EditorToolbar } from "./editor/Toolbar";
 import { useDocEditor } from "./editor/useDocEditor";
+import { fileDropHint, useFileDrop } from "./editor/useFileDrop";
 
 /**
  * Описание задачи в карточке. Тот же документ, что и в развёрнутом режиме, но
@@ -37,6 +40,15 @@ export function RichText({
   threadCount?: number;
 }) {
   const doc = useDocEditor({ value, onSave, orgId, taskId, editable, placeholder });
+
+  const canUpload = editable && !!orgId && !!taskId;
+  const drop = useFileDrop({
+    enabled: canUpload,
+    onFiles: (files) => void doc.uploadFiles(files),
+  });
+  // Область прокрутки — оболочка карточки, до неё редактору не дотянуться:
+  // меню по выделению ищет её само, от этого элемента вверх.
+  const [frame, setFrame] = useState<HTMLElement | null>(null);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -71,20 +83,36 @@ export function RichText({
         )}
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-border bg-background focus-within:border-ring">
+      <div
+        ref={setFrame}
+        {...drop.handlers}
+        className="relative overflow-hidden rounded-lg border border-border bg-background focus-within:border-ring"
+      >
         {editable && doc.editor && (
           <div className="border-b border-border bg-muted/30 px-1.5 py-1">
             <EditorToolbar
               editor={doc.editor}
               variant="compact"
-              onFiles={
-                orgId && taskId ? (files) => void doc.uploadFiles(files) : undefined
-              }
+              onFiles={canUpload ? (files) => void doc.uploadFiles(files) : undefined}
             />
           </div>
         )}
         <EditorContent editor={doc.editor} className="doc-surface min-h-24 px-3 py-2 text-sm" />
+
+        {/* Обсуждение к фрагменту заводит только развёрнутый режим — он владелец
+            doc_comments, поэтому кнопки «Комментировать» здесь нет. */}
+        {editable && doc.editor && <SelectionMenu editor={doc.editor} scrollHost={frame} />}
+
+        {/* pointer-events-none обязателен: перехватив указатель, оверлей съест и
+            dragleave (подсветка залипнет), и сам сброс. */}
+        {drop.active && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-primary bg-background/80 text-xs font-medium text-primary">
+            Отпустите, чтобы прикрепить
+          </div>
+        )}
       </div>
+
+      {editable && <p className="text-xs text-muted-foreground">{fileDropHint(canUpload)}</p>}
 
       {doc.error && (
         <p className="text-xs text-destructive">

@@ -268,6 +268,59 @@
   margin: 1.2em 0;
 }
 
+/* Списки --------------------------------------------------------------------
+   Preflight Tailwind снимает маркеры и обнуляет поля у `ul`/`ol` глобально, так
+   что без своих правил список в описании рисуется как набор абзацев. Поля и
+   `padding-left` перечислены явно: у `.tiptap ul` выше по файлу та же
+   специфичность, и опущенное свойство молча приехало бы оттуда. */
+.doc-content ul,
+.doc-content ol {
+  margin: 0.6em 0;
+  padding-left: 1.5rem;
+  list-style-position: outside;
+}
+.doc-content ul { list-style-type: disc; }
+.doc-content ol { list-style-type: decimal; }
+
+/* Уровни различаются на глаз: одинаковые точки на всех уровнях читаются как
+   один плоский список. */
+.doc-content ul ul { list-style-type: circle; }
+.doc-content ul ul ul { list-style-type: square; }
+.doc-content ol ol { list-style-type: lower-alpha; }
+.doc-content ol ol ol { list-style-type: lower-roman; }
+
+/* Вложенный список — часть своего пункта, а не соседний блок: полный
+   межблочный отступ разрывал бы его с родительской строкой. */
+.doc-content li > ul,
+.doc-content li > ol {
+  margin: 0.15em 0;
+}
+
+.doc-content li {
+  margin: 0.15em 0;
+}
+
+/* Единственный абзац пункта и есть сам пункт — собственных полей у него нет. */
+.doc-content li p {
+  margin: 0;
+}
+
+.doc-content li::marker {
+  color: var(--muted-foreground);
+}
+
+/* Отступ между блоками внутри пункта, цитаты и ячейки: `> * + *` выше достаёт
+   только прямых детей корня, поэтому второй абзац прижимался к первому.
+   Строка `li > * + p` дублирует правило намеренно — у `.tiptap li p` выше
+   специфичность больше, и без неё абзац остался бы с нулевым полем. */
+.doc-content li > * + *,
+.doc-content li > * + p,
+.doc-content blockquote > * + *,
+.doc-content td > * + *,
+.doc-content th > * + * {
+  margin-top: 0.6em;
+}
+
 /* Подложка выделения светлая в обеих темах, поэтому чернила задаются явно:
    с `color: inherit` в тёмной теме получался белый текст на жёлтом. */
 .doc-content mark {
@@ -510,6 +563,20 @@
 .doc-content .doc-comment-anchor[data-comment-resolved="true"] {
   background: transparent;
   border-bottom: 1px dotted var(--border);
+}
+
+/* Упоминание участника -------------------------------------------------------
+   Селектор по data-type, а не по классу: санитайзер вырезает class у span
+   (разрешены только data-*), поэтому класс до читателя всё равно не доедет.
+   Вне .doc-content намеренно — упоминание рисуется и в ленте комментариев,
+   которая идёт классами prose. */
+[data-type="mention"] {
+  border-radius: 0.3rem;
+  padding: 0 0.25em;
+  background: color-mix(in oklab, var(--primary) 16%, transparent);
+  color: var(--primary-ink, var(--primary));
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 /* Comment rendered prose: tighter lists */
