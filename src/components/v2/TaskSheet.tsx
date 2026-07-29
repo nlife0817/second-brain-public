@@ -33,6 +33,7 @@ import type {
   CoreComment,
   CoreEvent,
   CustomField,
+  DocCommentThread,
   RelationType,
   RelationWithTarget,
   TaskDetail,
@@ -54,6 +55,11 @@ const RichText = dynamic(() => import("./RichText").then((m) => m.RichText), {
       Загрузка редактора…
     </div>
   ),
+});
+// Полноэкранный документ — отдельный чанк поверх того же Tiptap: развёрнутый
+// режим открывают заметно реже, чем карточку.
+const DocEditor = dynamic(() => import("./editor/DocEditor").then((m) => m.DocEditor), {
+  ssr: false,
 });
 
 const VERB_LABELS: Record<string, string> = {
@@ -89,6 +95,7 @@ interface TaskBundle {
   subtasks: TaskListItem[];
   relations: RelationWithTarget[];
   relation_types: RelationType[];
+  doc_comments: DocCommentThread[];
 }
 
 export function TaskSheet({
@@ -116,6 +123,11 @@ export function TaskSheet({
   const [subtasks, setSubtasks] = useState<TaskListItem[]>([]);
   const [relations, setRelations] = useState<RelationWithTarget[]>([]);
   const [relationTypes, setRelationTypes] = useState<RelationType[]>([]);
+  const [docThreads, setDocThreads] = useState<DocCommentThread[]>([]);
+  // Разворот помнится по задаче, а не флагом: иначе переход к соседней задаче
+  // оставлял бы открытым документ уже другой — сбрасывать это в эффекте
+  // означало бы лишний каскад перерисовок.
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [tab, setTab] = useState<"comments" | "feed">("comments");
   const [commentText, setCommentText] = useState("");
   const [subtaskTitle, setSubtaskTitle] = useState("");
@@ -137,6 +149,7 @@ export function TaskSheet({
       setSubtasks(b.subtasks);
       setRelations(b.relations);
       setRelationTypes(b.relation_types);
+      setDocThreads(b.doc_comments ?? []);
       setError(null);
     } catch (e) {
       if (currentTaskRef.current !== taskId) return;
@@ -427,6 +440,7 @@ export function TaskSheet({
   );
 
   return (
+    <>
     <Sheet open={!!taskId} onOpenChange={(open) => !open && onClose()}>
       <SheetContent
         side="right"
@@ -664,6 +678,11 @@ export function TaskSheet({
                   key={`desc-${task.id}`}
                   value={task.description}
                   onSave={(html) => void patch({ description: html })}
+                  orgId={orgId}
+                  taskId={task.id}
+                  editable={canEdit}
+                  onExpand={() => setExpandedTaskId(task.id)}
+                  threadCount={docThreads.filter((t) => !t.resolved_at).length}
                 />
 
                 <div>
@@ -784,6 +803,26 @@ export function TaskSheet({
         )}
       </SheetContent>
     </Sheet>
+
+    {task && expandedTaskId === task.id && (
+      <DocEditor
+        open
+        onClose={() => setExpandedTaskId(null)}
+        orgId={orgId}
+        taskId={task.id}
+        taskTitle={task.title}
+        value={task.description}
+        onSave={(html) => void patch({ description: html })}
+        editable={canEdit}
+        // Право комментировать проверяет сервер: у гостя оно зависит от роли в
+        // конкретном проекте, а её карточка не знает.
+        canComment={orgRole !== null}
+        canResolveAll={canEdit}
+        me={me}
+        initialThreads={docThreads}
+      />
+    )}
+    </>
   );
 }
 
