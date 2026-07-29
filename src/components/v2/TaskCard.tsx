@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import { CheckCircle2, Clock3, MessageSquare, GitBranch } from "lucide-react";
-import { AvatarStack, PriorityDot, dueTone, formatDue } from "./bits";
+import { AvatarStack, PriorityDot, chipStyle, dueTone, formatDue } from "./bits";
 import type { TaskListItem } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useCardStore, type CardFieldId } from "@/lib/core/view-store";
@@ -77,8 +77,8 @@ export const TaskCard = memo(function TaskCard({
             return (
               <span
                 key={p.project_id}
-                className="rounded px-1.5 py-0.5 text-[10px] font-medium"
-                style={{ backgroundColor: `${project.color}1a`, color: project.color }}
+                className="tinted-chip rounded px-1.5 py-0.5 text-[11px] font-medium"
+                style={chipStyle(project.color)}
               >
                 {project.name}
               </span>
@@ -92,8 +92,8 @@ export const TaskCard = memo(function TaskCard({
           {task.tags.map((t) => (
             <span
               key={t.id}
-              className="rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-              style={{ backgroundColor: `${t.color}1a`, color: t.color }}
+              className="tinted-chip rounded-full px-1.5 py-0.5 text-[11px] font-medium"
+              style={chipStyle(t.color)}
             >
               {t.name}
             </span>

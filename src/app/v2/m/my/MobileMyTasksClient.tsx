@@ -114,7 +114,7 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
     }
     return [
       { key: "overdue", title: "Просрочено", items: overdue, tone: "text-red-600 dark:text-red-400" },
-      { key: "today", title: "Сегодня", items: dueToday, tone: "text-amber-600 dark:text-amber-400" },
+      { key: "today", title: "Сегодня", items: dueToday, tone: "text-amber-700 dark:text-amber-400" },
       { key: "upcoming", title: "Предстоящие", items: upcoming, tone: "" },
       { key: "nodate", title: "Без срока", items: noDate, tone: "" },
       ...(showDone ? [{ key: "done", title: "Завершённые", items: done, tone: "text-muted-foreground" }] : []),
@@ -124,7 +124,7 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 items-center gap-1 border-b border-border px-4 py-3">
-        <h1 className="flex-1 text-base font-semibold">Мои задачи</h1>
+        <h1 className="flex-1 font-heading text-lg font-semibold tracking-tight">Мои задачи</h1>
         <button
           onClick={() => setSearchOpen(true)}
           className="rounded-lg p-2 text-muted-foreground active:bg-muted"

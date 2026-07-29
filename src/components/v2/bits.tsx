@@ -2,8 +2,18 @@
 
 // Мелкие переиспользуемые элементы UI v2.
 
+import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 import type { TaskPriority, TaskStatus, UserBrief } from "@/lib/core/types";
+
+/**
+ * Цвет сущности для метки `.tinted-chip` (см. globals.css): подложку и текст
+ * из него выводит CSS, инлайном цвет напрямую не назначаем — сырой цвет
+ * текстом не проходит по контрасту.
+ */
+export function chipStyle(color: string | null | undefined): CSSProperties {
+  return { "--chip-color": color ?? "#94a3b8" } as CSSProperties;
+}
 
 export const PRIORITY_LABELS: Record<TaskPriority, { label: string; dot: string }> = {
   urgent: { label: "Срочно", dot: "bg-red-500" },
@@ -75,8 +85,8 @@ export function StatusPill({ status }: { status: TaskStatus | undefined }) {
   if (!status) return <span className="text-xs text-muted-foreground">Без статуса</span>;
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
-      style={{ backgroundColor: `${status.color}1a`, color: status.color }}
+      className="tinted-chip inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
+      style={chipStyle(status.color)}
     >
       <span className="size-1.5 rounded-full" style={{ backgroundColor: status.color }} />
       {status.name}
@@ -96,7 +106,8 @@ export function dueTone(due_date: string | null, completed: boolean): string {
   if (!due_date || completed) return "text-muted-foreground";
   const today = new Date();
   const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  // 700-я ступень, а не 600: «сегодня» на 12px должно проходить контраст 4.5:1.
   if (due_date < iso) return "text-red-600 dark:text-red-400";
-  if (due_date === iso) return "text-amber-600 dark:text-amber-400";
+  if (due_date === iso) return "text-amber-700 dark:text-amber-400";
   return "text-muted-foreground";
 }

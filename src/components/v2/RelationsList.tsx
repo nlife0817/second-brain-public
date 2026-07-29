@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowDownLeft, ArrowUpRight, Link2, Loader2, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { chipStyle } from "@/components/v2/bits";
 import { api } from "@/lib/core/client";
 import type { RelationEntityType, RelationType, RelationWithTarget } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -161,12 +162,8 @@ export function RelationsList({
                 <ArrowDownLeft className="size-3.5 shrink-0 text-muted-foreground" />
               )}
               <span
-                className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium"
-                style={
-                  type
-                    ? { backgroundColor: `${type.color}1a`, color: type.color }
-                    : { backgroundColor: "var(--muted)" }
-                }
+                className={cn("shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium", type && "tinted-chip")}
+                style={type ? chipStyle(type.color) : { backgroundColor: "var(--muted)" }}
               >
                 {type?.name ?? ENTITY_LABELS[r.entity_type]}
               </span>

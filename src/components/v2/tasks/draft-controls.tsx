@@ -8,6 +8,7 @@
 import { Check, X } from "lucide-react";
 import { useMemo } from "react";
 import { Avatar, PRIORITY_LABELS } from "@/components/v2/bits";
+import { assigneeChoice } from "@/lib/core/assignable";
 import type { TaskPriority } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
@@ -20,7 +21,6 @@ export const ESTIMATE_PRESETS = [15, 30, 60, 120, 240, 480];
 export const PRIORITY_POPOVER = "w-44 p-1";
 export const MENU_POPOVER = "max-h-72 w-56 overflow-y-auto p-1";
 export const WIDE_MENU_POPOVER = "max-h-72 w-60 overflow-y-auto p-1";
-export const DUE_POPOVER = "w-60 gap-2 p-2.5";
 export const ESTIMATE_POPOVER = "w-52 gap-2 p-2.5";
 export const FIELD_POPOVER = "w-64 gap-2 p-2.5";
 
@@ -115,17 +115,26 @@ export function ProjectsMenu({
   );
 }
 
+/**
+ * Исполнители черновика. Закрытый проект пускает в исполнители только своих
+ * участников — правило сервера (`assertAssigneesInClosedProjects`), которое
+ * интерфейс обязан повторять, иначе выбор заканчивается отказом при сохранении.
+ */
 export function AssigneesMenu({
   value,
+  projectIds,
   onChange,
 }: {
   value: string[];
+  projectIds: string[];
   onChange: (userIds: string[]) => void;
 }) {
   const members = useV2Store((s) => s.members);
+  const projects = useV2Store((s) => s.projects);
+  const choice = assigneeChoice(members, projects, projectIds, value);
   return (
     <>
-      {members.map((m) => (
+      {choice.members.map((m) => (
         <button
           key={m.user_id}
           onClick={() =>
@@ -145,8 +154,15 @@ export function AssigneesMenu({
           {value.includes(m.user_id) && <Check className="size-3.5 shrink-0" />}
         </button>
       ))}
-      {members.length === 0 && (
-        <p className="px-2 py-1.5 text-xs text-muted-foreground">Участники ещё не загружены</p>
+      {choice.members.length === 0 && (
+        <p className="px-2 py-1.5 text-xs text-muted-foreground">
+          {members.length === 0 ? "Участники ещё не загружены" : "В закрытом проекте некого назначить"}
+        </p>
+      )}
+      {choice.restrictedBy.length > 0 && (
+        <p className="border-t border-border px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
+          Только участники закрытого проекта «{choice.restrictedBy.join("», «")}»
+        </p>
       )}
     </>
   );
@@ -176,51 +192,6 @@ export function TagsMenu({
         </button>
       ))}
       {tags.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">Тегов пока нет</p>}
-    </>
-  );
-}
-
-/** Срок: дата и время. Время без даты схема не примет — снимаем его вместе с датой. */
-export function DueForm({
-  date,
-  time,
-  onChange,
-}: {
-  date: string | null;
-  time: string | null;
-  onChange: (patch: { due_date: string | null; due_time: string | null }) => void;
-}) {
-  return (
-    <>
-      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-        Дата
-        <input
-          type="date"
-          value={date ?? ""}
-          onChange={(e) =>
-            onChange({ due_date: e.target.value || null, due_time: e.target.value ? time : null })
-          }
-          className={FIELD_INPUT}
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-        Время
-        <input
-          type="time"
-          value={time?.slice(0, 5) ?? ""}
-          disabled={!date}
-          onChange={(e) => onChange({ due_date: date, due_time: e.target.value || null })}
-          className={cn(FIELD_INPUT, "disabled:opacity-50")}
-        />
-      </label>
-      {date && (
-        <button
-          onClick={() => onChange({ due_date: null, due_time: null })}
-          className="flex items-center gap-1.5 rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <X className="size-3.5" /> Убрать срок
-        </button>
-      )}
     </>
   );
 }

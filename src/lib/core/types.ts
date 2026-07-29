@@ -120,6 +120,12 @@ export interface Project {
 export interface ProjectWithMeta extends Project {
   my_role: ProjectRole | null;
   open_task_count: number;
+  /**
+   * Явные участники закрытого проекта; `null` — проект открыт, и ограничений на
+   * состав исполнителей он не накладывает. Нужен интерфейсу: закрытый проект
+   * виден только своим, а назначение задачи само по себе её открывает.
+   */
+  member_ids: string[] | null;
 }
 
 export interface Section {
@@ -234,6 +240,12 @@ export interface TaskDetail extends TaskWithMeta {
   followers: UserBrief[];
   field_values: Record<string, unknown>;
   creator: UserBrief | null;
+  /**
+   * Проекты всей цепочки, включая родительские: у подзадачи своих размещений
+   * нет, а закрытость она наследует от родителя. Карточка сужает по этому
+   * списку выбор исполнителей — ровно как сервер в `updateTask`.
+   */
+  chain_project_ids: string[];
 }
 
 // --- Связи между сущностями ------------------------------------------------------
@@ -273,6 +285,48 @@ export interface CoreComment {
   created_at: string;
   edited_at: string | null;
   author: UserBrief | null;
+}
+
+// --- Документ описания: вложения и комментарии к тексту ---------------------------
+
+/** Файл, вставленный в описание задачи. Байты живут в БД, здесь — только метаданные. */
+export interface Attachment {
+  id: string;
+  org_id: string;
+  task_id: string;
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+  width: number | null;
+  height: number | null;
+  created_at: string;
+  /** Готовый путь для `<img src>` / скачивания. */
+  url: string;
+}
+
+/** Одно сообщение в треде комментариев к описанию (корень или ответ). */
+export interface DocCommentMessage {
+  id: string;
+  author_id: string | null;
+  body: string;
+  created_at: string;
+  edited_at: string | null;
+  author: UserBrief | null;
+}
+
+/**
+ * Тред комментариев к фрагменту описания. `id` треда совпадает с id корневого
+ * сообщения и хранится в разметке как `<span data-comment="…">` — по нему
+ * панель комментариев и текст находят друг друга.
+ */
+export interface DocCommentThread {
+  id: string;
+  task_id: string;
+  quote: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  created_at: string;
+  messages: DocCommentMessage[];
 }
 
 export interface CoreEvent {

@@ -37,9 +37,11 @@ import {
   AvatarStack,
   PRIORITY_LABELS,
   PriorityDot,
+  chipStyle,
   dueTone,
   formatDue,
 } from "@/components/v2/bits";
+import { DuePicker } from "@/components/v2/DuePicker";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField, TaskListItem } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -47,8 +49,6 @@ import { cn } from "@/lib/utils";
 import { formatEstimate } from "./cells";
 import {
   AssigneesMenu,
-  DUE_POPOVER,
-  DueForm,
   ESTIMATE_POPOVER,
   EstimateForm,
   FIELD_POPOVER,
@@ -344,11 +344,8 @@ function SubtaskDraftDetails({ draft, patch }: DraftProps) {
                 return (
                   <span
                     key={id}
-                    className="inline-flex max-w-full items-center gap-1 truncate rounded px-1.5 py-0.5"
-                    style={{
-                      backgroundColor: `${project?.color ?? "#94a3b8"}1a`,
-                      color: project?.color ?? undefined,
-                    }}
+                    className="tinted-chip inline-flex max-w-full items-center gap-1 truncate rounded px-1.5 py-0.5"
+                    style={chipStyle(project?.color)}
                   >
                     <span className="truncate">{project?.name ?? "—"}</span>
                   </span>
@@ -370,8 +367,8 @@ function SubtaskDraftDetails({ draft, patch }: DraftProps) {
               selectedTags.map((t) => (
                 <span
                   key={t.id}
-                  className="truncate rounded px-1.5 py-0.5 text-[11px]"
-                  style={{ backgroundColor: `${t.color}1a`, color: t.color }}
+                  className="tinted-chip truncate rounded px-1.5 py-0.5 text-[11px]"
+                  style={chipStyle(t.color)}
                 >
                   {t.name}
                 </span>
@@ -444,8 +441,8 @@ function StatusChip({ draft, patch }: DraftProps) {
       >
         {status ? (
           <span
-            className="inline-flex max-w-full items-center gap-1 truncate rounded-full px-1.5 py-0.5 text-[11px] font-medium"
-            style={{ backgroundColor: `${status.color}1a`, color: status.color }}
+            className="tinted-chip inline-flex max-w-full items-center gap-1 truncate rounded-full px-1.5 py-0.5 text-[11px] font-medium"
+            style={chipStyle(status.color)}
           >
             <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: status.color }} />
             <span className="truncate">{status.name}</span>
@@ -489,7 +486,11 @@ function AssigneesChip({ draft, patch }: DraftProps) {
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className={WIDE_MENU_POPOVER}>
-        <AssigneesMenu value={draft.assignee_ids} onChange={(assignee_ids) => patch({ assignee_ids })} />
+        <AssigneesMenu
+          value={draft.assignee_ids}
+          projectIds={draft.project_ids}
+          onChange={(assignee_ids) => patch({ assignee_ids })}
+        />
       </PopoverContent>
     </Popover>
   );
@@ -498,20 +499,18 @@ function AssigneesChip({ draft, patch }: DraftProps) {
 function DueChip({ draft, patch }: DraftProps) {
   const text = formatDue(draft.due_date, draft.due_time);
   return (
-    <Popover>
-      <PopoverTrigger
-        render={<button className={cn(CHIP, text ? CHIP_SET : CHIP_EMPTY)} title="Срок" />}
-      >
-        {text ? (
-          <span className={cn("tabular-nums", dueTone(draft.due_date, false))}>{text}</span>
-        ) : (
-          <CalendarDays className="size-3.5" />
-        )}
-      </PopoverTrigger>
-      <PopoverContent align="start" className={DUE_POPOVER}>
-        <DueForm date={draft.due_date} time={draft.due_time} onChange={patch} />
-      </PopoverContent>
-    </Popover>
+    <DuePicker
+      date={draft.due_date}
+      time={draft.due_time}
+      triggerClassName={cn(CHIP, text ? CHIP_SET : CHIP_EMPTY)}
+      onCommit={(next) => patch(next)}
+    >
+      {text ? (
+        <span className={cn("tabular-nums", dueTone(draft.due_date, false))}>{text}</span>
+      ) : (
+        <CalendarDays className="size-3.5" />
+      )}
+    </DuePicker>
   );
 }
 

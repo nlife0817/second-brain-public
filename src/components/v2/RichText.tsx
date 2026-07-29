@@ -1,45 +1,99 @@
 "use client";
 
-import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import Placeholder from "@tiptap/extension-placeholder";
-import { useEffect } from "react";
+import { EditorContent } from "@tiptap/react";
+import { Loader2, Maximize2, MessageSquare } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { EditorToolbar } from "./editor/Toolbar";
+import { useDocEditor } from "./editor/useDocEditor";
 
-/** Мини-редактор описания (Tiptap StarterKit). Отдаёт HTML через onBlur. */
+/**
+ * Описание задачи в карточке. Тот же документ, что и в развёрнутом режиме, но
+ * в узкой колонке: панель инструментов сокращена, комментариев к тексту нет —
+ * для них нужна ширина, которой здесь просто негде взять.
+ */
 export function RichText({
   value,
   onSave,
+  orgId = null,
+  taskId = null,
   placeholder = "Добавьте описание…",
   editable = true,
+  onExpand,
+  threadCount = 0,
 }: {
   value: string;
   onSave: (html: string) => void;
+  /**
+   * Задача, к которой крепятся вложения. У черновика (`TaskDraftPanel`) её ещё
+   * нет — прикрепить файл не к чему, поэтому кнопки загрузки не рисуются.
+   */
+  orgId?: string | null;
+  taskId?: string | null;
   placeholder?: string;
   editable?: boolean;
+  /** Открыть полноэкранный режим. Без обработчика кнопка не рисуется. */
+  onExpand?: () => void;
+  /** Открытые обсуждения описания — счётчик на кнопке разворачивания. */
+  threadCount?: number;
 }) {
-  const editor = useEditor({
-    extensions: [StarterKit, Placeholder.configure({ placeholder })],
-    content: value || "",
-    editable,
-    immediatelyRender: false,
-    editorProps: {
-      attributes: {
-        class:
-          "prose prose-sm dark:prose-invert max-w-none min-h-24 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-ring",
-      },
-    },
-    onBlur: ({ editor: e }) => {
-      const html = e.isEmpty ? "" : e.getHTML();
-      if (html !== value) onSave(html);
-    },
-  });
+  const doc = useDocEditor({ value, onSave, orgId, taskId, editable, placeholder });
 
-  // Синхронизация при смене задачи (компонент переиспользуется по key).
-  useEffect(() => {
-    if (editor && !editor.isFocused && editor.getHTML() !== (value || "")) {
-      editor.commands.setContent(value || "", { emitUpdate: false });
-    }
-  }, [editor, value]);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Описание
+        </span>
+        {doc.uploading > 0 && (
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            загрузка
+          </span>
+        )}
+        <span className="flex-1" />
+        {onExpand && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={onExpand}
+            title="Развернуть описание на весь экран"
+          >
+            {threadCount > 0 && (
+              <>
+                <MessageSquare className="size-3.5" />
+                {threadCount}
+              </>
+            )}
+            <Maximize2 className="size-3.5" />
+            Развернуть
+          </Button>
+        )}
+      </div>
 
-  return <EditorContent editor={editor} />;
+      <div className="overflow-hidden rounded-lg border border-border bg-background focus-within:border-ring">
+        {editable && doc.editor && (
+          <div className="border-b border-border bg-muted/30 px-1.5 py-1">
+            <EditorToolbar
+              editor={doc.editor}
+              variant="compact"
+              onFiles={
+                orgId && taskId ? (files) => void doc.uploadFiles(files) : undefined
+              }
+            />
+          </div>
+        )}
+        <EditorContent editor={doc.editor} className="doc-surface min-h-24 px-3 py-2 text-sm" />
+      </div>
+
+      {doc.error && (
+        <p className="text-xs text-destructive">
+          {doc.error}{" "}
+          <button onClick={doc.clearError} className="underline">
+            скрыть
+          </button>
+        </p>
+      )}
+    </div>
+  );
 }

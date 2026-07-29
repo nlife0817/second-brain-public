@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Golos_Text, Inter, JetBrains_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
@@ -12,6 +12,13 @@ const inter = Inter({
 
 const jetbrainsMono = JetBrains_Mono({
   variable: "--font-mono",
+  subsets: ["latin", "cyrillic"],
+});
+
+// Заголовки: Golos Text рисован под кириллицу и даёт экранам собственное
+// лицо; текст остаётся на Inter (`--font-sans`).
+const golos = Golos_Text({
+  variable: "--font-golos",
   subsets: ["latin", "cyrillic"],
 });
 
@@ -48,7 +55,7 @@ export default function RootLayout({
   return (
     <html
       lang="ru"
-      className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      className={`${inter.variable} ${jetbrainsMono.variable} ${golos.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col overflow-hidden font-sans">
         <ErrorBoundary>

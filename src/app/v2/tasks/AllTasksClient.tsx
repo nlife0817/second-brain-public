@@ -7,7 +7,8 @@
 //
 // Список считает сервер и отдаёт в `initial`: экран показывает незавершённые
 // задачи неархивных проектов — то есть ровно то, ради чего его открывают.
-// Всё остальное сужение — через «Фильтры».
+// Задачи в «Готово» и «Архиве» скрыты, пока их не включат условиями
+// «Готово/Архив = Показать»; всё остальное сужение — тоже через «Фильтры».
 //
 // Сама таблица со всей обвязкой — общий `TaskTableView`: тот же экран рисуется
 // внутри проекта, и расходиться они не должны.
@@ -21,7 +22,8 @@ import { applyTaskChange } from "@/lib/core/task-change";
 import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type { AllTasksResult, TaskRow } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
-import { ViewStoreProvider } from "@/lib/core/view-store";
+import { ViewStoreProvider, useViewStore } from "@/lib/core/view-store";
+import { showsDone } from "@/lib/core/views";
 
 export function AllTasksClient({ initial }: { initial: AllTasksResult }) {
   return (
@@ -35,6 +37,7 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
   const { orgId, refreshProjects } = useV2Store();
   // Пуш и поиск умеют вести прямо на задачу.
   const deepLinkTaskId = useSearchParams().get("task");
+  const filterGroups = useViewStore((s) => s.groups);
 
   const [tasks, setTasks] = useState<TaskRow[]>(initial.tasks);
   const [truncated, setTruncated] = useState(initial.truncated);
@@ -42,13 +45,20 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
   const [error, setError] = useState<string | null>(null);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
 
-  const path = orgId ? `/orgs/${orgId}/tasks?view=all` : null;
+  // Завершённых сервер по умолчанию не отдаёт — просим их только по условию
+  // «Готово = Показать». Иначе оно показало бы пустоту, а грузить весь архив
+  // завершённого на каждое открытие экрана незачем.
+  const wantsDone = showsDone(filterGroups);
+
+  const basePath = orgId ? `/orgs/${orgId}/tasks?view=all` : null;
+  const path = basePath ? `${basePath}${wantsDone ? "&done=1" : ""}` : null;
 
   // Серверные данные — в кэш: возврат на экран в ближайшие секунды обойдётся
-  // без запроса, а первый эффект загрузки ниже увидит их уже свежими.
+  // без запроса, а первый эффект загрузки ниже увидит их уже свежими. Ключ —
+  // всегда базовый: сервер считал список без завершённых.
   useEffect(() => {
-    if (path) seed(path, initial);
-  }, [path, initial]);
+    if (basePath) seed(basePath, initial);
+  }, [basePath, initial]);
 
   const load = useCallback(
     async (opts: { force?: boolean } = {}) => {
@@ -107,7 +117,7 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
         onDismissError={() => setError(null)}
         onOpenTask={setOpenTaskId}
         onCreateTask={createTask}
-        titleSlot={<h1 className="text-base font-semibold">Все задачи</h1>}
+        titleSlot={<h1 className="font-heading text-xl font-semibold tracking-tight">Все задачи</h1>}
       />
 
       <TaskSheet

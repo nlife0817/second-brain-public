@@ -49,7 +49,7 @@ export default async function ProjectSettingsPage({
           <ChevronLeft className="size-4" />
         </Link>
         <ProjectIcon name={project.icon} color={project.color} className="size-4" />
-        <h1 className="text-base font-semibold">{project.name} · настройки</h1>
+        <h1 className="font-heading text-xl font-semibold tracking-tight">{project.name} · настройки</h1>
       </header>
       <ProjectSettings
         projectId={projectId}

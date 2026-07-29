@@ -5,9 +5,11 @@
 // саму мутацию делает страница.
 
 import { memo, useEffect, useRef, useState } from "react";
-import { Check, MessageSquare, X } from "lucide-react";
+import { Check, MessageSquare, Pencil, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Avatar, AvatarStack, PRIORITY_LABELS, PriorityDot, dueTone, formatDue } from "@/components/v2/bits";
+import { Avatar, AvatarStack, PRIORITY_LABELS, PriorityDot, chipStyle, dueTone, formatDue } from "@/components/v2/bits";
+import { DuePicker } from "@/components/v2/DuePicker";
+import { assigneeChoice } from "@/lib/core/assignable";
 import type {
   CoreTag,
   OrgMemberWithUser,
@@ -46,7 +48,7 @@ const CELL_BUTTON =
   "flex h-full w-full items-center gap-1 rounded px-1.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 /** Некликабельная обёртка — когда прав на правку нет. */
-function ReadOnly({ children, className }: { children: React.ReactNode; className?: string }) {
+function ReadOnly({ children, className }: { children?: React.ReactNode; className?: string }) {
   return <span className={cn("flex h-full items-center gap-1 px-1.5", className)}>{children}</span>;
 }
 
@@ -165,10 +167,10 @@ export const TitleCell = memo(function TitleCell({
             setDraft(task.title);
             setEditing(true);
           }}
-          className="shrink-0 rounded px-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:bg-muted focus-visible:opacity-100 group-hover/title:opacity-100"
+          className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted focus-visible:opacity-100 group-hover/title:opacity-100"
           title="Переименовать"
         >
-          ✎
+          <Pencil className="size-3" />
         </button>
       )}
     </span>
@@ -181,8 +183,8 @@ export const StatusCell = memo(function StatusCell({ task, ctx }: { task: TaskRo
   const status = task.status_id ? ctx.statuses.find((s) => s.id === task.status_id) : undefined;
   const label = status ? (
     <span
-      className="inline-flex max-w-full items-center gap-1.5 truncate rounded-full px-2 py-0.5 text-xs font-medium"
-      style={{ backgroundColor: `${status.color}1a`, color: status.color }}
+      className="tinted-chip inline-flex max-w-full items-center gap-1.5 truncate rounded-full px-2 py-0.5 text-xs font-medium"
+      style={chipStyle(status.color)}
     >
       <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: status.color }} />
       <span className="truncate">{status.name}</span>
@@ -232,11 +234,8 @@ export const ProjectCell = memo(function ProjectCell({ task, ctx }: { task: Task
         return (
           <span
             key={p.project_id}
-            className="inline-flex max-w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-xs"
-            style={{
-              backgroundColor: `${project?.color ?? "#94a3b8"}1a`,
-              color: project?.color ?? undefined,
-            }}
+            className="tinted-chip inline-flex max-w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-xs"
+            style={chipStyle(project?.color)}
             title={project?.name ?? "Недоступный проект"}
           >
             <span className="truncate">{project?.name ?? "—"}</span>
@@ -251,12 +250,9 @@ export const ProjectCell = memo(function ProjectCell({ task, ctx }: { task: Task
 
 export const AssigneesCell = memo(function AssigneesCell({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
   const current = new Set(task.assignees.map((a) => a.id));
-  const label =
-    task.assignees.length > 0 ? (
-      <AvatarStack users={task.assignees} max={3} />
-    ) : (
-      <span className="text-xs text-muted-foreground">—</span>
-    );
+  // Пустые ячейки молчат: три десятка прочерков в таблице — сплошной шум,
+  // а кликабельность и так видна по подсветке ячейки при наведении.
+  const label = task.assignees.length > 0 ? <AvatarStack users={task.assignees} max={3} /> : null;
 
   if (!ctx.canEdit) return <ReadOnly>{label}</ReadOnly>;
 
@@ -267,11 +263,19 @@ export const AssigneesCell = memo(function AssigneesCell({ task, ctx }: { task: 
     ctx.onPatch(task.id, { assignee_ids: next });
   }
 
+  // Закрытый проект пускает в исполнители только своих участников.
+  const choice = assigneeChoice(
+    ctx.members,
+    ctx.projectsById,
+    task.placements.map((p) => p.project_id),
+    current,
+  );
+
   return (
     <Popover>
       <PopoverTrigger render={<button className={CELL_BUTTON} />}>{label}</PopoverTrigger>
       <PopoverContent align="start" className="max-h-72 w-60 overflow-y-auto p-1">
-        {ctx.members.map((m) => (
+        {choice.members.map((m) => (
           <button
             key={m.user_id}
             onClick={() => toggle(m.user_id)}
@@ -285,8 +289,15 @@ export const AssigneesCell = memo(function AssigneesCell({ task, ctx }: { task: 
             {current.has(m.user_id) && <Check className="size-3.5 shrink-0" />}
           </button>
         ))}
-        {ctx.members.length === 0 && (
-          <p className="px-2 py-1.5 text-xs text-muted-foreground">Участники ещё не загружены</p>
+        {choice.members.length === 0 && (
+          <p className="px-2 py-1.5 text-xs text-muted-foreground">
+            {ctx.members.length === 0 ? "Участники ещё не загружены" : "В закрытом проекте некого назначить"}
+          </p>
+        )}
+        {choice.restrictedBy.length > 0 && (
+          <p className="border-t border-border px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
+            Только участники закрытого проекта «{choice.restrictedBy.join("», «")}»
+          </p>
         )}
       </PopoverContent>
     </Popover>
@@ -303,16 +314,14 @@ export const TagsCell = memo(function TagsCell({ task, ctx }: { task: TaskRow; c
         {task.tags.map((t) => (
           <span
             key={t.id}
-            className="truncate rounded px-1.5 py-0.5 text-[11px]"
-            style={{ backgroundColor: `${t.color}1a`, color: t.color }}
+            className="tinted-chip truncate rounded px-1.5 py-0.5 text-[11px]"
+            style={chipStyle(t.color)}
           >
             {t.name}
           </span>
         ))}
       </span>
-    ) : (
-      <span className="text-xs text-muted-foreground">—</span>
-    );
+    ) : null;
 
   if (!ctx.canEdit) return <ReadOnly>{label}</ReadOnly>;
 
@@ -348,45 +357,21 @@ export const TagsCell = memo(function TagsCell({ task, ctx }: { task: TaskRow; c
 
 export const DueCell = memo(function DueCell({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
   const text = formatDue(task.due_date, task.due_time);
-  const label = (
-    <span className={cn("truncate text-xs", dueTone(task.due_date, !!task.completed_at))}>{text ?? "—"}</span>
-  );
+  const label = text ? (
+    <span className={cn("truncate text-xs tabular-nums", dueTone(task.due_date, !!task.completed_at))}>{text}</span>
+  ) : null;
 
   if (!ctx.canEdit) return <ReadOnly>{label}</ReadOnly>;
 
   return (
-    <Popover>
-      <PopoverTrigger render={<button className={CELL_BUTTON} />}>{label}</PopoverTrigger>
-      <PopoverContent align="start" className="w-60 gap-2 p-2.5">
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Дата
-          <input
-            type="date"
-            value={task.due_date ?? ""}
-            onChange={(e) => ctx.onPatch(task.id, { due_date: e.target.value || null })}
-            className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring"
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Время
-          <input
-            type="time"
-            value={task.due_time?.slice(0, 5) ?? ""}
-            disabled={!task.due_date}
-            onChange={(e) => ctx.onPatch(task.id, { due_time: e.target.value || null })}
-            className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring disabled:opacity-50"
-          />
-        </label>
-        {task.due_date && (
-          <button
-            onClick={() => ctx.onPatch(task.id, { due_date: null, due_time: null })}
-            className="flex items-center gap-1.5 rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <X className="size-3.5" /> Убрать срок
-          </button>
-        )}
-      </PopoverContent>
-    </Popover>
+    <DuePicker
+      date={task.due_date}
+      time={task.due_time}
+      triggerClassName={CELL_BUTTON}
+      onCommit={(next) => ctx.onPatch(task.id, next)}
+    >
+      {label}
+    </DuePicker>
   );
 });
 
@@ -395,7 +380,10 @@ export const DueCell = memo(function DueCell({ task, ctx }: { task: TaskRow; ctx
 const ESTIMATE_PRESETS = [15, 30, 60, 120, 240, 480];
 
 export const EstimateCell = memo(function EstimateCell({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
-  const label = <span className="truncate text-xs tabular-nums">{formatEstimate(task.estimated_minutes)}</span>;
+  const label =
+    task.estimated_minutes == null ? null : (
+      <span className="truncate text-xs tabular-nums">{formatEstimate(task.estimated_minutes)}</span>
+    );
   if (!ctx.canEdit) return <ReadOnly>{label}</ReadOnly>;
 
   return (
@@ -447,7 +435,7 @@ export const EstimateCell = memo(function EstimateCell({ task, ctx }: { task: Ta
 // --- Счётчики -------------------------------------------------------------------------
 
 export const SubtasksCell = memo(function SubtasksCell({ task }: { task: TaskRow }) {
-  if (task.subtask_count === 0) return <ReadOnly className="text-xs text-muted-foreground">—</ReadOnly>;
+  if (task.subtask_count === 0) return <ReadOnly />;
   const done = task.subtask_done_count === task.subtask_count;
   return (
     <ReadOnly>
@@ -459,7 +447,7 @@ export const SubtasksCell = memo(function SubtasksCell({ task }: { task: TaskRow
 });
 
 export const CommentsCell = memo(function CommentsCell({ task }: { task: TaskRow }) {
-  if (task.comment_count === 0) return <ReadOnly className="text-xs text-muted-foreground">—</ReadOnly>;
+  if (task.comment_count === 0) return <ReadOnly />;
   return (
     <ReadOnly>
       <MessageSquare className="size-3 text-muted-foreground" />
@@ -479,14 +467,10 @@ export const PlainDateCell = memo(function PlainDateCell({ iso }: { iso: string 
 /** Значение кастомного поля — только для чтения: правка живёт в карточке. */
 export const CustomFieldCell = memo(function CustomFieldCell({ value }: { value: unknown }) {
   if (value == null || value === "" || (Array.isArray(value) && value.length === 0)) {
-    return <ReadOnly className="text-xs text-muted-foreground">—</ReadOnly>;
+    return <ReadOnly />;
   }
   if (typeof value === "boolean") {
-    return (
-      <ReadOnly>
-        {value ? <Check className="size-3.5 text-emerald-600" /> : <span className="text-xs text-muted-foreground">—</span>}
-      </ReadOnly>
-    );
+    return <ReadOnly>{value && <Check className="size-3.5 text-emerald-600" />}</ReadOnly>;
   }
   const text = Array.isArray(value) ? value.join(", ") : String(value);
   return (

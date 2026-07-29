@@ -180,7 +180,7 @@ export function TimeClient({ initial }: { initial: TimeInitial }) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-border px-6 py-3.5">
-        <h1 className="text-base font-semibold">Время</h1>
+        <h1 className="font-heading text-xl font-semibold tracking-tight">Время</h1>
         <span className="flex-1" />
         {active ? (
           <div className="flex items-center gap-2">

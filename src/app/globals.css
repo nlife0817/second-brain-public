@@ -10,7 +10,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-golos);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -49,73 +49,90 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Палитра: один акцент (индиго) + нейтрали с лёгкой хромой в его сторону.
+   Чистые серые дефолтной темы shadcn (хрома 0) выглядели как непокрашенный
+   вайрфрейм — тонировка убирает это, не меняя светлоту ни одной поверхности. */
 :root {
   --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --foreground: oklch(0.17 0.012 275);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.17 0.012 275);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.17 0.012 275);
+  --primary: oklch(0.49 0.165 272);
+  --primary-foreground: oklch(0.985 0.005 272);
+  --secondary: oklch(0.958 0.006 277);
+  --secondary-foreground: oklch(0.25 0.02 275);
+  --muted: oklch(0.958 0.006 277);
+  --muted-foreground: oklch(0.5 0.02 275);
+  --accent: oklch(0.945 0.01 274);
+  --accent-foreground: oklch(0.25 0.02 275);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --border: oklch(0.915 0.007 277);
+  --input: oklch(0.915 0.007 277);
+  --ring: oklch(0.6 0.13 272);
+  --chart-1: oklch(0.55 0.16 272);
+  --chart-2: oklch(0.62 0.12 190);
+  --chart-3: oklch(0.7 0.14 75);
+  --chart-4: oklch(0.6 0.17 15);
+  --chart-5: oklch(0.55 0.14 305);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.972 0.005 277);
+  --sidebar-foreground: oklch(0.17 0.012 275);
+  --sidebar-primary: oklch(0.49 0.165 272);
+  --sidebar-primary-foreground: oklch(0.985 0.005 272);
+  --sidebar-accent: oklch(0.938 0.008 275);
+  --sidebar-accent-foreground: oklch(0.25 0.02 275);
+  --sidebar-border: oklch(0.91 0.007 277);
+  --sidebar-ring: oklch(0.6 0.13 272);
 }
 
+/* Переключателя тёмной темы в приложении пока нет — блок обновлён в тон
+   светлой палитре, чтобы включение темы не потребовало перекраски заново. */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --background: oklch(0.155 0.01 275);
+  --foreground: oklch(0.975 0.005 275);
+  --card: oklch(0.205 0.012 275);
+  --card-foreground: oklch(0.975 0.005 275);
+  --popover: oklch(0.21 0.012 275);
+  --popover-foreground: oklch(0.975 0.005 275);
+  --primary: oklch(0.7 0.13 272);
+  --primary-foreground: oklch(0.16 0.02 272);
+  --secondary: oklch(0.26 0.014 275);
+  --secondary-foreground: oklch(0.975 0.005 275);
+  --muted: oklch(0.26 0.014 275);
+  --muted-foreground: oklch(0.72 0.015 275);
+  --accent: oklch(0.28 0.016 275);
+  --accent-foreground: oklch(0.975 0.005 275);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.62 0.12 272);
+  --chart-1: oklch(0.62 0.16 272);
+  --chart-2: oklch(0.68 0.12 190);
+  --chart-3: oklch(0.74 0.14 75);
+  --chart-4: oklch(0.66 0.17 15);
+  --chart-5: oklch(0.62 0.14 305);
+  --sidebar: oklch(0.185 0.012 275);
+  --sidebar-foreground: oklch(0.975 0.005 275);
+  --sidebar-primary: oklch(0.7 0.13 272);
+  --sidebar-primary-foreground: oklch(0.16 0.02 272);
+  --sidebar-accent: oklch(0.26 0.014 275);
+  --sidebar-accent-foreground: oklch(0.975 0.005 275);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: oklch(0.62 0.12 272);
+}
+
+/* Цветные метки (статусы, проекты, теги): цвет сущности задаёт подложку,
+   текст доводится до читаемого контраста. Сырые 500-е цвета Tailwind текстом
+   на белом дают ~2.3:1 (amber) — на кегле 12px это нечитаемо. */
+.tinted-chip {
+  background-color: color-mix(in srgb, var(--chip-color) 13%, transparent);
+  color: color-mix(in oklab, var(--chip-color) 58%, black);
+}
+.dark .tinted-chip {
+  background-color: color-mix(in srgb, var(--chip-color) 24%, transparent);
+  color: color-mix(in oklab, var(--chip-color) 60%, white);
 }
 
 /* Tiptap editor styles */
@@ -161,6 +178,324 @@
 .tiptap.prose ol {
   margin-top: 0.25rem;
   margin-bottom: 0.25rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Документ описания задачи (.doc-content — класс редактируемой области Tiptap).
+
+   Раньше описание рисовалось классами typography-плагина (`prose`), но у
+   документа появились свои блоки — таблицы, колонки, картинки с подписью,
+   якоря комментариев, — которых `prose` не знает вовсе. Одна таблица стилей
+   обслуживает и режим правки, и чтение: разметка в обоих случаях одна.
+--------------------------------------------------------------------------- */
+.doc-content {
+  outline: none;
+}
+
+.doc-content > * + * {
+  margin-top: 0.6em;
+}
+
+.doc-content h1,
+.doc-content h2,
+.doc-content h3,
+.doc-content h4,
+.doc-content h5,
+.doc-content h6 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin-top: 1.2em;
+  margin-bottom: 0.35em;
+}
+.doc-content h1 { font-size: 1.6em; }
+.doc-content h2 { font-size: 1.35em; }
+.doc-content h3 { font-size: 1.15em; }
+.doc-content h4 { font-size: 1.03em; }
+.doc-content h5,
+.doc-content h6 { font-size: 1em; color: var(--muted-foreground); }
+
+.doc-content p {
+  line-height: 1.6;
+}
+
+.doc-content a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.doc-content code {
+  background: var(--muted);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+  font-size: 0.9em;
+}
+
+.doc-content pre {
+  background: var(--muted);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+}
+.doc-content pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.doc-content blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.85rem;
+  color: var(--muted-foreground);
+}
+
+.doc-content hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.2em 0;
+}
+
+/* Подложка выделения светлая в обеих темах, поэтому чернила задаются явно:
+   с `color: inherit` в тёмной теме получался белый текст на жёлтом. */
+.doc-content mark {
+  background: #fde68a;
+  color: #1c1917;
+  border-radius: 0.15rem;
+  padding: 0 0.1em;
+}
+
+/* Таблицы -------------------------------------------------------------------
+   Обёртка `tableWrapper` — от расширения Tiptap: широкая таблица прокручивается
+   внутри себя, иначе она растягивает всю страницу. */
+.doc-content .tableWrapper {
+  overflow-x: auto;
+  margin: 0.8em 0;
+}
+
+.doc-content table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0;
+}
+
+.doc-content th,
+.doc-content td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.55rem;
+  vertical-align: top;
+  position: relative;
+  min-width: 3rem;
+}
+
+.doc-content th {
+  background: var(--muted);
+  font-weight: 600;
+  text-align: left;
+}
+
+.doc-content td > *:first-child,
+.doc-content th > *:first-child {
+  margin-top: 0;
+}
+
+/* Картинка внутри ячейки не должна разрывать колонку. */
+.doc-content td figure,
+.doc-content th figure {
+  width: 100% !important;
+  margin: 0.25rem 0;
+}
+
+.doc-content .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--primary) 18%, transparent);
+  pointer-events: none;
+}
+
+.doc-content .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--primary);
+  pointer-events: none;
+}
+
+/* Колонки -------------------------------------------------------------------
+   Число долей приходит атрибутом узла: сетке нужно знать раскладку и при
+   обычном рендере описания, вне редактора. */
+.doc-content [data-columns] {
+  display: grid;
+  gap: 1rem;
+  align-items: start;
+  margin: 0.8em 0;
+}
+.doc-content [data-columns="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.doc-content [data-columns="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.doc-content [data-columns="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+.doc-content [data-column] {
+  min-width: 0;
+}
+.doc-content [data-column] > * + * {
+  margin-top: 0.6em;
+}
+
+/* На телефоне колонки складываются в одну: 320 px делить надвое бессмысленно. */
+@media (max-width: 640px) {
+  .doc-content [data-columns] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Картинки ------------------------------------------------------------------ */
+.doc-content figure.doc-image {
+  margin: 0.8em 0;
+  max-width: 100%;
+}
+.doc-content figure.doc-image[data-align="center"] { margin-left: auto; margin-right: auto; }
+.doc-content figure.doc-image[data-align="right"] { margin-left: auto; margin-right: 0; }
+.doc-content figure.doc-image[data-align="left"] { margin-right: auto; margin-left: 0; }
+
+.doc-content .doc-image-frame {
+  position: relative;
+  line-height: 0;
+}
+
+.doc-content figure.doc-image img {
+  width: 100%;
+  height: auto;
+  margin: 0;
+  border-radius: 0.5rem;
+  display: block;
+}
+
+.doc-content figure.doc-image figcaption {
+  margin-top: 0.3rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+}
+
+.doc-image-caption-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font: inherit;
+  color: inherit;
+}
+
+.doc-content .doc-image-selected img {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Ручка изменения размера шире самой кромки — в два пикселя мышью не попасть.
+   Растёт она внутрь картинки: вынос наружу давал бы описанию несколько
+   пикселей горизонтальной прокрутки на ровном месте. */
+.doc-content .doc-image-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 14px;
+  cursor: ew-resize;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.doc-content .doc-image-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  width: 4px;
+  height: 32px;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: var(--primary);
+  box-shadow: 0 0 0 1px var(--background);
+}
+.doc-content .doc-image-frame:hover .doc-image-handle,
+.doc-content .doc-image-handle-active {
+  opacity: 1;
+}
+
+.doc-content .doc-image-toolbar {
+  position: absolute;
+  top: 0.4rem;
+  left: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.15rem;
+  border-radius: 0.5rem;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+  line-height: 1;
+  z-index: 2;
+}
+.doc-image-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5rem;
+  min-width: 1.5rem;
+  padding: 0 0.3rem;
+  border-radius: 0.35rem;
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+}
+.doc-image-btn:hover { background: var(--muted); color: var(--foreground); }
+.doc-image-btn-active { background: var(--muted); color: var(--foreground); }
+.doc-image-sep { width: 1px; height: 1rem; background: var(--border); }
+
+/* Файловое вложение --------------------------------------------------------- */
+.doc-content .doc-file {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5em 0;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.2;
+}
+.doc-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  text-decoration: none;
+}
+.doc-file-name:hover { text-decoration: underline; }
+.doc-file-size { color: var(--muted-foreground); font-size: 0.75rem; }
+.doc-file-action {
+  display: inline-flex;
+  padding: 0.2rem;
+  border-radius: 0.3rem;
+  color: var(--muted-foreground);
+}
+.doc-file-action:hover { background: var(--background); color: var(--foreground); }
+
+/* Якоря комментариев --------------------------------------------------------
+   Открытое обсуждение подсвечено, закрытое остаётся в разметке без подсветки —
+   тред можно переоткрыть на том же месте. */
+.doc-content .doc-comment-anchor {
+  background: color-mix(in oklab, #f59e0b 28%, transparent);
+  border-bottom: 2px solid #f59e0b;
+  cursor: pointer;
+}
+.doc-content .doc-comment-anchor[data-comment-resolved="true"] {
+  background: transparent;
+  border-bottom: 1px dotted var(--border);
 }
 
 /* Comment rendered prose: tighter lists */

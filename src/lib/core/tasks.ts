@@ -501,6 +501,7 @@ export async function getTaskDetail(ctx: AuthContext, taskId: string): Promise<T
     followers,
     field_values: Object.fromEntries(values.map((v) => [v.field_id, v.value])),
     creator: creator ?? null,
+    chain_project_ids: access.chainProjectIds,
   };
 }
 
@@ -522,6 +523,50 @@ async function assertOrgUsers(ctx: AuthContext, userIds: string[]): Promise<void
   ).all(ctx.orgId, userIds);
   if (rows.length !== new Set(userIds).size) {
     throw new DomainError(422, "Assignee is not a member of this organization");
+  }
+}
+
+/**
+ * Закрытый проект живёт только на явных участниках — а назначение само по себе
+ * открывает задачу исполнителю (см. правило видимости в `taskVisibility`).
+ * Значит, назначить постороннего на задачу закрытого проекта — это тихо выдать
+ * ему доступ в обход списка участников. Проверяем только тех, кого добавляют:
+ * старые назначения могли достаться от `preserveAssigneesOnClose` и ломать на
+ * них любую другую правку задачи нельзя.
+ */
+async function assertAssigneesInClosedProjects(
+  ctx: AuthContext,
+  userIds: string[],
+  projectIds: string[],
+): Promise<void> {
+  if (userIds.length === 0 || projectIds.length === 0) return;
+  const projectPh = projectIds.map(() => "?").join(",");
+  const closed = await prepare<{ id: string; name: string }>(
+    `SELECT id, name FROM core.projects
+     WHERE org_id = ? AND id IN (${projectPh}) AND default_role IS NULL`,
+  ).all(ctx.orgId, projectIds);
+  if (closed.length === 0) return;
+
+  const unique = [...new Set(userIds)];
+  const closedPh = closed.map(() => "?").join(",");
+  const userPh = unique.map(() => "?").join(",");
+  const rows = await prepare<{ project_id: string; user_id: string }>(
+    `SELECT project_id, user_id FROM core.project_members
+     WHERE project_id IN (${closedPh}) AND user_id IN (${userPh})`,
+  ).all(
+    closed.map((p) => p.id),
+    unique,
+  );
+  const member = new Set(rows.map((r) => `${r.project_id}:${r.user_id}`));
+  for (const project of closed) {
+    for (const userId of unique) {
+      if (!member.has(`${project.id}:${userId}`)) {
+        throw new DomainError(
+          422,
+          `Исполнителя нет среди участников закрытого проекта «${project.name}» — сначала добавьте его в проект`,
+        );
+      }
+    }
   }
 }
 
@@ -624,6 +669,10 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
   const requested = [...new Set(input.assignee_ids ?? [])];
   const assigneeIds = requested.length > 0 ? requested : [ctx.user.id];
   await assertOrgUsers(ctx, assigneeIds);
+  // Подзадача наследует проекты родителя, поэтому и закрытость — тоже.
+  await assertAssigneesInClosedProjects(ctx, assigneeIds, [
+    ...new Set([...placements.map((pl) => pl.project_id), ...(parentAccess?.chainProjectIds ?? [])]),
+  ]);
   const tagIds = [...new Set(input.tag_ids ?? [])];
   await assertOrgTags(ctx, tagIds);
   const status = input.status_id ? await getOrgStatus(ctx, input.status_id) : null;
@@ -752,7 +801,20 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
     ? await prepare<TaskStatus>(`SELECT id, org_id, name, color, kind, position FROM core.task_statuses WHERE id = ?`).get(task.status_id)
     : undefined;
 
-  if (patch.assignee_ids) await assertOrgUsers(ctx, patch.assignee_ids);
+  if (patch.assignee_ids) {
+    await assertOrgUsers(ctx, patch.assignee_ids);
+    // Что доступ расширяют, видно только по разнице с текущим составом —
+    // читаем его до транзакции, там же где остальные проверки.
+    const current = await prepare<{ user_id: string }>(
+      `SELECT user_id FROM core.task_assignees WHERE task_id = ?`,
+    ).all(taskId);
+    const currentSet = new Set(current.map((r) => r.user_id));
+    await assertAssigneesInClosedProjects(
+      ctx,
+      patch.assignee_ids.filter((id) => !currentSet.has(id)),
+      access.chainProjectIds,
+    );
+  }
   if (patch.tag_ids) await assertOrgTags(ctx, patch.tag_ids);
 
   await transaction(async (tx) => {
@@ -953,6 +1015,16 @@ export async function setTaskPlacements(
     if (!nextByProject.has(projectId)) {
       await requireProject(ctx, projectId, "task.edit");
     }
+  }
+
+  // Та же дыра, что и при назначении, только с другого конца: перенос задачи в
+  // закрытый проект открыл бы её нынешним исполнителям, которых там нет.
+  const added = [...nextByProject.keys()].filter((id) => !currentByProject.has(id));
+  if (added.length > 0) {
+    const assignees = await prepare<{ user_id: string }>(
+      `SELECT user_id FROM core.task_assignees WHERE task_id = ?`,
+    ).all(taskId);
+    await assertAssigneesInClosedProjects(ctx, assignees.map((a) => a.user_id), added);
   }
 
   await transaction(async (tx) => {

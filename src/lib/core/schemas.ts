@@ -88,7 +88,9 @@ const prioritySchema = z.enum(["urgent", "high", "medium", "low", "none"]);
 
 export const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(500),
-  description: z.string().max(100_000).optional(),
+  // Описание — документ: таблицы, колонки и подписи к картинкам легко
+  // перебирают прежние 100 КБ разметки.
+  description: z.string().max(500_000).optional(),
   status_id: z.uuid().nullish(),
   priority: prioritySchema.optional(),
   due_date: dateSchema.nullish(),
@@ -106,7 +108,7 @@ export const taskCreateSchema = z.object({
 export const taskPatchSchema = z
   .object({
     title: z.string().trim().min(1).max(500).optional(),
-    description: z.string().max(100_000).optional(),
+    description: z.string().max(500_000).optional(),
     status_id: z.uuid().nullable().optional(),
     priority: prioritySchema.optional(),
     due_date: dateSchema.nullable().optional(),
@@ -132,6 +134,18 @@ export const taskMoveSchema = z.object({
 });
 
 export const commentCreateSchema = z.object({ body: z.string().min(1).max(50_000) });
+
+// --- Комментарии к описанию (треды на фрагменте текста) ------------------------------
+
+export const docThreadCreateSchema = z.object({
+  body: z.string().min(1).max(20_000),
+  /** Выделенный фрагмент на момент создания треда — опора, если текст перепишут. */
+  quote: z.string().max(2_000).default(""),
+});
+
+export const docCommentBodySchema = z.object({ body: z.string().min(1).max(20_000) });
+
+export const docThreadResolveSchema = z.object({ resolved: z.boolean() });
 
 // --- Справочники и поля ---------------------------------------------------------------
 

@@ -36,6 +36,7 @@ import type {
   CoreComment,
   CoreEvent,
   CustomField,
+  DocCommentThread,
   RelationType,
   RelationWithTarget,
   TaskDetail,
@@ -44,7 +45,7 @@ import type {
 } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
-import { Avatar, PRIORITY_LABELS, StatusPill } from "./bits";
+import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle } from "./bits";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
 import { SidePanel } from "./SidePanel";
@@ -60,6 +61,11 @@ const RichText = dynamic(() => import("./RichText").then((m) => m.RichText), {
     </div>
   ),
 });
+// Полноэкранный документ — отдельный чанк поверх того же Tiptap: развёрнутый
+// режим открывают заметно реже, чем карточку.
+const DocEditor = dynamic(() => import("./editor/DocEditor").then((m) => m.DocEditor), {
+  ssr: false,
+});
 
 const VERB_LABELS: Record<string, string> = {
   "task.created": "создал(а) задачу",
@@ -71,6 +77,10 @@ const VERB_LABELS: Record<string, string> = {
   "task.unhomed": "убрал(а) из проекта",
   "task.deleted": "удалил(а) задачу",
   "comment.added": "оставил(а) комментарий",
+  "doc_comment.added": "начал(а) обсуждение в описании",
+  "doc_comment.replied": "ответил(а) в обсуждении описания",
+  "doc_comment.resolved": "закрыл(а) обсуждение описания",
+  "doc_comment.reopened": "переоткрыл(а) обсуждение описания",
 };
 
 function eventLabel(e: CoreEvent): string {
@@ -103,6 +113,7 @@ interface TaskBundle {
   relations: RelationWithTarget[];
   relation_types: RelationType[];
   recurrence: TaskRecurrenceRule | null;
+  doc_comments: DocCommentThread[];
 }
 
 export function TaskSheet({
@@ -165,6 +176,11 @@ export function TaskSheet({
   const [relations, setRelations] = useState<RelationWithTarget[]>([]);
   const [relationTypes, setRelationTypes] = useState<RelationType[]>([]);
   const [recurrence, setRecurrence] = useState<TaskRecurrenceRule | null>(null);
+  const [docThreads, setDocThreads] = useState<DocCommentThread[]>([]);
+  // Разворот помнится по задаче, а не флагом: иначе переход к соседней задаче
+  // оставлял бы открытым документ уже другой — сбрасывать это в эффекте
+  // означало бы лишний каскад перерисовок.
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [tab, setTab] = useState<"comments" | "feed">("comments");
   const [commentText, setCommentText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -197,6 +213,7 @@ export function TaskSheet({
       setRelations(b.relations);
       setRelationTypes(b.relation_types);
       setRecurrence(b.recurrence ?? null);
+      setDocThreads(b.doc_comments ?? []);
       setError(null);
     } catch (e) {
       if (currentTaskRef.current !== taskId) return;
@@ -567,8 +584,22 @@ export function TaskSheet({
     [task?.placements, projects],
   );
 
+  // Развёрнутое описание закрывает экран целиком, и карточка под ним не нужна.
+  // Дело не в красоте: оболочка карточки — модальный диалог (панель или окно,
+  // см. SidePanel), она забирает фокус себе и объявляет всё вне себя скрытым
+  // для скринридера. Оставить её открытой значит держать поверх неё слой, до
+  // которого не добраться ни клавиатурой, ни озвучкой. Состояние карточки живёт
+  // в этом компоненте и переживает закрытие оболочки — возврат ничего не
+  // перечитывает.
+  const docOpen = !!task && expandedTaskId === task.id;
+
   return (
-    <SidePanel open={!!rootTaskId} onOpenChange={(open) => !open && closeSheet()} title="Задача">
+    <>
+    <SidePanel
+      open={!!rootTaskId && !docOpen}
+      onOpenChange={(open) => !open && !docOpen && closeSheet()}
+      title="Задача"
+    >
       {!task ? (
         <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
           {error ?? "Загрузка…"}
@@ -657,7 +688,7 @@ export function TaskSheet({
               <Input
                 key={`title-${task.id}`}
                 defaultValue={task.title}
-                className="border-none px-0 text-lg font-semibold shadow-none focus-visible:ring-0"
+                className="border-none px-0 font-heading text-lg font-semibold tracking-tight shadow-none focus-visible:ring-0 md:text-lg"
                 onBlur={(e) => {
                   const v = e.target.value.trim();
                   if (v && v !== task.title) void patch({ title: v });
@@ -745,7 +776,13 @@ export function TaskSheet({
                       </button>
                     </span>
                   ))}
-                  <MemberPicker selected={task.assignees} onChange={(ids) => void setAssignees(ids)} />
+                  <MemberPicker
+                    selected={task.assignees}
+                    // Цепочка, а не свои размещения: подзадача наследует
+                    // проекты родителя вместе с их закрытостью.
+                    projectIds={task.chain_project_ids}
+                    onChange={(ids) => void setAssignees(ids)}
+                  />
                 </div>
 
                 <span className="text-muted-foreground">Теги</span>
@@ -762,10 +799,10 @@ export function TaskSheet({
                           void patch({ tag_ids: next });
                         }}
                         className={cn(
-                          "rounded-full px-2 py-0.5 text-[11px] font-medium transition-opacity",
+                          "tinted-chip rounded-full px-2 py-0.5 text-[11px] font-medium transition-opacity",
                           active ? "" : "opacity-40 hover:opacity-80",
                         )}
-                        style={{ backgroundColor: `${t.color}1a`, color: t.color }}
+                        style={chipStyle(t.color)}
                       >
                         {t.name}
                       </button>
@@ -828,11 +865,21 @@ export function TaskSheet({
                 ))}
               </div>
 
-              <RichText
-                key={`desc-${task.id}`}
-                value={task.description}
-                onSave={(html) => void patch({ description: html })}
-              />
+              {/* Оболочка карточки остаётся смонтированной и закрытой, поэтому
+                  редактор карточки надо снимать явно: два живых редактора на
+                  одном описании наперегонки сохраняют его каждый своей версией. */}
+              {!docOpen && (
+                <RichText
+                  key={`desc-${task.id}`}
+                  value={task.description}
+                  onSave={(html) => void patch({ description: html })}
+                  orgId={orgId}
+                  taskId={task.id}
+                  editable={canEdit}
+                  onExpand={() => setExpandedTaskId(task.id)}
+                  threadCount={docThreads.filter((t) => !t.resolved_at).length}
+                />
+              )}
 
               <SubtaskSection
                 subtasks={subtasks}
@@ -930,6 +977,26 @@ export function TaskSheet({
         </>
       )}
     </SidePanel>
+
+    {task && docOpen && (
+      <DocEditor
+        open
+        onClose={() => setExpandedTaskId(null)}
+        orgId={orgId}
+        taskId={task.id}
+        taskTitle={task.title}
+        value={task.description}
+        onSave={(html) => void patch({ description: html })}
+        editable={canEdit}
+        // Право комментировать проверяет сервер: у гостя оно зависит от роли в
+        // конкретном проекте, а её карточка не знает.
+        canComment={orgRole !== null}
+        canResolveAll={canEdit}
+        me={me}
+        initialThreads={docThreads}
+      />
+    )}
+    </>
   );
 }
 

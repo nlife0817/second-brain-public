@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Check, UserPlus } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar } from "./bits";
+import { assigneeChoice } from "@/lib/core/assignable";
 import { useV2Store } from "@/lib/core/ui-store";
 import type { UserBrief } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
@@ -13,14 +14,21 @@ export function MemberPicker({
   selected,
   onChange,
   trigger,
+  projectIds,
 }: {
   selected: UserBrief[];
   onChange: (ids: string[]) => void;
   trigger?: React.ReactNode;
+  /**
+   * Проекты задачи. Закрытый проект пускает в исполнители только своих
+   * участников — без этого списка выбор ничем не ограничен.
+   */
+  projectIds?: string[];
 }) {
-  const { members } = useV2Store();
+  const { members, projects } = useV2Store();
   const [open, setOpen] = useState(false);
   const selectedIds = new Set(selected.map((u) => u.id));
+  const choice = assigneeChoice(members, projects, projectIds ?? [], selectedIds);
 
   function toggle(id: string) {
     const next = new Set(selectedIds);
@@ -45,7 +53,7 @@ export function MemberPicker({
       />
       <PopoverContent className="w-64 p-1" align="start">
         <div className="max-h-64 overflow-y-auto">
-          {members.map((m) => (
+          {choice.members.map((m) => (
             <button
               key={m.user_id}
               onClick={() => toggle(m.user_id)}
@@ -59,10 +67,16 @@ export function MemberPicker({
               <Check className={cn("size-4", selectedIds.has(m.user_id) ? "opacity-100" : "opacity-0")} />
             </button>
           ))}
-          {members.length === 0 && (
+          {choice.members.length === 0 && (
             <p className="px-2 py-3 text-center text-xs text-muted-foreground">Нет участников</p>
           )}
         </div>
+        {/* Короткий список без объяснения выглядит как потерянные участники. */}
+        {choice.restrictedBy.length > 0 && (
+          <p className="border-t border-border px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
+            Только участники закрытого проекта «{choice.restrictedBy.join("», «")}»
+          </p>
+        )}
       </PopoverContent>
     </Popover>
   );

@@ -16,7 +16,10 @@ export interface BulkBarProps {
   count: number;
   statuses: TaskStatus[];
   tags: CoreTag[];
+  /** Уже суженный список: закрытые проекты выбранных задач его ограничивают. */
   members: OrgMemberWithUser[];
+  /** Названия закрытых проектов, сузивших список исполнителей. */
+  restrictedBy?: string[];
   busy: boolean;
   onClear: () => void;
   onApply: (payload: Record<string, unknown>) => void;
@@ -32,6 +35,7 @@ export function BulkBar({
   statuses,
   tags,
   members,
+  restrictedBy = [],
   busy,
   onClear,
   onApply,
@@ -83,6 +87,11 @@ export function BulkBar({
               <span className="flex-1 truncate text-left">{m.name || m.email}</span>
             </button>
           ))}
+          {restrictedBy.length > 0 && (
+            <p className="mt-1 border-t border-border px-2 pt-1.5 text-[11px] leading-4 text-muted-foreground">
+              Только участники закрытого проекта «{restrictedBy.join("», «")}»
+            </p>
+          )}
         </PopoverContent>
       </Popover>
 

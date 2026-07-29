@@ -6,7 +6,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Bell, LogOut, Smartphone } from "lucide-react";
+import { Bell, ChevronUp, LogOut, Smartphone } from "lucide-react";
 import { Avatar } from "@/components/v2/bits";
 import {
   DropdownMenu,
@@ -42,21 +42,27 @@ export function AccountMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
+          // Рамка и стрелка вверх: без них подпись с аватаром читалась как
+          // подпись, а не как кнопка, и меню аккаунта никто не находил.
+          // В свёрнутом сайдбаре остаётся одна рамка — стрелке там негде встать.
           <button
             title={compact ? me.name || me.email : undefined}
             className={cn(
-              "flex w-full items-center rounded-lg py-1 text-left hover:bg-muted/60",
-              compact ? "justify-center px-0" : "gap-2 px-1",
+              "flex w-full items-center rounded-lg border border-border py-1 text-left hover:border-ring hover:bg-muted/60",
+              compact ? "justify-center px-0" : "gap-2 px-1.5",
             )}
           >
             <Avatar user={me} size="md" />
             {!compact && (
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-medium">{me.name || me.email}</span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  {orgRole ? ROLE_LABELS[orgRole] : me.email}
+              <>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-medium">{me.name || me.email}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">
+                    {orgRole ? ROLE_LABELS[orgRole] : me.email}
+                  </span>
                 </span>
-              </span>
+                <ChevronUp className="size-4 shrink-0 text-muted-foreground" />
+              </>
             )}
           </button>
         }

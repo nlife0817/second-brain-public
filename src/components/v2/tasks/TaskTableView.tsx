@@ -20,6 +20,7 @@ import { FilterBuilder } from "@/components/v2/tasks/FilterBuilder";
 import { TaskComposer } from "@/components/v2/tasks/TaskComposer";
 import { TaskTable, resolveColumns, type GroupLabel } from "@/components/v2/tasks/TaskTable";
 import { ViewSettingsPopover } from "@/components/v2/tasks/ViewControls";
+import { assigneeChoice } from "@/lib/core/assignable";
 import { api } from "@/lib/core/client";
 import { invalidate } from "@/lib/core/query";
 import { emptyDraft, type TaskDraft } from "@/lib/core/task-draft";
@@ -33,9 +34,9 @@ import {
   NONE_VALUE,
   PRIORITY_WEIGHT,
   compareTasks,
+  hiddenStatusIds,
   makeMatchContext,
   matchesGroups,
-  showsArchived,
   type GroupByField,
   type SortColumn,
 } from "@/lib/core/views";
@@ -308,18 +309,21 @@ export function TaskTableView({
 
   const matchCtx = useMemo(() => makeMatchContext(me?.id ?? null), [me?.id]);
 
-  // Архивные статусы прячутся до явного «Архив = Показать»: иначе архив
-  // всплывает в каждой группировке и в счётчиках групп.
-  const archivedStatusIds = useMemo(
-    () => new Set(statuses.filter((s) => s.kind === "archived").map((s) => s.id)),
-    [statuses],
-  );
-  const withArchived = showsArchived(filterGroups);
+  /**
+   * Архив и завершённое прячутся до явного «Архив/Готово = Показать»: иначе
+   * прошлое всплывает в каждой группировке. Отсев идёт отдельным шагом, а не
+   * внутри общего фильтра: это умолчание экрана, и в счётчике «N из M» ему
+   * делать нечего — иначе список без единого условия показывал бы «12 из 40».
+   */
+  const pool = useMemo(() => {
+    const hidden = hiddenStatusIds(filterGroups, statuses);
+    if (hidden.size === 0) return tasks;
+    return tasks.filter((t) => !(t.status_id && hidden.has(t.status_id)));
+  }, [tasks, filterGroups, statuses]);
 
   const visibleTasks = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    const filtered = tasks.filter((t) => {
-      if (!withArchived && t.status_id && archivedStatusIds.has(t.status_id)) return false;
+    const filtered = pool.filter((t) => {
       if (needle && !t.title.toLowerCase().includes(needle)) return false;
       return matchesGroups(t, filterGroups, matchCtx);
     });
@@ -329,7 +333,7 @@ export function TaskTableView({
     return [...filtered].sort((a, b) =>
       compareTasks(a, b, sort, { statusPosition, projectPosition, projectName }),
     );
-  }, [tasks, search, filterGroups, matchCtx, sort, statuses, projects, withArchived, archivedStatusIds]);
+  }, [pool, search, filterGroups, matchCtx, sort, statuses, projects]);
 
   const columns = useMemo(
     () => resolveColumns(columnsOrder, widths, fields),
@@ -446,6 +450,21 @@ export function TaskTableView({
 
   const selectedTasks = useMemo(() => tasks.filter((t) => selected.has(t.id)), [tasks, selected]);
 
+  /**
+   * Массовое назначение перетирает исполнителей у всех выбранных строк, поэтому
+   * годятся только те, кого пускают закрытые проекты каждой из них. Текущих
+   * исполнителей здесь не сохраняем: это не правка списка, а замена.
+   */
+  const bulkAssignees = useMemo(
+    () =>
+      assigneeChoice(
+        members,
+        projects,
+        [...new Set(selectedTasks.flatMap((t) => t.placements.map((p) => p.project_id)))],
+      ),
+    [members, projects, selectedTasks],
+  );
+
   const runBulk = useCallback(
     async (build: (task: TaskRow) => Record<string, unknown> | null) => {
       const patches = selectedTasks
@@ -506,7 +525,7 @@ export function TaskTableView({
         {titleSlot}
         <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-muted-foreground">
           {visibleTasks.length}
-          {visibleTasks.length !== tasks.length && ` из ${tasks.length}`}
+          {visibleTasks.length !== pool.length && ` из ${pool.length}`}
         </span>
 
         {/* На узком экране кнопки экрана держатся первой строки — получается
@@ -664,7 +683,11 @@ export function TaskTableView({
                 ? "Загрузка…"
                 : tasks.length === 0
                   ? emptyText
-                  : `Ни одна задача не подходит под фильтр${search ? ` «${search}»` : ""}.`}
+                  : pool.length === 0
+                    ? // Все задачи ушли в «Готово»/«Архив» — иначе человек решит,
+                      // что список сломался.
+                      "Все задачи в «Готово» или «Архиве» — включите их показ в «Фильтрах», чтобы увидеть."
+                    : `Ни одна задача не подходит под фильтр${search ? ` «${search}»` : ""}.`}
             </p>
           }
         />
@@ -675,7 +698,8 @@ export function TaskTableView({
           count={selected.size}
           statuses={statuses}
           tags={tags}
-          members={members}
+          members={bulkAssignees.members}
+          restrictedBy={bulkAssignees.restrictedBy}
           busy={bulkBusy}
           onClear={() => setSelected(new Set())}
           onApply={(payload) => void runBulk(() => payload)}

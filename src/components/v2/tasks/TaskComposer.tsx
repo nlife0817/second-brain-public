@@ -12,7 +12,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Maximize2, Plus, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { AvatarStack, PRIORITY_LABELS, PriorityDot, dueTone, formatDue } from "@/components/v2/bits";
+import {
+  AvatarStack,
+  PRIORITY_LABELS,
+  PriorityDot,
+  chipStyle,
+  dueTone,
+  formatDue,
+} from "@/components/v2/bits";
+import { DuePicker } from "@/components/v2/DuePicker";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -21,8 +29,6 @@ import { cn } from "@/lib/utils";
 import { formatEstimate } from "./cells";
 import {
   AssigneesMenu,
-  DUE_POPOVER,
-  DueForm,
   ESTIMATE_POPOVER,
   EstimateForm,
   FIELD_POPOVER,
@@ -230,8 +236,9 @@ function DraftCell({
     default: {
       const fieldId = column.id.startsWith("field:") ? column.id.slice("field:".length) : null;
       if (fieldId) return <CustomFieldDraftCell fieldId={fieldId} draft={draft} patch={patch} />;
-      // Подзадачи, комментарии, даты создания — у ещё не созданной задачи их нет.
-      return <span className="px-1.5 text-xs text-muted-foreground/50">—</span>;
+      // Подзадачи, комментарии, даты создания — у ещё не созданной задачи их
+      // нет; ячейка просто молчит, как пустые ячейки таблицы.
+      return <span className="px-1.5" />;
     }
   }
 }
@@ -269,8 +276,8 @@ function StatusDraftCell({ draft, patch }: CellProps) {
       <PopoverTrigger render={<button className={CELL} />}>
         {status ? (
           <span
-            className="inline-flex max-w-full items-center gap-1.5 truncate rounded-full px-2 py-0.5 text-xs font-medium"
-            style={{ backgroundColor: `${status.color}1a`, color: status.color }}
+            className="tinted-chip inline-flex max-w-full items-center gap-1.5 truncate rounded-full px-2 py-0.5 text-xs font-medium"
+            style={chipStyle(status.color)}
           >
             <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: status.color }} />
             <span className="truncate">{status.name}</span>
@@ -300,11 +307,8 @@ function ProjectDraftCell({ draft, patch }: CellProps) {
             return (
               <span
                 key={id}
-                className="inline-flex max-w-full items-center truncate rounded px-1.5 py-0.5 text-xs"
-                style={{
-                  backgroundColor: `${project?.color ?? "#94a3b8"}1a`,
-                  color: project?.color ?? undefined,
-                }}
+                className="tinted-chip inline-flex max-w-full items-center truncate rounded px-1.5 py-0.5 text-xs"
+                style={chipStyle(project?.color)}
               >
                 <span className="truncate">{project?.name ?? "—"}</span>
               </span>
@@ -343,6 +347,7 @@ function AssigneesDraftCell({ draft, patch }: CellProps) {
       <PopoverContent align="start" className={WIDE_MENU_POPOVER}>
         <AssigneesMenu
           value={draft.assignee_ids}
+          projectIds={draft.project_ids}
           onChange={(assignee_ids) => patch({ assignee_ids })}
         />
       </PopoverContent>
@@ -362,8 +367,8 @@ function TagsDraftCell({ draft, patch }: CellProps) {
             {selected.map((t) => (
               <span
                 key={t.id}
-                className="truncate rounded px-1.5 py-0.5 text-[11px]"
-                style={{ backgroundColor: `${t.color}1a`, color: t.color }}
+                className="tinted-chip truncate rounded px-1.5 py-0.5 text-[11px]"
+                style={chipStyle(t.color)}
               >
                 {t.name}
               </span>
@@ -383,18 +388,18 @@ function TagsDraftCell({ draft, patch }: CellProps) {
 function DueDraftCell({ draft, patch }: CellProps) {
   const text = formatDue(draft.due_date, draft.due_time);
   return (
-    <Popover>
-      <PopoverTrigger render={<button className={CELL} />}>
-        {text ? (
-          <span className={cn("truncate text-xs", dueTone(draft.due_date, false))}>{text}</span>
-        ) : (
-          <span className={PLACEHOLDER}>Срок</span>
-        )}
-      </PopoverTrigger>
-      <PopoverContent align="start" className={DUE_POPOVER}>
-        <DueForm date={draft.due_date} time={draft.due_time} onChange={patch} />
-      </PopoverContent>
-    </Popover>
+    <DuePicker
+      date={draft.due_date}
+      time={draft.due_time}
+      triggerClassName={CELL}
+      onCommit={(next) => patch(next)}
+    >
+      {text ? (
+        <span className={cn("truncate text-xs", dueTone(draft.due_date, false))}>{text}</span>
+      ) : (
+        <span className={PLACEHOLDER}>Срок</span>
+      )}
+    </DuePicker>
   );
 }
 
@@ -429,7 +434,7 @@ function CustomFieldDraftCell({
 }) {
   const fields = useV2Store((s) => s.fields);
   const field: CustomField | undefined = fields.find((f) => f.id === fieldId);
-  if (!field) return <span className="px-1.5 text-xs text-muted-foreground/50">—</span>;
+  if (!field) return <span className="px-1.5" />;
 
   const text = describeFieldValue(field, draft.field_values[fieldId]);
 
