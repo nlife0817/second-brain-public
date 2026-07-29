@@ -6,7 +6,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Bell, LogOut, Smartphone } from "lucide-react";
+import { Bell, ChevronUp, LogOut, Smartphone } from "lucide-react";
 import { Avatar } from "@/components/v2/bits";
 import {
   DropdownMenu,
@@ -32,7 +32,9 @@ export function AccountMenu({ me, orgRole }: { me: UserBrief; orgRole: OrgRole |
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <button className="flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left hover:bg-muted/60">
+          // Рамка и стрелка вверх: без них подпись с аватаром читалась как
+          // подпись, а не как кнопка, и меню аккаунта никто не находил.
+          <button className="flex w-full items-center gap-2 rounded-lg border border-border px-1.5 py-1 text-left hover:border-ring hover:bg-muted/60">
             <Avatar user={me} size="md" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-xs font-medium">{me.name || me.email}</span>
@@ -40,6 +42,7 @@ export function AccountMenu({ me, orgRole }: { me: UserBrief; orgRole: OrgRole |
                 {orgRole ? ROLE_LABELS[orgRole] : me.email}
               </span>
             </span>
+            <ChevronUp className="size-4 shrink-0 text-muted-foreground" />
           </button>
         }
       />
