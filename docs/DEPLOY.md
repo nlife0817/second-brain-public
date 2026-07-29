@@ -29,6 +29,10 @@ push в v2-master
 
 ## Разовая настройка
 
+Порядок шагов важен: секреты в GitHub добавляются **последними**. Пока их нет,
+выкат не состоится ни при каком push — а до шага 2 он и не должен состояться, иначе
+попытается прогнать всю историю миграций поверх готовой базы.
+
 ### 1. Ключ для CI (на своём компьютере, PowerShell)
 
 ```powershell
@@ -50,20 +54,7 @@ Get-Content "$env:USERPROFILE\.ssh\sb_deploy_ci" -Raw | Set-Clipboard
 Get-Content "$env:USERPROFILE\.ssh\sb_deploy_ci.pub"; ssh-keyscan -t ed25519 203.0.113.10
 ```
 
-### 2. Секреты в GitHub
-
-Settings → Secrets and variables → Actions → New repository secret:
-
-| Имя | Значение |
-|---|---|
-| `DEPLOY_SSH_KEY` | приватный ключ целиком, из буфера обмена (вместе со строками `-----BEGIN…`/`-----END…`) |
-| `DEPLOY_KNOWN_HOSTS` | строка из `ssh-keyscan`, начинающаяся с IP |
-| `DEPLOY_HOST` | `203.0.113.10` |
-
-Адрес в `DEPLOY_HOST` и адрес в `DEPLOY_KNOWN_HOSTS` обязаны совпадать посимвольно:
-ключ, снятый для IP, к домену не подойдёт, и ssh откажется подключаться.
-
-### 3. Сервер (один блок, от root)
+### 2. Сервер (от root)
 
 ```bash
 cd /srv/secondbrain && git remote set-branches origin '*' && git fetch --prune origin && git switch -C v2-master origin/v2-master && deploy/migrate.sh --dry-run
@@ -94,6 +85,20 @@ printf 'command="/srv/secondbrain/deploy/deploy.sh",restrict %s\n' 'ВСТАВЬ
 ```bash
 ( crontab -l 2>/dev/null; echo '40 4 * * 0 /srv/secondbrain/deploy/cleanup.sh >> /var/log/secondbrain-cleanup.log 2>&1' ) | crontab - && crontab -l
 ```
+
+### 3. Секреты в GitHub
+
+Только теперь — иначе выкат случится раньше, чем отмечена история миграций.
+Settings → Secrets and variables → Actions → New repository secret:
+
+| Имя | Значение |
+|---|---|
+| `DEPLOY_SSH_KEY` | приватный ключ целиком, из буфера обмена (вместе со строками `-----BEGIN…`/`-----END…`) |
+| `DEPLOY_HOST` | `203.0.113.10` |
+| `DEPLOY_KNOWN_HOSTS` | строка из `ssh-keyscan`, начинающаяся с этого же адреса |
+
+Адрес в `DEPLOY_HOST` и адрес в `DEPLOY_KNOWN_HOSTS` обязаны совпадать посимвольно:
+отпечаток, снятый для IP, к домену не подойдёт, и ssh откажется подключаться.
 
 ### 4. Проверка
 
