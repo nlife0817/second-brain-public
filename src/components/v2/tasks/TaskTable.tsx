@@ -25,7 +25,7 @@ import {
 import type { TaskRow } from "@/lib/core/types";
 import { BASE_COLUMNS, COLUMN_MAX_WIDTH, COLUMN_MIN_WIDTH, type ColumnDef } from "@/lib/core/view-store";
 import type { GroupByField, MatchContext, SortState, SubtaskMode } from "@/lib/core/views";
-import { arrangeRows, groupKeys } from "@/lib/core/views";
+import { arrangeGroupRows, buildForest, groupKeys, type TaskForest } from "@/lib/core/views";
 import { cn } from "@/lib/utils";
 
 /**
@@ -85,14 +85,20 @@ function buildGroups(
   matchCtx: MatchContext,
   labelForGroup: TaskTableProps["labelForGroup"],
   groupOrder: TaskTableProps["groupOrder"],
+  forest: TaskForest | null,
 ): GroupNode[] {
   const [first, second] = fields;
+  // В режимах «вложенными» и «скрыть» по корзинам раскладываются ТОЛЬКО корни:
+  // подзадача едет под родителем, в его группу, а не отдельной строкой в свою.
+  // Раскладка всех подряд и была причиной, по которой вложенность разваливалась
+  // при любой активной группировке — а по умолчанию она включена.
+  const source = forest ? forest.roots : tasks;
   if (first === "none") {
-    return [{ key: "__all__", path: "__all__", label: { text: "" }, tasks, children: [] }];
+    return [{ key: "__all__", path: "__all__", label: { text: "" }, tasks: source, children: [] }];
   }
 
   const buckets = new Map<string, TaskRow[]>();
-  for (const task of tasks) {
+  for (const task of source) {
     // Задача с несколькими проектами/исполнителями/тегами попадает в каждую
     // группу — иначе список молча теряет часть её принадлежностей.
     for (const key of groupKeys(task, first, matchCtx)) {
@@ -318,6 +324,7 @@ function GroupBody({
   onOpen,
   grouped,
   subtaskMode,
+  forest,
 }: {
   node: GroupNode;
   level: number;
@@ -332,24 +339,25 @@ function GroupBody({
   onOpen: (taskId: string) => void;
   grouped: boolean;
   subtaskMode: SubtaskMode;
+  /** Дерево всего набора; `null` — режим «отдельными строками». */
+  forest: TaskForest | null;
 }) {
   const [limit, setLimit] = useState(GROUP_PAGE);
   const isCollapsed = collapsed.has(node.path);
-  // Вложенность считается внутри группы: подзадача, попавшая в другую группу,
-  // становится там обычной строкой — иначе она бы просто пропала.
-  const rows = useMemo(
-    () => (node.children.length === 0 ? arrangeRows(node.tasks, subtaskMode) : []),
-    [node.children.length, node.tasks, subtaskMode],
+  // Родство берётся из общего леса, посчитанного до группировки: подзадача
+  // рисуется под своим родителем даже когда её собственный статус (проект,
+  // исполнитель) отнёс бы её в другую группу.
+  const expanded = useMemo(
+    () => arrangeGroupRows(node.tasks, forest, subtaskMode),
+    [node.tasks, forest, subtaskMode],
   );
+  const rows = node.children.length === 0 ? expanded : [];
   const shown = rows.length > limit ? rows.slice(0, limit) : rows;
   const rest = rows.length - shown.length;
-  // «Выбрать все» относится к тому, что группа реально показывает: в режиме
-  // «скрыть подзадачи» они не на экране, и молча попадать под массовое
-  // действие не должны.
-  const selectable = useMemo(
-    () => (node.children.length === 0 ? rows.map((r) => r.task.id) : node.tasks.map((t) => t.id)),
-    [node.children.length, node.tasks, rows],
-  );
+  // Счётчик и «выбрать все» относятся к тому, что группа реально рисует: в
+  // режиме «скрыть подзадачи» их нет на экране, и молча попадать под массовое
+  // действие они не должны, а во «вложенными» — наоборот, уже свои строки.
+  const selectable = useMemo(() => expanded.map((r) => r.task.id), [expanded]);
   const allSelected = selectable.length > 0 && selectable.every((id) => selected.has(id));
 
   return (
@@ -377,7 +385,7 @@ function GroupBody({
               {node.label.text}
             </span>
             <span className="shrink-0 rounded bg-background px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground">
-              {node.children.length === 0 ? rows.length : node.tasks.length}
+              {expanded.length}
             </span>
           </button>
           <button
@@ -407,6 +415,7 @@ function GroupBody({
               onOpen={onOpen}
               grouped
               subtaskMode={subtaskMode}
+              forest={forest}
             />
           ))}
           {shown.map(({ task, depth }) => (
@@ -467,9 +476,16 @@ export function TaskTable(props: TaskTableProps) {
     return map;
   }, [columns]);
 
+  // Лес строится по всему набору и ДО группировки — в этом вся суть починки.
+  // В режиме «отдельными строками» родство не нужно вовсе.
+  const forest = useMemo(
+    () => (subtaskMode === "flat" ? null : buildForest(tasks)),
+    [tasks, subtaskMode],
+  );
+
   const nodes = useMemo(
-    () => buildGroups(tasks, groupBy, matchCtx, labelForGroup, groupOrder),
-    [tasks, groupBy, matchCtx, labelForGroup, groupOrder],
+    () => buildGroups(tasks, groupBy, matchCtx, labelForGroup, groupOrder, forest),
+    [tasks, groupBy, matchCtx, labelForGroup, groupOrder, forest],
   );
 
   const totalWidth = useMemo(
@@ -522,6 +538,7 @@ export function TaskTable(props: TaskTableProps) {
                 onOpen={onOpen}
                 grouped={grouped}
                 subtaskMode={subtaskMode}
+                forest={forest}
               />
             ))}
       </div>
