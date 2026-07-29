@@ -80,7 +80,8 @@ function SearchPalette({
       }
     }, 200);
     return () => clearTimeout(t);
-  }, [orgId, query]);
+    // tooShort выводится из query и меняется вместе с ним — лишних запусков не даёт.
+  }, [orgId, query, tooShort]);
 
   function pick(hit: SearchHit) {
     onOpenChange(false);

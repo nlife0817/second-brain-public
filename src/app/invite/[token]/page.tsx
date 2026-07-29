@@ -5,9 +5,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/core/client";
+import { useLoad } from "@/lib/core/use-load";
 
 interface InvitePreview {
   org_name: string;
@@ -40,9 +41,7 @@ export default function InvitePage({ params }: { params: Promise<{ token: string
     }
   }, [token]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useLoad(load);
 
   async function accept() {
     setAccepting(true);

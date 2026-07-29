@@ -114,6 +114,8 @@ export const taskPatchSchema = z
     due_date: dateSchema.nullable().optional(),
     due_time: timeSchema.nullable().optional(),
     estimated_minutes: z.number().int().min(0).max(60_000).nullable().optional(),
+    // null — «отвязать от родителя»: подзадача становится обычной задачей.
+    parent_task_id: z.uuid().nullable().optional(),
     assignee_ids: z.array(z.uuid()).max(20).optional(),
     tag_ids: z.array(z.uuid()).max(50).optional(),
   })

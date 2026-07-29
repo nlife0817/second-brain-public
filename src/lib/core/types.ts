@@ -120,6 +120,12 @@ export interface Project {
 export interface ProjectWithMeta extends Project {
   my_role: ProjectRole | null;
   open_task_count: number;
+  /**
+   * Явные участники закрытого проекта; `null` — проект открыт, и ограничений на
+   * состав исполнителей он не накладывает. Нужен интерфейсу: закрытый проект
+   * виден только своим, а назначение задачи само по себе её открывает.
+   */
+  member_ids: string[] | null;
 }
 
 export interface Section {
@@ -234,6 +240,12 @@ export interface TaskDetail extends TaskWithMeta {
   followers: UserBrief[];
   field_values: Record<string, unknown>;
   creator: UserBrief | null;
+  /**
+   * Проекты всей цепочки, включая родительские: у подзадачи своих размещений
+   * нет, а закрытость она наследует от родителя. Карточка сужает по этому
+   * списку выбор исполнителей — ровно как сервер в `updateTask`.
+   */
+  chain_project_ids: string[];
 }
 
 // --- Связи между сущностями ------------------------------------------------------

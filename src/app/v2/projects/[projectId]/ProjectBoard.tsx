@@ -23,7 +23,7 @@ import { invalidate } from "@/lib/core/query";
 import type { TaskDetail, TaskRow, TaskStatus } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
-import { showsArchived } from "@/lib/core/views";
+import { hiddenStatusIds } from "@/lib/core/views";
 
 /** Общая пустая колонка: новый [] на каждый рендер ломал бы memo карточек. */
 const EMPTY_TASKS: TaskRow[] = [];
@@ -147,9 +147,10 @@ export function ProjectBoard({
   onAddTask: (statusId: string | null) => void;
 }) {
   const { orgId, statuses, refreshProjects } = useV2Store();
-  // Фильтры у доски и таблицы общие (один ViewScope проекта) — архив
-  // показывается там и там по одному и тому же условию «Архив = Показать».
-  const withArchived = showsArchived(useViewStore((s) => s.groups));
+  // Фильтры у доски и таблицы общие (один ViewScope проекта) — архив и
+  // завершённое показываются там и там по одним и тем же условиям
+  // «Архив/Готово = Показать».
+  const filterGroups = useViewStore((s) => s.groups);
   const [dragTask, setDragTask] = useState<TaskRow | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -159,12 +160,13 @@ export function ProjectBoard({
   // семи статусах это тысячи проходов за перетаскивание.
   const columns = useMemo(() => {
     const known = new Set(statuses.map((s) => s.id));
-    const archived = new Set(statuses.filter((s) => s.kind === "archived").map((s) => s.id));
+    const hidden = hiddenStatusIds(filterGroups, statuses);
     const byStatus = new Map<string, TaskRow[]>();
     const noStatusTasks: TaskRow[] = [];
     for (const t of tasks) {
-      // Архив не просто прячет колонку: сама задача не должна всплыть нигде.
-      if (!withArchived && t.status_id && archived.has(t.status_id)) continue;
+      // Скрытая группа не просто убирает колонку: сама задача не должна
+      // всплыть нигде — ни в «Без статуса», ни в счётчиках.
+      if (t.status_id && hidden.has(t.status_id)) continue;
       if (t.status_id && known.has(t.status_id)) {
         const bucket = byStatus.get(t.status_id);
         if (bucket) bucket.push(t);
@@ -173,9 +175,12 @@ export function ProjectBoard({
         noStatusTasks.push(t);
       }
     }
-    const visible = statuses.filter((s) => withArchived || s.kind !== "archived");
+    // Колонку убираем только у архива. «Готово» — конец рабочего потока: без
+    // него карточку на доске нечем завершить, а перетащенная туда задача просто
+    // уходит с доски вместе с остальными завершёнными.
+    const visible = statuses.filter((s) => s.kind !== "archived" || !hidden.has(s.id));
     return { visible, byStatus, noStatusTasks };
-  }, [statuses, tasks, withArchived]);
+  }, [statuses, tasks, filterGroups]);
 
   const openNoStatusAdd = useCallback(() => onAddTask(null), [onAddTask]);
 

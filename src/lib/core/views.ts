@@ -6,7 +6,7 @@
 // Форма фильтров — `FilterGroup[]`: группы соединяются через И, условия
 // внутри группы через И/ИЛИ.
 
-import type { CustomField, TaskPriority, TaskRow } from "./types";
+import type { CustomField, StatusKind, TaskPriority, TaskRow } from "./types";
 
 // --- Фильтры ------------------------------------------------------------------
 
@@ -35,6 +35,7 @@ export type FilterField =
   | "completed"
   | "has_parent"
   | "archive"
+  | "done"
   | `field:${string}`;
 
 export type FilterLogic = "and" | "or";
@@ -58,15 +59,30 @@ export const NONE_VALUE = "__none__";
 /** Подстановка «текущий пользователь» в условии по исполнителю. */
 export const ME_VALUE = "__me__";
 
-/** Значения фильтра «Архив». Умолчание — `hide`, даже когда условия нет вовсе. */
-export const ARCHIVE_SHOW = "show";
-export const ARCHIVE_HIDE = "hide";
+/**
+ * Значения полей-переключателей («Архив», «Готово»). Умолчание — `hide`, даже
+ * когда условия нет вовсе.
+ */
+export const SHOW_VALUE = "show";
+export const HIDE_VALUE = "hide";
+
+/**
+ * Поля-переключатели: не условие на строку, а режим показа целой группы задач.
+ * Каждому соответствует вид статуса, задачи которого по умолчанию не видны.
+ */
+export const VISIBILITY_FIELDS = [
+  { field: "archive", label: "Архив", statusKind: "archived" },
+  { field: "done", label: "Готово", statusKind: "done" },
+] as const satisfies ReadonlyArray<{ field: FilterField; label: string; statusKind: StatusKind }>;
+
+/** Быстрая проверка «это переключатель, а не условие на строку». */
+const VISIBILITY_FIELD_SET: ReadonlySet<FilterField> = new Set(VISIBILITY_FIELDS.map((f) => f.field));
 
 export interface FieldMeta {
   field: FilterField;
   label: string;
   /** Какие операторы имеют смысл: определяет и вид редактора значения. */
-  kind: "select" | "text" | "date" | "boolean" | "archive";
+  kind: "select" | "text" | "date" | "boolean" | "visibility";
 }
 
 export const BASE_FILTER_FIELDS: FieldMeta[] = [
@@ -79,7 +95,7 @@ export const BASE_FILTER_FIELDS: FieldMeta[] = [
   { field: "due_date", label: "Дедлайн", kind: "date" },
   { field: "completed", label: "Завершена", kind: "boolean" },
   { field: "has_parent", label: "Подзадача", kind: "boolean" },
-  { field: "archive", label: "Архив", kind: "archive" },
+  ...VISIBILITY_FIELDS.map((f) => ({ field: f.field, label: f.label, kind: "visibility" as const })),
 ];
 
 export const OPERATORS_BY_KIND: Record<FieldMeta["kind"], FilterOperator[]> = {
@@ -87,7 +103,7 @@ export const OPERATORS_BY_KIND: Record<FieldMeta["kind"], FilterOperator[]> = {
   text: ["contains", "not_contains", "is_empty", "is_not_empty"],
   date: ["is", "before", "after", "is_today", "is_this_week", "is_overdue", "is_empty", "is_not_empty"],
   boolean: ["is"],
-  archive: ["is"],
+  visibility: ["is"],
 };
 
 export const OPERATOR_LABELS: Record<FilterOperator, string> = {
@@ -174,7 +190,8 @@ function valuesOf(task: TaskRow, field: FilterField): string[] {
     case "has_parent":
       return [task.parent_task_id ? "yes" : "no"];
     case "archive":
-      // Режим показа архива, а не свойство задачи, — см. showsArchived.
+    case "done":
+      // Режим показа, а не свойство задачи, — см. hiddenStatusIds.
       return [];
     default: {
       const id = field.slice("field:".length);
@@ -223,26 +240,50 @@ function matchesCondition(task: TaskRow, cond: FilterCondition, ctx: MatchContex
 }
 
 /**
- * Показывать ли задачи в архивных статусах. Архив скрыт всегда, кроме явного
- * условия «Архив = Показать»: иначе архивные задачи всплывают в каждой
- * группировке, ради чего фильтр и заводился.
+ * Включён ли показ группы, скрытой по умолчанию. «Архив» и «Готово» — это
+ * прошлое, а не работа: без явного «Показать» они всплывают в каждой
+ * группировке и в счётчиках групп, ради чего фильтры и заводились.
  *
  * Логика группы (И/ИЛИ) здесь роли не играет: это переключатель видимости, а не
  * условие на строку, и «спрятано, пока не попросили» — единственное поведение,
  * которое читается однозначно.
  */
-export function showsArchived(groups: FilterGroup[]): boolean {
+function showsField(groups: FilterGroup[], field: FilterField): boolean {
   return groups.some((g) =>
-    g.conditions.some((c) => c.field === "archive" && c.operator === "is" && c.value === ARCHIVE_SHOW),
+    g.conditions.some((c) => c.field === field && c.operator === "is" && c.value === SHOW_VALUE),
   );
+}
+
+/**
+ * Просит ли фильтр показать завершённые. Отдельно от `hiddenStatusIds` потому,
+ * что от этого зависит ещё и запрос: сервер завершённых по умолчанию не отдаёт,
+ * и без `&done=1` фильтр показал бы пустоту вместо задач. Архива это не
+ * касается — `completed_at` архивным не проставляют, они приходят всегда.
+ */
+export function showsDone(groups: FilterGroup[]): boolean {
+  return showsField(groups, "done");
+}
+
+/**
+ * Статусы, задачи которых список не показывает: все архивные и завершающие,
+ * кроме тех, чью группу включили фильтром. Пустое множество — прятать нечего.
+ */
+export function hiddenStatusIds(
+  groups: FilterGroup[],
+  statuses: ReadonlyArray<{ id: string; kind: StatusKind }>,
+): Set<string> {
+  const hiddenKinds = new Set<StatusKind>(
+    VISIBILITY_FIELDS.filter((f) => !showsField(groups, f.field)).map((f) => f.statusKind),
+  );
+  return new Set(statuses.filter((s) => hiddenKinds.has(s.kind)).map((s) => s.id));
 }
 
 /** Группы объединяются через И, условия внутри группы — по её `logic`. */
 export function matchesGroups(task: TaskRow, groups: FilterGroup[], ctx: MatchContext): boolean {
   for (const group of groups) {
-    // «Архив» — режим показа, его разбирает showsArchived: как предикат строки
-    // он бы вырезал из списка вообще всё.
-    const active = group.conditions.filter((c) => c.field !== "archive");
+    // «Архив» и «Готово» — режимы показа, их разбирает hiddenStatusIds: как
+    // предикат строки они бы вырезали из списка вообще всё.
+    const active = group.conditions.filter((c) => !VISIBILITY_FIELD_SET.has(c.field));
     if (active.length === 0) continue;
     const results = active.map((c) => matchesCondition(task, c, ctx));
     const ok = group.logic === "and" ? results.every(Boolean) : results.some(Boolean);

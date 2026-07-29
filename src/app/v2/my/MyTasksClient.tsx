@@ -7,7 +7,7 @@
 // мгновенно, а переключение «показывать завершённые» тянет свой список один раз.
 
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { CheckCircle2, Plus } from "lucide-react";
 import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { TaskCard } from "@/components/v2/TaskCard";
@@ -30,7 +30,7 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
   const deepLinkTaskId = useSearchParams().get("task");
   const [showDone, setShowDone] = useState(false);
   const [quickTitle, setQuickTitle] = useState("");
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(deepLinkTaskId);
   const [createError, setCreateError] = useState<string | null>(null);
 
   const path = orgId ? `/orgs/${orgId}/tasks${showDone ? "?done=1" : ""}` : null;
@@ -40,9 +40,16 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
   });
   const tasks = useMemo(() => data ?? [], [data]);
 
-  useEffect(() => {
+  // Ссылка из пуша или поиска открывает карточку сразу, на первом же рендере, и
+  // ещё раз, если ссылка сменилась при уже смонтированном экране. Правка
+  // состояния во время рендера — задокументированный React способ подстроиться
+  // под изменившийся вход; эффект здесь означал бы лишний проход рендера до
+  // отрисовки.
+  const [seenDeepLink, setSeenDeepLink] = useState(deepLinkTaskId);
+  if (deepLinkTaskId !== seenDeepLink) {
+    setSeenDeepLink(deepLinkTaskId);
     if (deepLinkTaskId) setOpenTaskId(deepLinkTaskId);
-  }, [deepLinkTaskId]);
+  }
 
   const reload = useCallback(async () => {
     // Мутация меняет оба списка (с завершёнными и без) — сбрасываем ветку целиком.

@@ -30,7 +30,7 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
   const [showDone, setShowDone] = useState(false);
   const [quickTitle, setQuickTitle] = useState("");
   const [adding, setAdding] = useState(false);
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(deepLinkTaskId);
   const [searchOpen, setSearchOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,9 +71,16 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
   // Именно принудительно — кэш тут был бы ровно тем, чего мы избегаем.
   useAppResume(reload);
 
-  useEffect(() => {
+  // Ссылка из пуша или поиска открывает карточку сразу, на первом же рендере, и
+  // ещё раз, если ссылка сменилась при уже смонтированном экране. Правка
+  // состояния во время рендера — задокументированный React способ подстроиться
+  // под изменившийся вход; эффект здесь означал бы лишний проход рендера до
+  // отрисовки.
+  const [seenDeepLink, setSeenDeepLink] = useState(deepLinkTaskId);
+  if (deepLinkTaskId !== seenDeepLink) {
+    setSeenDeepLink(deepLinkTaskId);
     if (deepLinkTaskId) setOpenTaskId(deepLinkTaskId);
-  }, [deepLinkTaskId]);
+  }
   useTaskDeepLink(setOpenTaskId);
 
   const closeTask = useCallback(() => setOpenTaskId(null), []);

@@ -9,6 +9,7 @@ import { Check, MessageSquare, Pencil, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarStack, PRIORITY_LABELS, PriorityDot, chipStyle, dueTone, formatDue } from "@/components/v2/bits";
 import { DuePicker } from "@/components/v2/DuePicker";
+import { assigneeChoice } from "@/lib/core/assignable";
 import type {
   CoreTag,
   OrgMemberWithUser,
@@ -262,11 +263,19 @@ export const AssigneesCell = memo(function AssigneesCell({ task, ctx }: { task: 
     ctx.onPatch(task.id, { assignee_ids: next });
   }
 
+  // Закрытый проект пускает в исполнители только своих участников.
+  const choice = assigneeChoice(
+    ctx.members,
+    ctx.projectsById,
+    task.placements.map((p) => p.project_id),
+    current,
+  );
+
   return (
     <Popover>
       <PopoverTrigger render={<button className={CELL_BUTTON} />}>{label}</PopoverTrigger>
       <PopoverContent align="start" className="max-h-72 w-60 overflow-y-auto p-1">
-        {ctx.members.map((m) => (
+        {choice.members.map((m) => (
           <button
             key={m.user_id}
             onClick={() => toggle(m.user_id)}
@@ -280,8 +289,15 @@ export const AssigneesCell = memo(function AssigneesCell({ task, ctx }: { task: 
             {current.has(m.user_id) && <Check className="size-3.5 shrink-0" />}
           </button>
         ))}
-        {ctx.members.length === 0 && (
-          <p className="px-2 py-1.5 text-xs text-muted-foreground">Участники ещё не загружены</p>
+        {choice.members.length === 0 && (
+          <p className="px-2 py-1.5 text-xs text-muted-foreground">
+            {ctx.members.length === 0 ? "Участники ещё не загружены" : "В закрытом проекте некого назначить"}
+          </p>
+        )}
+        {choice.restrictedBy.length > 0 && (
+          <p className="border-t border-border px-2 py-1.5 text-[11px] leading-4 text-muted-foreground">
+            Только участники закрытого проекта «{choice.restrictedBy.join("», «")}»
+          </p>
         )}
       </PopoverContent>
     </Popover>

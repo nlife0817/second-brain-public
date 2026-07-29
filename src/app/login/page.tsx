@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 /** Сообщения по коду ошибки из ?error= (его ставит /auth/callback). */
 const ERRORS: Record<string, string> = {
@@ -9,22 +10,50 @@ const ERRORS: Record<string, string> = {
   oauth: "Не удалось войти через Google. Попробуйте ещё раз.",
 };
 
+/**
+ * Параметры входа живут в строке запроса. Читаем их через `useSearchParams`, а
+ * не из `window.location` в эффекте: эффект правил три состояния сразу после
+ * монтирования, то есть каждый показ экрана стоил лишнего прохода рендера ещё
+ * до первой отрисовки.
+ *
+ * Страница статическая, поэтому `useSearchParams` обязан жить под `Suspense`.
+ * Пока параметры неизвестны, показываем ту же карточку с умолчаниями — это и
+ * есть обычный вход без «вы вышли» и без ошибки.
+ */
 export default function LoginPage() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [nextPath, setNextPath] = useState<string>("/");
-  const [signedOut, setSignedOut] = useState(false);
+  return (
+    <Suspense fallback={<LoginCard nextPath="/" signedOut={false} initialError={null} />}>
+      <LoginFromParams />
+    </Suspense>
+  );
+}
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    // После выхода возвращать на закрытый экран нельзя: следующим войти может
-    // другой человек, и «продолжить с того же места» — это чужое место.
-    const wasSignedOut = params.has("signedout");
-    setSignedOut(wasSignedOut);
-    setNextPath(wasSignedOut ? "/" : (params.get("next") ?? "/"));
-    const code = params.get("error");
-    if (code) setError(ERRORS[code] ?? ERRORS.oauth);
-  }, []);
+function LoginFromParams() {
+  const params = useSearchParams();
+  // После выхода возвращать на закрытый экран нельзя: следующим войти может
+  // другой человек, и «продолжить с того же места» — это чужое место.
+  const signedOut = params.has("signedout");
+  const code = params.get("error");
+  return (
+    <LoginCard
+      nextPath={signedOut ? "/" : (params.get("next") ?? "/")}
+      signedOut={signedOut}
+      initialError={code ? (ERRORS[code] ?? ERRORS.oauth) : null}
+    />
+  );
+}
+
+function LoginCard({
+  nextPath,
+  signedOut,
+  initialError,
+}: {
+  nextPath: string;
+  signedOut: boolean;
+  initialError: string | null;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(initialError);
 
   // Полноценная навигация, а не fetch: дальше идёт редирект на accounts.google.com,
   // а cookie с state и PKCE-верификатором ставит наш роут по пути.

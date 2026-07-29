@@ -88,8 +88,6 @@ export interface ViewSnapshot {
   sort: SortState;
   groupBy: GroupByConfig;
   groups: FilterGroup[];
-  /** Завершённые в выборке. Переключатель остался только у экрана проекта. */
-  showDone: boolean;
   subtaskMode: SubtaskMode;
 }
 
@@ -115,7 +113,6 @@ export interface ViewState extends ViewSnapshot {
   setGroupBy: (config: GroupByConfig) => void;
   setGroups: (groups: FilterGroup[]) => void;
   setSearch: (search: string) => void;
-  setShowDone: (show: boolean) => void;
   setSubtaskMode: (mode: SubtaskMode) => void;
   toggleCollapsed: (key: string) => void;
 
@@ -132,7 +129,6 @@ const DEFAULT_SNAPSHOT: ViewSnapshot = {
   sort: { column: "due_date", direction: "asc" },
   groupBy: ["status", "none"],
   groups: [],
-  showDone: false,
   subtaskMode: "nested",
 };
 
@@ -151,7 +147,6 @@ function snapshotOf(state: ViewSnapshot): ViewSnapshot {
     sort: state.sort,
     groupBy: state.groupBy,
     groups: state.groups,
-    showDone: state.showDone,
     subtaskMode: state.subtaskMode,
   };
 }
@@ -215,7 +210,6 @@ function createViewStore(scope: ViewScope) {
         setGroupBy: (groupBy) => set((s) => edit(s, { groupBy })),
         setGroups: (groups) => set((s) => edit(s, { groups })),
         setSearch: (search) => set({ search }),
-        setShowDone: (showDone) => set((s) => edit(s, { showDone })),
         setSubtaskMode: (subtaskMode) => set((s) => edit(s, { subtaskMode })),
         toggleCollapsed: (key) =>
           set((s) => ({

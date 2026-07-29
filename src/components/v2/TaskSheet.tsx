@@ -4,13 +4,14 @@
 // подзадачи, комментарии и лента активности. Сохранение — по действию (PATCH).
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeft,
   Bell,
   BellOff,
   Calendar,
   CheckCircle2,
-  Circle,
+  CornerLeftUp,
   Play,
   Plus,
   Trash2,
@@ -27,8 +28,10 @@ import {
 } from "@/components/ui/select";
 import { SheetHeader } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { SubtaskSection } from "@/components/v2/tasks/SubtaskSection";
 import { api } from "@/lib/core/client";
 import type { TaskChange } from "@/lib/core/task-change";
+import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type {
   CoreComment,
   CoreEvent,
@@ -41,6 +44,7 @@ import type {
   TaskListItem,
 } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
+import { useLoad } from "@/lib/core/use-load";
 import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle } from "./bits";
 import { MemberPicker } from "./MemberPicker";
@@ -93,12 +97,20 @@ function eventLabel(e: CoreEvent): string {
   return base;
 }
 
+/** Родитель подзадачи — ровно то, что нужно хлебной крошке. */
+interface ParentBrief {
+  id: string;
+  title: string;
+  completed_at: string | null;
+}
+
 /** Ответ /tasks/:id/bundle — всё содержимое карточки за один запрос. */
 interface TaskBundle {
   task: TaskDetail;
   comments: CoreComment[];
   feed: CoreEvent[];
   subtasks: TaskListItem[];
+  parent: ParentBrief | null;
   relations: RelationWithTarget[];
   relation_types: RelationType[];
   recurrence: TaskRecurrenceRule | null;
@@ -106,7 +118,7 @@ interface TaskBundle {
 }
 
 export function TaskSheet({
-  taskId,
+  taskId: rootTaskId,
   onClose,
   onChanged,
 }: {
@@ -114,6 +126,39 @@ export function TaskSheet({
   onClose: () => void;
   onChanged?: (change: TaskChange) => void;
 }) {
+  // Подзадача — такая же задача, и правится она в такой же карточке: клик по
+  // ней открывает её в этой же панели, «Назад» возвращает к предыдущей.
+  //
+  // Стек помнит, от какой задачи он отсчитан: пришёл новый `rootTaskId` — стек
+  // считается пустым сам собой, без сброса состояния в эффекте (тот вызвал бы
+  // лишний ре-рендер и запрещён правилом react-hooks/set-state-in-effect).
+  const [nav, setNav] = useState<{ root: string | null; ids: string[] }>({ root: null, ids: [] });
+  const stack = nav.root === rootTaskId ? nav.ids : [];
+  const taskId = stack.length > 0 ? stack[stack.length - 1] : rootTaskId;
+
+  const openNested = useCallback(
+    (id: string) => {
+      setNav((prev) => ({
+        root: rootTaskId,
+        ids: [...(prev.root === rootTaskId ? prev.ids : []), id],
+      }));
+    },
+    [rootTaskId],
+  );
+
+  const goBack = useCallback(() => {
+    setNav((prev) => ({
+      root: rootTaskId,
+      ids: (prev.root === rootTaskId ? prev.ids : []).slice(0, -1),
+    }));
+  }, [rootTaskId]);
+
+  /** Закрытие панели обнуляет и навигацию: следующее открытие — с корня. */
+  const closeSheet = useCallback(() => {
+    setNav({ root: null, ids: [] });
+    onClose();
+  }, [onClose]);
+
   // Кастомные поля — справочник организации из стора: раньше карточка тянула
   // /fields при каждом открытии.
   const { orgId, statuses, tags, projects, me, fields, orgRole } = useV2Store();
@@ -128,6 +173,7 @@ export function TaskSheet({
   const [comments, setComments] = useState<CoreComment[]>([]);
   const [feed, setFeed] = useState<CoreEvent[]>([]);
   const [subtasks, setSubtasks] = useState<TaskListItem[]>([]);
+  const [parent, setParent] = useState<ParentBrief | null>(null);
   const [relations, setRelations] = useState<RelationWithTarget[]>([]);
   const [relationTypes, setRelationTypes] = useState<RelationType[]>([]);
   const [recurrence, setRecurrence] = useState<TaskRecurrenceRule | null>(null);
@@ -138,11 +184,20 @@ export function TaskSheet({
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [tab, setTab] = useState<"comments" | "feed">("comments");
   const [commentText, setCommentText] = useState("");
-  const [subtaskTitle, setSubtaskTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   // Быстрое переключение задач: ответ по прежней задаче не должен перетереть текущую.
   const currentTaskRef = useRef<string | null>(null);
+
+  // Зеркало задачи для обработчиков. Считать новое состояние внутри апдейтера
+  // `setTask` нельзя: апдейтер исполняется в фазе рендера, и вызванный оттуда
+  // `onChanged` правит экран за панелью прямо во время её отрисовки (React
+  // ругается «Cannot update a component while rendering a different one»).
+  // Замыкание тоже не подходит: между запросом и ответом состояние уходит вперёд.
+  const taskRef = useRef<TaskDetail | null>(null);
+  useEffect(() => {
+    taskRef.current = task;
+  }, [task]);
 
   const load = useCallback(async () => {
     if (!orgId || !taskId) return;
@@ -155,6 +210,7 @@ export function TaskSheet({
       setComments(b.comments);
       setFeed(b.feed);
       setSubtasks(b.subtasks);
+      setParent(b.parent ?? null);
       setRelations(b.relations);
       setRelationTypes(b.relation_types);
       setRecurrence(b.recurrence ?? null);
@@ -164,12 +220,17 @@ export function TaskSheet({
       if (currentTaskRef.current !== taskId) return;
       setError(e instanceof Error ? e.message : "Не удалось загрузить задачу");
     }
-  }, [orgId, taskId]);
+    // setTask — псевдоним setLoaded, ссылка стабильна; в списке он только
+    // потому, что через `const` правило этого не видит.
+  }, [orgId, taskId, setTask]);
 
-  useEffect(() => {
+  // Отметку «какую задачу ждём» ставим до запроса: по ней ответ прежней задачи
+  // отсекается, если пользователь уже переключился на следующую.
+  const loadTask = useCallback(() => {
     currentTaskRef.current = taskId;
-    if (taskId) void load();
+    if (taskId) return load();
   }, [taskId, load]);
+  useLoad(loadTask);
 
   /** Единая точка вызова API: показывает ошибку вместо тихого падения. */
   async function run(fn: () => Promise<void>) {
@@ -267,22 +328,86 @@ export function TaskSheet({
     });
   }
 
-  async function addSubtask() {
-    if (!orgId || !taskId || !subtaskTitle.trim()) return;
-    const title = subtaskTitle.trim();
-    setSubtaskTitle("");
-    await run(async () => {
-      // Ответ на создание — сама подзадача: отдельный перечит списка не нужен.
-      const created = await api.post<TaskDetail>(`/orgs/${orgId}/tasks`, {
-        title,
-        parent_task_id: taskId,
-      });
-      if (currentTaskRef.current !== taskId) return;
-      setSubtasks((prev) => [...prev, created]);
-      setTask((prev) => (prev ? { ...prev, subtask_count: prev.subtask_count + 1 } : prev));
-      // В списках экрана появилась новая задача — их надо перечитать.
-      onChanged?.({ type: "reload" });
+  /**
+   * Счётчики подзадач у родителя — их показывает и колонка списка.
+   *
+   * `confirmed` отмечает предсказание: пока правка не подтверждена сервером,
+   * экран не должен вешать на неё побочную работу (перечит кэша, счётчики
+   * сайдбара) — иначе каждое действие уходит в сеть дважды.
+   */
+  function bumpSubtaskCounters(deltaTotal: number, deltaDone: number, confirmed = true) {
+    const prev = taskRef.current;
+    if (!prev) return;
+    const next: TaskDetail = {
+      ...prev,
+      subtask_count: prev.subtask_count + deltaTotal,
+      subtask_done_count: prev.subtask_done_count + deltaDone,
+    };
+    // Ref обновляем сразу: два вызова подряд (правка и откат) иначе посчитались
+    // бы от одного и того же состояния, и дельта потерялась бы.
+    taskRef.current = next;
+    setTask(next);
+    onChanged?.({ type: "patched", task: next, confirmed });
+  }
+
+  /**
+   * Создание подзадачи из черновика — тем же путём, что и обычной задачи в
+   * «Все задачи»: вместе с кастомными полями, отказ по которым остаётся
+   * предупреждением (задача уже создана).
+   */
+  async function addSubtask(draft: TaskDraft) {
+    if (!orgId || !taskId) return;
+    // Ошибку наверх не глушим: её показывает сама строка добавления, а
+    // черновик при этом остаётся набранным.
+    const { task: created, fieldsWarning } = await createTaskFromDraft(orgId, draft, {
+      parent_task_id: taskId,
     });
+    if (currentTaskRef.current !== taskId) return;
+    setSubtasks((prev) => [...prev, created]);
+    bumpSubtaskCounters(1, created.completed_at ? 1 : 0);
+    setError(fieldsWarning);
+    // В списках экрана появилась новая задача — их надо перечитать.
+    onChanged?.({ type: "reload" });
+  }
+
+  async function deleteSubtask(sub: TaskListItem) {
+    if (!orgId) return;
+    // У подзадачи могут быть свои подзадачи, а внешний ключ каскадный: молча
+    // унести с собой целую ветку нельзя.
+    const branch =
+      sub.subtask_count > 0 ? ` вместе с её подзадачами (${sub.subtask_count})` : "";
+    if (!window.confirm(`Удалить подзадачу «${sub.title}»${branch} безвозвратно?`)) return;
+    const previous = subtasks;
+    setSubtasks((prev) => prev.filter((s) => s.id !== sub.id));
+    bumpSubtaskCounters(-1, sub.completed_at ? -1 : 0, false);
+    try {
+      await api.del(`/orgs/${orgId}/tasks/${sub.id}`);
+      onChanged?.({ type: "deleted", taskId: sub.id });
+      setError(null);
+    } catch (e) {
+      setSubtasks(previous);
+      bumpSubtaskCounters(1, sub.completed_at ? 1 : 0);
+      setError(e instanceof Error ? e.message : "Не удалось удалить подзадачу");
+    }
+  }
+
+  /** Отвязка от родителя: подзадача становится обычной задачей и остаётся жить. */
+  async function detachSubtask(sub: TaskListItem) {
+    if (!orgId) return;
+    const previous = subtasks;
+    setSubtasks((prev) => prev.filter((s) => s.id !== sub.id));
+    bumpSubtaskCounters(-1, sub.completed_at ? -1 : 0, false);
+    try {
+      const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${sub.id}`, {
+        parent_task_id: null,
+      });
+      onChanged?.({ type: "patched", task: updated, confirmed: true });
+      setError(null);
+    } catch (e) {
+      setSubtasks(previous);
+      bumpSubtaskCounters(1, sub.completed_at ? 1 : 0);
+      setError(e instanceof Error ? e.message : "Не удалось отвязать подзадачу");
+    }
   }
 
   async function toggleSubtaskDone(sub: TaskListItem) {
@@ -302,25 +427,13 @@ export function TaskSheet({
           : s,
       ),
     );
-    setTask((prev) => {
-      if (!prev) return prev;
-      const next = {
-        ...prev,
-        subtask_done_count: prev.subtask_done_count + (wasDone ? -1 : 1),
-      };
-      onChanged?.({ type: "patched", task: next, confirmed: false });
-      return next;
-    });
+    bumpSubtaskCounters(0, wasDone ? -1 : 1, false);
     try {
       await api.patch(`/orgs/${orgId}/tasks/${sub.id}`, { status_id: target.id });
       setError(null);
     } catch (e) {
       setSubtasks(previous);
-      setTask((prev) =>
-        prev
-          ? { ...prev, subtask_done_count: prev.subtask_done_count + (wasDone ? 1 : -1) }
-          : prev,
-      );
+      bumpSubtaskCounters(0, wasDone ? 1 : -1);
       setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
     }
   }
@@ -394,7 +507,10 @@ export function TaskSheet({
     await run(async () => {
       await api.del(`/orgs/${orgId}/tasks/${removedId}`);
       onChanged?.({ type: "deleted", taskId: removedId });
-      onClose();
+      // Удалили подзадачу, открытую изнутри родителя, — возвращаемся к нему, а
+      // не закрываем всю панель: карточка родителя перечитается и потеряет строку.
+      if (stack.length > 0) goBack();
+      else closeSheet();
     });
   }
 
@@ -448,6 +564,32 @@ export function TaskSheet({
     (f) => !f.project_id || task?.placements.some((p) => p.project_id === f.project_id),
   );
 
+  /**
+   * Черновик подзадачи начинается с проектов родителя: без размещения задача
+   * уходит в личный инбокс и пропадает из списков проекта, внутри задачи
+   * которого её только что завели. Проекты, где нет прав на создание, не
+   * подставляем — сервер отказал бы всей форме, а не отдельному размещению.
+   *
+   * Срок не наследуем: у подзадач он свой, а «сегодня» из общего черновика в
+   * карточке только мешает — большинство подзадач заводят вообще без срока.
+   */
+  const subtaskDefaults = useMemo<Partial<TaskDraft>>(
+    () => ({
+      project_ids: (task?.placements ?? [])
+        .filter((pl) =>
+          projects.some(
+            (p) =>
+              p.id === pl.project_id &&
+              !p.archived_at &&
+              (p.my_role === "admin" || p.my_role === "editor"),
+          ),
+        )
+        .map((pl) => pl.project_id),
+      due_date: null,
+    }),
+    [task?.placements, projects],
+  );
+
   // Развёрнутое описание закрывает экран целиком, и карточка под ним не нужна.
   // Дело не в красоте: оболочка карточки — модальный диалог (панель или окно,
   // см. SidePanel), она забирает фокус себе и объявляет всё вне себя скрытым
@@ -460,8 +602,8 @@ export function TaskSheet({
   return (
     <>
     <SidePanel
-      open={!!taskId && !docOpen}
-      onOpenChange={(open) => !open && !docOpen && onClose()}
+      open={!!rootTaskId && !docOpen}
+      onOpenChange={(open) => !open && !docOpen && closeSheet()}
       title="Задача"
     >
       {!task ? (
@@ -473,6 +615,18 @@ export function TaskSheet({
           {/* Кнопки шапки на телефоне крупнее: 28 px мышью попадаются, пальцем — нет. */}
           <SheetHeader className="border-b border-border px-4 py-3">
             <div className="flex items-center gap-2">
+              {/* Открыли подзадачу изнутри карточки — «Назад» возвращает к ней. */}
+              {stack.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-9 sm:size-7"
+                  onClick={goBack}
+                  title="Назад"
+                >
+                  <ArrowLeft className="size-4" />
+                </Button>
+              )}
               <Button
                 variant={isDone ? "secondary" : "outline"}
                 size="sm"
@@ -514,7 +668,7 @@ export function TaskSheet({
               >
                 <Trash2 className="size-4" />
               </Button>
-              <Button variant="ghost" size="icon-sm" className="size-9 sm:size-7" onClick={onClose}>
+              <Button variant="ghost" size="icon-sm" className="size-9 sm:size-7" onClick={closeSheet}>
                 <X className="size-4" />
               </Button>
             </div>
@@ -523,6 +677,19 @@ export function TaskSheet({
           <div className="flex-1 overflow-y-auto">
             <div className="flex flex-col gap-4 px-4 py-4">
               {error && <p className="text-sm text-destructive">{error}</p>}
+
+              {/* Карточку подзадачи открывают и напрямую — из списка, поиска или
+                  пуша: без этой строки непонятно, частью чего она является. */}
+              {parent && (
+                <button
+                  onClick={() => openNested(parent.id)}
+                  className="flex max-w-full items-center gap-1 self-start text-xs text-muted-foreground hover:text-foreground"
+                  title="Открыть родительскую задачу"
+                >
+                  <CornerLeftUp className="size-3.5 shrink-0" />
+                  <span className="truncate">{parent.title}</span>
+                </button>
+              )}
 
               <Input
                 key={`title-${task.id}`}
@@ -615,7 +782,13 @@ export function TaskSheet({
                       </button>
                     </span>
                   ))}
-                  <MemberPicker selected={task.assignees} onChange={(ids) => void setAssignees(ids)} />
+                  <MemberPicker
+                    selected={task.assignees}
+                    // Цепочка, а не свои размещения: подзадача наследует
+                    // проекты родителя вместе с их закрытостью.
+                    projectIds={task.chain_project_ids}
+                    onChange={(ids) => void setAssignees(ids)}
+                  />
                 </div>
 
                 <span className="text-muted-foreground">Теги</span>
@@ -714,37 +887,16 @@ export function TaskSheet({
                 />
               )}
 
-              <div>
-                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Подзадачи
-                </p>
-                <div className="flex flex-col gap-1">
-                  {subtasks.map((s) => (
-                    <div key={s.id} className="flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-muted/50">
-                      <button onClick={() => void toggleSubtaskDone(s)}>
-                        {s.completed_at ? (
-                          <CheckCircle2 className="size-4 text-emerald-500" />
-                        ) : (
-                          <Circle className="size-4 text-muted-foreground" />
-                        )}
-                      </button>
-                      <span className={cn("flex-1 text-sm", s.completed_at && "text-muted-foreground line-through")}>
-                        {s.title}
-                      </span>
-                    </div>
-                  ))}
-                  <div className="flex items-center gap-2">
-                    <Plus className="size-4 text-muted-foreground" />
-                    <input
-                      value={subtaskTitle}
-                      onChange={(e) => setSubtaskTitle(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && void addSubtask()}
-                      placeholder="Добавить подзадачу…"
-                      className="flex-1 bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground"
-                    />
-                  </div>
-                </div>
-              </div>
+              <SubtaskSection
+                subtasks={subtasks}
+                canEdit={canEdit}
+                defaults={subtaskDefaults}
+                onCreate={addSubtask}
+                onToggleDone={(s) => void toggleSubtaskDone(s)}
+                onOpen={openNested}
+                onDelete={(s) => void deleteSubtask(s)}
+                onDetach={(s) => void detachSubtask(s)}
+              />
 
               <RelationsList
                 entityType="task"

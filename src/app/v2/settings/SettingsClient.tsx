@@ -11,7 +11,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Bell, Copy, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +39,7 @@ import type {
   ProjectRole,
 } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
+import { useLoad } from "@/lib/core/use-load";
 import { AuditList } from "@/components/v2/AuditList";
 import { Avatar, chipStyle } from "@/components/v2/bits";
 import { OrgSwitcher } from "@/components/v2/OrgSwitcher";
@@ -150,13 +151,14 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
   // Поля и приглашения пришли с сервера — перечитываем только после правок и
   // при смене организации.
   const extrasLoaded = useRef(true);
-  useEffect(() => {
+  const reloadExtras = useCallback(() => {
     if (extrasLoaded.current) {
       extrasLoaded.current = false;
       return;
     }
-    void loadExtras();
+    return loadExtras();
   }, [loadExtras]);
+  useLoad(reloadExtras);
 
   async function call(fn: () => Promise<unknown>, refresh?: () => Promise<void> | void) {
     try {
