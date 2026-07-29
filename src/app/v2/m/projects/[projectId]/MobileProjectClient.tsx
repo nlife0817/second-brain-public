@@ -21,20 +21,13 @@ import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import { useLoad } from "@/lib/core/use-load";
 import { applyTaskChange } from "@/lib/core/task-change";
-import type {
-  Project,
-  ProjectMemberWithUser,
-  ProjectRole,
-  Section,
-  TaskRow,
-} from "@/lib/core/types";
+import type { Project, ProjectMemberWithUser, ProjectRole, TaskRow } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { ViewStoreProvider, projectScope, useViewStore } from "@/lib/core/view-store";
 import { showsDone } from "@/lib/core/views";
 
 export type ProjectDetail = Project & {
   my_role: ProjectRole | null;
-  sections: Section[];
   members: ProjectMemberWithUser[];
 };
 

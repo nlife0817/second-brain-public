@@ -13,15 +13,12 @@ export const PUT = withOrg(async (request, { params, auth }) => {
   return NextResponse.json(await setTaskPlacements(auth, taskId, body.placements));
 });
 
-/** POST — переместить в рамках одного проекта (секция/позиция, drag&drop). */
+/** POST — переместить в рамках одного проекта (позиция, drag&drop). */
 export const POST = withOrg(async (request, { params, auth }) => {
   const { taskId } = await params;
   if (!isUuid(taskId)) return jsonError(404, "Task not found");
   const [body, invalid] = await parseJson(request, taskMoveSchema);
   if (invalid) return invalid;
-  await moveTaskInProject(auth, taskId, body.project_id, {
-    section_id: body.section_id,
-    position: body.position,
-  });
+  await moveTaskInProject(auth, taskId, body.project_id, { position: body.position });
   return NextResponse.json({ ok: true });
 });

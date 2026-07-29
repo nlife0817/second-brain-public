@@ -6,7 +6,7 @@ import { notFound } from "next/navigation";
 import { getActiveOrgAuth } from "@/lib/core/bootstrap";
 import { isUuid } from "@/lib/core/http";
 import { effectiveProjectRole } from "@/lib/core/policy";
-import { listProjectMembers, listSections, requireProject } from "@/lib/core/projects";
+import { listProjectMembers, requireProject } from "@/lib/core/projects";
 import { listProjectTasks } from "@/lib/core/tasks";
 import { ProjectBoardClient } from "./ProjectBoardClient";
 
@@ -29,8 +29,7 @@ export default async function ProjectBoardPage({
     notFound();
   }
 
-  const [sections, members, tasks] = await Promise.all([
-    listSections(projectId),
+  const [members, tasks] = await Promise.all([
     listProjectMembers(projectId),
     listProjectTasks(auth, projectId, { includeDone: false }),
   ]);
@@ -41,7 +40,6 @@ export default async function ProjectBoardPage({
       initialProject={{
         ...project,
         my_role: effectiveProjectRole(auth, project),
-        sections,
         members,
       }}
       initialTasks={tasks}

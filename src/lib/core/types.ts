@@ -128,14 +128,6 @@ export interface ProjectWithMeta extends Project {
   member_ids: string[] | null;
 }
 
-export interface Section {
-  id: string;
-  project_id: string;
-  name: string;
-  position: number;
-  created_at: string;
-}
-
 export interface ProjectMemberWithUser {
   project_id: string;
   user_id: string;
@@ -180,7 +172,6 @@ export interface CustomField {
 
 export interface TaskPlacement {
   project_id: string;
-  section_id: string | null;
   position: number;
 }
 

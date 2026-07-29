@@ -1,4 +1,4 @@
-// Доменный сервис проектов: список с учётом видимости, CRUD, секции, участники.
+// Доменный сервис проектов: список с учётом видимости, CRUD, участники.
 
 import { prepare, transaction, type TxContext } from "@/lib/sql";
 import { emitEvent, notifyUsers } from "./events";
@@ -16,7 +16,6 @@ import type {
   ProjectMemberWithUser,
   ProjectRole,
   ProjectWithMeta,
-  Section,
 } from "./types";
 
 // --- Загрузка и проверка --------------------------------------------------------
@@ -281,48 +280,6 @@ export async function setProjectArchived(ctx: AuthContext, projectId: string, ar
       verb: archived ? "project.archived" : "project.unarchived",
     });
   });
-}
-
-// --- Секции ------------------------------------------------------------------------
-
-export async function listSections(projectId: string): Promise<Section[]> {
-  return prepare<Section>(
-    `SELECT * FROM core.sections WHERE project_id = ? ORDER BY position, created_at`,
-  ).all(projectId);
-}
-
-export async function createSection(ctx: AuthContext, projectId: string, name: string): Promise<Section> {
-  await requireProject(ctx, projectId, "section.manage");
-  const row = await prepare<Section>(
-    `INSERT INTO core.sections (project_id, name, position)
-     VALUES (?, ?, COALESCE((SELECT max(position) + 1 FROM core.sections WHERE project_id = ?), 1))
-     RETURNING *`,
-  ).get(projectId, name, projectId);
-  if (!row) throw new DomainError(500, "Failed to create section");
-  return row;
-}
-
-export async function updateSection(
-  ctx: AuthContext,
-  projectId: string,
-  sectionId: string,
-  patch: Partial<{ name: string; position: number }>,
-): Promise<Section> {
-  await requireProject(ctx, projectId, "section.manage");
-  const current = await prepare<Section>(`SELECT * FROM core.sections WHERE id = ? AND project_id = ?`).get(sectionId, projectId);
-  if (!current) throw new DomainError(404, "Section not found");
-  const next = { ...current, ...patch };
-  const row = await prepare<Section>(
-    `UPDATE core.sections SET name = ?, position = ? WHERE id = ? RETURNING *`,
-  ).get(next.name, next.position, sectionId);
-  if (!row) throw new DomainError(500, "Failed to update section");
-  return row;
-}
-
-export async function deleteSection(ctx: AuthContext, projectId: string, sectionId: string): Promise<void> {
-  await requireProject(ctx, projectId, "section.manage");
-  const changed = await prepare(`DELETE FROM core.sections WHERE id = ? AND project_id = ?`).run(sectionId, projectId);
-  if (changed.changes === 0) throw new DomainError(404, "Section not found");
 }
 
 // --- Участники проекта ----------------------------------------------------------------

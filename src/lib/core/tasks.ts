@@ -89,12 +89,12 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
        SELECT task_id, 'follower' AS src FROM core.task_followers WHERE user_id = ? AND task_id IN (${ph})`,
     ).all(ctx.user.id, chainIds, ctx.user.id, chainIds),
     prepare<
-      { task_id: string; project_id: string; section_id: string | null; position: number } & {
+      { task_id: string; project_id: string; position: number } & {
         p_org_id: string;
         p_default_role: ProjectDefaultRole | null;
       }
     >(
-      `SELECT tp.task_id, tp.project_id, tp.section_id, tp.position,
+      `SELECT tp.task_id, tp.project_id, tp.position,
               p.org_id AS p_org_id, p.default_role AS p_default_role
        FROM core.task_projects tp
        JOIN core.projects p ON p.id = tp.project_id
@@ -156,7 +156,6 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
     chainProjectIds: [...new Set(chainPlacements.map((pl) => pl.project_id))],
     placements: directPlacementRows.map((pl) => ({
       project_id: pl.project_id,
-      section_id: pl.section_id,
       position: pl.position,
       project: projectsById.get(pl.project_id)!,
     })),
@@ -208,8 +207,8 @@ async function enrichTasks<T extends { id: string }>(rows: T[]): Promise<Array<T
        WHERE tt.task_id IN (${ph})
        ORDER BY g.position, g.name`,
     ).all(ids),
-    prepare<{ task_id: string; project_id: string; section_id: string | null; position: number }>(
-      `SELECT task_id, project_id, section_id, position FROM core.task_projects WHERE task_id IN (${ph})`,
+    prepare<{ task_id: string; project_id: string; position: number }>(
+      `SELECT task_id, project_id, position FROM core.task_projects WHERE task_id IN (${ph})`,
     ).all(ids),
     prepare<{ parent_task_id: string; total: number; done: number }>(
       `SELECT parent_task_id, count(*)::int AS total,
@@ -247,7 +246,7 @@ async function enrichTasks<T extends { id: string }>(rows: T[]): Promise<Array<T
       id: g.id, org_id: g.org_id, name: g.name, color: g.color, position: g.position,
     })),
     placements: (placementMap.get(t.id) ?? []).map((p) => ({
-      project_id: p.project_id, section_id: p.section_id, position: p.position,
+      project_id: p.project_id, position: p.position,
     })),
     subtask_count: subtaskMap.get(t.id)?.total ?? 0,
     subtask_done_count: subtaskMap.get(t.id)?.done ?? 0,
@@ -579,18 +578,11 @@ async function assertOrgTags(ctx: AuthContext, tagIds: string[]): Promise<void> 
   if (rows.length !== new Set(tagIds).size) throw new DomainError(422, "Unknown tag");
 }
 
-async function nextPlacementPosition(tx: TxContext, projectId: string, sectionId: string | null): Promise<number> {
+async function nextPlacementPosition(tx: TxContext, projectId: string): Promise<number> {
   const row = await tx
-    .prepare<{ p: number | null }>(
-      `SELECT max(position) AS p FROM core.task_projects WHERE project_id = ? AND section_id IS NOT DISTINCT FROM ?`,
-    )
-    .get(projectId, sectionId);
+    .prepare<{ p: number | null }>(`SELECT max(position) AS p FROM core.task_projects WHERE project_id = ?`)
+    .get(projectId);
   return (row?.p ?? 0) + 1;
-}
-
-async function assertSectionInProject(sectionId: string, projectId: string): Promise<void> {
-  const row = await prepare(`SELECT 1 FROM core.sections WHERE id = ? AND project_id = ?`).get(sectionId, projectId);
-  if (!row) throw new DomainError(422, "Section does not belong to the project");
 }
 
 /**
@@ -635,7 +627,7 @@ export interface CreateTaskInput {
   due_time?: string | null;
   estimated_minutes?: number | null;
   parent_task_id?: string | null;
-  placements?: Array<{ project_id: string; section_id?: string | null }>;
+  placements?: Array<{ project_id: string }>;
   assignee_ids?: string[];
   tag_ids?: string[];
   source?: string;
@@ -645,7 +637,6 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
   const placements = input.placements ?? [];
   for (const pl of placements) {
     await requireProject(ctx, pl.project_id, "task.create");
-    if (pl.section_id) await assertSectionInProject(pl.section_id, pl.project_id);
   }
 
   let parentAccess: TaskAccess | undefined;
@@ -706,10 +697,10 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
     for (const pl of placements) {
       await tx
         .prepare(
-          `INSERT INTO core.task_projects (task_id, project_id, section_id, position) VALUES (?, ?, ?, ?)
+          `INSERT INTO core.task_projects (task_id, project_id, position) VALUES (?, ?, ?)
            ON CONFLICT (task_id, project_id) DO NOTHING`,
         )
-        .run(id, pl.project_id, pl.section_id ?? null, await nextPlacementPosition(tx, pl.project_id, pl.section_id ?? null));
+        .run(id, pl.project_id, await nextPlacementPosition(tx, pl.project_id));
     }
     for (let i = 0; i < assigneeIds.length; i++) {
       await tx
@@ -988,7 +979,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
 export async function setTaskPlacements(
   ctx: AuthContext,
   taskId: string,
-  placements: Array<{ project_id: string; section_id?: string | null }>,
+  placements: Array<{ project_id: string }>,
 ): Promise<TaskDetail> {
   const access = await requireTaskAccess(ctx, taskId, "edit");
   const currentByProject = new Map(access.placements.map((p) => [p.project_id, p]));
@@ -1005,11 +996,10 @@ export async function setTaskPlacements(
     }
   }
 
-  for (const [projectId, pl] of nextByProject) {
+  for (const projectId of nextByProject.keys()) {
     if (!currentByProject.has(projectId)) {
       await requireProject(ctx, projectId, "task.create");
     }
-    if (pl.section_id) await assertSectionInProject(pl.section_id, projectId);
   }
   for (const projectId of currentByProject.keys()) {
     if (!nextByProject.has(projectId)) {
@@ -1041,48 +1031,38 @@ export async function setTaskPlacements(
         });
       }
     }
-    for (const [projectId, pl] of nextByProject) {
-      const existing = currentByProject.get(projectId);
-      if (!existing) {
-        await tx
-          .prepare(`INSERT INTO core.task_projects (task_id, project_id, section_id, position) VALUES (?, ?, ?, ?)`)
-          .run(taskId, projectId, pl.section_id ?? null, await nextPlacementPosition(tx, projectId, pl.section_id ?? null));
-        await emitEvent(tx, {
-          orgId: ctx.orgId,
-          actorId: ctx.user.id,
-          entityType: "task",
-          entityId: taskId,
-          verb: "task.homed",
-          payload: { project_id: projectId },
-        });
-      } else if ((pl.section_id ?? null) !== existing.section_id) {
-        await tx
-          .prepare(`UPDATE core.task_projects SET section_id = ?, position = ? WHERE task_id = ? AND project_id = ?`)
-          .run(pl.section_id ?? null, await nextPlacementPosition(tx, projectId, pl.section_id ?? null), taskId, projectId);
-      }
+    for (const projectId of nextByProject.keys()) {
+      if (currentByProject.has(projectId)) continue;
+      await tx
+        .prepare(`INSERT INTO core.task_projects (task_id, project_id, position) VALUES (?, ?, ?)`)
+        .run(taskId, projectId, await nextPlacementPosition(tx, projectId));
+      await emitEvent(tx, {
+        orgId: ctx.orgId,
+        actorId: ctx.user.id,
+        entityType: "task",
+        entityId: taskId,
+        verb: "task.homed",
+        payload: { project_id: projectId },
+      });
     }
   });
 
   return getTaskDetail(ctx, taskId);
 }
 
-/** Перемещение внутри проекта (канбан drag&drop): секция и/или позиция. */
+/** Перемещение внутри проекта (канбан drag&drop): позиция в списке. */
 export async function moveTaskInProject(
   ctx: AuthContext,
   taskId: string,
   projectId: string,
-  target: { section_id?: string | null; position?: number },
+  target: { position?: number },
 ): Promise<void> {
   await requireProject(ctx, projectId, "task.edit");
   const access = await requireTaskAccess(ctx, taskId, "view");
   const placement = access.placements.find((p) => p.project_id === projectId);
   if (!placement) throw new DomainError(404, "Task is not in this project");
-  if (target.section_id) await assertSectionInProject(target.section_id, projectId);
 
-  await prepare(
-    `UPDATE core.task_projects SET section_id = ?, position = ? WHERE task_id = ? AND project_id = ?`,
-  ).run(
-    target.section_id === undefined ? placement.section_id : target.section_id,
+  await prepare(`UPDATE core.task_projects SET position = ? WHERE task_id = ? AND project_id = ?`).run(
     target.position ?? placement.position,
     taskId,
     projectId,
