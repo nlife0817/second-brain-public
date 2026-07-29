@@ -6,11 +6,15 @@
 // один заход.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, RotateCcw, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock, RotateCcw, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
-/** Время, которое подставляется при выборе даты, если своего ещё нет. */
+/**
+ * Время, которое подставляется по кнопке «Добавить время». Само по себе, вместе
+ * с выбором дня, оно больше не появляется: срок «30 июля» и срок «30 июля 10:00»
+ * — разные обещания, и второе нельзя брать за человека.
+ */
 export const DEFAULT_DUE_TIME = "10:00";
 
 const MONTHS = [
@@ -51,6 +55,19 @@ function isoToday(): string {
   const t = new Date();
   return toIso(t.getFullYear(), t.getMonth(), t.getDate());
 }
+
+/** ISO-день через `days` суток от сегодняшнего. Перевод месяца делает сам Date. */
+function isoInDays(days: number): string {
+  const t = new Date();
+  const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() + days);
+  return toIso(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+const DAY_PRESETS: Array<{ label: string; days: number }> = [
+  { label: "Сегодня", days: 0 },
+  { label: "Завтра", days: 1 },
+  { label: "Через неделю", days: 7 },
+];
 
 /** Месяц, который показываем при открытии: месяц выбранной даты или текущий. */
 function monthOf(iso: string | null): ViewMonth {
@@ -299,7 +316,6 @@ export function DuePicker({
 
   function pickDay(iso: string) {
     setDraftDate(iso);
-    setDraftTime((t) => t ?? DEFAULT_DUE_TIME);
     setView(monthOf(iso));
   }
 
@@ -314,6 +330,8 @@ export function DuePicker({
   const timeDisabled = !draftDate;
   const hDisplay = raw.h ?? (parts ? pad2(parts.h) : "");
   const mDisplay = raw.m ?? (parts ? pad2(parts.m) : "");
+  /** Время ещё не заведено — вместо полей показываем одну кнопку. */
+  const timeUnset = !draftTime && !raw.h && !raw.m;
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
@@ -377,6 +395,29 @@ export function DuePicker({
 
           {mode === "days" && (
             <>
+              {/* Быстрые дни: за ними приходят чаще, чем за конкретной датой в
+                  календаре, поэтому они стоят до сетки, а не под ней. */}
+              <div className="flex gap-1">
+                {DAY_PRESETS.map((p) => {
+                  const iso = isoInDays(p.days);
+                  return (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => pickDay(iso)}
+                      className={cn(
+                        "flex h-7 min-w-0 flex-1 items-center justify-center rounded-md border px-1 text-[11px] transition-colors",
+                        iso === draftDate
+                          ? "border-primary bg-primary/10 font-medium text-primary"
+                          : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+                      )}
+                    >
+                      <span className="truncate">{p.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
               <div className="grid grid-cols-7 gap-0.5">
                 {WEEKDAYS.map((w) => (
                   <span
@@ -455,35 +496,49 @@ export function DuePicker({
         </div>
 
         <div className="flex flex-col gap-2 border-t border-border p-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs text-muted-foreground">Время</span>
-            <span className="flex items-center gap-1">
-              <TimeSegment
-                display={hDisplay}
-                placeholder="10"
-                disabled={timeDisabled}
-                label="Часы"
-                onType={(v) => setRaw((r) => ({ ...r, h: v }))}
-                onCommit={() => commitRaw("h")}
-                onStep={(dir) => step("h", dir)}
-              />
-              <span className={cn("text-sm text-muted-foreground", timeDisabled && "opacity-50")}>:</span>
-              <TimeSegment
-                display={mDisplay}
-                placeholder="00"
-                disabled={timeDisabled}
-                label="Минуты"
-                onType={(v) => setRaw((r) => ({ ...r, m: v }))}
-                onCommit={() => commitRaw("m")}
-                onStep={(dir) => step("m", dir)}
-              />
-            </span>
-          </div>
+          {/* Пока времени нет — вместо пустых полей одна кнопка: так видно, что
+              срок стоит на день целиком, а не на 00:00. */}
+          {timeUnset ? (
+            <button
+              type="button"
+              disabled={timeDisabled}
+              onClick={() => setDraftTime(DEFAULT_DUE_TIME)}
+              className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-dashed border-border text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            >
+              <Clock className="size-3.5 shrink-0" />
+              {timeDisabled ? "Сначала выберите день" : "Добавить время"}
+            </button>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-muted-foreground">Время</span>
+              <span className="flex items-center gap-1">
+                <TimeSegment
+                  display={hDisplay}
+                  placeholder="10"
+                  disabled={timeDisabled}
+                  label="Часы"
+                  onType={(v) => setRaw((r) => ({ ...r, h: v }))}
+                  onCommit={() => commitRaw("h")}
+                  onStep={(dir) => step("h", dir)}
+                />
+                <span className={cn("text-sm text-muted-foreground", timeDisabled && "opacity-50")}>:</span>
+                <TimeSegment
+                  display={mDisplay}
+                  placeholder="00"
+                  disabled={timeDisabled}
+                  label="Минуты"
+                  onType={(v) => setRaw((r) => ({ ...r, m: v }))}
+                  onCommit={() => commitRaw("m")}
+                  onStep={(dir) => step("m", dir)}
+                />
+              </span>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-1">
             <button
               type="button"
-              disabled={!draftTime && !raw.h && !raw.m}
+              disabled={timeUnset}
               onClick={() => {
                 setDraftTime(null);
                 setRaw(NO_RAW);
