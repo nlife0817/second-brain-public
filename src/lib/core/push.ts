@@ -34,26 +34,18 @@ type PendingRow = {
 
 type TargetRow = {
   id: string;
-  src: "core" | "v1";
   endpoint: string;
   p256dh: string;
   auth: string;
   user_agent: string | null;
 };
 
-/**
- * Подписки пользователя: своя таблица core + наследие v1 по email (устройства,
- * подписанные до появления core.push_subscriptions). Дубли по endpoint
- * снимает вызывающий.
- */
-async function listTargets(userId: string, email: string): Promise<TargetRow[]> {
+/** Устройства пользователя. */
+async function listTargets(userId: string): Promise<TargetRow[]> {
   return prepare<TargetRow>(
-    `SELECT id::text AS id, 'core' AS src, endpoint, p256dh, auth, user_agent
-     FROM core.push_subscriptions WHERE user_id = ?
-     UNION ALL
-     SELECT id, 'v1' AS src, endpoint, p256dh, auth, user_agent
-     FROM public.push_subscriptions WHERE user_email = ?`,
-  ).all(userId, email);
+    `SELECT id::text AS id, endpoint, p256dh, auth, user_agent
+     FROM core.push_subscriptions WHERE user_id = ?`,
+  ).all(userId);
 }
 
 function isMobileUserAgent(ua: string | null): boolean {
@@ -61,11 +53,7 @@ function isMobileUserAgent(ua: string | null): boolean {
 }
 
 async function dropTarget(target: TargetRow): Promise<void> {
-  if (target.src === "core") {
-    await prepare(`DELETE FROM core.push_subscriptions WHERE id = ?`).run(target.id);
-  } else {
-    await prepare(`DELETE FROM public.push_subscriptions WHERE id = ?`).run(target.id);
-  }
+  await prepare(`DELETE FROM core.push_subscriptions WHERE id = ?`).run(target.id);
 }
 
 /** Комментарии хранятся как HTML — в уведомление идёт обычный текст. */
@@ -168,12 +156,9 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
   let skipped = 0;
   for (const row of rows) {
     try {
-      const targets = await listTargets(row.user_id, row.email);
-      const seenEndpoints = new Set<string>();
+      const targets = await listTargets(row.user_id);
       let delivered = 0;
       for (const target of targets) {
-        if (seenEndpoints.has(target.endpoint)) continue;
-        seenEndpoints.add(target.endpoint);
         const payload = buildPayload(row, isMobileUserAgent(target.user_agent));
         const result = await sendWebPush(target, payload);
         if (result === "sent") delivered++;
