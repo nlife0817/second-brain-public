@@ -6,7 +6,9 @@
 import Link from "next/link";
 import { Check, CheckCircle2, ChevronsUpDown, Download, Monitor, Smartphone } from "lucide-react";
 import { Avatar } from "@/components/v2/bits";
+import { NotificationKinds, PushTestButton } from "@/components/v2/NotificationSettings";
 import { PushToggle } from "@/components/v2/PushToggle";
+import { SignOutButton } from "@/components/v2/SignOutButton";
 import { IosInstallSteps, useInstallState } from "@/components/v2/mobile/InstallPrompt";
 import { Button } from "@/components/ui/button";
 import {
@@ -98,6 +100,13 @@ export default function MobileSettingsPage() {
                 На iPhone уведомления работают только из установленного приложения — установите его ниже.
               </p>
             )}
+            <div className="mt-3 border-t border-border pt-3">
+              <PushTestButton />
+            </div>
+          </Section>
+
+          <Section title="Какие события присылать">
+            <NotificationKinds />
           </Section>
 
           <Section title="Приложение">
@@ -137,6 +146,13 @@ export default function MobileSettingsPage() {
                 Полная версия (администрирование — там)
               </Link>
             </div>
+          </Section>
+
+          <Section title="Аккаунт">
+            <p className="mb-3 text-sm text-muted-foreground">
+              Выход снимет подписку на уведомления на этом устройстве.
+            </p>
+            <SignOutButton label="Выйти из аккаунта" className="w-full" />
           </Section>
         </div>
       </div>

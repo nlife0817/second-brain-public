@@ -30,6 +30,8 @@ type PendingRow = {
   /** Текст комментария — только для kind = 'comment'. */
   comment_html: string | null;
   unread: number;
+  /** Настройка получателя: слать ли push по этому типу события. */
+  push_enabled: boolean;
 };
 
 type TargetRow = {
@@ -54,6 +56,67 @@ function isMobileUserAgent(ua: string | null): boolean {
 
 async function dropTarget(target: TargetRow): Promise<void> {
   await prepare(`DELETE FROM core.push_subscriptions WHERE id = ?`).run(target.id);
+}
+
+export interface PushDevice {
+  id: string;
+  /** Свой endpoint браузер знает сам и помечает устройство как текущее. */
+  endpoint: string;
+  user_agent: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Устройства пользователя для раздела уведомлений. */
+export async function listUserDevices(userId: string): Promise<PushDevice[]> {
+  return prepare<PushDevice>(
+    `SELECT id::text AS id, endpoint, user_agent, created_at, updated_at
+     FROM core.push_subscriptions
+     WHERE user_id = ?
+     ORDER BY updated_at DESC`,
+  ).all(userId);
+}
+
+/**
+ * Отписывает устройство по id. Владелец проверяется в самом DELETE: id из
+ * чужого списка не должен ничего удалять.
+ */
+export async function removeUserDevice(userId: string, id: string): Promise<boolean> {
+  const rows = await prepare<{ id: string }>(
+    `DELETE FROM core.push_subscriptions
+     WHERE id = ?::uuid AND user_id = ?
+     RETURNING id::text AS id`,
+  ).all(id, userId);
+  return rows.length > 0;
+}
+
+/**
+ * Проверочное уведомление на все устройства пользователя. Без него «включил,
+ * но ничего не приходит» невозможно отличить от «всё работает, просто пока
+ * нечему приходить»: между подпиской и первым реальным событием могут пройти
+ * часы, а к тому моменту причину уже не найти.
+ */
+export async function sendTestPushToUser(
+  userId: string,
+): Promise<{ sent: number; removed: number }> {
+  const targets = await listTargets(userId);
+  let sent = 0;
+  let removed = 0;
+  for (const target of targets) {
+    const mobile = isMobileUserAgent(target.user_agent);
+    const result = await sendWebPush(target, {
+      title: "Проверка уведомлений",
+      body: "Если вы видите это сообщение — уведомления работают.",
+      url: mobile ? "/v2/m/inbox" : "/v2/inbox",
+      tag: "v2-test",
+    });
+    if (result === "sent") sent++;
+    if (result === "dead") {
+      await dropTarget(target);
+      removed++;
+    }
+  }
+  return { sent, removed };
 }
 
 /** Комментарии хранятся как HTML — в уведомление идёт обычный текст. */
@@ -143,7 +206,9 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
                        WHERE c.id = (e.payload ->> 'comment_id')::uuid AND c.deleted_at IS NULL)
             END AS comment_html,
             (SELECT count(*)::int FROM core.notifications un
-             WHERE un.user_id = n.user_id AND un.read_at IS NULL) AS unread
+             WHERE un.user_id = n.user_id AND un.read_at IS NULL) AS unread,
+            coalesce((SELECT np.push FROM core.notification_prefs np
+                      WHERE np.user_id = n.user_id AND np.kind = n.kind), true) AS push_enabled
      FROM core.notifications n
      JOIN core.users u ON u.id = n.user_id
      LEFT JOIN core.events e ON e.id = n.event_id
@@ -155,6 +220,11 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
   let sent = 0;
   let skipped = 0;
   for (const row of rows) {
+    // Тип выключён в настройках: запись в инбоксе остаётся, шторку не трогаем.
+    if (!row.push_enabled) {
+      skipped++;
+      continue;
+    }
     try {
       const targets = await listTargets(row.user_id);
       let delivered = 0;

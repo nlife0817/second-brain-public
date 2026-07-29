@@ -6,8 +6,9 @@
 // получателю (`scope`): своя задача, подписка или прочее. Считает его сервер:
 // в браузере нет ни списка исполнителей задачи, ни подписок.
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bell, CheckCheck, Filter, Group } from "lucide-react";
+import { Bell, CheckCheck, Filter, Group, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TaskSheet } from "@/components/v2/lazy";
@@ -251,6 +252,16 @@ export function InboxClient({ initial }: { initial: CoreNotification[] }) {
         <Button variant="outline" size="sm" onClick={() => void markAll()}>
           <CheckCheck className="size-4" />
           Прочитать все
+        </Button>
+        {/* Настройки доставки живут рядом со списком: искать их в общем разделе
+            настроек, стоя над своим инбоксом, — лишний путь. */}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title="Настройки уведомлений"
+          render={<Link href="/v2/settings/notifications" />}
+        >
+          <Settings className="size-4" />
         </Button>
       </header>
 

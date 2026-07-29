@@ -81,6 +81,17 @@ self.addEventListener("push", (event) => {
     actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : undefined,
   };
   const jobs = [self.registration.showNotification(title, options)];
+  // Открытые вкладки узнают об изменении сразу, а не из опроса раз в 30 секунд:
+  // счётчик обновляется, десктопная оболочка показывает карточку в углу.
+  jobs.push(
+    broadcast({
+      type: "sb:push",
+      title,
+      body: options.body,
+      url: options.data.url,
+      unread: data.unread,
+    })
+  );
   // Счётчик на иконке установленного приложения (Android / iOS 16.4+).
   if (typeof data.unread === "number" && "setAppBadge" in self.navigator) {
     jobs.push(
@@ -92,6 +103,18 @@ self.addEventListener("push", (event) => {
   }
   event.waitUntil(Promise.all(jobs));
 });
+
+/** Сообщение всем окнам приложения; закрытые вкладки просто никого не получат. */
+async function broadcast(message) {
+  const clientList = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  for (const client of clientList) {
+    try {
+      client.postMessage(message);
+    } catch {
+      // окно закрывается прямо сейчас — не мешает остальным
+    }
+  }
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

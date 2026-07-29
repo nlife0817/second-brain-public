@@ -12,7 +12,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { Bell, Copy, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -42,7 +42,6 @@ import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { AuditList } from "@/components/v2/AuditList";
 import { Avatar } from "@/components/v2/bits";
 import { OrgSwitcher } from "@/components/v2/OrgSwitcher";
-import { PushToggle } from "@/components/v2/PushToggle";
 
 const PROJECT_ROLE_LABELS: Record<ProjectRole, string> = {
   admin: "Админ",
@@ -420,9 +419,18 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
             </Section>
           )}
 
-          {/* Пуш — про это устройство, а не про организацию: доступен всем. */}
-          <Section title="Уведомления на этом устройстве">
-            <PushToggle />
+          {/* Уведомления настраиваются в своём разделе: он личный и доступен
+              любой роли, а состав этой страницы решает владелец организации. */}
+          <Section title="Уведомления">
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="flex-1 text-sm text-muted-foreground">
+                Доставка в этот браузер, устройства и типы событий
+              </p>
+              <Button variant="outline" size="sm" render={<Link href="/v2/settings/notifications" />}>
+                <Bell className="size-4" />
+                Открыть раздел
+              </Button>
+            </div>
           </Section>
 
           {has("statuses") && (

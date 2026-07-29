@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { SheetHeader } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/core/client";
 import type { TaskChange } from "@/lib/core/task-change";
@@ -44,6 +44,7 @@ import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, StatusPill } from "./bits";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
+import { SidePanel } from "./SidePanel";
 import { TaskRecurrence, type TaskRecurrenceRule } from "./TaskRecurrence";
 // Tiptap — самая тяжёлая зависимость интерфейса (≈370 КБ). Статический импорт
 // тянул её в бандл каждой страницы v2, хотя редактор нужен только когда открыта
@@ -431,374 +432,364 @@ export function TaskSheet({
   );
 
   return (
-    <Sheet open={!!taskId} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent
-        side="right"
-        showCloseButton={false}
-        // На телефоне карточка занимает весь экран и рисуется поверх оболочки:
-        // без отступов безопасной зоны шапка уезжает под чёлку, а комментарии —
-        // под домашний индикатор.
-        className="flex flex-col gap-0 overflow-hidden p-0 pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] data-[side=right]:w-full data-[side=right]:sm:max-w-xl sm:pb-0 sm:pt-0"
-      >
-        {!task ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            {error ?? "Загрузка…"}
-          </div>
-        ) : (
-          <>
-            {/* Кнопки шапки на телефоне крупнее: 28 px мышью попадаются, пальцем — нет. */}
-            <SheetHeader className="border-b border-border px-4 py-3">
-              <div className="flex items-center gap-2">
-                <Button
-                  variant={isDone ? "secondary" : "outline"}
-                  size="sm"
-                  className="h-9 sm:h-7"
-                  onClick={() => {
-                    const target = isDone ? reopenStatus() : doneStatus;
-                    if (target) void patch({ status_id: target.id });
-                  }}
-                >
-                  <CheckCircle2 className={cn("size-4", isDone && "text-emerald-500")} />
-                  {isDone ? "Завершена" : "Завершить"}
-                </Button>
-                <span className="flex-1" />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-9 sm:h-7"
-                  onClick={() => void startTimerHere()}
-                  title="Начать отсчёт времени по этой задаче"
-                >
-                  <Play className="size-4" />
-                  Таймер
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="size-9 sm:size-7"
-                  onClick={() => void toggleFollow()}
-                  title={amFollower ? "Не следить" : "Следить"}
-                >
-                  {amFollower ? <BellOff className="size-4" /> : <Bell className="size-4" />}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="size-9 sm:size-7"
-                  onClick={() => void removeTask()}
-                  title="Удалить"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-                <Button variant="ghost" size="icon-sm" className="size-9 sm:size-7" onClick={onClose}>
-                  <X className="size-4" />
-                </Button>
-              </div>
-              <SheetTitle className="sr-only">Задача</SheetTitle>
-            </SheetHeader>
+    <SidePanel open={!!taskId} onOpenChange={(open) => !open && onClose()} title="Задача">
+      {!task ? (
+        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+          {error ?? "Загрузка…"}
+        </div>
+      ) : (
+        <>
+          {/* Кнопки шапки на телефоне крупнее: 28 px мышью попадаются, пальцем — нет. */}
+          <SheetHeader className="border-b border-border px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Button
+                variant={isDone ? "secondary" : "outline"}
+                size="sm"
+                className="h-9 sm:h-7"
+                onClick={() => {
+                  const target = isDone ? reopenStatus() : doneStatus;
+                  if (target) void patch({ status_id: target.id });
+                }}
+              >
+                <CheckCircle2 className={cn("size-4", isDone && "text-emerald-500")} />
+                {isDone ? "Завершена" : "Завершить"}
+              </Button>
+              <span className="flex-1" />
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 sm:h-7"
+                onClick={() => void startTimerHere()}
+                title="Начать отсчёт времени по этой задаче"
+              >
+                <Play className="size-4" />
+                Таймер
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="size-9 sm:size-7"
+                onClick={() => void toggleFollow()}
+                title={amFollower ? "Не следить" : "Следить"}
+              >
+                {amFollower ? <BellOff className="size-4" /> : <Bell className="size-4" />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="size-9 sm:size-7"
+                onClick={() => void removeTask()}
+                title="Удалить"
+              >
+                <Trash2 className="size-4" />
+              </Button>
+              <Button variant="ghost" size="icon-sm" className="size-9 sm:size-7" onClick={onClose}>
+                <X className="size-4" />
+              </Button>
+            </div>
+          </SheetHeader>
 
-            <div className="flex-1 overflow-y-auto">
-              <div className="flex flex-col gap-4 px-4 py-4">
-                {error && <p className="text-sm text-destructive">{error}</p>}
+          <div className="flex-1 overflow-y-auto">
+            <div className="flex flex-col gap-4 px-4 py-4">
+              {error && <p className="text-sm text-destructive">{error}</p>}
 
-                <Input
-                  key={`title-${task.id}`}
-                  defaultValue={task.title}
-                  className="border-none px-0 text-lg font-semibold shadow-none focus-visible:ring-0"
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    if (v && v !== task.title) void patch({ title: v });
-                  }}
+              <Input
+                key={`title-${task.id}`}
+                defaultValue={task.title}
+                className="border-none px-0 text-lg font-semibold shadow-none focus-visible:ring-0"
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v && v !== task.title) void patch({ title: v });
+                }}
+              />
+
+              <div className="grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2.5 text-sm">
+                <span className="text-muted-foreground">Статус</span>
+                <Select
+                  value={task.status_id ?? ""}
+                  onValueChange={(v) => v && void patch({ status_id: v })}
+                >
+                  <SelectTrigger size="sm" className="w-fit min-w-36">
+                    <SelectValue placeholder="Без статуса">
+                      <StatusPill status={statuses.find((s) => s.id === task.status_id)} />
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statuses.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <span className="text-muted-foreground">Приоритет</span>
+                <Select
+                  value={task.priority}
+                  onValueChange={(v) => v && void patch({ priority: v as TaskPriority })}
+                >
+                  <SelectTrigger size="sm" className="w-fit min-w-36">
+                    <SelectValue>{PRIORITY_LABELS[task.priority].label}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(PRIORITY_LABELS) as TaskPriority[]).map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {PRIORITY_LABELS[p].label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <span className="text-muted-foreground">Срок</span>
+                <div className="flex items-center gap-2">
+                  <Calendar className="size-4 text-muted-foreground" />
+                  <input
+                    type="date"
+                    value={task.due_date ?? ""}
+                    onChange={(e) => void patch({ due_date: e.target.value || null })}
+                    className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+                  />
+                  <input
+                    type="time"
+                    value={task.due_time?.slice(0, 5) ?? ""}
+                    onChange={(e) => void patch({ due_time: e.target.value || null })}
+                    className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+                  />
+                </div>
+
+                {/* Повтор — свойство самой задачи: отдельного экрана правил
+                    больше нет, копия рождается из её текущего состояния. */}
+                <span className="text-muted-foreground">Повтор</span>
+                <TaskRecurrence
+                  orgId={orgId}
+                  taskId={task.id}
+                  rule={recurrence}
+                  canEdit={canEdit}
+                  onChange={setRecurrence}
                 />
 
-                <div className="grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2.5 text-sm">
-                  <span className="text-muted-foreground">Статус</span>
-                  <Select
-                    value={task.status_id ?? ""}
-                    onValueChange={(v) => v && void patch({ status_id: v })}
-                  >
-                    <SelectTrigger size="sm" className="w-fit min-w-36">
-                      <SelectValue placeholder="Без статуса">
-                        <StatusPill status={statuses.find((s) => s.id === task.status_id)} />
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {statuses.map((s) => (
-                        <SelectItem key={s.id} value={s.id}>
-                          {s.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <span className="text-muted-foreground">Исполнители</span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {task.assignees.map((a) => (
+                    <span key={a.id} className="inline-flex items-center gap-1 rounded-full bg-muted py-0.5 pl-0.5 pr-2 text-xs">
+                      <Avatar user={a} size="xs" />
+                      {a.name || a.email}
+                      <button
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={() =>
+                          void setAssignees(task.assignees.filter((x) => x.id !== a.id).map((x) => x.id))
+                        }
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <MemberPicker selected={task.assignees} onChange={(ids) => void setAssignees(ids)} />
+                </div>
 
-                  <span className="text-muted-foreground">Приоритет</span>
-                  <Select
-                    value={task.priority}
-                    onValueChange={(v) => v && void patch({ priority: v as TaskPriority })}
-                  >
-                    <SelectTrigger size="sm" className="w-fit min-w-36">
-                      <SelectValue>{PRIORITY_LABELS[task.priority].label}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(Object.keys(PRIORITY_LABELS) as TaskPriority[]).map((p) => (
-                        <SelectItem key={p} value={p}>
-                          {PRIORITY_LABELS[p].label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <span className="text-muted-foreground">Теги</span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {tags.map((t) => {
+                    const active = task.tags.some((x) => x.id === t.id);
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => {
+                          const next = active
+                            ? task.tags.filter((x) => x.id !== t.id).map((x) => x.id)
+                            : [...task.tags.map((x) => x.id), t.id];
+                          void patch({ tag_ids: next });
+                        }}
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-[11px] font-medium transition-opacity",
+                          active ? "" : "opacity-40 hover:opacity-80",
+                        )}
+                        style={{ backgroundColor: `${t.color}1a`, color: t.color }}
+                      >
+                        {t.name}
+                      </button>
+                    );
+                  })}
+                  {tags.length === 0 && <span className="text-xs text-muted-foreground">Нет тегов</span>}
+                </div>
 
-                  <span className="text-muted-foreground">Срок</span>
-                  <div className="flex items-center gap-2">
-                    <Calendar className="size-4 text-muted-foreground" />
-                    <input
-                      type="date"
-                      value={task.due_date ?? ""}
-                      onChange={(e) => void patch({ due_date: e.target.value || null })}
-                      className="rounded-md border border-border bg-background px-2 py-1 text-sm"
-                    />
-                    <input
-                      type="time"
-                      value={task.due_time?.slice(0, 5) ?? ""}
-                      onChange={(e) => void patch({ due_time: e.target.value || null })}
-                      className="rounded-md border border-border bg-background px-2 py-1 text-sm"
-                    />
-                  </div>
-
-                  {/* Повтор — свойство самой задачи: отдельного экрана правил
-                      больше нет, копия рождается из её текущего состояния. */}
-                  <span className="text-muted-foreground">Повтор</span>
-                  <TaskRecurrence
-                    orgId={orgId}
-                    taskId={task.id}
-                    rule={recurrence}
-                    canEdit={canEdit}
-                    onChange={setRecurrence}
-                  />
-
-                  <span className="text-muted-foreground">Исполнители</span>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {task.assignees.map((a) => (
-                      <span key={a.id} className="inline-flex items-center gap-1 rounded-full bg-muted py-0.5 pl-0.5 pr-2 text-xs">
-                        <Avatar user={a} size="xs" />
-                        {a.name || a.email}
+                <span className="text-muted-foreground">Проекты</span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {task.placements.map((pl) => {
+                    const project = projects.find((p) => p.id === pl.project_id);
+                    return (
+                      <span key={pl.project_id} className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">
+                        <span className="size-2 rounded-sm" style={{ backgroundColor: project?.color ?? "#6b7280" }} />
+                        {project?.name ?? "Недоступный проект"}
                         <button
                           className="text-muted-foreground hover:text-foreground"
                           onClick={() =>
-                            void setAssignees(task.assignees.filter((x) => x.id !== a.id).map((x) => x.id))
+                            void setPlacements(task.placements.filter((x) => x.project_id !== pl.project_id).map((x) => x.project_id))
                           }
                         >
                           <X className="size-3" />
                         </button>
                       </span>
-                    ))}
-                    <MemberPicker selected={task.assignees} onChange={(ids) => void setAssignees(ids)} />
-                  </div>
-
-                  <span className="text-muted-foreground">Теги</span>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {tags.map((t) => {
-                      const active = task.tags.some((x) => x.id === t.id);
-                      return (
-                        <button
-                          key={t.id}
-                          onClick={() => {
-                            const next = active
-                              ? task.tags.filter((x) => x.id !== t.id).map((x) => x.id)
-                              : [...task.tags.map((x) => x.id), t.id];
-                            void patch({ tag_ids: next });
-                          }}
-                          className={cn(
-                            "rounded-full px-2 py-0.5 text-[11px] font-medium transition-opacity",
-                            active ? "" : "opacity-40 hover:opacity-80",
-                          )}
-                          style={{ backgroundColor: `${t.color}1a`, color: t.color }}
-                        >
-                          {t.name}
-                        </button>
-                      );
-                    })}
-                    {tags.length === 0 && <span className="text-xs text-muted-foreground">Нет тегов</span>}
-                  </div>
-
-                  <span className="text-muted-foreground">Проекты</span>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {task.placements.map((pl) => {
-                      const project = projects.find((p) => p.id === pl.project_id);
-                      return (
-                        <span key={pl.project_id} className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">
-                          <span className="size-2 rounded-sm" style={{ backgroundColor: project?.color ?? "#6b7280" }} />
-                          {project?.name ?? "Недоступный проект"}
-                          <button
-                            className="text-muted-foreground hover:text-foreground"
-                            onClick={() =>
-                              void setPlacements(task.placements.filter((x) => x.project_id !== pl.project_id).map((x) => x.project_id))
-                            }
-                          >
-                            <X className="size-3" />
-                          </button>
-                        </span>
-                      );
-                    })}
-                    <Select
-                      value=""
-                      onValueChange={(v) => {
-                        if (v) void setPlacements([...task.placements.map((p) => p.project_id), v]);
-                      }}
-                    >
-                      <SelectTrigger size="sm" className="h-6 w-fit border-dashed text-xs text-muted-foreground">
-                        <Plus className="size-3" /> В проект
-                      </SelectTrigger>
-                      <SelectContent>
-                        {projects
-                          .filter(
-                            (p) =>
-                              !task.placements.some((pl) => pl.project_id === p.id) &&
-                              (p.my_role === "admin" || p.my_role === "editor"),
-                          )
-                          .map((p) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.name}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {visibleFields.map((f) => (
-                    <FieldRow
-                      key={f.id}
-                      field={f}
-                      value={task.field_values[f.id]}
-                      onChange={(v) => void setFieldValue(f.id, v)}
-                    />
-                  ))}
+                    );
+                  })}
+                  <Select
+                    value=""
+                    onValueChange={(v) => {
+                      if (v) void setPlacements([...task.placements.map((p) => p.project_id), v]);
+                    }}
+                  >
+                    <SelectTrigger size="sm" className="h-6 w-fit border-dashed text-xs text-muted-foreground">
+                      <Plus className="size-3" /> В проект
+                    </SelectTrigger>
+                    <SelectContent>
+                      {projects
+                        .filter(
+                          (p) =>
+                            !task.placements.some((pl) => pl.project_id === p.id) &&
+                            (p.my_role === "admin" || p.my_role === "editor"),
+                        )
+                        .map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
-                <RichText
-                  key={`desc-${task.id}`}
-                  value={task.description}
-                  onSave={(html) => void patch({ description: html })}
-                />
-
-                <div>
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Подзадачи
-                  </p>
-                  <div className="flex flex-col gap-1">
-                    {subtasks.map((s) => (
-                      <div key={s.id} className="flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-muted/50">
-                        <button onClick={() => void toggleSubtaskDone(s)}>
-                          {s.completed_at ? (
-                            <CheckCircle2 className="size-4 text-emerald-500" />
-                          ) : (
-                            <Circle className="size-4 text-muted-foreground" />
-                          )}
-                        </button>
-                        <span className={cn("flex-1 text-sm", s.completed_at && "text-muted-foreground line-through")}>
-                          {s.title}
-                        </span>
-                      </div>
-                    ))}
-                    <div className="flex items-center gap-2">
-                      <Plus className="size-4 text-muted-foreground" />
-                      <input
-                        value={subtaskTitle}
-                        onChange={(e) => setSubtaskTitle(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && void addSubtask()}
-                        placeholder="Добавить подзадачу…"
-                        className="flex-1 bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <RelationsList
-                  entityType="task"
-                  entityId={task.id}
-                  canEdit={canEdit}
-                  initialRelations={relations}
-                  initialTypes={relationTypes}
-                />
+                {visibleFields.map((f) => (
+                  <FieldRow
+                    key={f.id}
+                    field={f}
+                    value={task.field_values[f.id]}
+                    onChange={(v) => void setFieldValue(f.id, v)}
+                  />
+                ))}
               </div>
 
-              <div className="border-t border-border">
-                <div className="flex gap-1 px-4 pt-3">
-                  {(["comments", "feed"] as const).map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => setTab(t)}
-                      className={cn(
-                        "rounded-lg px-3 py-1 text-sm",
-                        tab === t ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground",
-                      )}
-                    >
-                      {t === "comments" ? `Комментарии (${comments.length})` : "История"}
-                    </button>
+              <RichText
+                key={`desc-${task.id}`}
+                value={task.description}
+                onSave={(html) => void patch({ description: html })}
+              />
+
+              <div>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Подзадачи
+                </p>
+                <div className="flex flex-col gap-1">
+                  {subtasks.map((s) => (
+                    <div key={s.id} className="flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-muted/50">
+                      <button onClick={() => void toggleSubtaskDone(s)}>
+                        {s.completed_at ? (
+                          <CheckCircle2 className="size-4 text-emerald-500" />
+                        ) : (
+                          <Circle className="size-4 text-muted-foreground" />
+                        )}
+                      </button>
+                      <span className={cn("flex-1 text-sm", s.completed_at && "text-muted-foreground line-through")}>
+                        {s.title}
+                      </span>
+                    </div>
                   ))}
+                  <div className="flex items-center gap-2">
+                    <Plus className="size-4 text-muted-foreground" />
+                    <input
+                      value={subtaskTitle}
+                      onChange={(e) => setSubtaskTitle(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && void addSubtask()}
+                      placeholder="Добавить подзадачу…"
+                      className="flex-1 bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground"
+                    />
+                  </div>
                 </div>
-                <div className="flex flex-col gap-3 px-4 py-3">
-                  {tab === "comments" ? (
-                    <>
-                      {comments.map((c) => (
-                        <div key={c.id} className="flex gap-2">
-                          {c.author ? <Avatar user={c.author} size="sm" /> : <span className="size-6" />}
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs text-muted-foreground">
-                              <span className="font-medium text-foreground">
-                                {c.author?.name || c.author?.email || c.author_label || "Неизвестный"}
-                              </span>{" "}
-                              · {new Date(c.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                              {c.edited_at && " · изменён"}
-                            </p>
-                            <div
-                              className="prose prose-sm dark:prose-invert max-w-none text-sm"
-                              dangerouslySetInnerHTML={{ __html: c.body }}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                      <div className="flex gap-2">
-                        {me && <Avatar user={me} size="sm" />}
-                        <div className="flex-1">
-                          <Textarea
-                            value={commentText}
-                            onChange={(e) => setCommentText(e.target.value)}
-                            placeholder="Написать комментарий…"
-                            className="min-h-16 text-sm"
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void addComment();
-                            }}
+              </div>
+
+              <RelationsList
+                entityType="task"
+                entityId={task.id}
+                canEdit={canEdit}
+                initialRelations={relations}
+                initialTypes={relationTypes}
+              />
+            </div>
+
+            <div className="border-t border-border">
+              <div className="flex gap-1 px-4 pt-3">
+                {(["comments", "feed"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setTab(t)}
+                    className={cn(
+                      "rounded-lg px-3 py-1 text-sm",
+                      tab === t ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {t === "comments" ? `Комментарии (${comments.length})` : "История"}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-col gap-3 px-4 py-3">
+                {tab === "comments" ? (
+                  <>
+                    {comments.map((c) => (
+                      <div key={c.id} className="flex gap-2">
+                        {c.author ? <Avatar user={c.author} size="sm" /> : <span className="size-6" />}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs text-muted-foreground">
+                            <span className="font-medium text-foreground">
+                              {c.author?.name || c.author?.email || c.author_label || "Неизвестный"}
+                            </span>{" "}
+                            · {new Date(c.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                            {c.edited_at && " · изменён"}
+                          </p>
+                          <div
+                            className="prose prose-sm dark:prose-invert max-w-none text-sm"
+                            dangerouslySetInnerHTML={{ __html: c.body }}
                           />
-                          <div className="mt-1.5 flex justify-end">
-                            <Button size="sm" onClick={() => void addComment()} disabled={!commentText.trim()}>
-                              Отправить
-                            </Button>
-                          </div>
                         </div>
                       </div>
-                    </>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      {feed.map((e) => (
-                        <p key={e.id} className="text-xs text-muted-foreground">
-                          <span className="font-medium text-foreground">
-                            {e.actor?.name || e.actor?.email || "Система"}
-                          </span>{" "}
-                          {eventLabel(e)} ·{" "}
-                          {new Date(e.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                        </p>
-                      ))}
-                      {feed.length === 0 && <p className="text-xs text-muted-foreground">Пока пусто</p>}
+                    ))}
+                    <div className="flex gap-2">
+                      {me && <Avatar user={me} size="sm" />}
+                      <div className="flex-1">
+                        <Textarea
+                          value={commentText}
+                          onChange={(e) => setCommentText(e.target.value)}
+                          placeholder="Написать комментарий…"
+                          className="min-h-16 text-sm"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void addComment();
+                          }}
+                        />
+                        <div className="mt-1.5 flex justify-end">
+                          <Button size="sm" onClick={() => void addComment()} disabled={!commentText.trim()}>
+                            Отправить
+                          </Button>
+                        </div>
+                      </div>
                     </div>
-                  )}
-                </div>
+                  </>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {feed.map((e) => (
+                      <p key={e.id} className="text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          {e.actor?.name || e.actor?.email || "Система"}
+                        </span>{" "}
+                        {eventLabel(e)} ·{" "}
+                        {new Date(e.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                    ))}
+                    {feed.length === 0 && <p className="text-xs text-muted-foreground">Пока пусто</p>}
+                  </div>
+                )}
               </div>
             </div>
-          </>
-        )}
-      </SheetContent>
-    </Sheet>
+          </div>
+        </>
+      )}
+    </SidePanel>
   );
 }
 

@@ -11,7 +11,7 @@
 // Проект и его задачи считает сервер (`initial`) — экран рисуется сразу, без
 // пары запросов после гидрации. Дальше список живёт в клиентском кэше.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { KanbanSquare, Plus, Settings, Table2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,9 +21,9 @@ import { CreateTaskDialog, ProjectMembersDialog, TaskSheet } from "@/components/
 import { accessLabel } from "@/components/v2/ProjectAccessPicker";
 import { ProjectIcon } from "@/components/v2/project-icons";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
-import { api } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import { applyTaskChange } from "@/lib/core/task-change";
+import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type {
   Project,
   ProjectMemberWithUser,
@@ -101,6 +101,9 @@ function ProjectScreen({
   const [createIn, setCreateIn] = useState<string | null | false>(false); // false = закрыт, null/statusId = открыт
   const [membersOpen, setMembersOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Отдельно от `error`: тот означает «экран показать нечем» и подменяет собой
+  // всю страницу. Замечание по только что созданной задаче — полоса над списком.
+  const [notice, setNotice] = useState<string | null>(null);
 
   const projectPath = orgId ? `/orgs/${orgId}/projects/${projectId}` : null;
   const tasksPath = projectPath ? `${projectPath}/tasks${showDone ? "?done=1" : ""}` : null;
@@ -146,12 +149,22 @@ function ProjectScreen({
   const openTask = useCallback((id: string) => setOpenTaskId(id), []);
   const addTask = useCallback((statusId: string | null) => setCreateIn(statusId), []);
 
-  const quickAdd = useCallback(
-    async (title: string) => {
+  // Задача создаётся сразу в этом проекте: строка, добавленная с экрана проекта
+  // и уехавшая в личный инбокс, тут же пропала бы из списка. Стабильная ссылка —
+  // иначе черновик сбрасывался бы на каждый ре-рендер экрана.
+  const draftDefaults = useMemo(() => ({ project_ids: [projectId] }), [projectId]);
+
+  const createTask = useCallback(
+    async (draft: TaskDraft) => {
       if (!orgId) return;
-      // Задача создаётся сразу в этом проекте: строка, добавленная с экрана
-      // проекта и уехавшая в личный инбокс, тут же пропала бы из списка.
-      await api.post(`/orgs/${orgId}/tasks`, { title, placements: [{ project_id: projectId }] });
+      // Проект уже лежит в черновике, но подстраховываемся: задача без
+      // размещения уедет в личный инбокс и пропадёт из этого списка.
+      const { fieldsWarning } = await createTaskFromDraft(
+        orgId,
+        draft,
+        draft.project_ids.length === 0 ? { placements: [{ project_id: projectId }] } : undefined,
+      );
+      setNotice(fieldsWarning);
       await reload();
       await refreshProjects();
     },
@@ -268,7 +281,10 @@ function ProjectScreen({
           reload={reload}
           invalidateKey={projectPath}
           onOpenTask={openTask}
-          onQuickAdd={canEdit ? quickAdd : undefined}
+          onCreateTask={canEdit ? createTask : undefined}
+          draftDefaults={draftDefaults}
+          error={notice}
+          onDismissError={() => setNotice(null)}
           quickAddPlaceholder={`Быстро добавить задачу в «${project.name}»…`}
           emptyText="В проекте пока нет задач."
           titleSlot={title}
