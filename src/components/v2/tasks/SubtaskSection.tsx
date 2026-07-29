@@ -505,10 +505,13 @@ function DueChip({ draft, patch }: DraftProps) {
       triggerClassName={cn(CHIP, text ? CHIP_SET : CHIP_EMPTY)}
       onCommit={(next) => patch(next)}
     >
+      {/* Подпись на самом триггере: DuePicker пробрасывает наружу только класс. */}
       {text ? (
-        <span className={cn("tabular-nums", dueTone(draft.due_date, false))}>{text}</span>
+        <span className={cn("tabular-nums", dueTone(draft.due_date, false))} title="Срок">
+          {text}
+        </span>
       ) : (
-        <CalendarDays className="size-3.5" />
+        <CalendarDays className="size-3.5" aria-label="Срок" />
       )}
     </DuePicker>
   );
