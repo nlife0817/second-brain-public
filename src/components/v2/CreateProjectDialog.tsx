@@ -28,8 +28,9 @@ export function CreateProjectDialog({
   const { orgId, refreshProjects } = useV2Store();
   const [name, setName] = useState("");
   const [color, setColor] = useState(PROJECT_COLORS[5]);
-  // Базовая роль сотрудников; менять её потом — в настройках проекта.
-  const [defaultRole, setDefaultRole] = useState<ProjectAccessValue>("editor");
+  // Базовая роль сотрудников. По умолчанию проект закрытый: открыть доступ —
+  // осознанное действие, а не то, что случается само при создании.
+  const [defaultRole, setDefaultRole] = useState<ProjectAccessValue>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
