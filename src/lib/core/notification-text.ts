@@ -8,6 +8,7 @@ import type { CoreNotification } from "./types";
 const ACTION_LABELS: Record<string, string> = {
   assigned: "назначил(а) вам задачу",
   comment: "прокомментировал(а)",
+  mention: "упомянул(а) вас",
   status_changed: "сменил(а) статус",
   completed: "завершил(а) задачу",
   due_changed: "изменил(а) срок",

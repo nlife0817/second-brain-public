@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 import { deleteComment, editComment } from "@/lib/core/comments";
 import { withOrg } from "@/lib/core/context";
 import { isUuid, jsonError, parseJson } from "@/lib/core/http";
-import { commentCreateSchema } from "@/lib/core/schemas";
+import { commentEditSchema } from "@/lib/core/schemas";
 
 export const PATCH = withOrg(async (request, { params, auth }) => {
   const { commentId } = await params;
   if (!isUuid(commentId)) return jsonError(404, "Comment not found");
-  const [body, invalid] = await parseJson(request, commentCreateSchema);
+  const [body, invalid] = await parseJson(request, commentEditSchema);
   if (invalid) return invalid;
   return NextResponse.json(await editComment(auth, commentId, body.body));
 });

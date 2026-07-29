@@ -9,6 +9,7 @@ import { useEditor, type Editor } from "@tiptap/react";
 import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
 import { docExtensions } from "./extensions";
 import { isInlineImageMime, uploadAttachment, UploadError } from "./upload";
+import { useMentionItems } from "./use-mention-items";
 
 /**
  * Пауза перед сохранением. Правка описания — это PATCH задачи, который экран
@@ -82,8 +83,10 @@ export function useDocEditor({
   // пришлось бы пересоздавать (с потерей истории и курсора).
   const uploadFilesRef = useRef<(files: File[]) => Promise<void>>(async () => {});
 
+  const mentionItems = useMentionItems();
+
   const editor = useEditor({
-    extensions: docExtensions({ placeholder }),
+    extensions: docExtensions({ placeholder, mentionItems }),
     content: value || "",
     editable,
     immediatelyRender: false,

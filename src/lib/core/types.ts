@@ -294,6 +294,11 @@ export interface CoreComment {
   body: string;
   created_at: string;
   edited_at: string | null;
+  /**
+   * Корень обсуждения; null — сам корень. Уровень ровно один: ответ на ответ
+   * сервер приводит к тому же корню (как в core.doc_comments).
+   */
+  parent_id: string | null;
   author: UserBrief | null;
 }
 

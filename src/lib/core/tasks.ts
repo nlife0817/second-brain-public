@@ -12,6 +12,7 @@ import {
   effectiveProjectRole,
   PolicyError,
 } from "./policy";
+import { notifyMentions } from "./mentions";
 import { getDefaultStatus } from "./orgmeta";
 import { requireProject } from "./projects";
 import type {
@@ -410,6 +411,12 @@ export async function filterVisibleTaskIds(ctx: AuthContext, ids: string[]): Pro
   ).all(...vis.cteParams, ctx.orgId, ids, ...vis.clauseParams);
   return new Set(rows.map((r) => r.id));
 }
+
+// Транспонированная версия этого отсева — «кто из пользователей видит одну
+// задачу» — живёт в mentions.ts (`filterUsersWhoCanViewTask`). Здесь её нет
+// намеренно: она понадобилась только уведомлениям об упоминаниях, а импорт
+// оттуда сюда замкнул бы модули в кольцо. Правила видимости у обеих одни —
+// правя `taskVisibility`, правь и её.
 
 /**
  * Задачи всех доступных проектов организации + личные — для сводного экрана.
@@ -902,6 +909,19 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
           userIds: audience,
           excludeUserId: ctx.user.id,
           taskId,
+        });
+      }
+      // Только появившиеся упоминания: описание автосохраняется раз в 1.2 с, и
+      // без разницы с прошлой версией человек получал бы уведомление на каждую
+      // правку абзаца, в котором его когда-то упомянули.
+      if (changedFields.includes("description")) {
+        await notifyMentions(tx, {
+          orgId: ctx.orgId,
+          eventId,
+          taskId,
+          actorId: ctx.user.id,
+          html: scalar.description as string,
+          prevHtml: task.description,
         });
       }
     }

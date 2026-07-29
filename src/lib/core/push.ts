@@ -22,6 +22,7 @@ const COALESCE_WINDOW_SECONDS = 60;
 const KIND_TITLES: Record<string, string> = {
   assigned: "Вам назначили задачу",
   comment: "Новый комментарий",
+  mention: "Вас упомянули",
   status_changed: "Статус изменён",
   completed: "Задача завершена",
   due_changed: "Срок изменён",
@@ -187,6 +188,8 @@ function groupTitle(kind: string, count: number): string {
   switch (kind) {
     case "comment":
       return plural(count, "новый комментарий", "новых комментария", "новых комментариев");
+    case "mention":
+      return plural(count, "упоминание", "упоминания", "упоминаний");
     case "assigned":
       return plural(count, "новая задача", "новые задачи", "новых задач");
     case "status_changed":
@@ -311,12 +314,15 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
                 THEN (SELECT p.name FROM core.projects p WHERE p.id = coalesce(n.entity_id, e.entity_id))
             END AS entity_title,
             CASE
-              WHEN n.kind = 'comment' AND e.payload ->> 'comment_id' IS NOT NULL
+              -- Упоминание висит на том же событии, что и комментарий, поэтому
+              -- берёт текст оттуда же. Упоминание в описании оба ключа оставляет
+              -- пустыми — пуш соберётся из автора и названия задачи.
+              WHEN n.kind IN ('comment', 'mention') AND e.payload ->> 'comment_id' IS NOT NULL
                 THEN (SELECT c.body FROM core.comments c
                       WHERE c.id = (e.payload ->> 'comment_id')::uuid AND c.deleted_at IS NULL)
               -- Комментарий к описанию живёт в своей таблице, но в шторке должен
               -- читаться так же — самим текстом, а не «кто-то что-то написал».
-              WHEN n.kind = 'doc_comment' AND e.payload ->> 'doc_comment_id' IS NOT NULL
+              WHEN n.kind IN ('doc_comment', 'mention') AND e.payload ->> 'doc_comment_id' IS NOT NULL
                 THEN (SELECT d.body FROM core.doc_comments d
                       WHERE d.id = (e.payload ->> 'doc_comment_id')::uuid AND d.deleted_at IS NULL)
             END AS comment_html,

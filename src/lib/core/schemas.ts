@@ -136,7 +136,14 @@ export const taskMoveSchema = z.object({
   position: z.number().finite().optional(),
 });
 
-export const commentCreateSchema = z.object({ body: z.string().min(1).max(50_000) });
+export const commentCreateSchema = z.object({
+  body: z.string().min(1).max(50_000),
+  /** Ответ в обсуждении. Ответ на ответ сервер приведёт к тому же корню. */
+  parent_id: z.uuid().nullish(),
+});
+
+/** Правка не меняет место в ленте — parent_id здесь не принимается. */
+export const commentEditSchema = z.object({ body: z.string().min(1).max(50_000) });
 
 // --- Комментарии к описанию (треды на фрагменте текста) ------------------------------
 

@@ -30,7 +30,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SheetHeader } from "@/components/ui/sheet";
-import { Textarea } from "@/components/ui/textarea";
 import { PRIORITY_ORDER } from "@/components/v2/tasks/draft-controls";
 import { SegmentedPicker } from "@/components/v2/tasks/SegmentedPicker";
 import { SubtaskSection } from "@/components/v2/tasks/SubtaskSection";
@@ -75,6 +74,19 @@ const RichText = dynamic(() => import("./RichText").then((m) => m.RichText), {
 const DocEditor = dynamic(() => import("./editor/DocEditor").then((m) => m.DocEditor), {
   ssr: false,
 });
+// Композер комментария — тот же Tiptap, что и редактор описания, поэтому и он
+// приезжает отдельным чанком: карточку открывают и ради одного взгляда на срок.
+const CommentComposer = dynamic(
+  () => import("./editor/CommentComposer").then((m) => m.CommentComposer),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="min-h-9 rounded-lg border border-input px-3 py-2 text-sm text-muted-foreground">
+        Написать комментарий…
+      </div>
+    ),
+  },
+);
 
 /**
  * Высота поля названия по содержимому. Ref-колбэк, а не эффект: правило
@@ -115,6 +127,14 @@ function eventLabel(e: CoreEvent): string {
   }
   return base;
 }
+
+/**
+ * Чип и кнопка в сетке свойств. Высоту держит `h-7` — тот же рост, что у полей
+ * и селектов карточки; вертикальные паддинги при ней не нужны. Раньше каждый ряд
+ * набирал свою высоту паддингами (проекты 20 px, теги 24, исполнители 26), и
+ * значения в соседних строках не стояли на одной линии.
+ */
+const PROP_CHIP = "inline-flex h-7 items-center gap-1.5 text-xs";
 
 /** Родитель подзадачи — ровно то, что нужно хлебной крошке. */
 interface ParentBrief {
@@ -202,7 +222,8 @@ export function TaskSheet({
   // означало бы лишний каскад перерисовок.
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [tab, setTab] = useState<"comments" | "feed">("comments");
-  const [commentText, setCommentText] = useState("");
+  /** Корень обсуждения, в который уйдёт следующий комментарий; null — в ленту. */
+  const [replyTo, setReplyTo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Тихое «Сохранено ✓» в шапке: blur сохраняет молча, и без подтверждения
@@ -352,28 +373,32 @@ export function TaskSheet({
     }
   }
 
-  /** Многострочный ввод → HTML: иначе переносы строк теряются при рендере. */
-  function textToHtml(text: string): string {
-    const escape = (s: string) =>
-      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    return text
-      .split(/\n{2,}/)
-      .map((block) => `<p>${block.split("\n").map(escape).join("<br>")}</p>`)
-      .join("");
-  }
-
-  async function addComment() {
-    if (!orgId || !taskId || !commentText.trim()) return;
-    const text = commentText.trim();
-    // Поле очищаем сразу: ждать ответа сервера, чтобы убрать свой же текст,
-    // выглядит как зависшая кнопка.
-    setCommentText("");
+  /**
+   * Разметка приходит из редактора: комментарии набирают в нём, потому что в них
+   * живут @-упоминания. Ручная свёртка текста в <p> съедала бы их.
+   *
+   * `parentId` — корень обсуждения; ответ на ответ сервер приведёт к тому же
+   * корню, поэтому здесь достаточно передать, на что нажали.
+   */
+  async function addComment(html: string, parentId: string | null = null) {
+    if (!orgId || !taskId) return;
     await run(async () => {
       const comment = await api.post<CoreComment>(`/orgs/${orgId}/tasks/${taskId}/comments`, {
-        body: textToHtml(text),
+        body: html,
+        parent_id: parentId,
       });
       if (currentTaskRef.current !== taskId) return;
-      setComments((prev) => [...prev, comment]);
+      // Ответ встаёт за последним ответом своего корня, а не в конец ленты:
+      // иначе он прыгнет на место после первой же перезагрузки карточки.
+      setComments((prev) => {
+        if (!comment.parent_id) return [...prev, comment];
+        const last = prev.findLastIndex(
+          (c) => c.id === comment.parent_id || c.parent_id === comment.parent_id,
+        );
+        if (last < 0) return [...prev, comment];
+        return [...prev.slice(0, last + 1), comment, ...prev.slice(last + 1)];
+      });
+      setReplyTo(null);
       // Композер закреплён внизу и виден из обеих вкладок — отправка из
       // «Истории» должна показать, куда упал комментарий.
       setTab("comments");
@@ -708,7 +733,7 @@ export function TaskSheet({
         <span className="text-muted-foreground">Указать срок</span>
       )}
       {overdueDays > 0 && (
-        <span className="shrink-0 rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+        <span className="shrink-0 rounded-full bg-destructive/10 px-1.5 text-[10px] font-semibold leading-5 text-destructive">
           просрочено {overdueDays} дн.
         </span>
       )}
@@ -768,7 +793,7 @@ export function TaskSheet({
         <DuePicker
           date={task.due_date}
           time={task.due_time}
-          triggerClassName="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+          triggerClassName="-ml-2 flex h-7 w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 text-sm transition-colors hover:border-input hover:bg-background"
           onCommit={(next) => void patch(next)}
         >
           {dueLabelContent}
@@ -789,11 +814,15 @@ export function TaskSheet({
       />
 
       <span className={propLabel}>Исполнители</span>
-      <div className="flex flex-wrap items-center gap-1.5">
+      {/* Кнопку «Назначить» рисует MemberPicker, общий на несколько экранов:
+          свой рост она задаёт паддингом внутри себя, и в ряду с чипами
+          получалась на пару пикселей выше. Правим здесь, чтобы не менять
+          плотность пикера там, где он стоит один. */}
+      <div className="flex flex-wrap items-center gap-1.5 [&>button]:h-7 [&>button]:py-0">
         {task.assignees.map((a) => (
           <span
             key={a.id}
-            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card py-0.5 pl-0.5 pr-2 text-xs shadow-xs"
+            className={cn(PROP_CHIP, "rounded-full border border-border bg-card pl-0.5 pr-2 shadow-xs")}
           >
             <Avatar user={a} size="xs" />
             {a.name || a.email}
@@ -824,7 +853,7 @@ export function TaskSheet({
         {task.tags.map((t) => (
           <span
             key={t.id}
-            className="tinted-chip inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+            className={cn(PROP_CHIP, "tinted-chip gap-1 rounded-full px-2 text-[11px] font-medium")}
             style={chipStyle(t.color)}
           >
             {t.name}
@@ -846,7 +875,10 @@ export function TaskSheet({
             <PopoverTrigger
               render={
                 <button
-                  className="flex h-6 items-center gap-1 rounded-full border border-dashed border-border px-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary"
+                  className={cn(
+                    PROP_CHIP,
+                    "gap-1 rounded-full border border-dashed border-border px-2 text-muted-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary",
+                  )}
                   title="Добавить тег"
                 />
               }
@@ -865,7 +897,7 @@ export function TaskSheet({
                         : [...task.tags.map((x) => x.id), t.id];
                       void patch({ tag_ids: next });
                     }}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
+                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted"
                   >
                     <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: t.color }} />
                     <span className="flex-1 truncate text-left">{t.name}</span>
@@ -889,7 +921,7 @@ export function TaskSheet({
         {task.placements.map((pl) => {
           const project = projects.find((p) => p.id === pl.project_id);
           return (
-            <span key={pl.project_id} className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">
+            <span key={pl.project_id} className={cn(PROP_CHIP, "rounded-full bg-muted px-2")}>
               <span className="size-2 rounded-sm" style={{ backgroundColor: project?.color ?? "#6b7280" }} />
               {project?.name ?? "Недоступный проект"}
               <button
@@ -909,7 +941,7 @@ export function TaskSheet({
             if (v) void setPlacements([...task.placements.map((p) => p.project_id), v]);
           }}
         >
-          <SelectTrigger size="sm" className="h-6 w-fit border-dashed text-xs text-muted-foreground">
+          <SelectTrigger size="sm" className="w-fit border-dashed text-xs text-muted-foreground">
             <Plus className="size-3" /> В проект
           </SelectTrigger>
           <SelectContent>
@@ -1140,7 +1172,10 @@ export function TaskSheet({
                   {tab === "comments" ? (
                     <>
                       {comments.map((c) => (
-                        <div key={c.id} className="flex gap-2">
+                        // Ответы сдвинуты и отчёркнуты слева: иерархия ровно
+                        // одноуровневая, ответ на ответ сервер приводит к тому
+                        // же корню — дерево в узкой колонке нечитаемо.
+                        <div key={c.id} className={cn("flex gap-2", c.parent_id && "ml-8 border-l border-border pl-3")}>
                           {c.author ? <Avatar user={c.author} size="sm" /> : <span className="size-6" />}
                           <div className="min-w-0 flex-1">
                             <p className="text-xs text-muted-foreground">
@@ -1154,6 +1189,14 @@ export function TaskSheet({
                               className="prose prose-sm dark:prose-invert max-w-none text-sm"
                               dangerouslySetInnerHTML={{ __html: c.body }}
                             />
+                            {orgRole !== null && replyTo !== (c.parent_id ?? c.id) && (
+                              <button
+                                onClick={() => setReplyTo(c.parent_id ?? c.id)}
+                                className="mt-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+                              >
+                                Ответить
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -1192,23 +1235,26 @@ export function TaskSheet({
               сервер — гостю оно доступно по роли в проекте. */}
           {orgRole !== null && (
             <div className="shrink-0 border-t border-border bg-background px-4 py-2.5">
-              <div className="flex items-end gap-2">
+              <div className="flex items-start gap-2">
                 {me && <Avatar user={me} size="sm" />}
-                <Textarea
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  placeholder="Написать комментарий…"
-                  className="min-h-9 flex-1 resize-none text-sm"
-                  rows={1}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void addComment();
-                  }}
-                />
-                <Button size="sm" onClick={() => void addComment()} disabled={!commentText.trim()}>
-                  Отправить
-                </Button>
+                <div className="min-w-0 flex-1">
+                  {replyTo && (
+                    <p className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      Ответ в обсуждении
+                      <button onClick={() => setReplyTo(null)} className="underline hover:text-foreground">
+                        отменить
+                      </button>
+                    </p>
+                  )}
+                  <CommentComposer
+                    // key переводит композер в чистое состояние при смене задачи
+                    // и при переходе «новый комментарий ↔ ответ».
+                    key={`${taskId}-${replyTo ?? "root"}`}
+                    placeholder={replyTo ? "Ответить…" : "Написать комментарий…"}
+                    onSubmit={(html) => addComment(html, replyTo)}
+                  />
+                </div>
               </div>
-              <p className="mt-1 pl-8 text-[10.5px] text-muted-foreground">Ctrl+Enter — отправить</p>
             </div>
           )}
         </>
@@ -1276,7 +1322,7 @@ function FieldRow({
             type="date"
             value={typeof value === "string" ? value : ""}
             onChange={(e) => onChange(e.target.value || null)}
-            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+            className="h-7 rounded-md border border-border bg-background px-2 text-sm"
           />
         )}
         {field.type === "checkbox" && (
@@ -1321,7 +1367,8 @@ function FieldRow({
                   key={o.id}
                   onClick={() => onChange(active ? arr.filter((x) => x !== o.id) : [...arr, o.id])}
                   className={cn(
-                    "rounded-full border px-2 py-0.5 text-[11px]",
+                    PROP_CHIP,
+                    "rounded-full border px-2 text-[11px]",
                     active ? "border-primary bg-muted font-medium" : "border-border text-muted-foreground",
                   )}
                 >

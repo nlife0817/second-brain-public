@@ -17,9 +17,16 @@ import { Column, ColumnBlock } from "./Columns";
 import { CommentMark } from "./CommentMark";
 import { DocFile } from "./DocFile";
 import { DocImage } from "./DocImage";
+import { createMention, type MentionItem } from "./Mention";
 
 export interface DocExtensionsOptions {
   placeholder?: string;
+  /**
+   * Участники для @-упоминаний. Функция, а не массив: набор расширений строится
+   * внутри useEditor, и зависимость от состава заставляла бы пересоздавать
+   * редактор на каждый refreshMembers() — с потерей истории и курсора.
+   */
+  mentionItems?: () => MentionItem[];
 }
 
 /**
@@ -33,6 +40,7 @@ export interface DocExtensionsOptions {
  */
 export function docExtensions({
   placeholder = "Добавьте описание…",
+  mentionItems,
 }: DocExtensionsOptions = {}): Extensions {
   return [
     StarterKit.configure({
@@ -51,5 +59,32 @@ export function docExtensions({
     DocImage,
     DocFile,
     CommentMark,
+    // Упоминание тоже правило разбора: редактор без него не узнает
+    // <span data-type="mention"> и выбросит чужое упоминание при первом же
+    // сохранении — ровно та же ловушка, что с CommentMark выше.
+    ...(mentionItems ? [createMention(mentionItems)] : []),
+  ];
+}
+
+/**
+ * Набор для комментария: тот же текст, но без таблиц, колонок, вложений и
+ * якорей обсуждения — им в ленте нечего делать, а вес чанка они добавляют.
+ */
+export function commentExtensions({
+  placeholder = "Написать комментарий…",
+  mentionItems,
+}: DocExtensionsOptions = {}): Extensions {
+  return [
+    StarterKit.configure({
+      heading: false,
+      horizontalRule: false,
+      codeBlock: false,
+      link: {
+        openOnClick: false,
+        HTMLAttributes: { rel: "noopener noreferrer nofollow" },
+      },
+    }),
+    Placeholder.configure({ placeholder }),
+    ...(mentionItems ? [createMention(mentionItems)] : []),
   ];
 }
