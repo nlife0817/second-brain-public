@@ -144,9 +144,12 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
               <h2 className={`mb-2 text-xs font-semibold uppercase tracking-wide ${g.tone || "text-muted-foreground"}`}>
                 {g.title} · {g.items.length}
               </h2>
-              <div className="flex flex-col gap-1.5">
+              {/* Плотный список: строки без зазора, разделены линией. Отрицательный
+                  отступ оставляет названия на одной вертикали с заголовком группы,
+                  а подсветку наведения растягивает на всю ширину колонки. */}
+              <div className="-mx-2 flex flex-col divide-y divide-border/40">
                 {g.items.map((t) => (
-                  <TaskCard key={t.id} task={t} onOpen={openTask} />
+                  <TaskCard key={t.id} task={t} variant="row" onOpen={openTask} />
                 ))}
               </div>
             </section>
