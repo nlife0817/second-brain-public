@@ -271,6 +271,8 @@ async function claimAndNotify(input: {
   tasks: ReminderTask[];
   slots: string[];
   overdueCount?: number;
+  /** Занять поводы, но уведомление не создавать (о них уже сказано иначе). */
+  silent?: boolean;
 }): Promise<boolean> {
   if (input.slots.length === 0) return false;
   return transaction(async (tx) => {
@@ -285,7 +287,7 @@ async function claimAndNotify(input: {
          RETURNING slot`,
       )
       .all(params);
-    if (claimed.length === 0) return false;
+    if (claimed.length === 0 || input.silent) return false;
 
     // Утренняя сводка — один слот на день: её состав не сводится к списку
     // захваченных задач, поэтому берём его как есть.
@@ -386,6 +388,34 @@ export async function runDueReminders(now: Date = new Date()): Promise<ReminderR
     const off = disabled.get(bucket.userId) ?? new Set<string>();
     const local = localNow(now, bucket.timezone);
 
+    // --- утренняя сводка ---
+    //
+    // Идёт первой: если она уходит прямо сейчас, отдельное «столько-то
+    // просрочено» будет вторым сообщением о том же самом. Такое встречается
+    // ровно в первое утро после включения напоминаний — и портит первое же
+    // впечатление о них.
+    let digestSent = false;
+    const overdueToday = bucket.tasks.filter(
+      (t) => dueOffsetMinutes(t, local.date) <= local.minutes,
+    );
+    if (!off.has("digest") && digestDue(local, bucket.digestHour)) {
+      const dueToday = bucket.tasks.filter((t) => t.dueDate === local.date);
+      if (dueToday.length > 0 || overdueToday.length > 0) {
+        digestSent = await claimAndNotify({
+          orgId: bucket.orgId,
+          userId: bucket.userId,
+          kind: "digest",
+          tasks: dueToday,
+          slots: [digestSlot(bucket.orgId, local.date)],
+          overdueCount: overdueToday.length,
+        });
+        if (digestSent) {
+          created++;
+          reached.add(bucket.userId);
+        }
+      }
+    }
+
     // --- точечные напоминания, сгруппированные по типу ---
     const byKind = new Map<ReminderKind, ReminderTask[]>();
     for (const task of bucket.tasks) {
@@ -394,34 +424,21 @@ export async function runDueReminders(now: Date = new Date()): Promise<ReminderR
       byKind.set(kind, [...(byKind.get(kind) ?? []), task]);
     }
     for (const [kind, tasks] of byKind) {
+      // Просрочки только что перечислены в сводке: поводы гасим, чтобы они не
+      // всплыли следующим тиком, но второе сообщение не шлём.
+      const silent = digestSent && kind === "overdue";
       const notified = await claimAndNotify({
         orgId: bucket.orgId,
         userId: bucket.userId,
         kind,
         tasks,
         slots: tasks.map((t) => reminderSlot(t, kind)),
+        silent,
       });
       if (!notified) continue;
       created++;
       reached.add(bucket.userId);
     }
-
-    // --- утренняя сводка ---
-    if (off.has("digest") || !digestDue(local, bucket.digestHour)) continue;
-    const dueToday = bucket.tasks.filter((t) => t.dueDate === local.date);
-    const overdue = bucket.tasks.filter((t) => dueOffsetMinutes(t, local.date) <= local.minutes);
-    if (dueToday.length === 0 && overdue.length === 0) continue;
-    const notified = await claimAndNotify({
-      orgId: bucket.orgId,
-      userId: bucket.userId,
-      kind: "digest",
-      tasks: dueToday,
-      slots: [digestSlot(bucket.orgId, local.date)],
-      overdueCount: overdue.length,
-    });
-    if (!notified) continue;
-    created++;
-    reached.add(bucket.userId);
   }
 
   return { created, users: reached.size };

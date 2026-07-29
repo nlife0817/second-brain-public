@@ -14,6 +14,8 @@ import {
   type NotificationPref,
   type NotificationPrefs,
 } from "@/lib/core/notification-kinds";
+import { isValidHhMm, type DeliverySettings } from "@/lib/core/delivery";
+import { plural } from "@/lib/core/plural";
 import { cachedGet, invalidate } from "@/lib/core/query";
 import { browserTimezone } from "@/lib/core/timezone";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -35,7 +37,7 @@ export function PushTestButton({ className }: { className?: string }) {
       const res = await api.post<{ sent: number }>("/push/test");
       setState({
         ok: true,
-        text: res.sent === 1 ? "Отправлено на 1 устройство" : `Отправлено на ${res.sent} устройства`,
+        text: `Отправлено на ${plural(res.sent, "устройство", "устройства", "устройств")}`,
       });
     } catch (e) {
       setState({ ok: false, text: e instanceof Error ? e.message : "Не удалось отправить" });
@@ -190,15 +192,6 @@ export function PushDevices() {
 
 // ---- Режим тишины, сводка и напоминания ---------------------------------------------------
 
-interface DeliverySettings {
-  timezone: string;
-  quiet_enabled: boolean;
-  quiet_start: string;
-  quiet_end: string;
-  digest_hour: number;
-  reminders_enabled: boolean;
-}
-
 interface SettingsResponse {
   settings: DeliverySettings;
   muted_projects: string[];
@@ -221,6 +214,44 @@ function Row({
       </div>
       <div className="flex shrink-0 items-center gap-2">{children}</div>
     </div>
+  );
+}
+
+/**
+ * Поле времени с черновиком.
+ *
+ * Наивный `onChange → сохранить` шлёт запрос на каждое нажатие, а пока часы
+ * набраны, а минуты нет, поле отдаёт пустую строку — сервер честно отвечает
+ * «время в формате ЧЧ:ММ», и человек видит ошибку посреди набора. Поэтому
+ * набор живёт в черновике, а сохраняется завершённое значение.
+ */
+function TimeField({ value, onCommit }: { value: string; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+
+  // Значение пришло с сервера (или откатилось после ошибки) — показываем его.
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  function commit(next: string) {
+    if (!isValidHhMm(next) || next === value) return;
+    onCommit(next);
+  }
+
+  return (
+    <input
+      type="time"
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        commit(e.target.value);
+      }}
+      onBlur={() => {
+        // Незавершённый набор не сохраняем и возвращаем прежнее значение.
+        if (!isValidHhMm(draft)) setDraft(value);
+      }}
+      className="h-8 rounded-lg border border-border bg-background px-2 text-sm"
+    />
   );
 }
 
@@ -297,18 +328,14 @@ export function DeliveryPreferences() {
 
       {settings.quiet_enabled && (
         <Row label="Тихие часы" hint="Можно задать через полночь — например, с 22:00 до 08:00">
-          <input
-            type="time"
+          <TimeField
             value={settings.quiet_start}
-            onChange={(e) => void save({ quiet_start: e.target.value })}
-            className="h-8 rounded-lg border border-border bg-background px-2 text-sm"
+            onCommit={(value) => void save({ quiet_start: value })}
           />
           <span className="text-sm text-muted-foreground">—</span>
-          <input
-            type="time"
+          <TimeField
             value={settings.quiet_end}
-            onChange={(e) => void save({ quiet_end: e.target.value })}
-            className="h-8 rounded-lg border border-border bg-background px-2 text-sm"
+            onCommit={(value) => void save({ quiet_end: value })}
           />
         </Row>
       )}

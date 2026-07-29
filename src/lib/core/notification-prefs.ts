@@ -69,6 +69,20 @@ export async function listMutedProjects(userId: string): Promise<string[]> {
   return rows.map((r) => r.project_id);
 }
 
+/**
+ * Проект существует и лежит в организации, где состоит этот человек.
+ * Без проверки чужой id давал бы 500 на нарушении внешнего ключа, а
+ * существование чужого проекта не подтверждаем вовсе — как и везде в policy.
+ */
+export async function canMuteProject(userId: string, projectId: string): Promise<boolean> {
+  const row = await prepare<{ ok: number }>(
+    `SELECT 1 AS ok FROM core.projects p
+     JOIN core.org_members m ON m.org_id = p.org_id AND m.user_id = ?
+     WHERE p.id = ?`,
+  ).get(userId, projectId);
+  return !!row;
+}
+
 export async function setProjectMute(
   userId: string,
   projectId: string,
@@ -98,29 +112,29 @@ export async function filterByProjectMute(
   userIds: string[],
 ): Promise<string[]> {
   if (userIds.length === 0) return userIds;
-  const projects = await tx
-    .prepare<{ project_id: string }>(
-      `SELECT project_id::text AS project_id FROM core.task_projects WHERE task_id = ?`,
-    )
-    .all(taskId);
-  if (projects.length === 0) return userIds;
-
+  // Один запрос, а не два: этот фильтр стоит на пути каждой мутации задачи, и
+  // лишний поход в базу здесь оплачивается на каждом сохранении.
   const placeholders = userIds.map(() => "?").join(",");
-  const mutes = await tx
-    .prepare<{ user_id: string; project_id: string }>(
-      `SELECT user_id::text AS user_id, project_id::text AS project_id
-       FROM core.project_mutes WHERE user_id IN (${placeholders})`,
+  const rows = await tx
+    .prepare<{ project_id: string; user_id: string | null }>(
+      `SELECT tp.project_id::text AS project_id, pm.user_id::text AS user_id
+       FROM core.task_projects tp
+       LEFT JOIN core.project_mutes pm
+         ON pm.project_id = tp.project_id AND pm.user_id IN (${placeholders})
+       WHERE tp.task_id = ?`,
     )
-    .all(userIds);
-  if (mutes.length === 0) return userIds;
+    .all(userIds, taskId);
+  if (rows.length === 0) return userIds; // задача вне проектов — заглушать нечем
 
+  const projectIds = [...new Set(rows.map((r) => r.project_id))];
   const byUser = new Map<string, Set<string>>();
-  for (const mute of mutes) {
-    const set = byUser.get(mute.user_id) ?? new Set<string>();
-    set.add(mute.project_id);
-    byUser.set(mute.user_id, set);
+  for (const row of rows) {
+    if (!row.user_id) continue;
+    const set = byUser.get(row.user_id) ?? new Set<string>();
+    set.add(row.project_id);
+    byUser.set(row.user_id, set);
   }
-  const projectIds = projects.map((p) => p.project_id);
+  if (byUser.size === 0) return userIds;
   return userIds.filter((id) => !isTaskMuted(projectIds, byUser.get(id)));
 }
 

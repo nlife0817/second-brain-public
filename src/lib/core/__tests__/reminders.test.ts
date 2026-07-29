@@ -12,7 +12,7 @@ import {
   reminderText,
   type ReminderTask,
 } from "../reminders";
-import { isQuietNow, DEFAULT_DELIVERY } from "../notification-settings";
+import { isQuietNow, DEFAULT_DELIVERY } from "../delivery";
 import { isTaskMuted } from "../notification-prefs";
 
 function task(partial: Partial<ReminderTask> = {}): ReminderTask {

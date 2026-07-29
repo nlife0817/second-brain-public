@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withUser } from "@/lib/core/context";
 import { jsonError, isUuid, parseJson } from "@/lib/core/http";
-import { listMutedProjects, setProjectMute } from "@/lib/core/notification-prefs";
+import { canMuteProject, listMutedProjects, setProjectMute } from "@/lib/core/notification-prefs";
 import {
   getDeliverySettings,
   isValidHhMm,
@@ -43,8 +43,9 @@ export const PUT = withUser(async (request: NextRequest, user) => {
   const [body, invalid] = await parseJson(request, projectMuteSchema);
   if (invalid) return invalid;
   if (!isUuid(body.project_id)) return jsonError(404, "Not found");
-  // Право на проект не проверяем: строка в core.project_mutes ничего не
-  // открывает и ни на кого, кроме автора, не влияет — это личная тишина.
+  // Тишина личная и никому ничего не открывает, но проект должен существовать
+  // и быть из «своей» организации: иначе внешний ключ ответит пятисоткой.
+  if (!(await canMuteProject(user.id, body.project_id))) return jsonError(404, "Not found");
   await setProjectMute(user.id, body.project_id, body.muted);
   const mutedProjects = await listMutedProjects(user.id);
   return NextResponse.json({ muted_projects: mutedProjects });

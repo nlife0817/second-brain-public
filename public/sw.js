@@ -116,10 +116,6 @@ self.addEventListener("message", (event) => {
 
   if (data.type === "sb:read") {
     event.waitUntil(closeNotifications(data.tag).then(() => applyBadge(data.unread)));
-    return;
-  }
-  if (data.type === "sb:badge") {
-    event.waitUntil(applyBadge(data.unread));
   }
 });
 

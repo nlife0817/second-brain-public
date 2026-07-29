@@ -168,8 +168,10 @@ function buildPayload(row: PendingRow, mobile: boolean): PushPayload {
   // известны и число задач, и их названия.
   const reminder = row.payload as { title?: string; body?: string } | null;
   return {
-    title: reminder?.title ?? KIND_TITLES[row.kind] ?? "Обновление",
-    body: reminder?.body ?? body ?? "",
+    title: reminder?.title || KIND_TITLES[row.kind] || "Обновление",
+    // Через ||, а не ??: у события без автора и названия сущности body —
+    // пустая строка, и пуш ушёл бы без единого слова.
+    body: reminder?.body || body || "Открыть задачу",
     url,
     // Тег по сущности, а не по уведомлению: пять комментариев к одной задаче
     // схлопываются в одно уведомление вместо пяти строк в шторке.
@@ -200,18 +202,20 @@ function groupTitle(kind: string, count: number): string {
  */
 function buildGroupPayload(rows: PendingRow[], mobile: boolean): PushPayload {
   const unread = Math.max(...rows.map((r) => r.unread));
-  const entityIds = new Set(rows.map((r) => r.entity_id).filter(Boolean));
   const kinds = new Set(rows.map((r) => r.kind));
   const first = rows[0];
+  // Именно «все до единого про одну сущность»: если среди них затесалось
+  // уведомление без сущности (утренняя сводка), заголовок «5 комментариев в
+  // «Задаче»» будет враньём.
+  const sameEntity = !!first.entity_id && rows.every((r) => r.entity_id === first.entity_id);
 
   // Всё про одну задачу — тег тот же, что у одиночного пуша: сводка заменит
   // собой уже показанное уведомление, а не ляжет рядом с ним.
-  if (entityIds.size === 1 && first.entity_id) {
+  if (sameEntity) {
     const title = kinds.size === 1 ? groupTitle(first.kind, rows.length) : groupTitle("", rows.length);
-    const where = first.entity_title ? `«${first.entity_title}»` : "";
     return {
       title,
-      body: where,
+      body: first.entity_title ? `«${first.entity_title}»` : "Откройте, чтобы посмотреть",
       url: taskUrl(first, mobile),
       tag: `v2-${first.entity_type}-${first.entity_id}`,
       unread,
