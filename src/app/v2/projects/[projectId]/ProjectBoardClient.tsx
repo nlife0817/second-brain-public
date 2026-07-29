@@ -13,14 +13,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { KanbanSquare, Table2 } from "lucide-react";
 import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { CreateTaskDialog, TaskSheet } from "@/components/v2/lazy";
 import { accessLabel } from "@/components/v2/ProjectAccessPicker";
 import { ProjectIcon } from "@/components/v2/project-icons";
+import { GanttView } from "@/components/v2/tasks/GanttView";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
 import { BOARD_SECTIONS, ViewSettingsPopover } from "@/components/v2/tasks/ViewControls";
-import { FilterButton, TaskCount, TaskSearch } from "@/components/v2/tasks/ViewToolbar";
+import { FilterButton, TaskCount, TaskSearch, ViewModeSwitch } from "@/components/v2/tasks/ViewToolbar";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import { useLoad } from "@/lib/core/use-load";
 import { applyTaskChange } from "@/lib/core/task-change";
@@ -29,7 +29,6 @@ import type { Project, ProjectMemberWithUser, ProjectRole, TaskRow } from "@/lib
 import { useV2Store } from "@/lib/core/ui-store";
 import { ViewStoreProvider, projectScope, useViewStore } from "@/lib/core/view-store";
 import { filterTasks, makeMatchContext, showsDone, visiblePool } from "@/lib/core/views";
-import { cn } from "@/lib/utils";
 import { ProjectBoard } from "./ProjectBoard";
 
 export type ProjectDetail = Project & {
@@ -51,29 +50,7 @@ export function ProjectBoardClient(props: {
 
 /** Переключатель вида — единственное место, где экран проекта расходится. */
 function ViewSwitch() {
-  const mode = useViewStore((s) => s.mode);
-  const setMode = useViewStore((s) => s.setMode);
-  const item = "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium";
-  return (
-    <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-      <button
-        onClick={() => setMode("table")}
-        className={cn(item, mode === "table" ? "bg-background shadow-sm" : "text-muted-foreground")}
-        title="Таблица"
-      >
-        <Table2 className="size-3.5" />
-        <span className="hidden xl:inline">Таблица</span>
-      </button>
-      <button
-        onClick={() => setMode("board")}
-        className={cn(item, mode === "board" ? "bg-background shadow-sm" : "text-muted-foreground")}
-        title="Доска"
-      >
-        <KanbanSquare className="size-3.5" />
-        <span className="hidden xl:inline">Доска</span>
-      </button>
-    </div>
-  );
+  return <ViewModeSwitch modes={["table", "board", "gantt"]} />;
 }
 
 function ProjectScreen({
@@ -246,6 +223,26 @@ function ProjectScreen({
       />
     </>
   );
+
+  if (mode === "gantt") {
+    return (
+      <>
+        <GanttView
+          tasks={tasks}
+          setTasks={setTasks}
+          reload={reload}
+          invalidateKey={projectPath}
+          onOpenTask={openTask}
+          error={notice}
+          onDismissError={() => setNotice(null)}
+          emptyText="В проекте пока нет задач."
+          titleSlot={title}
+          actionsSlot={<ViewSwitch />}
+        />
+        {layers}
+      </>
+    );
+  }
 
   if (mode === "table") {
     return (

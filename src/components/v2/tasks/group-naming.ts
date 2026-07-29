@@ -1,12 +1,12 @@
 "use client";
 
-// Подписи и порядок групп списка задач. Вынесены из TaskTableView, потому что
-// мобильный список группирует те же строки по тем же полям: своя копия подписей
-// разъехалась бы с таблицей при первом же новом поле группировки.
+// Подписи и порядок групп: как называется группа «в работе» и в каком порядке
+// группы идут. Живёт отдельно от таблицы, потому что гант группирует строки той
+// же настройкой представления — своя копия этих правил означала бы, что одна и
+// та же группировка даёт в таблице и на ганте разные названия и разный порядок.
 
 import { useCallback, useMemo } from "react";
 import { PRIORITY_LABELS } from "@/components/v2/bits";
-import type { GroupLabel } from "@/components/v2/tasks/TaskTable";
 import type { TaskPriority } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import {
@@ -15,32 +15,30 @@ import {
   NONE_VALUE,
   PRIORITY_WEIGHT,
   type GroupByField,
+  type GroupLabel,
+  type GroupNaming,
 } from "@/lib/core/views";
 
-export interface GroupPresentation {
-  labelForGroup: (field: GroupByField, key: string) => GroupLabel;
-  /** Порядок ключей группы: справочники имеют свой (позиция статуса и т.п.). */
-  groupOrder: (field: GroupByField, keys: string[]) => string[];
-}
+/** Как называется группа «ничего не выбрано» у каждого поля. */
+const EMPTY_LABELS: Record<string, string> = {
+  status: "Без статуса",
+  project: "Без проекта",
+  assignee: "Без исполнителя",
+  tag: "Без тегов",
+  due: "Без срока",
+  estimate: "Без оценки",
+};
 
-export function useGroupPresentation(): GroupPresentation {
+/** Ранг неизвестного ключа: в конец, но выше «пусто». */
+const UNKNOWN_RANK = 9998;
+
+export function useGroupNaming(): GroupNaming {
   const { statuses, tags, members, projects } = useV2Store();
-
   const projectsById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
 
   const labelForGroup = useCallback(
     (field: GroupByField, key: string): GroupLabel => {
-      if (key === NONE_VALUE) {
-        const empty: Record<string, string> = {
-          status: "Без статуса",
-          project: "Без проекта",
-          assignee: "Без исполнителя",
-          tag: "Без тегов",
-          due: "Без срока",
-          estimate: "Без оценки",
-        };
-        return { text: empty[field] ?? "Прочее" };
-      }
+      if (key === NONE_VALUE) return { text: EMPTY_LABELS[field] ?? "Прочее" };
       switch (field) {
         case "status": {
           const s = statuses.find((x) => x.id === key);
@@ -78,19 +76,19 @@ export function useGroupPresentation(): GroupPresentation {
         if (key === NONE_VALUE) return Number.POSITIVE_INFINITY;
         switch (field) {
           case "status":
-            return statuses.find((s) => s.id === key)?.position ?? 9998;
+            return statuses.find((s) => s.id === key)?.position ?? UNKNOWN_RANK;
           case "priority":
-            return PRIORITY_WEIGHT[key as TaskPriority] ?? 9998;
+            return PRIORITY_WEIGHT[key as TaskPriority] ?? UNKNOWN_RANK;
           case "project":
-            return projectsById.get(key)?.position ?? 9998;
+            return projectsById.get(key)?.position ?? UNKNOWN_RANK;
           case "tag":
-            return tags.find((t) => t.id === key)?.position ?? 9998;
+            return tags.find((t) => t.id === key)?.position ?? UNKNOWN_RANK;
           case "due":
             return DUE_BUCKETS.findIndex((b) => b.key === key);
           case "estimate":
             return ESTIMATE_BUCKETS.findIndex((b) => b.key === key);
           default:
-            return 9998;
+            return UNKNOWN_RANK;
         }
       };
       return [...keys].sort((a, b) => {
@@ -103,5 +101,5 @@ export function useGroupPresentation(): GroupPresentation {
     [statuses, projectsById, tags, labelForGroup],
   );
 
-  return { labelForGroup, groupOrder };
+  return useMemo(() => ({ labelForGroup, groupOrder }), [labelForGroup, groupOrder]);
 }

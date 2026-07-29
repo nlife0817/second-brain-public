@@ -348,6 +348,12 @@ interface TaskShape {
   placements?: Array<{ project_id: string }>;
   assignee_ids?: string[];
   tag_ids?: string[];
+  /**
+   * Сколько дней занимала исходная задача (start_date → due_date). Копия
+   * получает ту же длительность, отсчитанную назад от своего срока: полоса
+   * на ганте повторяется по форме, а не схлопывается в один день.
+   */
+  span_days?: number | null;
 }
 
 function shapeOfTemplate(template: RecurringTemplate): TaskShape | null {
@@ -375,8 +381,11 @@ async function shapeOfTask(taskId: string, orgId: string): Promise<TaskShape | n
     status_id: string | null;
     status_category: string | null;
     estimated_minutes: number | null;
+    start_date: string | null;
+    due_date: string | null;
   }>(
-    `SELECT t.title, t.description, t.priority, t.status_id, s.category AS status_category, t.estimated_minutes
+    `SELECT t.title, t.description, t.priority, t.status_id, s.category AS status_category, t.estimated_minutes,
+            t.start_date, t.due_date
      FROM core.tasks t
      LEFT JOIN core.task_statuses s ON s.id = t.status_id
      WHERE t.id = ?`,
@@ -408,7 +417,23 @@ async function shapeOfTask(taskId: string, orgId: string): Promise<TaskShape | n
     placements: projects.map((p) => ({ project_id: p.project_id })),
     assignee_ids: assignees.map((a) => a.user_id),
     tag_ids: tags.map((t) => t.tag_id),
+    span_days: daysBetween(task.start_date, task.due_date),
   };
+}
+
+/** Длительность в днях, если известны обе границы. Иначе — null. */
+function daysBetween(from: string | null, to: string | null): number | null {
+  if (!from || !to) return null;
+  const ms = Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`);
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  return Math.round(ms / 86_400_000);
+}
+
+/** Дата на `days` дней раньше указанной. */
+function shiftBack(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - days);
+  return toIso(d);
 }
 
 /**
@@ -478,8 +503,10 @@ export async function materializeDueRules(today: string): Promise<{ created: num
         console.error(`[recurring] правило ${rule.id}: исходная задача не найдена`);
         continue;
       }
+      const { span_days: span, ...fields } = shape;
       const task = await createTask(ctx, {
-        ...shape,
+        ...fields,
+        start_date: span == null ? null : shiftBack(rule.next_run_date, span),
         due_date: rule.next_run_date,
         source: "recurring",
       });

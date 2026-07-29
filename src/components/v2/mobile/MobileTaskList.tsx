@@ -3,14 +3,14 @@
 // Список задач проекта на телефоне: те же фильтры, поиск, сортировка и
 // группировка из общего ViewStore, что и у таблицы, но раскладка — карточки в
 // один столбец вместо колонок с горизонтальной прокруткой. Отсев и подписи
-// групп — общие модули (`views.ts`, `use-group-labels`): один и тот же фильтр
+// групп — общие модули (`views.ts`, `group-naming`): один и тот же фильтр
 // обязан показывать на телефоне и на десктопе одни и те же задачи.
 
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Layers } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TaskCard } from "@/components/v2/TaskCard";
-import { useGroupPresentation } from "@/components/v2/tasks/use-group-labels";
+import { useGroupNaming } from "@/components/v2/tasks/group-naming";
 import type { TaskRow } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
@@ -157,7 +157,7 @@ export function MobileTaskList({
   const filterGroups = useViewStore((s) => s.groups);
   const search = useViewStore((s) => s.search);
   const sort = useViewStore((s) => s.sort);
-  const { labelForGroup, groupOrder } = useGroupPresentation();
+  const { labelForGroup, groupOrder } = useGroupNaming();
 
   const matchCtx = useMemo(() => makeMatchContext(me?.id ?? null), [me?.id]);
 

@@ -31,6 +31,7 @@ export type FilterField =
   | "assignee"
   | "tag"
   | "title"
+  | "start_date"
   | "due_date"
   | "completed"
   | "has_parent"
@@ -92,6 +93,7 @@ export const BASE_FILTER_FIELDS: FieldMeta[] = [
   { field: "assignee", label: "Исполнитель", kind: "select" },
   { field: "tag", label: "Тег", kind: "select" },
   { field: "title", label: "Название", kind: "text" },
+  { field: "start_date", label: "Начало", kind: "date" },
   { field: "due_date", label: "Дедлайн", kind: "date" },
   { field: "completed", label: "Завершена", kind: "boolean" },
   { field: "has_parent", label: "Подзадача", kind: "boolean" },
@@ -183,6 +185,8 @@ function valuesOf(task: TaskRow, field: FilterField): string[] {
       return task.tags.map((t) => t.id);
     case "title":
       return [task.title];
+    case "start_date":
+      return task.start_date ? [task.start_date] : [];
     case "due_date":
       return task.due_date ? [task.due_date] : [];
     case "completed":
@@ -332,6 +336,7 @@ export type SortColumn =
   | "title"
   | "status"
   | "project"
+  | "start_date"
   | "due_date"
   | "estimated_minutes"
   | "subtasks"
@@ -391,6 +396,9 @@ export function compareTasks(a: TaskRow, b: TaskRow, sort: SortState, ctx: SortC
       base = compareNullableString(na || null, nb || null);
       break;
     }
+    case "start_date":
+      base = compareNullableString(a.start_date, b.start_date);
+      break;
     case "due_date":
       base = compareNullableString(a.due_date, b.due_date);
       break;
@@ -416,6 +424,7 @@ export function compareTasks(a: TaskRow, b: TaskRow, sort: SortState, ctx: SortC
   // Пустые значения не переворачиваем: compareNullableString уже прижал их вниз.
   if (base === 0) return a.created_at.localeCompare(b.created_at);
   const nullPinned =
+    (sort.column === "start_date" && (!a.start_date || !b.start_date)) ||
     (sort.column === "due_date" && (!a.due_date || !b.due_date)) ||
     (sort.column === "estimated_minutes" && (a.estimated_minutes == null || b.estimated_minutes == null));
   return nullPinned ? base : base * dir;
@@ -559,6 +568,89 @@ export function expandRoots(roots: TaskRow[], forest: TaskForest): ArrangedRow[]
   };
   for (const task of roots) emit(task, 0);
   return out;
+}
+
+export interface GroupLabel {
+  text: string;
+  color?: string;
+}
+
+export interface GroupNode {
+  key: string;
+  path: string;
+  label: GroupLabel;
+  tasks: TaskRow[];
+  children: GroupNode[];
+}
+
+/** Подписи и порядок ключей берутся снаружи: справочники живут в сторе экрана. */
+export interface GroupNaming {
+  labelForGroup: (field: GroupByField, key: string) => GroupLabel;
+  /** Порядок ключей группы: у справочников он свой (позиция статуса и т.п.). */
+  groupOrder: (field: GroupByField, keys: string[]) => string[];
+}
+
+/**
+ * Двухуровневые группы. Живёт здесь, а не в таблице: гант раскладывает строки
+ * той же группировкой, и вторая копия означала бы, что одна настройка даёт в
+ * таблице и на ганте разные группы с разными счётчиками.
+ */
+export function buildGroups(
+  tasks: TaskRow[],
+  fields: GroupByConfig,
+  matchCtx: MatchContext,
+  { labelForGroup, groupOrder }: GroupNaming,
+  forest: TaskForest | null,
+): GroupNode[] {
+  const [first, second] = fields;
+  // В режимах «вложенными» и «скрыть» по корзинам раскладываются ТОЛЬКО корни:
+  // подзадача едет под родителем, в его группу, а не отдельной строкой в свою.
+  // Раскладка всех подряд и была причиной, по которой вложенность разваливалась
+  // при любой активной группировке — а по умолчанию она включена.
+  const source = forest ? forest.roots : tasks;
+  if (first === "none") {
+    return [{ key: "__all__", path: "__all__", label: { text: "" }, tasks: source, children: [] }];
+  }
+
+  const buckets = new Map<string, TaskRow[]>();
+  for (const task of source) {
+    // Задача с несколькими проектами/исполнителями/тегами попадает в каждую
+    // группу — иначе список молча теряет часть её принадлежностей.
+    for (const key of groupKeys(task, first, matchCtx)) {
+      const arr = buckets.get(key);
+      if (arr) arr.push(task);
+      else buckets.set(key, [task]);
+    }
+  }
+
+  return groupOrder(first, [...buckets.keys()]).map((key) => {
+    const rows = buckets.get(key) ?? [];
+    const path = `${first}:${key}`;
+    if (second === "none") {
+      return { key, path, label: labelForGroup(first, key), tasks: rows, children: [] };
+    }
+    const sub = new Map<string, TaskRow[]>();
+    for (const task of rows) {
+      for (const subKey of groupKeys(task, second, matchCtx)) {
+        const arr = sub.get(subKey);
+        if (arr) arr.push(task);
+        else sub.set(subKey, [task]);
+      }
+    }
+    return {
+      key,
+      path,
+      label: labelForGroup(first, key),
+      tasks: rows,
+      children: groupOrder(second, [...sub.keys()]).map((subKey) => ({
+        key: subKey,
+        path: `${path}/${second}:${subKey}`,
+        label: labelForGroup(second, subKey),
+        tasks: sub.get(subKey) ?? [],
+        children: [],
+      })),
+    };
+  });
 }
 
 /**

@@ -12,6 +12,7 @@
 import { createContext, createElement, useContext, type ReactNode } from "react";
 import { create, createStore, useStore } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import type { GanttScale } from "./gantt";
 import type { FilterGroup, GroupByConfig, SortState, SubtaskMode } from "./views";
 
 export interface ColumnDef {
@@ -32,6 +33,7 @@ export const BASE_COLUMNS: ColumnDef[] = [
   { id: "project", label: "Проект", width: 150, sortable: true, editable: true },
   { id: "assignees", label: "Исполнители", width: 116, sortable: false, editable: true },
   { id: "tags", label: "Теги", width: 150, sortable: false, editable: true },
+  { id: "start_date", label: "Начало", width: 96, sortable: true, editable: true },
   { id: "due_date", label: "Дедлайн", width: 116, sortable: true, editable: true },
   { id: "estimated_minutes", label: "Оценка", width: 88, sortable: true, editable: true },
   { id: "subtasks", label: "Подзадачи", headerLabel: "Подз.", width: 76, sortable: true, editable: false },
@@ -72,8 +74,11 @@ function storageKey(scope: ViewScope): string {
   return scope === "all" ? "sb.v2.tasksView" : `sb.v2.view.${scope}`;
 }
 
-/** Как экран проекта показывает задачи. */
-export type ProjectViewMode = "table" | "board";
+/**
+ * Как экран показывает задачи. Доска есть только у проекта: раскладка по
+ * статусам поверх всех проектов организации — это не доска, а свалка.
+ */
+export type ProjectViewMode = "table" | "board" | "gantt";
 
 /**
  * Снимок настроек, который сохраняется как именованное представление.
@@ -109,10 +114,18 @@ export interface ViewState extends ViewSnapshot {
   activeViewId: string | null;
   /** Свёрнутые группы — по ключу «уровень1/уровень2». */
   collapsed: string[];
-  /** Таблица или доска — только для экрана проекта. */
+  /** Таблица, доска или гант. */
   mode: ProjectViewMode;
+  /**
+   * Масштаб полотна ганта. Не входит в снимок представления: это способ
+   * посмотреть на один и тот же срез, а не часть самого среза — как и выбор
+   * вида. Крутят его постоянно, и записывать каждое переключение в именованное
+   * представление значит без конца его «править».
+   */
+  ganttScale: GanttScale;
 
   setMode: (mode: ProjectViewMode) => void;
+  setGanttScale: (scale: GanttScale) => void;
   setColumns: (columns: string[]) => void;
   setWidth: (columnId: string, width: number) => void;
   toggleSort: (column: SortState["column"]) => void;
@@ -195,8 +208,10 @@ function createViewStore(scope: ViewScope) {
         activeViewId: null,
         collapsed: [],
         mode: "table",
+        ganttScale: "day",
 
         setMode: (mode) => set({ mode }),
+        setGanttScale: (ganttScale) => set({ ganttScale }),
         setColumns: (columns) => set((s) => edit(s, { columns })),
         setWidth: (columnId, width) =>
           set((s) =>
@@ -263,6 +278,7 @@ function createViewStore(scope: ViewScope) {
           savedViews: s.savedViews,
           activeViewId: s.activeViewId,
           mode: s.mode,
+          ganttScale: s.ganttScale,
         }),
         version: 2,
         // Версия 2 добавила wrapTitle. Migrate обязателен: без него zustand

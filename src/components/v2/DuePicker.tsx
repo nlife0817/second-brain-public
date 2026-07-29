@@ -241,33 +241,18 @@ function TimeSegment({
   );
 }
 
-export function DuePicker({
-  date,
-  time,
-  align = "start",
-  triggerClassName,
-  onCommit,
-  children,
-}: {
-  date: string | null;
-  /** Может прийти как `HH:MM:SS` из базы — обрежем сами. */
-  time: string | null;
-  align?: "start" | "center" | "end";
-  triggerClassName?: string;
-  /** Дёргается один раз при закрытии и только если что-то изменилось. */
-  onCommit: (next: { due_date: string | null; due_time: string | null }) => void;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const [draftDate, setDraftDate] = useState<string | null>(null);
-  const [draftTime, setDraftTime] = useState<string | null>(null);
-  const [raw, setRaw] = useState<RawTime>(NO_RAW);
-  const [view, setView] = useState<ViewMonth>(() => monthOf(null));
+/**
+ * Сетка дней с быстрыми датами и переключением на месяцы и годы. Состояние
+ * навигации своё и заводится от выбранной даты, поэтому панель монтируется
+ * только на время открытого поповера: закрытый Base UI детей не размонтирует, и
+ * следующее открытие показало бы месяц, до которого долистали в прошлый раз.
+ */
+function CalendarPanel({ value, onPick }: { value: string | null; onPick: (iso: string) => void }) {
+  const [view, setView] = useState<ViewMonth>(() => monthOf(value));
   const [mode, setMode] = useState<Mode>("days");
-  const [yearBase, setYearBase] = useState(() => new Date().getFullYear() - YEARS_BEHIND);
+  const [yearBase, setYearBase] = useState(() => monthOf(value).y - YEARS_BEHIND);
 
   const today = isoToday();
-  const savedTime = time ? time.slice(0, 5) : null;
 
   const days = useMemo(() => {
     const shift = (new Date(view.y, view.m, 1).getDay() + 6) % 7; // неделя с понедельника
@@ -282,40 +267,8 @@ export function DuePicker({
     });
   }, [view]);
 
-  /** Колесо и стрелки всегда крутят уже набранное, а не значение до правки. */
-  function step(unit: "h" | "m", dir: 1 | -1) {
-    setDraftTime((p) => stepTime(resolveTime(p, raw), dir, unit));
-    setRaw(NO_RAW);
-  }
-
-  /** Уход фокуса из поля: набранное становится значением черновика. */
-  function commitRaw(unit: "h" | "m") {
-    const only: RawTime = unit === "h" ? { h: raw.h, m: null } : { h: null, m: raw.m };
-    setDraftTime((p) => resolveTime(p, only));
-    setRaw((r) => ({ ...r, [unit]: null }));
-  }
-
-  function handleOpenChange(next: boolean) {
-    if (next) {
-      setDraftDate(date);
-      setDraftTime(savedTime);
-      setRaw(NO_RAW);
-      setMode("days");
-      const start = monthOf(date);
-      setView(start);
-      setYearBase(start.y - YEARS_BEHIND);
-    } else {
-      const nextDate = draftDate;
-      const nextTime = nextDate ? resolveTime(draftTime, raw) : null;
-      if (nextDate !== date || nextTime !== savedTime) {
-        onCommit({ due_date: nextDate, due_time: nextTime });
-      }
-    }
-    setOpen(next);
-  }
-
   function pickDay(iso: string) {
-    setDraftDate(iso);
+    onPick(iso);
     setView(monthOf(iso));
   }
 
@@ -326,19 +279,7 @@ export function DuePicker({
     });
   }
 
-  const parts = splitTime(draftTime);
-  const timeDisabled = !draftDate;
-  const hDisplay = raw.h ?? (parts ? pad2(parts.h) : "");
-  const mDisplay = raw.m ?? (parts ? pad2(parts.m) : "");
-  /** Время ещё не заведено — вместо полей показываем одну кнопку. */
-  const timeUnset = !draftTime && !raw.h && !raw.m;
-
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger render={<button type="button" className={triggerClassName} />}>
-        {children}
-      </PopoverTrigger>
-      <PopoverContent align={align} className="w-64 gap-0 p-0">
         <div className="flex flex-col gap-1.5 p-2">
           {/* Шапка: стрелки листают то, что сейчас выбирается. */}
           <div className="flex items-center justify-between gap-1">
@@ -407,7 +348,7 @@ export function DuePicker({
                       onClick={() => pickDay(iso)}
                       className={cn(
                         "flex h-7 min-w-0 flex-1 items-center justify-center rounded-md border px-1 text-[11px] transition-colors",
-                        iso === draftDate
+                        iso === value
                           ? "border-primary bg-primary/10 font-medium text-primary"
                           : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
                       )}
@@ -430,7 +371,7 @@ export function DuePicker({
               </div>
               <div className="grid grid-cols-7 gap-0.5">
                 {days.map((d) => {
-                  const selected = d.iso === draftDate;
+                  const selected = d.iso === value;
                   return (
                     <button
                       key={d.iso}
@@ -494,6 +435,79 @@ export function DuePicker({
             </div>
           )}
         </div>
+  );
+}
+
+export function DuePicker({
+  date,
+  time,
+  align = "start",
+  triggerClassName,
+  onCommit,
+  children,
+}: {
+  date: string | null;
+  /** Может прийти как `HH:MM:SS` из базы — обрежем сами. */
+  time: string | null;
+  align?: "start" | "center" | "end";
+  triggerClassName?: string;
+  /** Дёргается один раз при закрытии и только если что-то изменилось. */
+  onCommit: (next: { due_date: string | null; due_time: string | null }) => void;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draftDate, setDraftDate] = useState<string | null>(null);
+  const [draftTime, setDraftTime] = useState<string | null>(null);
+  const [raw, setRaw] = useState<RawTime>(NO_RAW);
+
+  const savedTime = time ? time.slice(0, 5) : null;
+
+  /** Колесо и стрелки всегда крутят уже набранное, а не значение до правки. */
+  function step(unit: "h" | "m", dir: 1 | -1) {
+    setDraftTime((p) => stepTime(resolveTime(p, raw), dir, unit));
+    setRaw(NO_RAW);
+  }
+
+  /** Уход фокуса из поля: набранное становится значением черновика. */
+  function commitRaw(unit: "h" | "m") {
+    const only: RawTime = unit === "h" ? { h: raw.h, m: null } : { h: null, m: raw.m };
+    setDraftTime((p) => resolveTime(p, only));
+    setRaw((r) => ({ ...r, [unit]: null }));
+  }
+
+  function handleOpenChange(next: boolean) {
+    if (next) {
+      setDraftDate(date);
+      setDraftTime(savedTime);
+      setRaw(NO_RAW);
+    } else {
+      const nextDate = draftDate;
+      const nextTime = nextDate ? resolveTime(draftTime, raw) : null;
+      if (nextDate !== date || nextTime !== savedTime) {
+        onCommit({ due_date: nextDate, due_time: nextTime });
+      }
+    }
+    setOpen(next);
+  }
+
+  function pickDay(iso: string) {
+    setDraftDate(iso);
+  }
+
+  const parts = splitTime(draftTime);
+  const timeDisabled = !draftDate;
+  const hDisplay = raw.h ?? (parts ? pad2(parts.h) : "");
+  const mDisplay = raw.m ?? (parts ? pad2(parts.m) : "");
+  /** Время ещё не заведено — вместо полей показываем одну кнопку. */
+  const timeUnset = !draftTime && !raw.h && !raw.m;
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger render={<button type="button" className={triggerClassName} />}>
+        {children}
+      </PopoverTrigger>
+      <PopoverContent align={align} className="w-64 gap-0 p-0">
+        {open && <CalendarPanel value={draftDate} onPick={pickDay} />}
 
         <div className="flex flex-col gap-2 border-t border-border p-2">
           {/* Пока времени нет — вместо пустых полей одна кнопка: так видно, что
@@ -560,6 +574,62 @@ export function DuePicker({
               <RotateCcw className="size-3.5 shrink-0" /> Сбросить дату
             </button>
           </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * Дата без времени — начало работ. Отдельный компонент, а не флаг у `DuePicker`:
+ * там черновик сложный (незакоммиченный ввод времени, `resolveTime`), и половина
+ * его состояния при `dateOnly` была бы мёртвой.
+ *
+ * Выбор дня закрывает поповер сразу: копить тут нечего, а лишний клик «готово»
+ * на одном поле — раздражение.
+ */
+export function DatePicker({
+  date,
+  align = "start",
+  triggerClassName,
+  onCommit,
+  children,
+}: {
+  date: string | null;
+  align?: "start" | "center" | "end";
+  triggerClassName?: string;
+  onCommit: (next: string | null) => void;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger render={<button type="button" className={triggerClassName} />}>
+        {children}
+      </PopoverTrigger>
+      <PopoverContent align={align} className="w-64 gap-0 p-0">
+        {open && (
+          <CalendarPanel
+            value={date}
+            onPick={(iso) => {
+              if (iso !== date) onCommit(iso);
+              setOpen(false);
+            }}
+          />
+        )}
+        <div className="border-t border-border p-2">
+          <button
+            type="button"
+            disabled={!date}
+            onClick={() => {
+              onCommit(null);
+              setOpen(false);
+            }}
+            className="flex w-full items-center justify-center gap-1 rounded-md border border-border px-1 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+          >
+            <RotateCcw className="size-3.5 shrink-0" /> Сбросить дату
+          </button>
         </div>
       </PopoverContent>
     </Popover>

@@ -15,8 +15,8 @@ import { Loader2, Plus, Redo2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BulkBar } from "@/components/v2/tasks/BulkBar";
 import { TaskComposer } from "@/components/v2/tasks/TaskComposer";
+import { useGroupNaming } from "@/components/v2/tasks/group-naming";
 import { TaskTable, resolveColumns } from "@/components/v2/tasks/TaskTable";
-import { useGroupPresentation } from "@/components/v2/tasks/use-group-labels";
 import { ViewSettingsPopover } from "@/components/v2/tasks/ViewControls";
 import { FilterButton, TaskCount, TaskSearch } from "@/components/v2/tasks/ViewToolbar";
 import { assigneeChoice } from "@/lib/core/assignable";
@@ -247,6 +247,7 @@ export function TaskTableView({
                     title: updated.title,
                     status_id: updated.status_id,
                     priority: updated.priority,
+                    start_date: updated.start_date,
                     due_date: updated.due_date,
                     due_time: updated.due_time,
                     estimated_minutes: updated.estimated_minutes,
@@ -391,8 +392,7 @@ export function TaskTableView({
     [statuses, tags, members, projectsById, canEdit, wrapTitle, patchOne, setPlacements],
   );
 
-  // Подписи и порядок групп — общие с мобильным списком (use-group-labels).
-  const { labelForGroup, groupOrder } = useGroupPresentation();
+  const { labelForGroup, groupOrder } = useGroupNaming();
 
   const collapsed = useMemo(() => new Set(collapsedList), [collapsedList]);
 

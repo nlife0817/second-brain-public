@@ -5,12 +5,50 @@
 // поиск живут в общем `ViewStore`, и своя копия разметки на втором экране
 // разъехалась бы с первой при первой же правке.
 
-import { Filter, Search, X } from "lucide-react";
+import { Filter, GanttChartSquare, KanbanSquare, Search, Table2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { FilterBuilder } from "@/components/v2/tasks/FilterBuilder";
-import { useViewStore } from "@/lib/core/view-store";
+import { useViewStore, type ProjectViewMode } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
+
+const MODE_META: Record<ProjectViewMode, { label: string; icon: typeof Table2 }> = {
+  table: { label: "Таблица", icon: Table2 },
+  board: { label: "Доска", icon: KanbanSquare },
+  gantt: { label: "Гант", icon: GanttChartSquare },
+};
+
+/**
+ * Переключатель вида. Состав задаёт экран: доска раскладывает задачи по
+ * статусам внутри проекта, и в сводном списке всех проектов организации ей
+ * делать нечего — а таблица и гант есть везде.
+ */
+export function ViewModeSwitch({ modes }: { modes: ProjectViewMode[] }) {
+  const mode = useViewStore((s) => s.mode);
+  const setMode = useViewStore((s) => s.setMode);
+
+  return (
+    <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
+      {modes.map((m) => {
+        const { label, icon: Icon } = MODE_META[m];
+        return (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium",
+              mode === m ? "bg-background shadow-sm" : "text-muted-foreground",
+            )}
+            title={label}
+          >
+            <Icon className="size-3.5" />
+            <span className="hidden xl:inline">{label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /** «12 из 40»: сколько строк осталось после фильтра и сколько их до него. */
 export function TaskCount({ shown, total }: { shown: number; total: number }) {

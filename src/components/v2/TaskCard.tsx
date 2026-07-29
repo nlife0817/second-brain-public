@@ -22,8 +22,12 @@ function formatEstimate(minutes: number): string {
  * теги и метаданные встают отдельными строками.
  * `row` — строка плотного списка: всё в один ряд высотой ~32px, чтобы на экран
  * помещалось втрое больше задач.
+ * `compact` — та же плотность для телефона, но в две строки: на 375px в один
+ * ряд названию остаётся около 260px, и оно обрезается на середине. Здесь
+ * название занимает свою строку целиком, а метки, метаданные и аватары
+ * съезжают под него одной строкой.
  */
-export type TaskCardVariant = "card" | "row";
+export type TaskCardVariant = "card" | "row" | "compact";
 
 /**
  * Метка, сжатая до цвета: в строке места на названия нет, поэтому имя уходит в
@@ -125,6 +129,55 @@ export const TaskCard = memo(function TaskCard({
     </>
   );
 
+  /** Метки проектов и тегов, сжатые до точек — общий кусок плотных видов. */
+  const chipDots = (
+    <>
+      {taskProjects.map((p) => (
+        <MiniChip key={p.id} color={p.color} label={p.name} hint={`Проект: ${p.name}`} square />
+      ))}
+      {showTags &&
+        task.tags.map((t) => <MiniChip key={t.id} color={t.color} label={t.name} hint={`Тег: ${t.name}`} />)}
+    </>
+  );
+
+  if (variant === "compact") {
+    return (
+      <button
+        onClick={onOpen ? () => onOpen(task.id) : undefined}
+        className={cn(
+          "group flex w-full flex-col rounded-md px-2 py-2 text-left transition-colors active:bg-muted/60",
+          className,
+        )}
+      >
+        <span className="flex w-full items-start gap-2">
+          {show("priority") && (
+            <span className="mt-1 flex size-2 shrink-0">
+              <PriorityDot priority={task.priority} />
+            </span>
+          )}
+          {/* Две строки, а не одна: обрезанное на середине название на телефоне
+              не даёт узнать задачу, а третья строка уже возвращает прежний рост. */}
+          <span
+            className={cn(
+              "min-w-0 flex-1 line-clamp-2 text-sm leading-snug",
+              completed && "text-muted-foreground line-through",
+            )}
+          >
+            {task.title || "Без названия"}
+          </span>
+        </span>
+        {(taskProjects.length > 0 || showTags || hasMeta || showAssignees) && (
+          <span className="mt-1 flex w-full items-center gap-2 pl-4 text-[11px] text-muted-foreground">
+            {chipDots}
+            {meta}
+            <span className="flex-1" />
+            {showAssignees && <AvatarStack users={task.assignees} />}
+          </span>
+        )}
+      </button>
+    );
+  }
+
   if (variant === "row") {
     return (
       <button
@@ -144,19 +197,8 @@ export const TaskCard = memo(function TaskCard({
         <span className={cn("min-w-0 flex-1 truncate text-sm", completed && "text-muted-foreground line-through")}>
           {task.title || "Без названия"}
         </span>
-        {taskProjects.length > 0 && (
-          <span className="flex shrink-0 items-center gap-1.5">
-            {taskProjects.map((p) => (
-              <MiniChip key={p.id} color={p.color} label={p.name} hint={`Проект: ${p.name}`} square />
-            ))}
-          </span>
-        )}
-        {showTags && (
-          <span className="flex shrink-0 items-center gap-1.5">
-            {task.tags.map((t) => (
-              <MiniChip key={t.id} color={t.color} label={t.name} hint={`Тег: ${t.name}`} />
-            ))}
-          </span>
+        {(taskProjects.length > 0 || showTags) && (
+          <span className="flex shrink-0 items-center gap-1.5">{chipDots}</span>
         )}
         {(hasMeta || showAssignees) && (
           <span className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
