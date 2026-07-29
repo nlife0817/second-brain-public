@@ -690,6 +690,10 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
   const tagIds = [...new Set(input.tag_ids ?? [])];
   await assertOrgTags(ctx, tagIds);
   const status = await resolveNewStatus(ctx, input.status_id);
+  // Один раз на всю функцию: описание уходит и в INSERT, и в разбор упоминаний,
+  // а двойная очистка одного и того же текста — лишняя работа и лишний повод
+  // им разъехаться.
+  const description = sanitizeRichText(input.description ?? "");
 
   const taskId = await transaction(async (tx) => {
     const row = await tx
@@ -703,7 +707,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
       .get(
         ctx.orgId,
         input.title.trim(),
-        sanitizeRichText(input.description ?? ""),
+        description,
         status.id,
         input.priority ?? "none",
         input.start_date ?? null,
@@ -759,7 +763,6 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
     // Задачу заводят вместе с описанием (развёрнутый черновик, форма создания),
     // и упоминание в нём — такое же упоминание. Без этого оно не доходило
     // никогда: notifyMentions стоял только на правке.
-    const description = sanitizeRichText(input.description ?? "");
     if (description) {
       await notifyMentions(tx, {
         orgId: ctx.orgId,
