@@ -4,27 +4,24 @@
 
 - Next.js 16 (App Router, `proxy.ts` вместо `middleware.ts`), React 19, TypeScript
 - Supabase (Postgres + Auth + Storage + Realtime), `@supabase/ssr` для сессий
-- UI: Base UI (`@base-ui/react`), Tailwind v4, shadcn, Tiptap, dnd-kit, Zustand
+- UI: Base UI (`@base-ui/react`), Tailwind v4, shadcn, Tiptap, `@dnd-kit/core`, Zustand
 - Push: `web-push` + Service Worker (`/sw.js`)
 - Деплой: Vercel (auto-deploy с `master` → production)
 
-Команды: `npm run dev` · `npm run build` · `npm run lint`
+Команды: `npm run dev` · `npm run build` · `npm run lint` · `npm run test`
 
-# Две версии приложения
+# Приложение
 
-В репозитории живут одновременно:
+Командный трекер: мультитенантное ядро на схеме `core`, экраны `/v2/*`, API `/api/v2/**`, доменный слой [src/lib/core/](src/lib/core/) с единым policy-слоем. Правила и конвенции ядра — в [src/lib/core/CLAUDE.md](src/lib/core/CLAUDE.md), читай их перед любой правкой домена.
 
-- **v1** (наследие) — персональный «второй мозг»: `/` и `/m/*`, таблицы в схеме `public`, доступ через [src/lib/db.ts](src/lib/db.ts), whitelist-авторизация в [src/lib/auth.ts](src/lib/auth.ts).
-- **v2** (командный трекер) — мультитенантное ядро: `/v2/*`, схема `core`, API `/api/v2/**`, доменный слой [src/lib/core/](src/lib/core/) с единым policy-слоем. Правила и конвенции — в [src/lib/core/CLAUDE.md](src/lib/core/CLAUDE.md).
-
-Экран целиком принадлежит одной версии — смешивать v1 и v2 в одном компоненте нельзя. Новые командные фичи делаем в v2.
+Наследие v1 (персональный «второй мозг» на схеме `public`) удалено целиком; таблицы сносит миграция [0034_drop_v1_public.sql](supabase/migrations/0034_drop_v1_public.sql). Если встретишь упоминание `public.items`, `src/lib/db.ts`, Kaiten или whitelist-авторизации — это устаревший след, а не действующий код.
 
 # Структура и ключевые модули
 
-- [src/app/](src/app/) — App Router. Корень `/` — десктоп; `/m/*` (tasks/notes/inbox/settings) — мобильный UI; `/planning/` — недельное планирование; `/login/`, `/auth/callback/` — auth
-- [src/app/api/](src/app/api/) — REST endpoints. Крупные подсистемы: `kaiten/*` (двусторонняя синхронизация с Kaiten + cron), `weekly-plans/*` (план + entries + отчёты), `staging/*` (inbox), `push/*` + `notifications/dispatch` (web-push), `clients`, `items`, `relations`, `comments`
-- [src/lib/](src/lib/) — `sql.ts` (доступ к БД), `db.ts` (домен-запросы), `auth.ts`/`api-auth.ts` (`withAuth`/`withAdminOnly` обёртки), `store.ts` (Zustand), `realtime.ts` (Supabase Realtime), `storage.ts`
-- [supabase/migrations/](supabase/migrations/) — SQL миграции (см. правило ниже)
+- [src/app/](src/app/) — App Router. `/v2/*` — десктопные экраны, `/v2/m/*` — мобильная PWA, `/login/` и `/auth/callback/` — вход, `/invite/[token]` — приглашение. Корень `/` — редирект на `/v2/my`
+- [src/app/api/v2/](src/app/api/v2/) — REST endpoints, тонкие: zod → policy → сервис ядра. SQL в роутах не пишем
+- [src/lib/](src/lib/) — `sql.ts` (единственный доступ к Postgres, `prepare()` конвертит `?` → `$N`), `core/` (домен), `supabase/` (сессии), `notifications/` (web-push), `sanitize.ts`, `utils.ts`
+- [supabase/migrations/](supabase/migrations/) — SQL миграции (см. правило ниже). `0001`–`0022` создавали схему `public` (v1), `0023`+ — схему `core`
 
 # Правило: уточняющие вопросы перед кодом
 
@@ -94,12 +91,12 @@
 2. Добавь путь в `config.matcher` exclusion list в [src/proxy.ts](src/proxy.ts)
 3. Иначе запрос получит 307 на /login и до твоего кода не дойдёт
 
-Источник правды — `config.matcher` в [src/proxy.ts](src/proxy.ts). На текущий момент из proxy исключены `api/cron`, `api/v2/cron`, `api/notifications/dispatch`, `api/timing/watchdog`, `api/mcp`, `api/v2/invitations` (плюс статика: `_next`, `icons`, `favicon`, `manifest`, `sw.js`). Все остальные `/api/*` проходят проверку сессии в proxy — отдельный `withAuth` в роуте не обязателен, но допустим (см. [src/lib/api-auth.ts](src/lib/api-auth.ts) для ролевых ограничений).
+Источник правды — `config.matcher` в [src/proxy.ts](src/proxy.ts). На текущий момент из proxy исключены `api/v2/cron` и `api/v2/invitations` (плюс статика: `_next`, `icons`, `favicon`, `manifest`, `sw.js`, `offline.html`). Все остальные `/api/*` проходят проверку сессии в proxy; ролевые ограничения — в `withOrg`/`withUser` из [src/lib/core/context.ts](src/lib/core/context.ts).
 
-Дополнительно proxy редиректит мобильные UA: `/` → `/m/tasks` (v1) и `/v2/*` → `/v2/m/*` (v2), обойти — `?desktop` (липкая cookie).
+Дополнительно proxy редиректит мобильные UA с десктопных экранов на `/v2/m/*` (включая корень `/`), обойти — `?desktop` (липкая cookie), вернуть — `?mobile`.
 
 # Хостинг
 
 - **Vercel Hobby plan** — cron максимум 1 раз/сутки, не подходит для частых задач
 - **Supabase Postgres + Vault** — для cron используем pg_cron + pg_net, секреты в Vault (`app_url`, `cron_secret`)
-- Пример расписаний: [supabase/migrations/0005_notifications_cron.sql](supabase/migrations/0005_notifications_cron.sql)
+- Пример расписания: [supabase/migrations/0027_core_cron.sql](supabase/migrations/0027_core_cron.sql) — задание `v2_core_tick` раз в 10 минут дёргает `/api/v2/cron`

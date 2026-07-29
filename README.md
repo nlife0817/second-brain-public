@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Командный трекер задач
 
-## Getting Started
+Мультитенантное веб-приложение: организации, проекты, задачи с подзадачами и связями, учёт времени, CRM-контур, уведомления и мобильная PWA.
 
-First, run the development server:
+Стек — Next.js 16 (App Router), React 19, TypeScript, Supabase (Postgres + Auth + Realtime), Tailwind v4 и Base UI. Деплой на Vercel из ветки `master`.
+
+## Разработка
+
+```bash
+npm install
+```
+
+Понадобится `.env.local` с доступами к Supabase:
+
+```
+DATABASE_URL=
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=
+CRON_SECRET=
+```
+
+Дальше:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Приложение откроется на http://localhost:3000 и уведёт на `/v2/my`. Локально можно обойти вход, задав `DEV_USER_EMAIL` — тогда `proxy.ts` пропускает проверку сессии (только при `NODE_ENV !== production`).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Остальные команды:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build && npm run lint && npm run test
+```
 
-## Learn More
+## Устройство
 
-To learn more about Next.js, take a look at the following resources:
+| Путь | Что там |
+|---|---|
+| `src/app/v2/**` | Десктопные экраны: сводный список, проекты, клиенты, время, настройки |
+| `src/app/v2/m/**` | Мобильная PWA с нижним таб-баром |
+| `src/app/api/v2/**` | REST API — тонкие роуты: zod → проверка прав → сервис |
+| `src/lib/core/**` | Доменный слой и единственный источник правил доступа (`policy.ts`) |
+| `src/lib/sql.ts` | Доступ к Postgres; `prepare()` конвертит `?` → `$N` |
+| `supabase/migrations/` | SQL-миграции |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Конвенции ядра, правила доступа и грабли, на которые уже наступали, — в [src/lib/core/CLAUDE.md](src/lib/core/CLAUDE.md). Прочитай перед правкой домена.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Миграции
 
-## Deploy on Vercel
+Миграции **не** применяются автоматически при деплое — это отдельный шаг:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npx supabase db push
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Либо скопировать SQL в Supabase Dashboard → SQL Editor → Run.
+
+Схема приложения — `core`. Миграции `0001`–`0022` относятся к удалённой первой версии (персональный «второй мозг» на схеме `public`) и оставлены как журнал: Supabase хранит применённые версии, удаление файлов даст drift.
+
+## Фоновые задачи
+
+`pg_cron` + `pg_net` раз в 10 минут дёргают `/api/v2/cron` (Bearer `CRON_SECRET`): push-рассылка, материализация повторяющихся правил, закрытие забытых таймеров, доставка вебхуков. Расписание — [0027_core_cron.sql](supabase/migrations/0027_core_cron.sql), секреты в Supabase Vault.
