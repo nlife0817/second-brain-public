@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { signOut } from "@/lib/core/session";
 import type { OrgRole, UserBrief } from "@/lib/core/types";
+import { cn } from "@/lib/utils";
 
 const ROLE_LABELS: Record<OrgRole, string> = {
   owner: "Владелец",
@@ -25,21 +26,38 @@ const ROLE_LABELS: Record<OrgRole, string> = {
   guest: "Гость",
 };
 
-export function AccountMenu({ me, orgRole }: { me: UserBrief; orgRole: OrgRole | null }) {
+export function AccountMenu({
+  me,
+  orgRole,
+  compact = false,
+}: {
+  me: UserBrief;
+  orgRole: OrgRole | null;
+  /** Свёрнутый сайдбар: остаётся один аватар, подпись уходит в title. */
+  compact?: boolean;
+}) {
   const [signingOut, setSigningOut] = useState(false);
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <button className="flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left hover:bg-muted/60">
+          <button
+            title={compact ? me.name || me.email : undefined}
+            className={cn(
+              "flex w-full items-center rounded-lg py-1 text-left hover:bg-muted/60",
+              compact ? "justify-center px-0" : "gap-2 px-1",
+            )}
+          >
             <Avatar user={me} size="md" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-xs font-medium">{me.name || me.email}</span>
-              <span className="block truncate text-[11px] text-muted-foreground">
-                {orgRole ? ROLE_LABELS[orgRole] : me.email}
+            {!compact && (
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-medium">{me.name || me.email}</span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  {orgRole ? ROLE_LABELS[orgRole] : me.email}
+                </span>
               </span>
-            </span>
+            )}
           </button>
         }
       />

@@ -35,6 +35,7 @@ import {
   compareTasks,
   makeMatchContext,
   matchesGroups,
+  showsArchived,
   type GroupByField,
   type SortColumn,
 } from "@/lib/core/views";
@@ -307,9 +308,18 @@ export function TaskTableView({
 
   const matchCtx = useMemo(() => makeMatchContext(me?.id ?? null), [me?.id]);
 
+  // Архивные статусы прячутся до явного «Архив = Показать»: иначе архив
+  // всплывает в каждой группировке и в счётчиках групп.
+  const archivedStatusIds = useMemo(
+    () => new Set(statuses.filter((s) => s.kind === "archived").map((s) => s.id)),
+    [statuses],
+  );
+  const withArchived = showsArchived(filterGroups);
+
   const visibleTasks = useMemo(() => {
     const needle = search.trim().toLowerCase();
     const filtered = tasks.filter((t) => {
+      if (!withArchived && t.status_id && archivedStatusIds.has(t.status_id)) return false;
       if (needle && !t.title.toLowerCase().includes(needle)) return false;
       return matchesGroups(t, filterGroups, matchCtx);
     });
@@ -319,7 +329,7 @@ export function TaskTableView({
     return [...filtered].sort((a, b) =>
       compareTasks(a, b, sort, { statusPosition, projectPosition, projectName }),
     );
-  }, [tasks, search, filterGroups, matchCtx, sort, statuses, projects]);
+  }, [tasks, search, filterGroups, matchCtx, sort, statuses, projects, withArchived, archivedStatusIds]);
 
   const columns = useMemo(
     () => resolveColumns(columnsOrder, widths, fields),

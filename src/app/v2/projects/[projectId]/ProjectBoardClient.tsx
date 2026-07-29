@@ -322,7 +322,6 @@ function ProjectScreen({
         tasks={tasks}
         setTasks={setTasks}
         canEdit={!!canEdit}
-        showDone={showDone}
         onOpenTask={openTask}
         onAddTask={addTask}
       />

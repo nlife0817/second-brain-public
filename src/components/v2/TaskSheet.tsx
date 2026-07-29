@@ -45,6 +45,7 @@ import { Avatar, PRIORITY_LABELS, StatusPill } from "./bits";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
 import { SidePanel } from "./SidePanel";
+import { TaskRecurrence, type TaskRecurrenceRule } from "./TaskRecurrence";
 // Tiptap — самая тяжёлая зависимость интерфейса (≈370 КБ). Статический импорт
 // тянул её в бандл каждой страницы v2, хотя редактор нужен только когда открыта
 // карточка задачи. Грузим чанк при первом открытии.
@@ -90,6 +91,7 @@ interface TaskBundle {
   subtasks: TaskListItem[];
   relations: RelationWithTarget[];
   relation_types: RelationType[];
+  recurrence: TaskRecurrenceRule | null;
 }
 
 export function TaskSheet({
@@ -117,6 +119,7 @@ export function TaskSheet({
   const [subtasks, setSubtasks] = useState<TaskListItem[]>([]);
   const [relations, setRelations] = useState<RelationWithTarget[]>([]);
   const [relationTypes, setRelationTypes] = useState<RelationType[]>([]);
+  const [recurrence, setRecurrence] = useState<TaskRecurrenceRule | null>(null);
   const [tab, setTab] = useState<"comments" | "feed">("comments");
   const [commentText, setCommentText] = useState("");
   const [subtaskTitle, setSubtaskTitle] = useState("");
@@ -138,6 +141,7 @@ export function TaskSheet({
       setSubtasks(b.subtasks);
       setRelations(b.relations);
       setRelationTypes(b.relation_types);
+      setRecurrence(b.recurrence ?? null);
       setError(null);
     } catch (e) {
       if (currentTaskRef.current !== taskId) return;
@@ -552,6 +556,17 @@ export function TaskSheet({
                     className="rounded-md border border-border bg-background px-2 py-1 text-sm"
                   />
                 </div>
+
+                {/* Повтор — свойство самой задачи: отдельного экрана правил
+                    больше нет, копия рождается из её текущего состояния. */}
+                <span className="text-muted-foreground">Повтор</span>
+                <TaskRecurrence
+                  orgId={orgId}
+                  taskId={task.id}
+                  rule={recurrence}
+                  canEdit={canEdit}
+                  onChange={setRecurrence}
+                />
 
                 <span className="text-muted-foreground">Исполнители</span>
                 <div className="flex flex-wrap items-center gap-1.5">

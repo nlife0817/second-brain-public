@@ -128,7 +128,24 @@ export async function listNotifications(
                 THEN (SELECT t.title FROM core.tasks t WHERE t.id = coalesce(n.entity_id, e.entity_id))
               WHEN coalesce(n.entity_type, e.entity_type) = 'project'
                 THEN (SELECT p.name FROM core.projects p WHERE p.id = coalesce(n.entity_id, e.entity_id))
-            END AS entity_title
+            END AS entity_title,
+            -- Своё/подписка/прочее: инбокс фильтрует и группирует по этому
+            -- признаку, а в браузере ни исполнителей, ни подписок нет.
+            -- Сущность берётся так же, как выше: напоминание о своей задаче —
+            -- это «моё», и попасть в «прочее» оно не должно.
+            CASE
+              WHEN coalesce(n.entity_type, e.entity_type) = 'task'
+                   AND EXISTS (SELECT 1 FROM core.task_assignees ta
+                               WHERE ta.task_id = coalesce(n.entity_id, e.entity_id)
+                                 AND ta.user_id = n.user_id)
+                THEN 'mine'
+              WHEN coalesce(n.entity_type, e.entity_type) = 'task'
+                   AND EXISTS (SELECT 1 FROM core.task_followers tf
+                               WHERE tf.task_id = coalesce(n.entity_id, e.entity_id)
+                                 AND tf.user_id = n.user_id)
+                THEN 'subscribed'
+              ELSE 'other'
+            END AS scope
      FROM core.notifications n
      LEFT JOIN core.events e ON e.id = n.event_id
      LEFT JOIN core.users u ON u.id = e.actor_id

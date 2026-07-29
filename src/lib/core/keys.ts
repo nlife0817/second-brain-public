@@ -15,3 +15,13 @@ export const ACTIVE_ORG_LEGACY_KEY = "sb.v2.orgId";
 
 /** Год: выбор организации — долгоживущая настройка, а не сессионная. */
 export const ACTIVE_ORG_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+
+/**
+ * Свёрнутый сайдбар. Тоже cookie, а не localStorage: ширина панели видна в
+ * первом же кадре, и читать её после гидрации — значит показать развёрнутую
+ * панель и тут же схлопнуть её на глазах у пользователя.
+ */
+export const SIDEBAR_COLLAPSED_COOKIE = "sb_v2_sidebar";
+
+/** Ширина панели — такая же долгоживущая привычка, как выбор организации. */
+export const SIDEBAR_COLLAPSED_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
