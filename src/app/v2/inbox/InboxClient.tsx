@@ -13,19 +13,13 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TaskSheet } from "@/components/v2/lazy";
 import { api } from "@/lib/core/client";
+import { syncReadState } from "@/lib/notifications/client";
 import { cachedGet, patch, peek, seed } from "@/lib/core/query";
+import { notificationLine } from "@/lib/core/notification-text";
 import type { CoreNotification, NotificationScope } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 
-const KIND_LABELS: Record<string, string> = {
-  assigned: "назначил(а) вам задачу",
-  comment: "прокомментировал(а)",
-  status_changed: "сменил(а) статус",
-  completed: "завершил(а) задачу",
-  due_changed: "изменил(а) срок",
-  added_to_project: "добавил(а) вас в проект",
-};
 
 /** Порядок здесь же задаёт порядок групп на экране. */
 const SCOPES: Array<{ id: NotificationScope; label: string }> = [
@@ -93,6 +87,8 @@ export function InboxClient({ initial }: { initial: CoreNotification[] }) {
     if (path) patch<{ items: CoreNotification[] }>(path, (prev) => ({ items: markAllRead(prev.items) }));
     try {
       await api.post(`/orgs/${orgId}/notifications`, { all: true });
+      // Разобрано целиком — в шторке ОС висеть больше нечему.
+      syncReadState({ unread: 0 });
       await refreshUnread();
     } catch (e) {
       setItems(previous);
@@ -115,6 +111,8 @@ export function InboxClient({ initial }: { initial: CoreNotification[] }) {
     if (path) patch<{ items: CoreNotification[] }>(path, (prev) => ({ items: markRead(prev.items) }));
     try {
       await api.post(`/orgs/${orgId}/notifications`, { ids: [n.id] });
+      // Тег тот же, что у пуша: уведомление об этой задаче уходит из шторки.
+      if (n.entity_id) syncReadState({ tag: `v2-${n.entity_type}-${n.entity_id}` });
       await refreshUnread();
     } catch {
       // молча: уведомление останется непрочитанным, попробуем в следующий раз
@@ -136,6 +134,9 @@ export function InboxClient({ initial }: { initial: CoreNotification[] }) {
   }, [visible, groupMode, scopes]);
 
   function renderItem(n: CoreNotification) {
+    // У напоминания о сроке нет автора: строку собирает общий помощник, иначе
+    // здесь появилось бы «Кто-то напомнил».
+    const line = notificationLine(n);
     return (
       <button
         key={n.id}
@@ -148,9 +149,9 @@ export function InboxClient({ initial }: { initial: CoreNotification[] }) {
         <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", n.read_at ? "bg-transparent" : "bg-primary")} />
         <span className="min-w-0 flex-1">
           <span className="block text-sm">
-            <span className="font-medium">{n.actor_name || "Кто-то"}</span>{" "}
-            {KIND_LABELS[n.kind] ?? n.kind}
-            {n.entity_title && <span className="font-medium"> «{n.entity_title}»</span>}
+            {line.actor && <span className="font-medium">{line.actor} </span>}
+            {line.action}
+            {line.entity && <span className="font-medium"> «{line.entity}»</span>}
           </span>
           <span className="block text-xs text-muted-foreground">
             {new Date(n.created_at).toLocaleString("ru-RU", {

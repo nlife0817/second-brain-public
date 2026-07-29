@@ -7,12 +7,10 @@ import {
   assertOrg,
   assertProject,
   effectiveProjectRole,
-  PolicyError,
   type ProjectAction,
 } from "./policy";
 import type {
   AuthContext,
-  PolicyProject,
   Project,
   ProjectDefaultRole,
   ProjectMemberWithUser,
@@ -442,7 +440,3 @@ async function revokeProjectTaskLinks(
       .run(projectId, userId);
   });
 }
-
-// Повторный экспорт для роутов, которым нужен только policy-срез.
-export type { PolicyProject };
-export { PolicyError };

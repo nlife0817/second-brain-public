@@ -77,6 +77,7 @@ export async function addTaskComment(ctx: AuthContext, taskId: string, body: str
       kind: "comment",
       userIds: await taskAudience(tx, taskId),
       excludeUserId: ctx.user.id,
+      taskId,
     });
     // Комментатор начинает следить за задачей (поведение Asana).
     await tx

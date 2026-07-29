@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { ProjectMuteToggle } from "@/components/v2/ProjectMuteToggle";
 import { api, ApiError } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import type {
@@ -248,6 +249,15 @@ export function ProjectSettings({
 
       {tab === "general" && (
         <>
+          {/* Личная настройка внутри общих: заглушение видно только автору и
+              доступно всем, включая гостя, — в отличие от полей ниже. */}
+          <Card
+            title="Уведомления"
+            hint="Заглушённый проект перестаёт присылать уведомления вам; остальных участников это не касается"
+          >
+            <ProjectMuteToggle projectId={projectId} />
+          </Card>
+
           <Card title="Название и описание">
             <div className="flex flex-col gap-3">
               <Input

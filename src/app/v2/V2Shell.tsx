@@ -34,7 +34,9 @@ import {
   useV2StoreApi,
   writeActiveOrgCookie,
 } from "@/lib/core/ui-store";
+import { reportTimezone } from "@/lib/core/timezone";
 import { usePollWhenVisible } from "@/lib/core/use-poll";
+import { syncReadState } from "@/lib/notifications/client";
 import type { V2BootstrapResult } from "@/lib/core/bootstrap";
 import type { UserBrief } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
@@ -161,6 +163,18 @@ export function V2Shell({
     useCallback(() => void storeApi.getState().refreshUnread(), [storeApi]),
     30_000,
   );
+
+  // Непрочитанных не осталось — возможно, их разобрали на телефоне. Убираем
+  // из шторки этого браузера то, что там ещё висит.
+  const unread = store.unreadCount;
+  useEffect(() => {
+    if (unread === 0) syncReadState({ unread: 0 });
+  }, [unread]);
+
+  // Часовой пояс устройства нужен напоминаниям о сроках и тихим часам.
+  useEffect(() => {
+    void reportTimezone();
+  }, []);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
