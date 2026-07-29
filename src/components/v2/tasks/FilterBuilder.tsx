@@ -10,6 +10,8 @@ import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
 import {
   BASE_FILTER_FIELDS,
+  HIDE_VALUE,
+  SHOW_VALUE,
   ME_VALUE,
   NONE_VALUE,
   OPERATORS_BY_KIND,
@@ -76,6 +78,14 @@ export function FilterBuilder() {
         return [
           { value: "yes", label: "Да" },
           { value: "no", label: "Нет" },
+        ];
+      case "archive":
+      case "done":
+        // Задачи в статусах вида «архив» и «готово» скрыты всегда — показать их
+        // можно только этим условием.
+        return [
+          { value: HIDE_VALUE, label: "Скрыть" },
+          { value: SHOW_VALUE, label: "Показать" },
         ];
       default: {
         const id = field.startsWith("field:") ? field.slice("field:".length) : null;

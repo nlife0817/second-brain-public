@@ -33,6 +33,7 @@ import type {
 } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { ViewStoreProvider, projectScope, useViewStore } from "@/lib/core/view-store";
+import { showsDone } from "@/lib/core/views";
 import { cn } from "@/lib/utils";
 import { ProjectBoard } from "./ProjectBoard";
 
@@ -92,8 +93,10 @@ function ProjectScreen({
 }) {
   const { orgId, statuses, metaLoading, refreshProjects } = useV2Store();
   const mode = useViewStore((s) => s.mode);
-  const showDone = useViewStore((s) => s.showDone);
-  const setShowDone = useViewStore((s) => s.setShowDone);
+  // Завершённые тянем с сервера только когда их просят показать: условие
+  // «Готово = Показать» в «Фильтрах» — единственный переключатель, общий у
+  // таблицы, доски и сводного списка.
+  const withDone = showsDone(useViewStore((s) => s.groups));
 
   const [project, setProject] = useState<ProjectDetail | null>(initialProject);
   const [tasks, setTasks] = useState<TaskRow[]>(initialTasks);
@@ -106,7 +109,7 @@ function ProjectScreen({
   const [notice, setNotice] = useState<string | null>(null);
 
   const projectPath = orgId ? `/orgs/${orgId}/projects/${projectId}` : null;
-  const tasksPath = projectPath ? `${projectPath}/tasks${showDone ? "?done=1" : ""}` : null;
+  const tasksPath = projectPath ? `${projectPath}/tasks${withDone ? "?done=1" : ""}` : null;
 
   // Серверные данные — в кэш: переход на соседний экран и назад обойдётся без
   // повторной пары запросов.
@@ -187,18 +190,6 @@ function ProjectScreen({
         {accessLabel(project.default_role)}
       </span>
     </>
-  );
-
-  const doneToggle = (
-    <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      <input
-        type="checkbox"
-        checked={showDone}
-        onChange={(e) => setShowDone(e.target.checked)}
-        className="size-3.5 accent-primary"
-      />
-      Завершённые
-    </label>
   );
 
   const membersButton = (
@@ -291,7 +282,6 @@ function ProjectScreen({
           actionsSlot={
             <>
               <ViewSwitch />
-              {doneToggle}
               {membersButton}
               {settingsLink}
               {addButton}
@@ -310,7 +300,6 @@ function ProjectScreen({
         <span className="flex-1" />
         <ViewSwitch />
         <CardSettingsPopover />
-        {doneToggle}
         {membersButton}
         {settingsLink}
         {addButton}
@@ -322,7 +311,6 @@ function ProjectScreen({
         tasks={tasks}
         setTasks={setTasks}
         canEdit={!!canEdit}
-        showDone={showDone}
         onOpenTask={openTask}
         onAddTask={addTask}
       />

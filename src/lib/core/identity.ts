@@ -4,6 +4,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { prepare, transaction } from "@/lib/sql";
 import { DomainError } from "./http";
+import { SETTINGS_SECTIONS_KEY } from "./settings-sections";
 import { PROJECT_ROLE_RANK } from "./types";
 import type {
   CoreUser,
@@ -18,20 +19,8 @@ import type {
 
 // --- Users ---------------------------------------------------------------------
 
-export async function getUserByAuthId(authUserId: string): Promise<CoreUser | undefined> {
-  return prepare<CoreUser>(`SELECT * FROM core.users WHERE auth_user_id = ?`).get(authUserId);
-}
-
 export async function getUserByEmail(email: string): Promise<CoreUser | undefined> {
   return prepare<CoreUser>(`SELECT * FROM core.users WHERE email = ?`).get(email.toLowerCase().trim());
-}
-
-export async function getUserById(id: string): Promise<CoreUser | undefined> {
-  return prepare<CoreUser>(`SELECT * FROM core.users WHERE id = ?`).get(id);
-}
-
-export async function linkAuthUser(userId: string, authUserId: string): Promise<void> {
-  await prepare(`UPDATE core.users SET auth_user_id = ? WHERE id = ? AND auth_user_id IS NULL`).run(authUserId, userId);
 }
 
 export async function createUser(input: {
@@ -55,10 +44,6 @@ export async function createUser(input: {
 
 export async function getOrganization(orgId: string): Promise<Organization | undefined> {
   return prepare<Organization>(`SELECT * FROM core.organizations WHERE id = ?`).get(orgId);
-}
-
-export async function getFirstOrganization(): Promise<Organization | undefined> {
-  return prepare<Organization>(`SELECT * FROM core.organizations ORDER BY created_at LIMIT 1`).get();
 }
 
 export async function getMembershipRole(orgId: string, userId: string): Promise<OrgRole | undefined> {
@@ -86,14 +71,6 @@ export async function listOrgMembers(orgId: string): Promise<OrgMemberWithUser[]
      WHERE m.org_id = ?
      ORDER BY (m.role = 'owner') DESC, (m.role = 'admin') DESC, u.name, u.email`,
   ).all(orgId);
-}
-
-export async function addMember(orgId: string, userId: string, role: OrgRole): Promise<void> {
-  await prepare(
-    `INSERT INTO core.org_members (org_id, user_id, role)
-     VALUES (?, ?, ?)
-     ON CONFLICT (org_id, user_id) DO NOTHING`,
-  ).run(orgId, userId, role);
 }
 
 // Известное упрощение: проверка "последний owner" не сериализована (нет FOR UPDATE);
@@ -257,6 +234,22 @@ export async function updateOrganization(
   );
   if (!row) throw new DomainError(500, "Failed to update organization");
   return row;
+}
+
+/**
+ * Состав экрана настроек по ролям — точечная правка ключа в `settings`.
+ * Через `updateOrganization` это было бы чтение-запись целиком: параллельная
+ * правка имени организации затёрла бы настройку (или наоборот).
+ */
+export async function setSettingsSections(
+  orgId: string,
+  config: Record<string, string[]>,
+): Promise<void> {
+  await prepare(
+    `UPDATE core.organizations
+     SET settings = jsonb_set(coalesce(settings, '{}'::jsonb), ?::text[], ?::jsonb, true)
+     WHERE id = ?`,
+  ).run(`{${SETTINGS_SECTIONS_KEY}}`, JSON.stringify(config), orgId);
 }
 
 // --- Invitations -----------------------------------------------------------------

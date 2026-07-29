@@ -75,16 +75,19 @@ function storageKey(scope: ViewScope): string {
 /** Как экран проекта показывает задачи. */
 export type ProjectViewMode = "table" | "board";
 
-/** Снимок настроек, который сохраняется как именованное представление. */
+/**
+ * Снимок настроек, который сохраняется как именованное представление.
+ *
+ * Поиска здесь намеренно нет: строку ищут разово, «где та задача», и держать
+ * её в представлении значит подставлять при каждом его выборе запрос, набранный
+ * когда-то давно. Поиск живёт рядом, в `ViewState`.
+ */
 export interface ViewSnapshot {
   columns: string[];
   widths: Record<string, number>;
   sort: SortState;
   groupBy: GroupByConfig;
   groups: FilterGroup[];
-  search: string;
-  /** Завершённые в выборке. Переключатель остался только у экрана проекта. */
-  showDone: boolean;
   subtaskMode: SubtaskMode;
 }
 
@@ -94,6 +97,8 @@ export interface SavedView extends ViewSnapshot {
 }
 
 export interface ViewState extends ViewSnapshot {
+  /** Поиск по списку — состояние сессии, а не часть представления. */
+  search: string;
   savedViews: SavedView[];
   activeViewId: string | null;
   /** Свёрнутые группы — по ключу «уровень1/уровень2». */
@@ -108,13 +113,12 @@ export interface ViewState extends ViewSnapshot {
   setGroupBy: (config: GroupByConfig) => void;
   setGroups: (groups: FilterGroup[]) => void;
   setSearch: (search: string) => void;
-  setShowDone: (show: boolean) => void;
   setSubtaskMode: (mode: SubtaskMode) => void;
   toggleCollapsed: (key: string) => void;
 
   saveView: (name: string) => void;
   applyView: (id: string) => void;
-  updateActiveView: () => void;
+  duplicateView: (id: string) => void;
   deleteView: (id: string) => void;
   resetView: () => void;
 }
@@ -125,8 +129,6 @@ const DEFAULT_SNAPSHOT: ViewSnapshot = {
   sort: { column: "due_date", direction: "asc" },
   groupBy: ["status", "none"],
   groups: [],
-  search: "",
-  showDone: false,
   subtaskMode: "nested",
 };
 
@@ -145,18 +147,26 @@ function snapshotOf(state: ViewSnapshot): ViewSnapshot {
     sort: state.sort,
     groupBy: state.groupBy,
     groups: state.groups,
-    search: state.search,
-    showDone: state.showDone,
     subtaskMode: state.subtaskMode,
   };
 }
 
 /**
- * Ручная правка настроек отвязывает от представления: иначе кнопка «обновить»
- * молча перезаписала бы сохранённое чужими изменениями.
+ * Правка настроек. Пока выбрано именованное представление, изменение уходит
+ * прямо в него: представление — это рабочий срез, за которым возвращаются, а не
+ * снимок на момент создания. Прежнее поведение отвязывало от представления при
+ * любой правке (снял фильтр — и ты уже нигде), а сохранить изменение можно было
+ * только отдельной кнопкой «обновить».
+ *
+ * Отсюда следствие: оригинал правится сразу. Чтобы отвести вариант, не задев
+ * его, есть `duplicateView`, а выйти из представления вовсе — `resetView`.
  */
-function edit(patch: Partial<ViewSnapshot>): Partial<ViewState> {
-  return { ...patch, activeViewId: null };
+function edit(state: ViewState, patch: Partial<ViewSnapshot>): Partial<ViewState> {
+  if (!state.activeViewId) return patch;
+  return {
+    ...patch,
+    savedViews: state.savedViews.map((v) => (v.id === state.activeViewId ? { ...v, ...patch } : v)),
+  };
 }
 
 function newId(): string {
@@ -171,36 +181,36 @@ function createViewStore(scope: ViewScope) {
     persist(
       (set, get) => ({
         ...defaults,
+        search: "",
         savedViews: [],
         activeViewId: null,
         collapsed: [],
         mode: "table",
 
         setMode: (mode) => set({ mode }),
-        setColumns: (columns) => set(edit({ columns })),
+        setColumns: (columns) => set((s) => edit(s, { columns })),
         setWidth: (columnId, width) =>
-          set((s) => ({
-            ...edit({
+          set((s) =>
+            edit(s, {
               widths: {
                 ...s.widths,
                 [columnId]: Math.min(COLUMN_MAX_WIDTH, Math.max(COLUMN_MIN_WIDTH, Math.round(width))),
               },
             }),
-          })),
+          ),
         toggleSort: (column) =>
-          set((s) => ({
-            ...edit({
+          set((s) =>
+            edit(s, {
               sort:
                 s.sort.column === column
                   ? { column, direction: s.sort.direction === "asc" ? "desc" : "asc" }
                   : { column, direction: "asc" },
             }),
-          })),
-        setGroupBy: (groupBy) => set(edit({ groupBy })),
-        setGroups: (groups) => set(edit({ groups })),
+          ),
+        setGroupBy: (groupBy) => set((s) => edit(s, { groupBy })),
+        setGroups: (groups) => set((s) => edit(s, { groups })),
         setSearch: (search) => set({ search }),
-        setShowDone: (showDone) => set(edit({ showDone })),
-        setSubtaskMode: (subtaskMode) => set(edit({ subtaskMode })),
+        setSubtaskMode: (subtaskMode) => set((s) => edit(s, { subtaskMode })),
         toggleCollapsed: (key) =>
           set((s) => ({
             collapsed: s.collapsed.includes(key) ? s.collapsed.filter((k) => k !== key) : [...s.collapsed, key],
@@ -215,20 +225,22 @@ function createViewStore(scope: ViewScope) {
           if (!view) return;
           set({ ...snapshotOf(view), activeViewId: id });
         },
-        updateActiveView: () => {
-          const { activeViewId } = get();
-          if (!activeViewId) return;
-          const snapshot = snapshotOf(get());
-          set((s) => ({
-            savedViews: s.savedViews.map((v) => (v.id === activeViewId ? { ...v, ...snapshot } : v)),
-          }));
+        duplicateView: (id) => {
+          const source = get().savedViews.find((v) => v.id === id);
+          if (!source) return;
+          const copy: SavedView = { ...source, id: newId(), name: `${source.name} — копия` };
+          // Копия сразу становится активной: дублируют затем, чтобы править её.
+          set((s) => ({ savedViews: [...s.savedViews, copy], activeViewId: copy.id, ...snapshotOf(copy) }));
         },
         deleteView: (id) =>
           set((s) => ({
             savedViews: s.savedViews.filter((v) => v.id !== id),
             activeViewId: s.activeViewId === id ? null : s.activeViewId,
           })),
-        resetView: () => set({ ...defaults, activeViewId: null }),
+        // Единственный способ выйти из представления, не выбрав другое. Поиск
+        // снимаем заодно: список, оставшийся отфильтрованным после «сбросить»,
+        // читается как поломка.
+        resetView: () => set({ ...defaults, search: "", activeViewId: null }),
       }),
       {
         name: storageKey(scope),
@@ -237,6 +249,7 @@ function createViewStore(scope: ViewScope) {
         // настройка. Иначе после смены группировки половина списка «пропадает».
         partialize: (s) => ({
           ...snapshotOf(s),
+          search: s.search,
           savedViews: s.savedViews,
           activeViewId: s.activeViewId,
           mode: s.mode,

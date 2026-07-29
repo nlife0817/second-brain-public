@@ -109,12 +109,6 @@ export interface TaskTableViewProps {
   emptyText?: string;
   /** Узкий экран: прячем то, что на телефоне бесполезно (история правок). */
   compact?: boolean;
-  /**
-   * Прятать задачи завершающих и архивных статусов, пока их не выбрали в
-   * «Фильтрах». Для экрана проекта выключено: там тот же отбор делает
-   * переключатель «Завершённые», и два механизма разом мешали бы друг другу.
-   */
-  hideFinished?: boolean;
   onOpenTask: (taskId: string) => void;
   /** Ошибка экрана — показывается той же полосой, что и ошибки правок. */
   error?: string | null;
@@ -135,7 +129,6 @@ export function TaskTableView({
   quickAddPlaceholder = "Быстро добавить задачу…",
   emptyText = "Задач пока нет.",
   compact = false,
-  hideFinished = false,
   onOpenTask,
   error: externalError = null,
   onDismissError,
@@ -317,16 +310,16 @@ export function TaskTableView({
   const matchCtx = useMemo(() => makeMatchContext(me?.id ?? null), [me?.id]);
 
   /**
-   * Завершённое и архив прячем до того, как пользователь их запросит фильтром.
-   * Отсев идёт отдельным шагом, а не внутри общего фильтра: скрытые статусы —
-   * это умолчание экрана, и в счётчике «N из M» им делать нечего, иначе экран
-   * без единого условия показывал бы «12 из 40».
+   * Архив и завершённое прячутся до явного «Архив/Готово = Показать»: иначе
+   * прошлое всплывает в каждой группировке. Отсев идёт отдельным шагом, а не
+   * внутри общего фильтра: это умолчание экрана, и в счётчике «N из M» ему
+   * делать нечего — иначе список без единого условия показывал бы «12 из 40».
    */
   const pool = useMemo(() => {
-    const hidden = hideFinished ? hiddenStatusIds(filterGroups, statuses) : null;
-    if (!hidden || hidden.size === 0) return tasks;
+    const hidden = hiddenStatusIds(filterGroups, statuses);
+    if (hidden.size === 0) return tasks;
     return tasks.filter((t) => !(t.status_id && hidden.has(t.status_id)));
-  }, [tasks, hideFinished, filterGroups, statuses]);
+  }, [tasks, filterGroups, statuses]);
 
   const visibleTasks = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -693,7 +686,7 @@ export function TaskTableView({
                   : pool.length === 0
                     ? // Все задачи ушли в «Готово»/«Архив» — иначе человек решит,
                       // что список сломался.
-                      "Все задачи завершены или в архиве — выберите их статус в «Фильтрах», чтобы увидеть."
+                      "Все задачи в «Готово» или «Архиве» — включите их показ в «Фильтрах», чтобы увидеть."
                     : `Ни одна задача не подходит под фильтр${search ? ` «${search}»` : ""}.`}
             </p>
           }

@@ -14,7 +14,9 @@ import { SignOutButton } from "@/components/v2/SignOutButton";
 import { Button } from "@/components/ui/button";
 import { InstallPrompt, PushNudge } from "./InstallPrompt";
 import { TASK_DEEPLINK_EVENT, useAppResume, useOnline } from "./hooks";
+import { reportTimezone } from "@/lib/core/timezone";
 import { useV2Store } from "@/lib/core/ui-store";
+import { syncReadState } from "@/lib/notifications/client";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -130,6 +132,18 @@ export function MobileShell({ children }: { children: React.ReactNode }) {
     if (!nav.setAppBadge || !nav.clearAppBadge) return;
     void (unreadCount > 0 ? nav.setAppBadge(unreadCount) : nav.clearAppBadge()).catch(() => {});
   }, [unreadCount]);
+
+  // Непрочитанных не осталось — значит их разобрали, возможно и на другом
+  // устройстве. Старые уведомления этого браузера убираем из шторки: иначе
+  // они висят там до ручного смахивания.
+  useEffect(() => {
+    if (unreadCount === 0) syncReadState({ unread: 0 });
+  }, [unreadCount]);
+
+  // Часовой пояс устройства нужен напоминаниям и тихим часам.
+  useEffect(() => {
+    void reportTimezone();
+  }, []);
 
   if (!ready) return <ShellSkeleton />;
   if (needsOnboarding && me) return <OrgOnboarding />;

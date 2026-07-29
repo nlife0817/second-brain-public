@@ -3,7 +3,7 @@
 // after() в withOrg/withUser шлёт сразу после ответа, cron добирает остатки.
 
 import { prepare, type TxContext } from "@/lib/sql";
-import { filterByInboxPref } from "./notification-prefs";
+import { filterByInboxPref, filterByProjectMute } from "./notification-prefs";
 import type { CoreEvent, CoreNotification } from "./types";
 
 export type EntityType = "task" | "project" | "client" | "org";
@@ -44,10 +44,19 @@ export async function notifyUsers(
     kind: string;
     userIds: Iterable<string>;
     excludeUserId?: string | null;
+    /**
+     * Задача, вокруг которой событие. Нужна, чтобы уважать заглушённые
+     * проекты; без неё фильтр не применяется (событие вне задачи —
+     * например, добавление в проект: это членство, а не шум проекта).
+     */
+    taskId?: string;
   },
 ): Promise<void> {
   const candidates = [...new Set(input.userIds)].filter((id) => id && id !== input.excludeUserId);
-  const targets = await filterByInboxPref(tx, input.kind, candidates);
+  const allowed = input.taskId
+    ? await filterByProjectMute(tx, input.taskId, candidates)
+    : candidates;
+  const targets = await filterByInboxPref(tx, input.kind, allowed);
   for (const userId of targets) {
     await tx
       .prepare(
@@ -106,13 +115,37 @@ export async function listNotifications(
   opts: { unreadOnly?: boolean; limit?: number } = {},
 ): Promise<CoreNotification[]> {
   return prepare<CoreNotification>(
+    // Напоминание живёт без события: сущность и текст лежат в самом
+    // уведомлении, поэтому берём первое непустое из двух источников.
     `SELECT n.id, n.org_id, n.kind, n.read_at, n.created_at,
-            e.verb, e.payload, e.entity_type, e.entity_id,
+            e.verb,
+            CASE WHEN n.payload = '{}'::jsonb THEN e.payload ELSE n.payload END AS payload,
+            coalesce(n.entity_type, e.entity_type) AS entity_type,
+            coalesce(n.entity_id, e.entity_id) AS entity_id,
             u.name AS actor_name,
             CASE
-              WHEN e.entity_type = 'task' THEN (SELECT t.title FROM core.tasks t WHERE t.id = e.entity_id)
-              WHEN e.entity_type = 'project' THEN (SELECT p.name FROM core.projects p WHERE p.id = e.entity_id)
-            END AS entity_title
+              WHEN coalesce(n.entity_type, e.entity_type) = 'task'
+                THEN (SELECT t.title FROM core.tasks t WHERE t.id = coalesce(n.entity_id, e.entity_id))
+              WHEN coalesce(n.entity_type, e.entity_type) = 'project'
+                THEN (SELECT p.name FROM core.projects p WHERE p.id = coalesce(n.entity_id, e.entity_id))
+            END AS entity_title,
+            -- Своё/подписка/прочее: инбокс фильтрует и группирует по этому
+            -- признаку, а в браузере ни исполнителей, ни подписок нет.
+            -- Сущность берётся так же, как выше: напоминание о своей задаче —
+            -- это «моё», и попасть в «прочее» оно не должно.
+            CASE
+              WHEN coalesce(n.entity_type, e.entity_type) = 'task'
+                   AND EXISTS (SELECT 1 FROM core.task_assignees ta
+                               WHERE ta.task_id = coalesce(n.entity_id, e.entity_id)
+                                 AND ta.user_id = n.user_id)
+                THEN 'mine'
+              WHEN coalesce(n.entity_type, e.entity_type) = 'task'
+                   AND EXISTS (SELECT 1 FROM core.task_followers tf
+                               WHERE tf.task_id = coalesce(n.entity_id, e.entity_id)
+                                 AND tf.user_id = n.user_id)
+                THEN 'subscribed'
+              ELSE 'other'
+            END AS scope
      FROM core.notifications n
      LEFT JOIN core.events e ON e.id = n.event_id
      LEFT JOIN core.users u ON u.id = e.actor_id

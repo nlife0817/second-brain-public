@@ -6,7 +6,12 @@
 import Link from "next/link";
 import { Check, CheckCircle2, ChevronsUpDown, Download, Monitor, Smartphone } from "lucide-react";
 import { Avatar } from "@/components/v2/bits";
-import { NotificationKinds, PushTestButton } from "@/components/v2/NotificationSettings";
+import {
+  DeliveryPreferences,
+  NotificationKinds,
+  ProjectMutes,
+  PushTestButton,
+} from "@/components/v2/NotificationSettings";
 import { PushToggle } from "@/components/v2/PushToggle";
 import { SignOutButton } from "@/components/v2/SignOutButton";
 import { IosInstallSteps, useInstallState } from "@/components/v2/mobile/InstallPrompt";
@@ -107,6 +112,14 @@ export default function MobileSettingsPage() {
 
           <Section title="Какие события присылать">
             <NotificationKinds />
+          </Section>
+
+          <Section title="Режим и сроки">
+            <DeliveryPreferences />
+          </Section>
+
+          <Section title="Проекты">
+            <ProjectMutes />
           </Section>
 
           <Section title="Приложение">

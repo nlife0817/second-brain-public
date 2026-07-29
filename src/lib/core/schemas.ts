@@ -15,6 +15,18 @@ export const memberPatchSchema = z.object({
   role: z.enum(["owner", "admin", "member", "guest"]),
 });
 
+/**
+ * Состав экрана настроек по ролям. Список разделов не перечисляем: он живёт в
+ * `settings-sections.ts` и там же отсеиваются неизвестные ключи — дублировать
+ * его здесь значит однажды забыть одно из двух мест.
+ */
+export const settingsSectionsSchema = z.object({
+  sections: z.record(
+    z.string().max(40),
+    z.array(z.enum(["owner", "admin", "member", "guest"])).max(4),
+  ),
+});
+
 export const projectGrantSchema = z.object({
   project_id: z.uuid(),
   role: z.enum(["admin", "editor", "commenter", "viewer"]),
@@ -294,9 +306,24 @@ export const webhookCreateSchema = z.object({
   events: z.array(z.string().max(64)).max(50).default([]),
 });
 
-export const projectTeamSchema = z.object({ team_id: z.uuid().nullable() });
-
 // --- Push-подписки ----------------------------------------------------------------
+
+export const notificationSettingsSchema = z
+  .object({
+    timezone: z.string().min(1).max(64).optional(),
+    quiet_enabled: z.boolean().optional(),
+    quiet_start: z.string().max(5).optional(),
+    quiet_end: z.string().max(5).optional(),
+    digest_hour: z.number().int().min(0).max(23).optional(),
+    reminders_enabled: z.boolean().optional(),
+  })
+  // Пустой PATCH — почти наверняка ошибка вызывающего, а не «сохранить как есть».
+  .refine((v) => Object.keys(v).length > 0, { message: "Нечего сохранять" });
+
+export const projectMuteSchema = z.object({
+  project_id: z.string().min(1),
+  muted: z.boolean(),
+});
 
 export const notificationPrefSchema = z.object({
   kind: z.string().min(1).max(64),
@@ -326,6 +353,19 @@ export const recurringCreateSchema = z.object({
   byweekday: z.array(z.number().int().min(0).max(6)).max(7).nullish(),
   bymonthday: z.number().int().min(1).max(28).nullish(),
   start_date: dateSchema,
+  until_date: dateSchema.nullish(),
+});
+
+/**
+ * Расписание задачи — то, что правится в карточке. Шаблона здесь нет: новая
+ * задача повторяет саму исходную, а не отдельный слепок её полей.
+ */
+export const taskRecurrenceSchema = z.object({
+  freq: z.enum(["daily", "weekdays", "weekly", "monthly"]),
+  interval: z.number().int().min(1).max(365).default(1),
+  byweekday: z.array(z.number().int().min(0).max(6)).max(7).nullish(),
+  bymonthday: z.number().int().min(1).max(28).nullish(),
+  start_date: dateSchema.optional(),
   until_date: dateSchema.nullish(),
 });
 

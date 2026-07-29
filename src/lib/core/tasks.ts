@@ -641,7 +641,13 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
   if (placements.length === 0 && !inheritsProject) {
     assertOrg(ctx, "task.create.personal");
   }
-  const assigneeIds = [...new Set(input.assignee_ids ?? [])];
+  // Исполнитель по умолчанию — тот, кто создаёт задачу. Без этого задача
+  // остаётся ничьей: она не попадает ни в чьи «Мои задачи» и не получает
+  // напоминаний о сроке, адресатом которых является только исполнитель.
+  // Пустой список от интерфейса означает «никого не выбрали», а не «снять
+  // всех»: снятие — это уже правка задачи, отдельный путь.
+  const requested = [...new Set(input.assignee_ids ?? [])];
+  const assigneeIds = requested.length > 0 ? requested : [ctx.user.id];
   await assertOrgUsers(ctx, assigneeIds);
   // Подзадача наследует проекты родителя, поэтому и закрытость — тоже.
   await assertAssigneesInClosedProjects(ctx, assigneeIds, [
@@ -712,6 +718,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         kind: "assigned",
         userIds: assigneeIds,
         excludeUserId: ctx.user.id,
+        taskId: id,
       });
     }
     return id;
@@ -823,6 +830,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
           kind: "due_changed",
           userIds: audience,
           excludeUserId: ctx.user.id,
+          taskId,
         });
       }
     }
@@ -845,6 +853,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
         kind: nextStatus?.kind === "done" ? "completed" : "status_changed",
         userIds: audience,
         excludeUserId: ctx.user.id,
+        taskId,
       });
     }
 
@@ -882,6 +891,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
             kind: "assigned",
             userIds: added,
             excludeUserId: ctx.user.id,
+            taskId,
           });
         }
       }

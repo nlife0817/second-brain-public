@@ -299,6 +299,12 @@ export interface CoreEvent {
   actor: UserBrief | null;
 }
 
+/**
+ * Отношение уведомления к получателю: своя задача, подписка или всё остальное.
+ * Считается на сервере — в браузере нет ни списка исполнителей, ни подписок.
+ */
+export type NotificationScope = "mine" | "subscribed" | "other";
+
 export interface CoreNotification {
   id: string;
   org_id: string;
@@ -311,6 +317,7 @@ export interface CoreNotification {
   entity_type: string | null;
   entity_id: string | null;
   entity_title: string | null;
+  scope: NotificationScope;
 }
 
 export const ORG_ROLE_RANK: Record<OrgRole, number> = {

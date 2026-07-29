@@ -7,13 +7,13 @@
 //
 // Список считает сервер и отдаёт в `initial`: экран показывает незавершённые
 // задачи неархивных проектов — то есть ровно то, ради чего его открывают.
-// Задачи в «Готово» и «Архиве» скрыты, пока их не выберут в «Фильтрах»; всё
-// остальное сужение — тоже через «Фильтры».
+// Задачи в «Готово» и «Архиве» скрыты, пока их не включат условиями
+// «Готово/Архив = Показать»; всё остальное сужение — тоже через «Фильтры».
 //
 // Сама таблица со всей обвязкой — общий `TaskTableView`: тот же экран рисуется
 // внутри проекта, и расходиться они не должны.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { TaskSheet } from "@/components/v2/lazy";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
@@ -23,7 +23,7 @@ import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type { AllTasksResult, TaskRow } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { ViewStoreProvider, useViewStore } from "@/lib/core/view-store";
-import { needsCompletedTasks } from "@/lib/core/views";
+import { showsDone } from "@/lib/core/views";
 
 export function AllTasksClient({ initial }: { initial: AllTasksResult }) {
   return (
@@ -34,7 +34,7 @@ export function AllTasksClient({ initial }: { initial: AllTasksResult }) {
 }
 
 function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
-  const { orgId, statuses, refreshProjects } = useV2Store();
+  const { orgId, refreshProjects } = useV2Store();
   // Пуш и поиск умеют вести прямо на задачу.
   const deepLinkTaskId = useSearchParams().get("task");
   const filterGroups = useViewStore((s) => s.groups);
@@ -45,10 +45,10 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
   const [error, setError] = useState<string | null>(null);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
 
-  // Завершённых сервер по умолчанию не отдаёт — просим их только тогда, когда
-  // фильтр выбрал завершающий статус. Иначе «Статус = Готово» показал бы пустой
-  // список, а грузить весь архив организации на каждое открытие экрана незачем.
-  const wantsDone = useMemo(() => needsCompletedTasks(filterGroups, statuses), [filterGroups, statuses]);
+  // Завершённых сервер по умолчанию не отдаёт — просим их только по условию
+  // «Готово = Показать». Иначе оно показало бы пустоту, а грузить весь архив
+  // завершённого на каждое открытие экрана незачем.
+  const wantsDone = showsDone(filterGroups);
 
   const basePath = orgId ? `/orgs/${orgId}/tasks?view=all` : null;
   const path = basePath ? `${basePath}${wantsDone ? "&done=1" : ""}` : null;
@@ -117,7 +117,6 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
         onDismissError={() => setError(null)}
         onOpenTask={setOpenTaskId}
         onCreateTask={createTask}
-        hideFinished
         titleSlot={<h1 className="text-base font-semibold">Все задачи</h1>}
       />
 

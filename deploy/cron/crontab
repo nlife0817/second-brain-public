@@ -8,9 +8,3 @@
 # Страховка мгновенных пушей + материализация повторов, закрытие забытых
 # таймеров, доставка вебхуков. Основную доставку делает after() в withOrg.
 */10 * * * * . /etc/cron-env; curl -fsS -m 60 -X POST -H "Authorization: Bearer $CRON_SECRET" "$INTERNAL_URL/api/v2/cron" > /proc/1/fd/1 2>&1
-
-# --- v1: заморожено ---------------------------------------------------------
-# Снять комментарий, если версия v1 вернётся в работу.
-# 0 * * * *    . /etc/cron-env; curl -fsS -m 30 -H "Authorization: Bearer $CRON_SECRET" "$INTERNAL_URL/api/notifications/dispatch?type=overdue_hour" > /proc/1/fd/1 2>&1
-# 0 14 * * *   . /etc/cron-env; curl -fsS -m 30 -H "Authorization: Bearer $CRON_SECRET" "$INTERNAL_URL/api/notifications/dispatch?type=daily_summary" > /proc/1/fd/1 2>&1
-# */15 * * * * . /etc/cron-env; curl -fsS -m 30 -H "Authorization: Bearer $CRON_SECRET" "$INTERNAL_URL/api/timing/watchdog" > /proc/1/fd/1 2>&1

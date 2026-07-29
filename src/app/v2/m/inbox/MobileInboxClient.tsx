@@ -11,17 +11,10 @@ import { useAppResume, useBackDismiss, useTaskDeepLink } from "@/components/v2/m
 import { api } from "@/lib/core/client";
 import { cachedGet, patch, seed } from "@/lib/core/query";
 import type { CoreNotification } from "@/lib/core/types";
+import { notificationLine } from "@/lib/core/notification-text";
 import { useV2Store } from "@/lib/core/ui-store";
+import { syncReadState } from "@/lib/notifications/client";
 import { cn } from "@/lib/utils";
-
-const KIND_LABELS: Record<string, string> = {
-  assigned: "назначил(а) вам задачу",
-  comment: "прокомментировал(а)",
-  status_changed: "сменил(а) статус",
-  completed: "завершил(а) задачу",
-  due_changed: "изменил(а) срок",
-  added_to_project: "добавил(а) вас в проект",
-};
 
 export function MobileInboxClient({ initial }: { initial: CoreNotification[] }) {
   const { orgId, refreshUnread } = useV2Store();
@@ -75,6 +68,8 @@ export function MobileInboxClient({ initial }: { initial: CoreNotification[] }) 
     setMarking(true);
     try {
       await api.post(`/orgs/${orgId}/notifications`, { all: true });
+      // Разобрано целиком — в шторке ОС висеть больше нечему.
+      syncReadState({ unread: 0 });
       await Promise.all([load({ force: true }), refreshUnread()]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось отметить прочитанными");
@@ -90,6 +85,8 @@ export function MobileInboxClient({ initial }: { initial: CoreNotification[] }) 
     if (!n.read_at) {
       try {
         await api.post(`/orgs/${orgId}/notifications`, { ids: [n.id] });
+        // Тег тот же, что у пуша: уведомление об этой задаче уходит из шторки.
+        if (n.entity_id) syncReadState({ tag: `v2-${n.entity_type}-${n.entity_id}` });
         const readAt = new Date().toISOString();
         const markRead = (list: CoreNotification[]) =>
           list.map((x) => (x.id === n.id ? { ...x, read_at: readAt } : x));
@@ -142,7 +139,9 @@ export function MobileInboxClient({ initial }: { initial: CoreNotification[] }) 
           </div>
         )}
 
-        {items.map((n) => (
+        {items.map((n) => {
+          const line = notificationLine(n);
+          return (
           <button
             key={n.id}
             onClick={() => void openNotification(n)}
@@ -154,9 +153,9 @@ export function MobileInboxClient({ initial }: { initial: CoreNotification[] }) 
             <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", n.read_at ? "bg-transparent" : "bg-primary")} />
             <span className="min-w-0 flex-1">
               <span className="block text-sm leading-snug">
-                <span className="font-medium">{n.actor_name || "Кто-то"}</span>{" "}
-                {KIND_LABELS[n.kind] ?? n.kind}
-                {n.entity_title && <span className="font-medium"> «{n.entity_title}»</span>}
+                {line.actor && <span className="font-medium">{line.actor} </span>}
+                {line.action}
+                {line.entity && <span className="font-medium"> «{line.entity}»</span>}
               </span>
               <span className="mt-0.5 block text-xs text-muted-foreground">
                 {new Date(n.created_at).toLocaleString("ru-RU", {
@@ -168,7 +167,8 @@ export function MobileInboxClient({ initial }: { initial: CoreNotification[] }) 
               </span>
             </span>
           </button>
-        ))}
+          );
+        })}
       </PullToRefresh>
 
       <TaskSheet

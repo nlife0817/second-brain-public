@@ -21,7 +21,6 @@ export interface TimeEntry {
 
 export interface TimeEntryWithTask extends TimeEntry {
   task_title: string | null;
-  user_name: string | null;
 }
 
 const MAX_TIMER_HOURS = 12;
@@ -33,10 +32,9 @@ const MAX_TIMER_HOURS = 12;
  */
 export async function getActiveTimer(ctx: AuthContext): Promise<TimeEntryWithTask | null> {
   const row = await prepare<TimeEntryWithTask>(
-    `SELECT e.*, t.title AS task_title, u.name AS user_name
+    `SELECT e.*, t.title AS task_title
      FROM core.time_entries e
      LEFT JOIN core.tasks t ON t.id = e.task_id
-     LEFT JOIN core.users u ON u.id = e.user_id
      WHERE e.user_id = ? AND e.org_id = ? AND e.ended_at IS NULL`,
   ).get(ctx.user.id, ctx.orgId);
   return row ?? null;
@@ -135,10 +133,9 @@ export async function listEntries(
     params.push(opts.taskId);
   }
   return prepare<TimeEntryWithTask>(
-    `SELECT e.*, ${showTitles ? "t.title" : "NULL::text"} AS task_title, u.name AS user_name
+    `SELECT e.*, ${showTitles ? "t.title" : "NULL::text"} AS task_title
      FROM core.time_entries e
      LEFT JOIN core.tasks t ON t.id = e.task_id
-     LEFT JOIN core.users u ON u.id = e.user_id
      WHERE ${where.join(" AND ")}
      ORDER BY e.started_at DESC
      LIMIT 500`,

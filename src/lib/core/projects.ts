@@ -7,13 +7,10 @@ import {
   assertOrg,
   assertProject,
   effectiveProjectRole,
-  PolicyError,
   type ProjectAction,
 } from "./policy";
-import { assertWithinLimit } from "./saas";
 import type {
   AuthContext,
-  PolicyProject,
   Project,
   ProjectDefaultRole,
   ProjectMemberWithUser,
@@ -98,12 +95,11 @@ export async function createProject(
     description?: string;
     color?: string;
     icon?: string;
-    /** Базовая роль сотрудников; `null` — закрытый проект. По умолчанию editor. */
+    /** Базовая роль сотрудников; `null` — закрытый проект. По умолчанию закрытый. */
     default_role?: ProjectDefaultRole | null;
   },
 ): Promise<ProjectWithMeta> {
   assertOrg(ctx, "project.create");
-  await assertWithinLimit(ctx, "projects");
   // Гость не может создать проект (project.create), поэтому проверка
   // «доступом организации управляют только сотрудники» здесь избыточна.
   const project = await transaction(async (tx) => {
@@ -122,7 +118,8 @@ export async function createProject(
         input.description ?? "",
         input.color ?? "#6b7280",
         input.icon ?? "Folder",
-        input.default_role === undefined ? "editor" : input.default_role,
+        // Умолчание — закрытый проект: доступ всей организации открывают явно.
+        input.default_role ?? null,
         ctx.orgId,
         ctx.user.id,
       );
@@ -466,7 +463,3 @@ async function revokeProjectTaskLinks(
       .run(projectId, userId);
   });
 }
-
-// Повторный экспорт для роутов, которым нужен только policy-срез.
-export type { PolicyProject };
-export { PolicyError };

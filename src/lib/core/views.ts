@@ -34,6 +34,8 @@ export type FilterField =
   | "due_date"
   | "completed"
   | "has_parent"
+  | "archive"
+  | "done"
   | `field:${string}`;
 
 export type FilterLogic = "and" | "or";
@@ -57,11 +59,30 @@ export const NONE_VALUE = "__none__";
 /** Подстановка «текущий пользователь» в условии по исполнителю. */
 export const ME_VALUE = "__me__";
 
+/**
+ * Значения полей-переключателей («Архив», «Готово»). Умолчание — `hide`, даже
+ * когда условия нет вовсе.
+ */
+export const SHOW_VALUE = "show";
+export const HIDE_VALUE = "hide";
+
+/**
+ * Поля-переключатели: не условие на строку, а режим показа целой группы задач.
+ * Каждому соответствует вид статуса, задачи которого по умолчанию не видны.
+ */
+export const VISIBILITY_FIELDS = [
+  { field: "archive", label: "Архив", statusKind: "archived" },
+  { field: "done", label: "Готово", statusKind: "done" },
+] as const satisfies ReadonlyArray<{ field: FilterField; label: string; statusKind: StatusKind }>;
+
+/** Быстрая проверка «это переключатель, а не условие на строку». */
+const VISIBILITY_FIELD_SET: ReadonlySet<FilterField> = new Set(VISIBILITY_FIELDS.map((f) => f.field));
+
 export interface FieldMeta {
   field: FilterField;
   label: string;
   /** Какие операторы имеют смысл: определяет и вид редактора значения. */
-  kind: "select" | "text" | "date" | "boolean";
+  kind: "select" | "text" | "date" | "boolean" | "visibility";
 }
 
 export const BASE_FILTER_FIELDS: FieldMeta[] = [
@@ -74,6 +95,7 @@ export const BASE_FILTER_FIELDS: FieldMeta[] = [
   { field: "due_date", label: "Дедлайн", kind: "date" },
   { field: "completed", label: "Завершена", kind: "boolean" },
   { field: "has_parent", label: "Подзадача", kind: "boolean" },
+  ...VISIBILITY_FIELDS.map((f) => ({ field: f.field, label: f.label, kind: "visibility" as const })),
 ];
 
 export const OPERATORS_BY_KIND: Record<FieldMeta["kind"], FilterOperator[]> = {
@@ -81,6 +103,7 @@ export const OPERATORS_BY_KIND: Record<FieldMeta["kind"], FilterOperator[]> = {
   text: ["contains", "not_contains", "is_empty", "is_not_empty"],
   date: ["is", "before", "after", "is_today", "is_this_week", "is_overdue", "is_empty", "is_not_empty"],
   boolean: ["is"],
+  visibility: ["is"],
 };
 
 export const OPERATOR_LABELS: Record<FilterOperator, string> = {
@@ -166,6 +189,10 @@ function valuesOf(task: TaskRow, field: FilterField): string[] {
       return [task.completed_at ? "yes" : "no"];
     case "has_parent":
       return [task.parent_task_id ? "yes" : "no"];
+    case "archive":
+    case "done":
+      // Режим показа, а не свойство задачи, — см. hiddenStatusIds.
+      return [];
     default: {
       const id = field.slice("field:".length);
       const raw = task.field_values[id];
@@ -212,78 +239,57 @@ function matchesCondition(task: TaskRow, cond: FilterCondition, ctx: MatchContex
   }
 }
 
+/**
+ * Включён ли показ группы, скрытой по умолчанию. «Архив» и «Готово» — это
+ * прошлое, а не работа: без явного «Показать» они всплывают в каждой
+ * группировке и в счётчиках групп, ради чего фильтры и заводились.
+ *
+ * Логика группы (И/ИЛИ) здесь роли не играет: это переключатель видимости, а не
+ * условие на строку, и «спрятано, пока не попросили» — единственное поведение,
+ * которое читается однозначно.
+ */
+function showsField(groups: FilterGroup[], field: FilterField): boolean {
+  return groups.some((g) =>
+    g.conditions.some((c) => c.field === field && c.operator === "is" && c.value === SHOW_VALUE),
+  );
+}
+
+/**
+ * Просит ли фильтр показать завершённые. Отдельно от `hiddenStatusIds` потому,
+ * что от этого зависит ещё и запрос: сервер завершённых по умолчанию не отдаёт,
+ * и без `&done=1` фильтр показал бы пустоту вместо задач. Архива это не
+ * касается — `completed_at` архивным не проставляют, они приходят всегда.
+ */
+export function showsDone(groups: FilterGroup[]): boolean {
+  return showsField(groups, "done");
+}
+
+/**
+ * Статусы, задачи которых список не показывает: все архивные и завершающие,
+ * кроме тех, чью группу включили фильтром. Пустое множество — прятать нечего.
+ */
+export function hiddenStatusIds(
+  groups: FilterGroup[],
+  statuses: ReadonlyArray<{ id: string; kind: StatusKind }>,
+): Set<string> {
+  const hiddenKinds = new Set<StatusKind>(
+    VISIBILITY_FIELDS.filter((f) => !showsField(groups, f.field)).map((f) => f.statusKind),
+  );
+  return new Set(statuses.filter((s) => hiddenKinds.has(s.kind)).map((s) => s.id));
+}
+
 /** Группы объединяются через И, условия внутри группы — по её `logic`. */
 export function matchesGroups(task: TaskRow, groups: FilterGroup[], ctx: MatchContext): boolean {
   for (const group of groups) {
-    const active = group.conditions;
+    // «Архив» и «Готово» — режимы показа, их разбирает hiddenStatusIds: как
+    // предикат строки они бы вырезали из списка вообще всё.
+    const active = group.conditions.filter((c) => !VISIBILITY_FIELD_SET.has(c.field));
     if (active.length === 0) continue;
     const results = active.map((c) => matchesCondition(task, c, ctx));
     const ok = group.logic === "and" ? results.every(Boolean) : results.some(Boolean);
     if (!ok) return false;
   }
   return true;
-}
-
-// --- Завершённое и архив: что список прячет по умолчанию ------------------------
-//
-// «Готово» и «Архив» — это прошлое, а не работа: в сводном списке они только
-// разбавляют текущие задачи. Прячем их по умолчанию, но выбор такого статуса в
-// «Фильтрах» — явное намерение их увидеть, и тогда список их показывает.
-
-/** Виды статусов, задачи которых сводный список прячет без спроса. */
-const HIDDEN_STATUS_KINDS: ReadonlySet<StatusKind> = new Set<StatusKind>(["done", "archived"]);
-
-/** Минимум, который нужен правилам ниже: id статуса и его вид. */
-export interface StatusKindRef {
-  id: string;
-  kind: StatusKind;
-}
-
-/**
- * Что фильтр выбрал явно: id статусов из условий «Статус равно X» плюс признак
- * «Завершена равно Да». Только оператор «равно» считается выбором — «не равно»
- * сужает выборку, но архив им никто не запрашивает.
- */
-function explicitPicks(groups: FilterGroup[]): { statusIds: Set<string>; completed: boolean } {
-  const statusIds = new Set<string>();
-  let completed = false;
-  for (const group of groups) {
-    for (const cond of group.conditions) {
-      if (cond.operator !== "is") continue;
-      if (cond.field === "status" && cond.value) statusIds.add(cond.value);
-      if (cond.field === "completed" && cond.value === "yes") completed = true;
-    }
-  }
-  return { statusIds, completed };
-}
-
-/**
- * Статусы, задачи которых список не показывает. Пустое множество означает
- * «прятать нечего».
- */
-export function hiddenStatusIds(groups: FilterGroup[], statuses: StatusKindRef[]): Set<string> {
-  const picks = explicitPicks(groups);
-  const hidden = new Set<string>();
-  for (const status of statuses) {
-    if (!HIDDEN_STATUS_KINDS.has(status.kind)) continue;
-    if (picks.statusIds.has(status.id)) continue;
-    // «Завершена = Да» — тот же явный запрос, только через другое поле.
-    if (picks.completed && status.kind === "done") continue;
-    hidden.add(status.id);
-  }
-  return hidden;
-}
-
-/**
- * Нужно ли просить у сервера завершённые задачи. Их не отдают по умолчанию, и
- * без этого фильтр «Статус = Готово» показал бы пустоту вместо задач.
- * Архивных это не касается: `completed_at` им не проставляют, они приходят
- * всегда.
- */
-export function needsCompletedTasks(groups: FilterGroup[], statuses: StatusKindRef[]): boolean {
-  const picks = explicitPicks(groups);
-  if (picks.completed) return true;
-  return statuses.some((s) => s.kind === "done" && picks.statusIds.has(s.id));
 }
 
 // --- Сортировка ----------------------------------------------------------------

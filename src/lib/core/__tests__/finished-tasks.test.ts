@@ -1,12 +1,13 @@
-// Правило «Готово и Архив скрыты, пока их не выбрали фильтром» живёт в двух
-// местах сразу — в отборе строк на экране и в решении, просить ли у сервера
-// завершённые. Разъедутся они молча: список покажет пустоту вместо задач.
+// «Архив» и «Готово» скрыты, пока их не включат в «Фильтрах». Правило живёт в
+// двух местах сразу — в отборе строк (таблица и доска) и в решении, просить ли
+// у сервера завершённые. Разъедутся они молча: список покажет пустоту.
 
 import { describe, expect, it } from "vitest";
-import { hiddenStatusIds, needsCompletedTasks, type StatusKindRef } from "../views";
+import { HIDE_VALUE, SHOW_VALUE, hiddenStatusIds, showsDone } from "../views";
 import type { FilterGroup } from "../views";
+import type { StatusKind } from "../types";
 
-const STATUSES: StatusKindRef[] = [
+const STATUSES: Array<{ id: string; kind: StatusKind }> = [
   { id: "s-inbox", kind: "open" },
   { id: "s-doing", kind: "open" },
   { id: "s-done", kind: "done" },
@@ -27,48 +28,57 @@ function group(...conditions: Array<[field: string, operator: string, value: str
 }
 
 describe("hiddenStatusIds", () => {
-  it("без фильтров прячет завершающие и архивные статусы", () => {
+  it("без фильтров прячет и архивные, и завершающие статусы", () => {
     expect([...hiddenStatusIds([], STATUSES)].sort()).toEqual(["s-archive", "s-done"]);
   });
 
-  it("выбранный статус возвращается в список, остальные остаются скрытыми", () => {
-    const hidden = hiddenStatusIds([group(["status", "is", "s-archive"])], STATUSES);
+  it("«Архив = Показать» открывает архив, но не «Готово»", () => {
+    const hidden = hiddenStatusIds([group(["archive", "is", SHOW_VALUE])], STATUSES);
     expect(hidden.has("s-archive")).toBe(false);
     expect(hidden.has("s-done")).toBe(true);
   });
 
-  it("«Завершена = Да» открывает завершающие статусы, но не архив", () => {
-    const hidden = hiddenStatusIds([group(["completed", "is", "yes"])], STATUSES);
+  it("«Готово = Показать» открывает завершённые, но не архив", () => {
+    const hidden = hiddenStatusIds([group(["done", "is", SHOW_VALUE])], STATUSES);
     expect(hidden.has("s-done")).toBe(false);
     expect(hidden.has("s-archive")).toBe(true);
   });
 
-  it("«не равно» выбором не считается", () => {
-    const hidden = hiddenStatusIds([group(["status", "is_not", "s-inbox"])], STATUSES);
+  it("оба переключателя работают вместе", () => {
+    const hidden = hiddenStatusIds(
+      [group(["archive", "is", SHOW_VALUE], ["done", "is", SHOW_VALUE])],
+      STATUSES,
+    );
+    expect(hidden.size).toBe(0);
+  });
+
+  it("явное «Скрыть» ничего не открывает", () => {
+    const hidden = hiddenStatusIds([group(["done", "is", HIDE_VALUE])], STATUSES);
     expect([...hidden].sort()).toEqual(["s-archive", "s-done"]);
   });
 
   it("рабочие статусы не прячет никогда", () => {
-    const hidden = hiddenStatusIds([], STATUSES);
+    const hidden = hiddenStatusIds([group(["done", "is", SHOW_VALUE])], STATUSES);
     expect(hidden.has("s-inbox")).toBe(false);
     expect(hidden.has("s-doing")).toBe(false);
   });
+
+  it("логика группы на переключатель не влияет: он не предикат строки", () => {
+    const or: FilterGroup = { ...group(["done", "is", SHOW_VALUE]), logic: "or" };
+    expect(hiddenStatusIds([or], STATUSES).has("s-done")).toBe(false);
+  });
 });
 
-describe("needsCompletedTasks", () => {
+describe("showsDone", () => {
   it("по умолчанию завершённые с сервера не нужны", () => {
-    expect(needsCompletedTasks([], STATUSES)).toBe(false);
+    expect(showsDone([])).toBe(false);
   });
 
-  it("выбор завершающего статуса требует их догрузки", () => {
-    expect(needsCompletedTasks([group(["status", "is", "s-done"])], STATUSES)).toBe(true);
-  });
-
-  it("«Завершена = Да» — тот же запрос другими словами", () => {
-    expect(needsCompletedTasks([group(["completed", "is", "yes"])], STATUSES)).toBe(true);
+  it("«Готово = Показать» требует их догрузки", () => {
+    expect(showsDone([group(["done", "is", SHOW_VALUE])])).toBe(true);
   });
 
   it("архив приходит и без флага: completed_at ему не проставляют", () => {
-    expect(needsCompletedTasks([group(["status", "is", "s-archive"])], STATUSES)).toBe(false);
+    expect(showsDone([group(["archive", "is", SHOW_VALUE])])).toBe(false);
   });
 });

@@ -28,6 +28,7 @@ import type {
 } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { ViewStoreProvider, projectScope, useViewStore } from "@/lib/core/view-store";
+import { showsDone } from "@/lib/core/views";
 
 export type ProjectDetail = Project & {
   my_role: ProjectRole | null;
@@ -57,7 +58,8 @@ function MobileProjectScreen({
   initialTasks: TaskRow[];
 }) {
   const { orgId, statuses, metaLoading, refreshProjects } = useV2Store();
-  const showDone = useViewStore((s) => s.showDone);
+  // Завершённые приходят только по условию «Готово = Показать» в «Фильтрах».
+  const withDone = showsDone(useViewStore((s) => s.groups));
 
   const [project, setProject] = useState<ProjectDetail | null>(initialProject);
   const [tasks, setTasks] = useState<TaskRow[]>(initialTasks);
@@ -66,7 +68,7 @@ function MobileProjectScreen({
   const [error, setError] = useState<string | null>(null);
 
   const projectPath = orgId ? `/orgs/${orgId}/projects/${projectId}` : null;
-  const tasksPath = projectPath ? `${projectPath}/tasks${showDone ? "?done=1" : ""}` : null;
+  const tasksPath = projectPath ? `${projectPath}/tasks${withDone ? "?done=1" : ""}` : null;
 
   useEffect(() => {
     if (!projectPath) return;
