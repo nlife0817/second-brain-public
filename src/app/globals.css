@@ -237,9 +237,11 @@
   margin: 1.2em 0;
 }
 
+/* Подложка выделения светлая в обеих темах, поэтому чернила задаются явно:
+   с `color: inherit` в тёмной теме получался белый текст на жёлтом. */
 .doc-content mark {
   background: #fde68a;
-  color: inherit;
+  color: #1c1917;
   border-radius: 0.15rem;
   padding: 0 0.1em;
 }
@@ -374,14 +376,15 @@
   outline-offset: 2px;
 }
 
-/* Ручка изменения размера ловит курсор за пределами картинки: попасть в
-   двухпиксельную кромку мышью практически невозможно. */
+/* Ручка изменения размера шире самой кромки — в два пикселя мышью не попасть.
+   Растёт она внутрь картинки: вынос наружу давал бы описанию несколько
+   пикселей горизонтальной прокрутки на ровном месте. */
 .doc-content .doc-image-handle {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: -6px;
-  width: 12px;
+  right: 0;
+  width: 14px;
   cursor: ew-resize;
   opacity: 0;
   transition: opacity 0.12s;
@@ -390,12 +393,13 @@
   content: "";
   position: absolute;
   top: 50%;
-  right: 4px;
+  right: 3px;
   width: 4px;
   height: 32px;
   transform: translateY(-50%);
   border-radius: 2px;
   background: var(--primary);
+  box-shadow: 0 0 0 1px var(--background);
 }
 .doc-content .doc-image-frame:hover .doc-image-handle,
 .doc-content .doc-image-handle-active {
