@@ -495,21 +495,31 @@ export interface ArrangedRow {
   depth: number;
 }
 
-/**
- * Раскладка строк с учётом режима подзадач. Порядок внутри уровня сохраняется
- * тем, что задала сортировка. «Осиротевшую» подзадачу (родитель не попал в
- * набор — отфильтрован или недоступен) всегда показываем как обычную строку:
- * иначе она молча исчезла бы из списка.
- */
-export function arrangeRows(tasks: TaskRow[], mode: SubtaskMode): ArrangedRow[] {
-  if (mode === "flat") return tasks.map((task) => ({ task, depth: 0 }));
+/** Циклов в данных быть не должно, но защита дешевле, чем зависший рендер. */
+const MAX_DEPTH = 8;
 
+/**
+ * Дерево задач по всему набору — считается ДО группировки. Это ключевой момент:
+ * родство определяется по всему списку, а не внутри корзины группы. Иначе
+ * подзадача, у которой статус (проект, исполнитель) отличается от родительского,
+ * попадала бы в чужую корзину, не находила там родителя и рисовалась отдельной
+ * строкой — при включённом режиме «вложенными под родителя».
+ */
+export interface TaskForest {
+  /** Дети по id родителя, в порядке, который задала сортировка. */
+  childrenOf: Map<string, TaskRow[]>;
+  /**
+   * Строки верхнего уровня: задачи без родителя и «осиротевшие» подзадачи, чей
+   * родитель не попал в набор (отфильтрован или недоступен). Сюда же уходят
+   * узлы, до которых не дошёл обход, — иначе взаимная ссылка в данных унесла бы
+   * задачу из списка совсем.
+   */
+  roots: TaskRow[];
+}
+
+export function buildForest(tasks: TaskRow[]): TaskForest {
   const present = new Set(tasks.map((t) => t.id));
   const hasVisibleParent = (t: TaskRow) => !!t.parent_task_id && present.has(t.parent_task_id);
-
-  if (mode === "hidden") {
-    return tasks.filter((t) => !hasVisibleParent(t)).map((task) => ({ task, depth: 0 }));
-  }
 
   const childrenOf = new Map<string, TaskRow[]>();
   for (const t of tasks) {
@@ -519,22 +529,60 @@ export function arrangeRows(tasks: TaskRow[], mode: SubtaskMode): ArrangedRow[] 
     else childrenOf.set(t.parent_task_id!, [t]);
   }
 
+  const roots = tasks.filter((t) => !hasVisibleParent(t));
+
+  const reachable = new Set<string>();
+  const walk = (task: TaskRow, depth: number) => {
+    if (reachable.has(task.id) || depth > MAX_DEPTH) return;
+    reachable.add(task.id);
+    for (const child of childrenOf.get(task.id) ?? []) walk(child, depth + 1);
+  };
+  for (const task of roots) walk(task, 0);
+  for (const task of tasks) {
+    if (reachable.has(task.id)) continue;
+    roots.push(task);
+    walk(task, 0);
+  }
+
+  return { childrenOf, roots };
+}
+
+/** Поддеревья перечисленных корней — плоским списком строк с глубиной. */
+export function expandRoots(roots: TaskRow[], forest: TaskForest): ArrangedRow[] {
   const out: ArrangedRow[] = [];
   const emitted = new Set<string>();
-  const MAX_DEPTH = 8;
   const emit = (task: TaskRow, depth: number) => {
-    // Циклов в данных быть не должно, но защита дешевле, чем зависший рендер.
     if (emitted.has(task.id) || depth > MAX_DEPTH) return;
     emitted.add(task.id);
     out.push({ task, depth });
-    for (const child of childrenOf.get(task.id) ?? []) emit(child, depth + 1);
+    for (const child of forest.childrenOf.get(task.id) ?? []) emit(child, depth + 1);
   };
-  for (const task of tasks) {
-    if (!hasVisibleParent(task)) emit(task, 0);
-  }
-  // Остаток — узлы, до которых обход не дошёл (например, взаимные ссылки).
-  for (const task of tasks) if (!emitted.has(task.id)) emit(task, 0);
+  for (const task of roots) emit(task, 0);
   return out;
+}
+
+/**
+ * Строки одной группы. `groupRoots` — то, что реально разложено по этой корзине:
+ * в режимах `nested`/`hidden` туда попадают только корни, поэтому подзадача едет
+ * под родителем и в его группу.
+ */
+export function arrangeGroupRows(
+  groupRoots: TaskRow[],
+  forest: TaskForest | null,
+  mode: SubtaskMode,
+): ArrangedRow[] {
+  if (mode === "nested" && forest) return expandRoots(groupRoots, forest);
+  return groupRoots.map((task) => ({ task, depth: 0 }));
+}
+
+/**
+ * Раскладка плоского (не сгруппированного) списка с учётом режима подзадач.
+ * Порядок внутри уровня сохраняется тем, что задала сортировка.
+ */
+export function arrangeRows(tasks: TaskRow[], mode: SubtaskMode): ArrangedRow[] {
+  if (mode === "flat") return tasks.map((task) => ({ task, depth: 0 }));
+  const forest = buildForest(tasks);
+  return arrangeGroupRows(forest.roots, forest, mode);
 }
 
 /**
