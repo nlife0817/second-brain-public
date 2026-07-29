@@ -611,17 +611,13 @@ export function TaskSheet({
 
   async function setPlacements(projectIds: string[]) {
     if (!orgId || !taskId || !task) return;
-    const placements = projectIds.map((pid) => {
-      const existing = task.placements.find((p) => p.project_id === pid);
-      return { project_id: pid, section_id: existing?.section_id ?? null };
-    });
+    const placements = projectIds.map((pid) => ({ project_id: pid }));
     const previous = task;
     const optimistic: TaskDetail = {
       ...task,
       placements: placements.map((p) => ({
         ...(task.placements.find((x) => x.project_id === p.project_id) ?? {
           project_id: p.project_id,
-          section_id: p.section_id,
           position: 0,
         }),
       })),

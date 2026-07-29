@@ -25,13 +25,7 @@ import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import { useLoad } from "@/lib/core/use-load";
 import { applyTaskChange } from "@/lib/core/task-change";
 import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
-import type {
-  Project,
-  ProjectMemberWithUser,
-  ProjectRole,
-  Section,
-  TaskRow,
-} from "@/lib/core/types";
+import type { Project, ProjectMemberWithUser, ProjectRole, TaskRow } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { ViewStoreProvider, projectScope, useViewStore } from "@/lib/core/view-store";
 import { filterTasks, makeMatchContext, showsDone, visiblePool } from "@/lib/core/views";
@@ -40,7 +34,6 @@ import { ProjectBoard } from "./ProjectBoard";
 
 export type ProjectDetail = Project & {
   my_role: ProjectRole | null;
-  sections: Section[];
   members: ProjectMemberWithUser[];
 };
 

@@ -67,14 +67,6 @@ export const projectPatchSchema = z
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
-export const sectionCreateSchema = z.object({ name: z.string().trim().min(1).max(200) });
-export const sectionPatchSchema = z
-  .object({
-    name: z.string().trim().min(1).max(200).optional(),
-    position: z.number().finite().optional(),
-  })
-  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
-
 export const projectMemberSchema = z.object({
   user_id: z.uuid(),
   role: z.enum(["admin", "editor", "commenter", "viewer"]).default("editor"),
@@ -97,10 +89,7 @@ export const taskCreateSchema = z.object({
   due_time: timeSchema.nullish(),
   estimated_minutes: z.number().int().min(0).max(60_000).nullish(),
   parent_task_id: z.uuid().nullish(),
-  placements: z
-    .array(z.object({ project_id: z.uuid(), section_id: z.uuid().nullish() }))
-    .max(20)
-    .optional(),
+  placements: z.array(z.object({ project_id: z.uuid() })).max(20).optional(),
   assignee_ids: z.array(z.uuid()).max(20).optional(),
   tag_ids: z.array(z.uuid()).max(50).optional(),
 });
@@ -125,14 +114,11 @@ export const taskPatchSchema = z
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
 export const taskPlacementsSchema = z.object({
-  placements: z
-    .array(z.object({ project_id: z.uuid(), section_id: z.uuid().nullish() }))
-    .max(20),
+  placements: z.array(z.object({ project_id: z.uuid() })).max(20),
 });
 
 export const taskMoveSchema = z.object({
   project_id: z.uuid(),
-  section_id: z.uuid().nullable().optional(),
   position: z.number().finite().optional(),
 });
 

@@ -63,9 +63,8 @@ export type ProjectAction =
   | "project.archive"
   | "project.delete"
   | "project.members.manage"
-  | "section.manage"
   | "task.create"
-  | "task.edit"               // поля, статус, исполнители, перенос между секциями
+  | "task.edit"               // поля, статус, исполнители, порядок в проекте
   | "task.delete"
   | "task.comment"
   | "field.value.edit";       // значения кастомных полей на задачах проекта
@@ -77,7 +76,6 @@ const MIN_PROJECT_ROLE: Record<ProjectAction, ProjectRole> = {
   "project.archive": "admin",
   "project.delete": "admin",
   "project.members.manage": "admin",
-  "section.manage": "editor",
   "task.create": "editor",
   "task.edit": "editor",
   "task.delete": "editor",
