@@ -76,9 +76,7 @@ self.addEventListener("push", (event) => {
     // Тег схлопывает уведомления по одной сущности; renotify возвращает звук и
     // вибрацию, иначе замена происходила бы молча и её легко пропустить.
     renotify: !!data.tag,
-    data: { url: data.url || "/", itemId: data.itemId, action: data.action },
-    requireInteraction: !!data.requireInteraction,
-    actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : undefined,
+    data: { url: data.url || "/" },
   };
   const jobs = [self.registration.showNotification(title, options)];
   // Открытые вкладки узнают об изменении сразу, а не из опроса раз в 30 секунд:
