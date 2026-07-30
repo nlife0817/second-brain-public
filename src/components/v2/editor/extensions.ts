@@ -19,6 +19,7 @@ import { DocFile } from "./DocFile";
 import { DocImage } from "./DocImage";
 import { createMention, type MentionItem } from "./Mention";
 import { OpenLinkInNewTab } from "./OpenLink";
+import { NoTextDrag } from "./TextDrag";
 
 /**
  * Ссылки открывает `OpenLinkInNewTab`, а не сам `openOnClick`: тот идёт по
@@ -57,6 +58,7 @@ export function docExtensions({
   return [
     StarterKit.configure({ link: LINK_OPTIONS }),
     OpenLinkInNewTab,
+    NoTextDrag,
     Placeholder.configure({ placeholder }),
     TextAlign.configure({ types: ["heading", "paragraph"] }),
     Highlight,
@@ -90,6 +92,7 @@ export function commentExtensions({
       link: LINK_OPTIONS,
     }),
     OpenLinkInNewTab,
+    NoTextDrag,
     Placeholder.configure({ placeholder }),
     ...(mentionItems ? [createMention(mentionItems)] : []),
   ];

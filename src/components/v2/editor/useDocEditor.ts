@@ -111,6 +111,11 @@ export function useDocEditor({
     onUpdate: ({ editor: e }) => {
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
+        // Обнулить обязательно: пока ссылка на таймер жива, синхронизация ниже
+        // считает, что правка ещё не уехала, и не накатывает чужие изменения —
+        // после первого же нажатия клавиши описание навсегда переставало их
+        // подхватывать.
+        timerRef.current = null;
         const html = e.isEmpty ? "" : e.getHTML();
         if (html === savedRef.current) return;
         savedRef.current = html;
