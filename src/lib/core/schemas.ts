@@ -196,6 +196,12 @@ export const relationQuerySchema = z.object({
   entity_id: z.uuid(),
 });
 
+/** Стрелка ганта: `from` блокирует `to`. Тип связи подставляет сервер. */
+export const dependencySchema = z.object({
+  from: z.uuid(),
+  to: z.uuid(),
+});
+
 /** `blocks` — связь читается гантом как зависимость и рисуется стрелкой. */
 const relationKindSchema = z.enum(["generic", "blocks"]);
 

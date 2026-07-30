@@ -13,6 +13,10 @@
 // Даты правятся прямо здесь: полоса переносится и растягивается за края, а
 // задаче без дат их назначает протягивание по её пустой строке. Правка
 // оптимистичная с откатом — так же, как в таблице.
+//
+// Зависимости тоже рисуются здесь: от кружка у края полосы тянется резинка,
+// цель — любая строка задачи. Снимается стрелка крестиком по наведению. Тип
+// связи («Блокирует») подставляет сервер: выбирать его на полотне негде.
 
 import {
   memo,
@@ -182,6 +186,29 @@ interface DragState {
   moved: boolean;
 }
 
+/**
+ * Незавершённое рисование зависимости. `dir` — с какого края полосы потянули:
+ * от правого «эта блокирует ту», от левого «ту блокирует эта». Обе стороны
+ * нужны, потому что зависимость чаще замечают, стоя на зависимом конце.
+ */
+interface LinkState {
+  taskId: string;
+  dir: "from" | "to";
+  /** Точка старта и текущее положение указателя — в координатах полотна. */
+  x0: number;
+  y0: number;
+  x: number;
+  y: number;
+  /** Задача под указателем; null — отпускание ничего не создаст. */
+  over: string | null;
+}
+
+interface LinkHandlers {
+  onLinkDown: (e: React.PointerEvent, taskId: string, dir: "from" | "to") => void;
+  onLinkMove: (e: React.PointerEvent) => void;
+  onLinkUp: (e: React.PointerEvent) => void;
+}
+
 /** Полоса, какой она выглядит прямо сейчас — с учётом незавершённого жеста. */
 function previewOf(bar: GanttBar, drag: DragState | null): GanttBar {
   if (!drag || drag.taskId !== bar.taskId || drag.kind === "create" || drag.days === 0) return bar;
@@ -241,6 +268,7 @@ export function GanttView({
   const [error, setError] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [deps, setDeps] = useState<TaskDependency[]>([]);
+  const [link, setLink] = useState<LinkState | null>(null);
 
   const naming = useGroupNaming();
   const collapsed = useMemo(() => new Set(collapsedList), [collapsedList]);
@@ -429,6 +457,112 @@ export function GanttView({
     [onOpenTask, patchTask, placement],
   );
 
+  // --- Зависимости ------------------------------------------------------------------
+
+  const addDep = useCallback(
+    async (from: string, to: string) => {
+      if (!orgId || from === to) return;
+      if (deps.some((d) => d.from === from && d.to === to)) return;
+      // Оптимистично: стрелка появляется под курсором, а не через круг сети.
+      setDeps((prev) => [...prev, { from, to }]);
+      try {
+        await api.post(`/orgs/${orgId}/dependencies`, { from, to });
+        setError(null);
+      } catch (e) {
+        setDeps((prev) => prev.filter((d) => !(d.from === from && d.to === to)));
+        setError(e instanceof Error ? e.message : "Не удалось создать связь");
+      }
+    },
+    [orgId, deps],
+  );
+
+  const removeDep = useCallback(
+    async (from: string, to: string) => {
+      if (!orgId) return;
+      setDeps((prev) => prev.filter((d) => !(d.from === from && d.to === to)));
+      try {
+        await api.del(`/orgs/${orgId}/dependencies?from=${from}&to=${to}`);
+        setError(null);
+      } catch (e) {
+        setDeps((prev) => [...prev, { from, to }]);
+        setError(e instanceof Error ? e.message : "Не удалось убрать связь");
+      }
+    },
+    [orgId],
+  );
+
+  // --- Рисование стрелки ------------------------------------------------------------
+
+  const canvasRef = useRef<HTMLDivElement>(null);
+  // Как и у перетаскивания дат, живое состояние жеста дублируется в ref:
+  // события указателя приходят пачками и замыкание рендера теряет часть из них.
+  const linkRef = useRef<{ rect: DOMRect; state: LinkState } | null>(null);
+
+  /** Задача под указателем: попадания в саму полосу не требуем — хватает строки. */
+  const taskAtY = useCallback(
+    (y: number): string | null => {
+      const row = rows[Math.floor(y / ROW_H)];
+      return row && row.kind === "task" ? row.task.id : null;
+    },
+    [rows],
+  );
+
+  const onLinkDown = useCallback(
+    (e: React.PointerEvent, taskId: string, dir: "from" | "to") => {
+      const canvas = canvasRef.current;
+      if (!canEdit || e.button !== 0 || !canvas) return;
+      e.preventDefault();
+      // Иначе pointerdown дойдёт до полосы и вместо связи начнётся перенос дат.
+      e.stopPropagation();
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const state: LinkState = { taskId, dir, x0: x, y0: y, x, y, over: null };
+      linkRef.current = { rect, state };
+      setLink(state);
+    },
+    [canEdit],
+  );
+
+  const onLinkMove = useCallback(
+    (e: React.PointerEvent) => {
+      const active = linkRef.current;
+      if (!active) return;
+      e.stopPropagation();
+      const x = e.clientX - active.rect.left;
+      const y = e.clientY - active.rect.top;
+      const at = taskAtY(y);
+      const over = at === active.state.taskId ? null : at;
+      active.state = { ...active.state, x, y, over };
+      setLink(active.state);
+    },
+    [taskAtY],
+  );
+
+  const onLinkUp = useCallback(
+    (e: React.PointerEvent) => {
+      const active = linkRef.current;
+      linkRef.current = null;
+      setLink(null);
+      if (!active) return;
+      e.stopPropagation();
+      const target = e.currentTarget as HTMLElement;
+      if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
+
+      const { taskId, dir, over } = active.state;
+      // Отпустили мимо строки задачи или на самой себе — жест просто отменён.
+      if (!over) return;
+      void (dir === "from" ? addDep(taskId, over) : addDep(over, taskId));
+    },
+    [addDep],
+  );
+
+  const linkHandlers = useMemo(
+    () => ({ onLinkDown, onLinkMove, onLinkUp }),
+    [onLinkDown, onLinkMove, onLinkUp],
+  );
+
   // --- Прокрутка к сегодня ---------------------------------------------------------
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -507,7 +641,7 @@ export function GanttView({
             <div className="relative" style={{ width: canvasWidth }}>
               <TimelineHead ticks={ticks} scale={scale} range={range} />
 
-              <div className="relative" style={{ height: rows.length * ROW_H }}>
+              <div ref={canvasRef} className="relative" style={{ height: rows.length * ROW_H }}>
                 {/* Фон: выходные и вертикальная сетка. Один слой на всё
                     полотно — по div на день в каждой строке это тысячи узлов. */}
                 <div className="pointer-events-none absolute inset-0">
@@ -537,7 +671,17 @@ export function GanttView({
                   />
                 )}
 
-                <DependencyArrows deps={deps} placement={placement} range={range} scale={scale} drag={drag} />
+                <DependencyArrows
+                  deps={deps}
+                  placement={placement}
+                  range={range}
+                  scale={scale}
+                  drag={drag}
+                  canEdit={canEdit}
+                  onRemove={removeDep}
+                />
+
+                {link && <LinkRubber link={link} />}
 
                 {rows.map((row, i) => (
                   <CanvasRow
@@ -546,6 +690,10 @@ export function GanttView({
                     index={i}
                     range={range}
                     scale={scale}
+                    link={linkHandlers}
+                    // Подсветку получает только строка под указателем — общий
+                    // проп сводил бы memo на нет ровно так же, как `drag`.
+                    linkTarget={link !== null && row.kind === "task" && link.over === row.task.id}
                     // Жест получает только та строка, которую тянут: `drag`
                     // меняется на каждое движение мыши, и общий проп сводил бы
                     // memo на нет — перерисовывались бы все сотни строк.
@@ -707,6 +855,56 @@ const ListRow = memo(function ListRow({
   );
 });
 
+// --- Резинка связи ---------------------------------------------------------------
+
+/** Линия от края полосы к указателю, пока связь не отпустили. */
+function LinkRubber({ link }: { link: LinkState }) {
+  return (
+    <svg className="pointer-events-none absolute inset-0 z-20 size-full overflow-visible">
+      <path
+        d={`M ${link.x0} ${link.y0} L ${link.x} ${link.y}`}
+        className={link.over ? "text-primary" : "text-muted-foreground"}
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeDasharray="4 3"
+        fill="none"
+      />
+      <circle cx={link.x} cy={link.y} r={3} className="text-primary" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Кружок у края полосы, с которого тянут зависимость. */
+function LinkHandle({
+  side,
+  taskId,
+  link,
+}: {
+  side: "left" | "right";
+  taskId: string;
+  link: LinkHandlers;
+}) {
+  return (
+    <span
+      // Прозрачная площадка шире самой точки: попасть в кружок 10 px мышью
+      // трудно, а увеличивать его — загромождать полотно. Пока ручка скрыта,
+      // она обязана и не ловить указатель: площадка торчит за край полосы, и на
+      // мелком масштабе накрыла бы соседей — прозрачная, но кликабельная.
+      className={cn(
+        "pointer-events-none absolute top-1/2 z-10 flex size-5 -translate-y-1/2 cursor-crosshair items-center justify-center opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100",
+        side === "left" ? "-left-5" : "-right-5",
+      )}
+      onPointerDown={(e) => link.onLinkDown(e, taskId, side === "left" ? "to" : "from")}
+      onPointerMove={link.onLinkMove}
+      onPointerUp={link.onLinkUp}
+      onPointerCancel={link.onLinkUp}
+      title={side === "left" ? "Потянуть: эта задача ждёт другую" : "Потянуть: эта задача блокирует другую"}
+    >
+      <span className="size-2.5 rounded-full border-[1.5px] border-primary bg-background" />
+    </span>
+  );
+}
+
 // --- Строка полотна --------------------------------------------------------------
 
 const CanvasRow = memo(function CanvasRow({
@@ -714,6 +912,8 @@ const CanvasRow = memo(function CanvasRow({
   index,
   range,
   scale,
+  link,
+  linkTarget,
   drag,
   canEdit,
   onPointerDown,
@@ -724,6 +924,8 @@ const CanvasRow = memo(function CanvasRow({
   index: number;
   range: { from: string };
   scale: GanttScale;
+  link: LinkHandlers;
+  linkTarget: boolean;
   drag: DragState | null;
   canEdit: boolean;
   onPointerDown: (
@@ -770,7 +972,13 @@ const CanvasRow = memo(function CanvasRow({
 
     return (
       <div
-        className={cn("absolute inset-x-0", canEdit && "cursor-crosshair")}
+        className={cn(
+          "absolute inset-x-0",
+          canEdit && "cursor-crosshair",
+          // Задача без дат — законная цель зависимости: стрелку ей просто пока
+          // негде нарисовать, а сама связь останется в карточке.
+          linkTarget && "bg-primary/10 ring-1 ring-inset ring-primary/40",
+        )}
         style={{ top, height: ROW_H }}
         onPointerDown={(e) => {
           if (!canEdit) return;
@@ -818,7 +1026,7 @@ const CanvasRow = memo(function CanvasRow({
     const size = Math.min(DAY_WIDTH[scale], ROW_H) - 12;
     return (
       <div
-        className={cn("absolute", canEdit && "cursor-grab")}
+        className={cn("group absolute", canEdit && "cursor-grab")}
         style={{ top, height: ROW_H, left, width: DAY_WIDTH[scale] }}
         onPointerDown={(e) => onPointerDown(e, task.id, "move", shown.start, DAY_WIDTH[scale])}
         onPointerMove={onPointerMove}
@@ -827,7 +1035,11 @@ const CanvasRow = memo(function CanvasRow({
         title={`${task.title} · ${label}`}
       >
         <span
-          className={cn("absolute rotate-45 rounded-[2px]", tone)}
+          className={cn(
+            "absolute rotate-45 rounded-[2px]",
+            tone,
+            linkTarget && "ring-2 ring-primary ring-offset-1",
+          )}
           style={{
             width: Math.max(8, size),
             height: Math.max(8, size),
@@ -835,13 +1047,24 @@ const CanvasRow = memo(function CanvasRow({
             top: `calc(50% - ${Math.max(8, size) / 2}px)`,
           }}
         />
+        {canEdit && (
+          <>
+            <LinkHandle side="left" taskId={task.id} link={link} />
+            <LinkHandle side="right" taskId={task.id} link={link} />
+          </>
+        )}
       </div>
     );
   }
 
   return (
     <div
-      className={cn("group absolute flex items-center rounded-md", tone, canEdit && "cursor-grab")}
+      className={cn(
+        "group absolute flex items-center rounded-md",
+        tone,
+        canEdit && "cursor-grab",
+        linkTarget && "ring-2 ring-primary ring-offset-1",
+      )}
       style={{ top: top + 5, height: ROW_H - 10, left, width }}
       onPointerDown={(e) => onPointerDown(e, task.id, "move", shown.start, DAY_WIDTH[scale])}
       onPointerMove={onPointerMove}
@@ -866,6 +1089,12 @@ const CanvasRow = memo(function CanvasRow({
           onPointerDown={(e) => onPointerDown(e, task.id, "resize-end", shown.end, DAY_WIDTH[scale])}
         />
       )}
+      {canEdit && (
+        <>
+          <LinkHandle side="left" taskId={task.id} link={link} />
+          <LinkHandle side="right" taskId={task.id} link={link} />
+        </>
+      )}
     </div>
   );
 });
@@ -878,15 +1107,28 @@ const DependencyArrows = memo(function DependencyArrows({
   range,
   scale,
   drag,
+  canEdit,
+  onRemove,
 }: {
   deps: TaskDependency[];
   placement: Map<string, { row: number; bar: GanttBar }>;
   range: { from: string };
   scale: GanttScale;
   drag: DragState | null;
+  canEdit: boolean;
+  onRemove: (from: string, to: string) => void;
 }) {
+  const [hovered, setHovered] = useState<string | null>(null);
+
   const paths = useMemo(() => {
-    const out: Array<{ key: string; d: string; head: string; late: boolean }> = [];
+    const out: Array<{
+      key: string;
+      dep: TaskDependency;
+      d: string;
+      head: string;
+      late: boolean;
+      mid: { x: number; y: number };
+    }> = [];
     for (const dep of deps) {
       const from = placement.get(dep.from);
       const to = placement.get(dep.to);
@@ -902,19 +1144,23 @@ const DependencyArrows = memo(function DependencyArrows({
       const y2 = to.row * ROW_H + ROW_H / 2;
 
       const r = 10;
-      const d =
-        x2 >= x1 + 2 * r
-          ? `M ${x1} ${y1} H ${x2 - r} V ${y2} H ${x2}`
-          : // Цель левее источника — обходим по промежутку между строками.
-            `M ${x1} ${y1} H ${x1 + r} V ${y1 + (y2 > y1 ? ROW_H / 2 : -ROW_H / 2)} H ${x2 - r} V ${y2} H ${x2}`;
+      const straight = x2 >= x1 + 2 * r;
+      const d = straight
+        ? `M ${x1} ${y1} H ${x2 - r} V ${y2} H ${x2}`
+        : // Цель левее источника — обходим по промежутку между строками.
+          `M ${x1} ${y1} H ${x1 + r} V ${y1 + (y2 > y1 ? ROW_H / 2 : -ROW_H / 2)} H ${x2 - r} V ${y2} H ${x2}`;
 
       out.push({
         key: `${dep.from}->${dep.to}`,
+        dep,
         d,
         head: `M ${x2} ${y2} l -5 -3.5 l 0 7 z`,
         // Нарушенная зависимость: то, что блокирует, кончается позже, чем
         // начинается зависимое. Ровно это гант и должен показывать.
         late: toBar.start < fromBar.end,
+        // Крестик садится на вертикальный участок: горизонтальные отрезки
+        // проходят по самим строкам и накрыли бы полосы.
+        mid: { x: straight ? x2 - r : x1 + r, y: (y1 + y2) / 2 },
       });
     }
     return out;
@@ -924,12 +1170,51 @@ const DependencyArrows = memo(function DependencyArrows({
 
   return (
     <svg className="pointer-events-none absolute inset-0 z-[5] size-full overflow-visible">
-      {paths.map((p) => (
-        <g key={p.key} className={p.late ? "text-destructive" : "text-muted-foreground/70"}>
-          <path d={p.d} fill="none" stroke="currentColor" strokeWidth={1.5} />
-          <path d={p.head} fill="currentColor" />
-        </g>
-      ))}
+      {paths.map((p) => {
+        const active = hovered === p.key;
+        return (
+          <g
+            key={p.key}
+            className={p.late ? "text-destructive" : active ? "text-primary" : "text-muted-foreground/70"}
+          >
+            <path d={p.d} fill="none" stroke="currentColor" strokeWidth={active ? 2 : 1.5} />
+            <path d={p.head} fill="currentColor" />
+            {canEdit && (
+              // Прозрачный дубль пошире — единственное, что ловит указатель:
+              // попасть в линию толщиной 1.5 px мышью невозможно.
+              <path
+                d={p.d}
+                fill="none"
+                stroke="transparent"
+                strokeWidth={8}
+                className="pointer-events-auto cursor-pointer"
+                onPointerEnter={() => setHovered(p.key)}
+                onPointerLeave={() => setHovered((h) => (h === p.key ? null : h))}
+              />
+            )}
+            {canEdit && active && (
+              <g
+                className="pointer-events-auto cursor-pointer"
+                onPointerEnter={() => setHovered(p.key)}
+                onPointerLeave={() => setHovered((h) => (h === p.key ? null : h))}
+                onClick={() => {
+                  setHovered(null);
+                  onRemove(p.dep.from, p.dep.to);
+                }}
+              >
+                <title>Убрать зависимость</title>
+                <circle cx={p.mid.x} cy={p.mid.y} r={7} fill="currentColor" />
+                <path
+                  d={`M ${p.mid.x - 2.5} ${p.mid.y - 2.5} l 5 5 M ${p.mid.x + 2.5} ${p.mid.y - 2.5} l -5 5`}
+                  stroke="var(--background)"
+                  strokeWidth={1.5}
+                  strokeLinecap="round"
+                />
+              </g>
+            )}
+          </g>
+        );
+      })}
     </svg>
   );
 });
