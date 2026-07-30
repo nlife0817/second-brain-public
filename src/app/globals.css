@@ -496,6 +496,21 @@
   display: block;
 }
 
+/* Место картинки, которая ещё грузится во вложения (см. paste-images.ts). */
+.doc-content .doc-image-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 6rem;
+  border: 1px dashed var(--border);
+  border-radius: 0.5rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.2;
+}
+
 .doc-content figure.doc-image figcaption {
   margin-top: 0.3rem;
   font-size: 0.8rem;

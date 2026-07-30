@@ -7,7 +7,7 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import { useCallback, useRef, useState } from "react";
-import { AlignCenter, AlignLeft, AlignRight, Trash2 } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Loader2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 declare module "@tiptap/core" {
@@ -69,6 +69,18 @@ export const DocImage = Node.create({
         },
         renderHTML: (attributes) => ({ "data-align": (attributes.align as string) ?? "left" }),
       },
+      /**
+       * Метка картинки, которая ещё грузится во вложения (см. paste-images.ts).
+       * Пока метка стоит, на месте картинки рисуется заглушка, а `src` пуст:
+       * исходный base64 в документ не попадает вовсе, иначе описание раздувается
+       * до мегабайтов и перестаёт помещаться в предел сохранения.
+       */
+      uploadId: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("data-upload"),
+        renderHTML: (attributes) =>
+          attributes.uploadId ? { "data-upload": String(attributes.uploadId) } : {},
+      },
     };
   },
 
@@ -120,6 +132,7 @@ function DocImageView({ node, updateAttributes, selected, editor, deleteNode }: 
   const editable = editor.isEditable;
   const align = (node.attrs.align as Align) ?? "left";
   const width = normalizeWidth(node.attrs.width);
+  const uploading = !!node.attrs.uploadId && !node.attrs.src;
 
   /**
    * Перетаскивание правого края. Слушатели вешаются на документ, а не на ручку:
@@ -163,13 +176,22 @@ function DocImageView({ node, updateAttributes, selected, editor, deleteNode }: 
       className={cn("doc-image", selected && editable && "doc-image-selected")}
     >
       <div className="doc-image-frame">
-        {/* eslint-disable-next-line @next/next/no-img-element -- вложение отдаёт наш роут, оптимизатор next/image к нему неприменим */}
-        <img
-          src={(node.attrs.src as string) ?? ""}
-          alt={(node.attrs.alt as string) || (node.attrs.caption as string) || ""}
-          draggable={false}
-        />
-        {editable && (
+        {/* Картинка из вставки ещё едет во вложения — показываем место, которое
+            она займёт. Пустой <img> вместо этого выглядел бы как битая ссылка. */}
+        {uploading ? (
+          <span className="doc-image-loading">
+            <Loader2 className="size-4 animate-spin" />
+            Загрузка картинки…
+          </span>
+        ) : (
+          /* eslint-disable-next-line @next/next/no-img-element -- вложение отдаёт наш роут, оптимизатор next/image к нему неприменим */
+          <img
+            src={(node.attrs.src as string) ?? ""}
+            alt={(node.attrs.alt as string) || (node.attrs.caption as string) || ""}
+            draggable={false}
+          />
+        )}
+        {editable && !uploading && (
           <span
             className={cn("doc-image-handle", dragging && "doc-image-handle-active")}
             onPointerDown={startResize}
