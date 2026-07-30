@@ -6,6 +6,8 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Archive,
+  ArchiveRestore,
   ArrowLeft,
   Bell,
   BellOff,
@@ -43,7 +45,7 @@ import {
 import { SegmentedPicker } from "@/components/v2/tasks/SegmentedPicker";
 import { SubtaskSection } from "@/components/v2/tasks/SubtaskSection";
 import { api } from "@/lib/core/client";
-import { cardStatuses } from "@/lib/core/status-model";
+import { archiveStatus, cardStatuses, defaultStatus } from "@/lib/core/status-model";
 import type { TaskChange } from "@/lib/core/task-change";
 import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type {
@@ -702,6 +704,21 @@ export function TaskSheet({
     return working.length > 0 ? working[working.length - 1] : undefined;
   }
 
+  /**
+   * Архивирование — отдельное действие, а не следующий шаг работы, поэтому у
+   * него своя кнопка в шапке: в ряду статусов архивных нет (кроме случая, когда
+   * задача уже там). Возврат ведёт в статус по умолчанию — тот же, в который
+   * встаёт новая задача.
+   */
+  const currentStatus = task?.status_id ? statuses.find((s) => s.id === task.status_id) : undefined;
+  const inArchive = currentStatus?.category === "archived";
+  const archiveTarget = inArchive ? defaultStatus(statuses) : archiveStatus(statuses);
+
+  function toggleArchive() {
+    if (!archiveTarget) return;
+    void patch({ status_id: archiveTarget.id });
+  }
+
   /** Учёт времени начинается там, где идёт работа — в карточке задачи. */
   async function startTimerHere() {
     if (!orgId || !taskId) return;
@@ -1222,6 +1239,22 @@ export function TaskSheet({
               >
                 {amFollower ? <BellOff className="size-4" /> : <Bell className="size-4" />}
               </Button>
+              {canEdit && archiveTarget && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-9 max-sm:hidden sm:size-7"
+                  onClick={toggleArchive}
+                  title={
+                    inArchive
+                      ? `Вернуть из архива — в «${archiveTarget.name}»`
+                      : `В архив — статус «${archiveTarget.name}»`
+                  }
+                  aria-label={inArchive ? "Вернуть из архива" : "В архив"}
+                >
+                  {inArchive ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -1269,6 +1302,19 @@ export function TaskSheet({
                     )}
                     {amFollower ? "Не следить" : "Следить"}
                   </button>
+                  {canEdit && archiveTarget && (
+                    <button
+                      onClick={toggleArchive}
+                      className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm hover:bg-muted"
+                    >
+                      {inArchive ? (
+                        <ArchiveRestore className="size-4 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <Archive className="size-4 shrink-0 text-muted-foreground" />
+                      )}
+                      {inArchive ? "Вернуть из архива" : "В архив"}
+                    </button>
+                  )}
                   <button
                     onClick={() => void removeTask()}
                     className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm text-destructive hover:bg-destructive/10"

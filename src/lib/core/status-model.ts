@@ -134,6 +134,15 @@ export function cardStatuses(statuses: TaskStatus[], currentId: string | null): 
   return flow;
 }
 
+/**
+ * Куда отправляет кнопка «В архив» — первый архивный статус справочника.
+ * `undefined` означает, что архива в организации нет вовсе (категории это
+ * разрешено пустовать), и кнопку показывать нечем.
+ */
+export function archiveStatus(statuses: TaskStatus[]): TaskStatus | undefined {
+  return statuses.find((s) => s.category === "archived");
+}
+
 /** Раскладка экрана настроек: все категории, в том числе пустой архив. */
 export function groupByCategory(
   statuses: TaskStatus[],

@@ -1,6 +1,6 @@
 // Справочники организации: статусы задач и теги.
 
-import { prepare, transaction } from "@/lib/sql";
+import { prepare, transaction, type TxContext } from "@/lib/sql";
 import { DomainError } from "./http";
 import { assertOrg } from "./policy";
 import {
@@ -23,16 +23,24 @@ import type { AuthContext, CoreTag, StatusCategory, TaskStatus } from "./types";
  */
 const STATUS_SELECT = `id, org_id, name, color, category, is_default, position, kind`;
 
+/**
+ * Порядок справочника — категория, потом позиция. Одной позиции недостаточно:
+ * так справочник шёл до 0045, и статус, добавленный после архивного, оказывался
+ * в выпадающих списках между рабочими. Позиции выровнены той же миграцией, но
+ * сортировку держим явной — она и есть правило, а числа лишь его отражают.
+ */
+const STATUS_ORDER = `array_position(array['backlog', 'in_progress', 'done', 'archived'], category), position, created_at`;
+
 export async function listStatuses(ctx: AuthContext): Promise<TaskStatus[]> {
   return prepare<TaskStatus>(
     `SELECT ${STATUS_SELECT} FROM core.task_statuses
-     WHERE org_id = ? ORDER BY position, created_at`,
+     WHERE org_id = ? ORDER BY ${STATUS_ORDER}`,
   ).all(ctx.orgId);
 }
 
 async function statusesOf(orgId: string): Promise<TaskStatus[]> {
   return prepare<TaskStatus>(
-    `SELECT ${STATUS_SELECT} FROM core.task_statuses WHERE org_id = ? ORDER BY position, created_at`,
+    `SELECT ${STATUS_SELECT} FROM core.task_statuses WHERE org_id = ? ORDER BY ${STATUS_ORDER}`,
   ).all(orgId);
 }
 
@@ -54,13 +62,53 @@ export async function createStatus(
   input: { name: string; color?: string; category?: StatusCategory },
 ): Promise<TaskStatus> {
   assertOrg(ctx, "statuses.manage");
-  const row = await prepare<TaskStatus>(
-    `INSERT INTO core.task_statuses (org_id, name, color, category, position)
-     VALUES (?, ?, ?, ?, COALESCE((SELECT max(position) + 1 FROM core.task_statuses WHERE org_id = ?), 1))
-     RETURNING ${STATUS_SELECT}`,
-  ).get(ctx.orgId, input.name, input.color ?? "#6b7280", input.category ?? "backlog", ctx.orgId);
-  if (!row) throw new DomainError(500, "Failed to create status");
-  return row;
+  const category = input.category ?? "backlog";
+  return transaction(async (t) => {
+    // Новый статус встаёт в конец СВОЕЙ категории, а не всего справочника:
+    // `max(position) + 1` по организации уводил его за архивные, и выпадающие
+    // списки показывали «Архив» посреди рабочих статусов (см. 0045).
+    const row = await t
+      .prepare<TaskStatus>(
+        `INSERT INTO core.task_statuses (org_id, name, color, category, position)
+         VALUES (?, ?, ?, ?,
+                 COALESCE((SELECT max(position) FROM core.task_statuses WHERE org_id = ? AND category = ?),
+                          (SELECT max(position) FROM core.task_statuses WHERE org_id = ?),
+                          0) + 0.5)
+         RETURNING ${STATUS_SELECT}`,
+      )
+      .get(
+        ctx.orgId,
+        input.name,
+        input.color ?? "#6b7280",
+        category,
+        ctx.orgId,
+        category,
+        ctx.orgId,
+      );
+    if (!row) throw new DomainError(500, "Failed to create status");
+    // Дробная позиция — только чтобы встать между соседями; сразу за вставкой
+    // нумерация выравнивается, иначе дроби копились бы с каждым статусом.
+    await renumber(t, ctx.orgId);
+    const fresh = await t
+      .prepare<TaskStatus>(`SELECT ${STATUS_SELECT} FROM core.task_statuses WHERE id = ?`)
+      .get(row.id);
+    return fresh ?? row;
+  });
+}
+
+/** Позиции 1..N в порядке категорий — инвариант справочника после любой правки. */
+async function renumber(t: TxContext, orgId: string): Promise<void> {
+  await t
+    .prepare(
+      `WITH ranked AS (
+         SELECT id, row_number() OVER (ORDER BY ${STATUS_ORDER}) AS rn
+           FROM core.task_statuses WHERE org_id = ?
+       )
+       UPDATE core.task_statuses s SET position = ranked.rn
+         FROM ranked
+        WHERE ranked.id = s.id AND s.position IS DISTINCT FROM ranked.rn`,
+    )
+    .run(orgId);
 }
 
 export async function updateStatus(
@@ -124,6 +172,10 @@ export async function updateStatus(
       );
     }
 
+    // Патч категории двигает статус в другой блок справочника — нумерация обязана
+    // это отразить, иначе он останется в списках на прежнем месте.
+    if (nextCategory !== current.category) await renumber(t, ctx.orgId);
+
     const row = await t
       .prepare<TaskStatus>(`SELECT ${STATUS_SELECT} FROM core.task_statuses WHERE id = ?`)
       .get(statusId);
@@ -181,9 +233,12 @@ export async function reorderStatuses(
           .run(becameDone, ctx.orgId, row.id);
       }
     }
+    // Порядок внутри категории — как прислали, а сами категории всегда идут
+    // своей чередой: запрос, перемешавший их между собой, выравнивается здесь.
+    await renumber(t, ctx.orgId);
     return t
       .prepare<TaskStatus>(
-        `SELECT ${STATUS_SELECT} FROM core.task_statuses WHERE org_id = ? ORDER BY position, created_at`,
+        `SELECT ${STATUS_SELECT} FROM core.task_statuses WHERE org_id = ? ORDER BY ${STATUS_ORDER}`,
       )
       .all(ctx.orgId);
   });
@@ -215,6 +270,9 @@ export async function deleteStatus(ctx: AuthContext, statusId: string): Promise<
       )
       .run(fallbackId, fallbackDone, ctx.orgId, statusId);
     await t.prepare(`DELETE FROM core.task_statuses WHERE id = ? AND org_id = ?`).run(statusId, ctx.orgId);
+    // Дыра в нумерации порядок не ломает, но следующая вставка в эту категорию
+    // считает позицию от максимума — держим 1..N без пропусков.
+    await renumber(t, ctx.orgId);
   });
 }
 
