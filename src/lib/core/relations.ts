@@ -104,6 +104,99 @@ export async function listTaskDependencies(ctx: AuthContext): Promise<TaskDepend
     .map((r) => ({ from: r.source_id, to: r.target_id }));
 }
 
+/**
+ * Тип связи «блокирует» этой организации. Заводится на лету, если справочник его
+ * потерял (переименовали, удалили): без прав `tags.manage` — рисование стрелки
+ * на ганте это работа с задачами, а не правка справочника, и требовать роль
+ * администратора за неё нельзя.
+ */
+async function blocksTypeId(ctx: AuthContext): Promise<string> {
+  const existing = await prepare<{ id: string }>(
+    `SELECT id FROM core.relation_types WHERE org_id = ? AND kind = 'blocks' ORDER BY position, name LIMIT 1`,
+  ).get(ctx.orgId);
+  if (existing) return existing.id;
+
+  const created = await prepare<{ id: string }>(
+    `INSERT INTO core.relation_types (org_id, name, color, icon, kind, position)
+     VALUES (?, 'Блокирует', '#ef4444', 'Ban', 'blocks',
+             COALESCE((SELECT max(position) + 1 FROM core.relation_types WHERE org_id = ?), 1))
+     ON CONFLICT (org_id, name) DO UPDATE SET kind = 'blocks'
+     RETURNING id`,
+  ).get(ctx.orgId, ctx.orgId);
+  if (!created) throw new DomainError(500, "Relation type was not created");
+  return created.id;
+}
+
+/** Дотягивается ли `from` до `to` по стрелкам «блокирует» — проверка на кольцо. */
+async function reachesVia(ctx: AuthContext, from: string, to: string): Promise<boolean> {
+  const row = await prepare<{ ok: number }>(
+    `WITH RECURSIVE reach(id) AS (
+       SELECT ?::uuid
+       UNION
+       SELECT r.target_id
+       FROM core.relations r
+       JOIN core.relation_types rt ON rt.id = r.relation_type_id
+       JOIN reach ON reach.id = r.source_id
+       WHERE r.org_id = ? AND rt.kind = 'blocks'
+         AND r.source_type = 'task' AND r.target_type = 'task'
+     )
+     SELECT 1 AS ok FROM reach WHERE id = ?::uuid LIMIT 1`,
+  ).get(from, ctx.orgId, to);
+  return row != null;
+}
+
+/**
+ * Стрелка, нарисованная прямо на ганте: `from` блокирует `to`.
+ *
+ * Идёт мимо `createRelation` ради двух вещей — тип связи подставляется сам (на
+ * полотне его негде выбрать) и проверяется кольцо. Кольцо запрещаем здесь, а не
+ * в общем создании связи: «блокирует» — единственный тип со смыслом порядка, и
+ * замкнутая цепочка означает план, который не начать ни с какого конца.
+ */
+export async function createTaskDependency(
+  ctx: AuthContext,
+  from: string,
+  to: string,
+): Promise<TaskDependency> {
+  if (from === to) throw new DomainError(422, "Задача не может блокировать саму себя");
+  // Править — источник, видеть — цель: ровно как в `createRelation`, иначе связь
+  // становится способом проверить существование чужой задачи по id.
+  await requireTaskAccess(ctx, from, "edit");
+  await requireTaskAccess(ctx, to, "view");
+
+  if (await reachesVia(ctx, to, from)) {
+    throw new DomainError(422, "Такая связь замкнёт зависимости в кольцо");
+  }
+
+  const relationTypeId = await blocksTypeId(ctx);
+  await prepare(
+    `INSERT INTO core.relations (org_id, source_type, source_id, target_type, target_id, relation_type_id, created_by)
+     VALUES (?, 'task', ?, 'task', ?, ?, ?)
+     ON CONFLICT (source_type, source_id, target_type, target_id)
+       DO UPDATE SET relation_type_id = excluded.relation_type_id`,
+  ).run(ctx.orgId, from, to, relationTypeId, ctx.user.id);
+
+  return { from, to };
+}
+
+/** Снятие стрелки с полотна. Пара адресуется концами: id связи ганту не нужен. */
+export async function deleteTaskDependency(ctx: AuthContext, from: string, to: string): Promise<void> {
+  // Как и в `deleteRelation`, хватает прав на любую из сторон: иначе остаются
+  // неудаляемые «висяки» у того, кто видит только один конец.
+  try {
+    await requireTaskAccess(ctx, from, "edit");
+  } catch {
+    await requireTaskAccess(ctx, to, "edit");
+  }
+  await prepare(
+    `DELETE FROM core.relations r
+     USING core.relation_types rt
+     WHERE rt.id = r.relation_type_id AND rt.kind = 'blocks' AND r.org_id = ?
+       AND r.source_type = 'task' AND r.source_id = ?
+       AND r.target_type = 'task' AND r.target_id = ?`,
+  ).run(ctx.orgId, from, to);
+}
+
 // --- Связи ---------------------------------------------------------------------------
 
 interface RawRelation {

@@ -49,6 +49,7 @@ export const DEFAULT_COLUMNS = [
   "project",
   "assignees",
   "tags",
+  "start_date",
   "due_date",
   "estimated_minutes",
   "subtasks",
@@ -191,6 +192,14 @@ function edit(state: ViewState, patch: Partial<ViewSnapshot>): Partial<ViewState
   };
 }
 
+/** «Начало» перед «Дедлайном»: даты читаются парой, и порядок здесь — смысл. */
+function withStartDate(columns: string[] | undefined): string[] | undefined {
+  if (!columns || columns.includes("start_date")) return columns;
+  const at = columns.indexOf("due_date");
+  if (at < 0) return [...columns, "start_date"];
+  return [...columns.slice(0, at), "start_date", ...columns.slice(at)];
+}
+
 function newId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -280,18 +289,29 @@ function createViewStore(scope: ViewScope) {
           mode: s.mode,
           ganttScale: s.ganttScale,
         }),
-        version: 2,
-        // Версия 2 добавила wrapTitle. Migrate обязателен: без него zustand
-        // не смог бы поднять срез старой версии и молча выбросил бы его вместе
-        // со всеми именованными представлениями и порядком колонок.
+        version: 3,
+        // Migrate обязателен: без него zustand не смог бы поднять срез старой
+        // версии и молча выбросил бы его вместе со всеми именованными
+        // представлениями и порядком колонок.
+        //
+        // Версия 2 добавила wrapTitle, версия 3 — колонку «Начало». Второе
+        // приходится дописывать в уже сохранённый набор: у всех, кто хоть раз
+        // трогал колонки, в localStorage лежит список без неё, и умолчание её
+        // не покажет никогда. Именованные представления при этом не трогаем —
+        // их состав собирали руками под конкретный срез.
         migrate: (persisted, from) => {
           const s = persisted as Partial<ViewState> | undefined;
-          if (!s || from >= 2) return s as ViewState;
-          return {
-            ...s,
-            wrapTitle: false,
-            savedViews: (s.savedViews ?? []).map((v) => ({ ...v, wrapTitle: false })),
-          } as ViewState;
+          if (!s) return persisted as ViewState;
+          let next = s;
+          if (from < 2) {
+            next = {
+              ...next,
+              wrapTitle: false,
+              savedViews: (next.savedViews ?? []).map((v) => ({ ...v, wrapTitle: false })),
+            };
+          }
+          if (from < 3) next = { ...next, columns: withStartDate(next.columns) };
+          return next as ViewState;
         },
       },
     ),
