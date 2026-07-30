@@ -114,6 +114,14 @@ export interface ViewState extends ViewSnapshot {
   activeViewId: string | null;
   /** Свёрнутые группы — по ключу «уровень1/уровень2». */
   collapsed: string[];
+  /**
+   * Свёрнутые задачи — по id. В отличие от групп персистится: свёрнутое
+   * поддеревьями дерево это рабочая привычка, и разворачивать его заново после
+   * каждой перезагрузки — та же потеря, что сброшенный порядок колонок. Ключ по
+   * id, а не по месту в списке, поэтому смена группировки и сортировки ветку не
+   * разворачивает.
+   */
+  collapsedTasks: string[];
   /** Таблица, доска или гант. */
   mode: ProjectViewMode;
   /**
@@ -135,6 +143,7 @@ export interface ViewState extends ViewSnapshot {
   setSubtaskMode: (mode: SubtaskMode) => void;
   setWrapTitle: (wrap: boolean) => void;
   toggleCollapsed: (key: string) => void;
+  toggleCollapsedTask: (taskId: string) => void;
 
   saveView: (name: string) => void;
   applyView: (id: string) => void;
@@ -191,6 +200,13 @@ function edit(state: ViewState, patch: Partial<ViewSnapshot>): Partial<ViewState
   };
 }
 
+/**
+ * Сколько свёрнутых задач помнить. В отличие от групп набор персистится, а
+ * задачи удаляются — без предела список id рос бы в localStorage навсегда.
+ * Свежие вытесняют старые: свёрнутое год назад никому не нужно.
+ */
+const COLLAPSED_TASKS_LIMIT = 500;
+
 function newId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -207,6 +223,7 @@ function createViewStore(scope: ViewScope) {
         savedViews: [],
         activeViewId: null,
         collapsed: [],
+        collapsedTasks: [],
         mode: "table",
         ganttScale: "day",
 
@@ -240,6 +257,12 @@ function createViewStore(scope: ViewScope) {
           set((s) => ({
             collapsed: s.collapsed.includes(key) ? s.collapsed.filter((k) => k !== key) : [...s.collapsed, key],
           })),
+        toggleCollapsedTask: (taskId) =>
+          set((s) => ({
+            collapsedTasks: s.collapsedTasks.includes(taskId)
+              ? s.collapsedTasks.filter((id) => id !== taskId)
+              : [...s.collapsedTasks, taskId].slice(-COLLAPSED_TASKS_LIMIT),
+          })),
 
         saveView: (name) => {
           const view: SavedView = { id: newId(), name, ...snapshotOf(get()) };
@@ -272,11 +295,14 @@ function createViewStore(scope: ViewScope) {
         storage: createJSONStorage(() => localStorage),
         // collapsed не персистим: свёрнутые группы — состояние сессии, а не
         // настройка. Иначе после смены группировки половина списка «пропадает».
+        // С collapsedTasks иначе: ключ там — id задачи, и смена группировки его
+        // не обессмысливает.
         partialize: (s) => ({
           ...snapshotOf(s),
           search: s.search,
           savedViews: s.savedViews,
           activeViewId: s.activeViewId,
+          collapsedTasks: s.collapsedTasks,
           mode: s.mode,
           ganttScale: s.ganttScale,
         }),

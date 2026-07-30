@@ -27,7 +27,7 @@ import type { CustomField } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import type { ColumnDef } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
-import { formatEstimate } from "./cells";
+import { TREE_TOGGLE_W, formatEstimate } from "./cells";
 import {
   AssigneesMenu,
   ESTIMATE_POPOVER,
@@ -214,6 +214,9 @@ function DraftCell({
             }
           }}
           placeholder="Новая задача…"
+          // Слева тот же слот шеврона, что и у строк: без него поле ввода
+          // стоит на 18 px левее названий, под которые оно и подписано.
+          style={{ paddingLeft: TREE_TOGGLE_W + 6 }}
           className="h-full w-full bg-transparent px-1.5 text-sm outline-none placeholder:text-muted-foreground/70"
         />
       );

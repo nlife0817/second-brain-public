@@ -502,10 +502,21 @@ export const SUBTASK_MODE_LABELS: Record<SubtaskMode, string> = {
 export interface ArrangedRow {
   task: TaskRow;
   depth: number;
+  /**
+   * Есть ли у задачи подзадачи в текущем срезе. От этого зависит, рисовать ли
+   * шеврон: у листа сворачивать нечего, а кнопка, которая ничего не меняет,
+   * читается как сломанная.
+   */
+  hasChildren: boolean;
+  /** Поддерево свёрнуто — строки подзадач в выдачу не попали. */
+  collapsed: boolean;
 }
 
 /** Циклов в данных быть не должно, но защита дешевле, чем зависший рендер. */
 const MAX_DEPTH = 8;
+
+/** Общая пустая ссылка: аргумент по умолчанию не должен ломать memo. */
+const NO_COLLAPSED: ReadonlySet<string> = new Set();
 
 /**
  * Дерево задач по всему набору — считается ДО группировки. Это ключевой момент:
@@ -556,15 +567,30 @@ export function buildForest(tasks: TaskRow[]): TaskForest {
   return { childrenOf, roots };
 }
 
-/** Поддеревья перечисленных корней — плоским списком строк с глубиной. */
-export function expandRoots(roots: TaskRow[], forest: TaskForest): ArrangedRow[] {
+/**
+ * Поддеревья перечисленных корней — плоским списком строк с глубиной.
+ *
+ * `collapsedTasks` — id задач, чьи поддеревья свёрнуты. Ключ именно id задачи, а
+ * не путь в дереве: задача остаётся той же при смене группировки и сортировки, и
+ * свёрнутая ветка не разворачивается сама от того, что список перестроили.
+ */
+export function expandRoots(
+  roots: TaskRow[],
+  forest: TaskForest,
+  collapsedTasks: ReadonlySet<string> = NO_COLLAPSED,
+): ArrangedRow[] {
   const out: ArrangedRow[] = [];
   const emitted = new Set<string>();
   const emit = (task: TaskRow, depth: number) => {
     if (emitted.has(task.id) || depth > MAX_DEPTH) return;
     emitted.add(task.id);
-    out.push({ task, depth });
-    for (const child of forest.childrenOf.get(task.id) ?? []) emit(child, depth + 1);
+    const children = forest.childrenOf.get(task.id) ?? [];
+    // Свёрнутость без детей не считается: id остаётся в наборе (задачу могли
+    // отфильтровать), но строка обязана выглядеть обычным листом.
+    const collapsed = children.length > 0 && collapsedTasks.has(task.id);
+    out.push({ task, depth, hasChildren: children.length > 0, collapsed });
+    if (collapsed) return;
+    for (const child of children) emit(child, depth + 1);
   };
   for (const task of roots) emit(task, 0);
   return out;
@@ -662,19 +688,26 @@ export function arrangeGroupRows(
   groupRoots: TaskRow[],
   forest: TaskForest | null,
   mode: SubtaskMode,
+  collapsedTasks: ReadonlySet<string> = NO_COLLAPSED,
 ): ArrangedRow[] {
-  if (mode === "nested" && forest) return expandRoots(groupRoots, forest);
-  return groupRoots.map((task) => ({ task, depth: 0 }));
+  if (mode === "nested" && forest) return expandRoots(groupRoots, forest, collapsedTasks);
+  // Сворачивать нечего: в «отдельными строками» подзадача и так не под
+  // родителем, в «скрыть» её нет вовсе. Шеврона на этих строках быть не должно.
+  return groupRoots.map((task) => ({ task, depth: 0, hasChildren: false, collapsed: false }));
 }
 
 /**
  * Раскладка плоского (не сгруппированного) списка с учётом режима подзадач.
  * Порядок внутри уровня сохраняется тем, что задала сортировка.
  */
-export function arrangeRows(tasks: TaskRow[], mode: SubtaskMode): ArrangedRow[] {
-  if (mode === "flat") return tasks.map((task) => ({ task, depth: 0 }));
+export function arrangeRows(
+  tasks: TaskRow[],
+  mode: SubtaskMode,
+  collapsedTasks: ReadonlySet<string> = NO_COLLAPSED,
+): ArrangedRow[] {
+  if (mode === "flat") return tasks.map((task) => ({ task, depth: 0, hasChildren: false, collapsed: false }));
   const forest = buildForest(tasks);
-  return arrangeGroupRows(forest.roots, forest, mode);
+  return arrangeGroupRows(forest.roots, forest, mode, collapsedTasks);
 }
 
 /**

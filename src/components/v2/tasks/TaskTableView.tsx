@@ -140,9 +140,11 @@ export function TaskTableView({
   const subtaskMode = useViewStore((s) => s.subtaskMode);
   const wrapTitle = useViewStore((s) => s.wrapTitle);
   const collapsedList = useViewStore((s) => s.collapsed);
+  const collapsedTasksList = useViewStore((s) => s.collapsedTasks);
   const toggleSortRaw = useViewStore((s) => s.toggleSort);
   const setWidth = useViewStore((s) => s.setWidth);
   const toggleCollapsed = useViewStore((s) => s.toggleCollapsed);
+  const toggleCollapsedTask = useViewStore((s) => s.toggleCollapsedTask);
 
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -388,13 +390,15 @@ export function TaskTableView({
       wrapTitle,
       onPatch: patchOne,
       onPlacements: setPlacements,
+      onToggleSubtree: toggleCollapsedTask,
     }),
-    [statuses, tags, members, projectsById, canEdit, wrapTitle, patchOne, setPlacements],
+    [statuses, tags, members, projectsById, canEdit, wrapTitle, patchOne, setPlacements, toggleCollapsedTask],
   );
 
   const { labelForGroup, groupOrder } = useGroupNaming();
 
   const collapsed = useMemo(() => new Set(collapsedList), [collapsedList]);
+  const collapsedTasks = useMemo(() => new Set(collapsedTasksList), [collapsedTasksList]);
 
   // --- Выбор строк ------------------------------------------------------------------
 
@@ -593,6 +597,7 @@ export function TaskTableView({
           onSelectMany={selectMany}
           collapsed={collapsed}
           onToggleCollapsed={toggleCollapsed}
+          collapsedTasks={collapsedTasks}
           onOpen={onOpenTask}
           labelForGroup={labelForGroup}
           groupOrder={groupOrder}

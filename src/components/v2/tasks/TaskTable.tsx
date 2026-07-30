@@ -81,6 +81,8 @@ export interface TaskTableProps {
   onSelectMany: (taskIds: string[], checked: boolean) => void;
   collapsed: ReadonlySet<string>;
   onToggleCollapsed: (key: string) => void;
+  /** Свёрнутые задачи — по id. Сворачивать умеет только режим «вложенными». */
+  collapsedTasks: ReadonlySet<string>;
   onOpen: (taskId: string) => void;
   labelForGroup: GroupNaming["labelForGroup"];
   groupOrder: GroupNaming["groupOrder"];
@@ -182,6 +184,8 @@ const Row = memo(function Row({
   widths,
   ctx,
   depth,
+  hasChildren,
+  subtreeCollapsed,
   selected,
   onToggleSelected,
   onOpen,
@@ -191,6 +195,8 @@ const Row = memo(function Row({
   widths: Record<string, number>;
   ctx: CellContext;
   depth: number;
+  hasChildren: boolean;
+  subtreeCollapsed: boolean;
   selected: boolean;
   onToggleSelected: (taskId: string, checked: boolean) => void;
   onOpen: (taskId: string) => void;
@@ -218,7 +224,15 @@ const Row = memo(function Row({
           className="flex shrink-0 items-center overflow-hidden"
           style={{ width: widths[column.id] ?? column.width }}
         >
-          <Cell column={column} task={task} ctx={ctx} depth={depth} onOpen={onOpen} />
+          <Cell
+            column={column}
+            task={task}
+            ctx={ctx}
+            depth={depth}
+            hasChildren={hasChildren}
+            subtreeCollapsed={subtreeCollapsed}
+            onOpen={onOpen}
+          />
         </div>
       ))}
     </div>
@@ -230,19 +244,32 @@ function Cell({
   task,
   ctx,
   depth,
+  hasChildren,
+  subtreeCollapsed,
   onOpen,
 }: {
   column: ColumnDef;
   task: TaskRow;
   ctx: CellContext;
   depth: number;
+  hasChildren: boolean;
+  subtreeCollapsed: boolean;
   onOpen: (taskId: string) => void;
 }) {
   switch (column.id) {
     case "priority":
       return <PriorityCell task={task} ctx={ctx} />;
     case "title":
-      return <TitleCell task={task} ctx={ctx} depth={depth} onOpen={onOpen} />;
+      return (
+        <TitleCell
+          task={task}
+          ctx={ctx}
+          depth={depth}
+          hasChildren={hasChildren}
+          collapsed={subtreeCollapsed}
+          onOpen={onOpen}
+        />
+      );
     case "status":
       return <StatusCell task={task} ctx={ctx} />;
     case "project":
@@ -283,6 +310,7 @@ function GroupBody({
   onSelectMany,
   collapsed,
   onToggleCollapsed,
+  collapsedTasks,
   onOpen,
   grouped,
   subtaskMode,
@@ -298,6 +326,7 @@ function GroupBody({
   onSelectMany: (taskIds: string[], checked: boolean) => void;
   collapsed: ReadonlySet<string>;
   onToggleCollapsed: (key: string) => void;
+  collapsedTasks: ReadonlySet<string>;
   onOpen: (taskId: string) => void;
   grouped: boolean;
   subtaskMode: SubtaskMode;
@@ -310,15 +339,16 @@ function GroupBody({
   // рисуется под своим родителем даже когда её собственный статус (проект,
   // исполнитель) отнёс бы её в другую группу.
   const expanded = useMemo(
-    () => arrangeGroupRows(node.tasks, forest, subtaskMode),
-    [node.tasks, forest, subtaskMode],
+    () => arrangeGroupRows(node.tasks, forest, subtaskMode, collapsedTasks),
+    [node.tasks, forest, subtaskMode, collapsedTasks],
   );
   const rows = node.children.length === 0 ? expanded : [];
   const shown = rows.length > limit ? rows.slice(0, limit) : rows;
   const rest = rows.length - shown.length;
   // Счётчик и «выбрать все» относятся к тому, что группа реально рисует: в
   // режиме «скрыть подзадачи» их нет на экране, и молча попадать под массовое
-  // действие они не должны, а во «вложенными» — наоборот, уже свои строки.
+  // действие они не должны, а во «вложенными» — наоборот, уже свои строки. По
+  // той же причине свёрнутое поддерево не попадает ни в счётчик, ни в выбор.
   const selectable = useMemo(() => expanded.map((r) => r.task.id), [expanded]);
   const allSelected = selectable.length > 0 && selectable.every((id) => selected.has(id));
 
@@ -379,21 +409,24 @@ function GroupBody({
               onSelectMany={onSelectMany}
               collapsed={collapsed}
               onToggleCollapsed={onToggleCollapsed}
+              collapsedTasks={collapsedTasks}
               onOpen={onOpen}
               grouped
               subtaskMode={subtaskMode}
               forest={forest}
             />
           ))}
-          {shown.map(({ task, depth }) => (
+          {shown.map((row) => (
             <Row
-              key={task.id}
-              task={task}
+              key={row.task.id}
+              task={row.task}
               columns={columns}
               widths={widths}
               ctx={ctx}
-              depth={depth}
-              selected={selected.has(task.id)}
+              depth={row.depth}
+              hasChildren={row.hasChildren}
+              subtreeCollapsed={row.collapsed}
+              selected={selected.has(row.task.id)}
               onToggleSelected={onToggleSelected}
               onOpen={onOpen}
             />
@@ -430,6 +463,7 @@ export function TaskTable(props: TaskTableProps) {
     onSelectMany,
     collapsed,
     onToggleCollapsed,
+    collapsedTasks,
     onOpen,
     labelForGroup,
     groupOrder,
@@ -502,6 +536,7 @@ export function TaskTable(props: TaskTableProps) {
                 onSelectMany={onSelectMany}
                 collapsed={collapsed}
                 onToggleCollapsed={onToggleCollapsed}
+                collapsedTasks={collapsedTasks}
                 onOpen={onOpen}
                 grouped={grouped}
                 subtaskMode={subtaskMode}

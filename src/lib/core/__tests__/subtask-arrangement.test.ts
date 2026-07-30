@@ -92,6 +92,47 @@ describe("arrangeGroupRows — подзадача в группе родител
   });
 });
 
+describe("свёрнутые поддеревья", () => {
+  it("свёрнутый родитель прячет всё поддерево, а не только первый уровень", () => {
+    const rows = [task("a"), task("b", "a"), task("c", "b"), task("d")];
+    const forest = buildForest(rows);
+    expect(shape(expandRoots(forest.roots, forest, new Set(["a"])))).toEqual(["a:0", "d:0"]);
+  });
+
+  it("свёрнутая ветка внутри развёрнутой не задевает соседей", () => {
+    const rows = [task("a"), task("b", "a"), task("c", "b"), task("e", "a")];
+    const forest = buildForest(rows);
+    expect(shape(expandRoots(forest.roots, forest, new Set(["b"])))).toEqual(["a:0", "b:1", "e:1"]);
+  });
+
+  it("шеврон помечает только строки с подзадачами в срезе", () => {
+    const rows = [task("a"), task("b", "a"), task("c")];
+    const forest = buildForest(rows);
+    expect(expandRoots(forest.roots, forest).map((r) => [r.task.id, r.hasChildren])).toEqual([
+      ["a", true],
+      ["b", false],
+      ["c", false],
+    ]);
+  });
+
+  it("id в наборе без детей в срезе не делает строку свёрнутой", () => {
+    // Родителя свернули, потом отфильтровали его подзадачи: строка обязана
+    // выглядеть обычным листом, иначе шеврон обещает то, чего нет.
+    const forest = buildForest([task("a")]);
+    const [row] = expandRoots(forest.roots, forest, new Set(["a"]));
+    expect([row.hasChildren, row.collapsed]).toEqual([false, false]);
+  });
+
+  it("в режимах «отдельными строками» и «скрыть» сворачивать нечего", () => {
+    const all = [task("a"), task("b", "a")];
+    const forest = buildForest(all);
+    // Свёрнутость передана, но строк она не убирает и шеврона не даёт.
+    expect(shape(arrangeGroupRows(all, null, "flat", new Set(["a"])))).toEqual(["a:0", "b:0"]);
+    const hidden = arrangeGroupRows(forest.roots, forest, "hidden", new Set(["a"]));
+    expect(hidden.map((r) => [r.task.id, r.hasChildren, r.collapsed])).toEqual([["a", false, false]]);
+  });
+});
+
 describe("arrangeRows — список без группировки", () => {
   const rows = [task("a"), task("b", "a"), task("c")];
 

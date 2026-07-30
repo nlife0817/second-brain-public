@@ -84,16 +84,30 @@ const CLICK_SLOP = 3;
 
 type GanttRow =
   | { kind: "group"; path: string; label: GroupLabel; depth: number; count: number; span: { from: string; to: string } | null }
-  | { kind: "task"; task: TaskRow; depth: number; bar: GanttBar | null };
+  | {
+      kind: "task";
+      task: TaskRow;
+      depth: number;
+      bar: GanttBar | null;
+      /** Есть подзадачи в срезе — строка получает шеврон. */
+      hasChildren: boolean;
+      /** Поддерево свёрнуто: строк подзадач ниже нет. */
+      collapsed: boolean;
+    };
 
 /**
  * Плоский список строк из дерева групп. Свёрнутая группа оставляет только свою
  * строку — вместе со сводной полосой, иначе сворачивание прячет и то, что в
  * группе вообще что-то запланировано.
+ *
+ * У свёрнутой задачи сводной полосы нет: у неё, в отличие от группы, есть своя
+ * собственная — вторая полоса в той же строке читалась бы как две разные даты
+ * одной задачи.
  */
 function flattenRows(
   groups: GroupNode[],
   collapsed: ReadonlySet<string>,
+  collapsedTasks: ReadonlySet<string>,
   subtaskMode: SubtaskMode,
   forest: TaskForest | null,
   today: string,
@@ -103,10 +117,18 @@ function flattenRows(
   // Раскладка внутри группы — общая с таблицей: в корзину группы попали только
   // корни, а подзадачи приезжают из дерева, построенного по всему набору. Иначе
   // подзадача, у которой статус отличается от родительского, уходила бы
-  // отдельной строкой в чужую группу.
+  // отдельной строкой в чужую группу. Свёрнутость тоже считает общий код —
+  // иначе один и тот же шеврон давал бы в таблице и на ганте разные списки.
   const pushTasks = (tasks: TaskRow[], baseDepth: number) => {
-    for (const { task, depth } of arrangeGroupRows(tasks, forest, subtaskMode)) {
-      out.push({ kind: "task", task, depth: baseDepth + depth, bar: barOf(task, today) });
+    for (const row of arrangeGroupRows(tasks, forest, subtaskMode, collapsedTasks)) {
+      out.push({
+        kind: "task",
+        task: row.task,
+        depth: baseDepth + row.depth,
+        bar: barOf(row.task, today),
+        hasChildren: row.hasChildren,
+        collapsed: row.collapsed,
+      });
     }
   };
 
@@ -211,6 +233,8 @@ export function GanttView({
   const subtaskMode = useViewStore((s) => s.subtaskMode);
   const collapsedList = useViewStore((s) => s.collapsed);
   const toggleCollapsed = useViewStore((s) => s.toggleCollapsed);
+  const collapsedTasksList = useViewStore((s) => s.collapsedTasks);
+  const toggleCollapsedTask = useViewStore((s) => s.toggleCollapsedTask);
   const scale = useViewStore((s) => s.ganttScale);
   const setScale = useViewStore((s) => s.setGanttScale);
 
@@ -220,6 +244,7 @@ export function GanttView({
 
   const naming = useGroupNaming();
   const collapsed = useMemo(() => new Set(collapsedList), [collapsedList]);
+  const collapsedTasks = useMemo(() => new Set(collapsedTasksList), [collapsedTasksList]);
   const matchCtx = useMemo(() => makeMatchContext(me?.id ?? null), [me?.id]);
   // Сегодня считается один раз на монтирование: пересчёт в рендере означал бы
   // новую ссылку на каждую перерисовку и «дрожащую» линию текущего дня.
@@ -254,11 +279,12 @@ export function GanttView({
       flattenRows(
         buildGroups(visibleTasks, groupBy, matchCtx, naming, forest),
         collapsed,
+        collapsedTasks,
         subtaskMode,
         forest,
         today,
       ),
-    [visibleTasks, groupBy, matchCtx, naming, forest, collapsed, subtaskMode, today],
+    [visibleTasks, groupBy, matchCtx, naming, forest, collapsed, collapsedTasks, subtaskMode, today],
   );
 
   const bars = useMemo(
@@ -472,6 +498,7 @@ export function GanttView({
                   row={row}
                   collapsed={row.kind === "group" && collapsed.has(row.path)}
                   onToggle={toggleCollapsed}
+                  onToggleTask={toggleCollapsedTask}
                   onOpen={onOpenTask}
                 />
               ))}
@@ -611,11 +638,13 @@ const ListRow = memo(function ListRow({
   row,
   collapsed,
   onToggle,
+  onToggleTask,
   onOpen,
 }: {
   row: GanttRow;
   collapsed: boolean;
   onToggle: (path: string) => void;
+  onToggleTask: (taskId: string) => void;
   onOpen: (taskId: string) => void;
 }) {
   if (row.kind === "group") {
@@ -640,19 +669,41 @@ const ListRow = memo(function ListRow({
   }
 
   const { task } = row;
+  // Строка — не кнопка: внутри живёт шеврон, а кнопка внутри кнопки недопустима.
+  // Открывает задачу название, а подсветка по наведению осталась на всей строке.
   return (
-    <button
-      onClick={() => onOpen(task.id)}
-      className="flex w-full items-center gap-1.5 border-b border-border/40 px-2 text-left hover:bg-muted/50"
+    <div
+      className="flex w-full items-center gap-1.5 border-b border-border/40 px-2 hover:bg-muted/50"
       style={{ height: ROW_H, paddingLeft: 8 + row.depth * 12 }}
-      title={task.title}
     >
+      {/* Слот шеврона занят всегда — иначе названия строк одного уровня
+          разъезжаются в зависимости от того, есть ли у задачи подзадачи. */}
+      {row.hasChildren ? (
+        <button
+          onClick={() => onToggleTask(task.id)}
+          className="-m-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          aria-expanded={!row.collapsed}
+          aria-label={row.collapsed ? "Развернуть подзадачи" : "Свернуть подзадачи"}
+          title={row.collapsed ? "Развернуть подзадачи" : "Свернуть подзадачи"}
+        >
+          {row.collapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+        </button>
+      ) : (
+        <span className="size-3.5 shrink-0" aria-hidden />
+      )}
       <PriorityDot priority={task.priority} />
-      <span className={cn("min-w-0 flex-1 truncate text-xs", task.completed_at && "text-muted-foreground line-through")}>
+      <button
+        onClick={() => onOpen(task.id)}
+        className={cn(
+          "min-w-0 flex-1 truncate text-left text-xs",
+          task.completed_at && "text-muted-foreground line-through",
+        )}
+        title={task.title}
+      >
         {task.title}
-      </span>
+      </button>
       {!row.bar && <span className="shrink-0 text-[10px] text-muted-foreground/70">без дат</span>}
-    </button>
+    </div>
   );
 });
 

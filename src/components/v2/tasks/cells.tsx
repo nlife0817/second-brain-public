@@ -5,7 +5,7 @@
 // саму мутацию делает страница.
 
 import { memo, useEffect, useRef, useState } from "react";
-import { Check, CornerDownRight, MessageSquare, Pencil, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, CornerDownRight, MessageSquare, Pencil, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarStack, PRIORITY_LABELS, PriorityDot, chipStyle, dueTone, formatDue } from "@/components/v2/bits";
 import { DatePicker, DuePicker } from "@/components/v2/DuePicker";
@@ -32,6 +32,8 @@ export interface CellContext {
   onPatch: (taskId: string, payload: Record<string, unknown>) => void;
   /** Полный список проектов задачи: размещения PATCH не принимает. */
   onPlacements: (taskId: string, projectIds: string[]) => void;
+  /** Свернуть/развернуть подзадачи строки. Обязан быть стабильной ссылкой. */
+  onToggleSubtree: (taskId: string) => void;
 }
 
 /** 90 → «1 ч 30 м». Пустая оценка отображается прочерком, а не нулём. */
@@ -116,15 +118,28 @@ export const PriorityCell = memo(function PriorityCell({
 
 // --- Название -------------------------------------------------------------------
 
+/**
+ * Ширина слота шеврона вместе с отбивкой. Слот занят на каждой строке, даже у
+ * задачи без подзадач: иначе названия соседей одного уровня разъезжаются на
+ * ширину кнопки, и колонка перестаёт читаться сверху вниз.
+ */
+export const TREE_TOGGLE_W = 18;
+
 export const TitleCell = memo(function TitleCell({
   task,
   ctx,
   depth,
+  hasChildren,
+  collapsed,
   onOpen,
 }: {
   task: TaskRow;
   ctx: CellContext;
   depth: number;
+  /** Есть подзадачи в текущем срезе — строка получает шеврон. */
+  hasChildren: boolean;
+  /** Поддерево свёрнуто. */
+  collapsed: boolean;
   onOpen: (taskId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -147,7 +162,10 @@ export const TitleCell = memo(function TitleCell({
       // w-full min-w-0 обязателен: без ширины обёртка — flex-элемент по
       // содержимому, и `w-full` инпута замыкается сам на себя, схлопывая поле
       // до размера по умолчанию вместо ширины столбца.
-      <span className="flex h-full w-full min-w-0 items-center px-1.5" style={{ paddingLeft: depth * 16 + 6 }}>
+      <span
+        className="flex h-full w-full min-w-0 items-center px-1.5"
+        style={{ paddingLeft: depth * 16 + 6 + TREE_TOGGLE_W }}
+      >
         <input
           ref={inputRef}
           value={draft}
@@ -171,6 +189,27 @@ export const TitleCell = memo(function TitleCell({
       className={cn("group/title flex w-full min-w-0 gap-1", ctx.wrapTitle ? "items-start py-1" : "h-full items-center")}
       style={{ paddingLeft: depth * 16 + 6 }}
     >
+      {/* Слот шеврона. У задачи без подзадач он пустой, но занимает место:
+          кнопка, появляющаяся только у части строк, сдвигала бы их названия
+          относительно соседних. */}
+      {hasChildren ? (
+        <button
+          // -m-1 p-1: кликабельная зона и подсветка крупнее самой иконки, а
+          // место в раскладке занимает по-прежнему её 14 px.
+          className={cn(
+            "-m-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground",
+            ctx.wrapTitle && "mt-1",
+          )}
+          onClick={() => ctx.onToggleSubtree(task.id)}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Развернуть подзадачи" : "Свернуть подзадачи"}
+          title={collapsed ? "Развернуть подзадачи" : "Свернуть подзадачи"}
+        >
+          {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+        </button>
+      ) : (
+        <span className="size-3.5 shrink-0" aria-hidden />
+      )}
       {/* При группировке подзадача едет в группу родителя и её собственный
           статус в колонке отличается от заголовка группы. Без явного знака
           вложенности такая строка читается как ошибка списка; на телефоне
