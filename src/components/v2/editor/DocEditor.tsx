@@ -453,6 +453,8 @@ export function DocEditor({
             <CommentPanel
               threads={threads}
               me={me}
+              orgId={orgId}
+              taskId={taskId}
               activeThreadId={activeThreadId}
               isAnchored={(id) => anchors.has(id)}
               canComment={canComment}

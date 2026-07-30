@@ -8,14 +8,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useEditor, type Editor } from "@tiptap/react";
 import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
 import { docExtensions } from "./extensions";
-import {
-  extractPastedImages,
-  fileFromImageSrc,
-  revertPastedImage,
-  settlePastedImage,
-  type PendingImage,
-} from "./paste-images";
-import { isInlineImageMime, uploadAttachment, UploadError } from "./upload";
+import { isInlineImageMime } from "./upload";
+import { useEditorUploads } from "./use-uploads";
 import { useMentionItems } from "./use-mention-items";
 
 /**
@@ -34,27 +28,6 @@ const AUTOSAVE_DELAY_MS = 1200;
  * перезаписывает документ ответом на собственное же сохранение — вставленная
  * секунду назад картинка при этом пропадала.
  */
-/**
- * Есть ли в переносимых данных осмысленный текст.
- *
- * Word, Excel, Google Docs, Outlook и обычная веб-страница кладут в буфер рядом
- * с разметкой ещё и картинку — рендер фрагмента. Забирать такую вставку под
- * загрузку файла нельзя: человек вставляет несколько страниц текста, а в
- * документе не появляется ничего, кроме картинки, — сохранять нечего.
- *
- * Картинка, скопированная со страницы, сюда не попадает: её разметка — один
- * `<img>` без текста, и она по-прежнему уезжает во вложения.
- */
-function hasTextPayload(data: DataTransfer | null | undefined): boolean {
-  if (!data) return false;
-  if (data.getData("text/plain").trim()) return true;
-  const html = data.getData("text/html");
-  if (!html) return false;
-  const holder = document.createElement("div");
-  holder.innerHTML = html;
-  return !!holder.textContent?.trim();
-}
-
 /** Разметка документа для сохранения: пустой редактор — пустое описание. */
 function docHtml(editor: Editor): string {
   return editor.isEmpty ? "" : editor.getHTML();
@@ -115,8 +88,29 @@ export function useDocEditor({
   placeholder,
   autofocus = false,
 }: UseDocEditorOptions): DocEditorApi {
-  const [uploading, setUploading] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  // Вложение описания — картинка узлом `docImage`, всё остальное — карточкой
+  // файла. Тем же хуком пользуется поле комментария, но там вложение бывает
+  // только картинкой.
+  const uploads = useEditorUploads({
+    orgId,
+    taskId,
+    enabled: editable,
+    insert: (target, attachment) => {
+      if (isInlineImageMime(attachment.mime_type)) {
+        target.chain().focus().insertDocImage({ src: attachment.url, alt: attachment.filename }).run();
+      } else {
+        target
+          .chain()
+          .focus()
+          .insertDocFile({
+            href: attachment.url,
+            name: attachment.filename,
+            size: attachment.byte_size,
+          })
+          .run();
+      }
+    },
+  });
 
   // Последнее, что сервер подтвердил. Сравнение идёт с ним, а не с пропом:
   // ответ на PATCH приходит с задержкой, и пока он в пути проп ещё старый.
@@ -148,17 +142,6 @@ export function useDocEditor({
   const runRef = useRef(0);
   const commitRef = useRef<(html: string) => void>(() => {});
 
-  // Обработчики вставки живут внутри редактора и создаются один раз, а функция
-  // загрузки меняется вместе с задачей — держим её в ref, иначе редактор
-  // пришлось бы пересоздавать (с потерей истории и курсора).
-  const uploadFilesRef = useRef<(files: File[]) => Promise<void>>(async () => {});
-
-  // Картинки, вынутые из вставленной разметки. Копятся в разборе вставки, а
-  // загрузка начинается сразу после неё (см. onUpdate): к этому моменту узлы с
-  // метками уже стоят в документе, и их есть чем находить.
-  const pastedImagesRef = useRef<PendingImage[]>([]);
-  const uploadPastedRef = useRef<(images: PendingImage[]) => Promise<void>>(async () => {});
-
   const mentionItems = useMentionItems();
 
   const editor = useEditor({
@@ -169,42 +152,12 @@ export function useDocEditor({
     autofocus: autofocus ? "end" : false,
     editorProps: {
       attributes: { class: "doc-content" },
-      // Текст важнее приложенной к нему картинки: см. `hasTextPayload`.
-      handlePaste: (_view, event) => {
-        const files = Array.from(event.clipboardData?.files ?? []);
-        if (!files.length || !editable) return false;
-        if (hasTextPayload(event.clipboardData)) return false;
-        event.preventDefault();
-        void uploadFilesRef.current(files);
-        return true;
-      },
-      handleDrop: (_view, event) => {
-        const data = (event as DragEvent).dataTransfer;
-        const files = Array.from(data?.files ?? []);
-        if (!files.length || !editable) return false;
-        if (hasTextPayload(data)) return false;
-        event.preventDefault();
-        void uploadFilesRef.current(files);
-        return true;
-      },
-      // Картинки внутри вставленной разметки — во вложения; в документ вместо
-      // них едут метки. Иначе base64 из Word и Google Docs раздувает описание
-      // до мегабайтов, и сохранение отваливается по пределу длины.
-      transformPastedHTML: (html) => {
-        if (!editable) return html;
-        const { html: next, pending } = extractPastedImages(html);
-        if (pending.length) pastedImagesRef.current.push(...pending);
-        return next;
-      },
+      ...uploads.editorProps,
     },
     onUpdate: ({ editor: e }) => {
       // Вставка только что легла в документ — метки картинок на месте, можно
       // грузить. Раньше этого момента искать их в документе нечем.
-      if (pastedImagesRef.current.length) {
-        const images = pastedImagesRef.current;
-        pastedImagesRef.current = [];
-        void uploadPastedRef.current(images);
-      }
+      uploads.onUpdate();
       if (timerRef.current) clearTimeout(timerRef.current);
       // Правка, вернувшая текст к сохранённому (отмена через Ctrl+Z), — уже не
       // правка: сохранять нечего, и кнопка не должна звать в никуда.
@@ -289,102 +242,13 @@ export function useDocEditor({
   }, [flush]);
   useEffect(() => () => flushRef.current(), []);
 
-  /**
-   * Загрузка файлов по одному: параллельные ответы вставлялись бы в документ в
-   * случайном порядке, а выбирают их осмысленной последовательностью.
-   */
-  const uploadFiles = useCallback(
-    async (files: File[]) => {
-      if (!orgId || !taskId || !editor || !editable) return;
-      setUploading((n) => n + files.length);
-      for (const file of files) {
-        try {
-          const attachment = await uploadAttachment(orgId, taskId, file);
-          if (isInlineImageMime(attachment.mime_type)) {
-            editor
-              .chain()
-              .focus()
-              .insertDocImage({ src: attachment.url, alt: attachment.filename })
-              .run();
-          } else {
-            editor
-              .chain()
-              .focus()
-              .insertDocFile({
-                href: attachment.url,
-                name: attachment.filename,
-                size: attachment.byte_size,
-              })
-              .run();
-          }
-        } catch (e) {
-          setError(
-            e instanceof UploadError || e instanceof Error
-              ? e.message
-              : `Не удалось загрузить «${file.name}»`,
-          );
-        } finally {
-          setUploading((n) => Math.max(0, n - 1));
-        }
-      }
-    },
-    [orgId, taskId, editor, editable],
-  );
-
+  // Загрузка работает не с тем редактором, что был при вызове хука: он
+  // создаётся ниже. Связываем эффектом — обработчики вставки всё равно
+  // срабатывают только после монтирования.
+  const bindUploads = uploads.bind;
   useEffect(() => {
-    uploadFilesRef.current = uploadFiles;
-  }, [uploadFiles]);
-
-  /**
-   * Загрузка картинок, вынутых из вставки. Идёт по одной, как и загрузка
-   * выбранных файлов: два десятка картинок из документа — это два десятка
-   * запросов, и слать их разом незачем. Текст всё это время уже в документе,
-   * ждать человеку нечего.
-   */
-  const uploadPastedImages = useCallback(
-    async (images: PendingImage[]) => {
-      if (!editor || editor.isDestroyed) return;
-      // Прикрепить некуда (черновик задачи) — возвращаем как было: внешние
-      // ссылки останутся ссылками, base64 уйдёт вместе с местом картинки.
-      if (!orgId || !taskId || !editable) {
-        for (const image of images) revertPastedImage(editor, image);
-        return;
-      }
-      setUploading((n) => n + images.length);
-      let failed = 0;
-      for (const [index, image] of images.entries()) {
-        try {
-          const attachment = await uploadAttachment(
-            orgId,
-            taskId,
-            await fileFromImageSrc(image.src, index + 1),
-          );
-          if (editor.isDestroyed) return;
-          settlePastedImage(editor, image.id, attachment.url);
-        } catch {
-          if (editor.isDestroyed) return;
-          revertPastedImage(editor, image);
-          failed += 1;
-        } finally {
-          setUploading((n) => Math.max(0, n - 1));
-        }
-      }
-      // Одним сообщением на всю вставку: два десятка отдельных ошибок читать
-      // никто не станет, а сути они добавят не больше одной.
-      if (failed) {
-        setError(
-          failed === images.length
-            ? "Не удалось загрузить картинки из вставленного текста"
-            : `Не удалось загрузить картинок: ${failed} из ${images.length}`,
-        );
-      }
-    },
-    [editor, orgId, taskId, editable],
-  );
-
-  useEffect(() => {
-    uploadPastedRef.current = uploadPastedImages;
-  }, [uploadPastedImages]);
+    bindUploads(editor);
+  }, [bindUploads, editor]);
 
   // Синхронизация при смене задачи и при чужой правке. Своя правка, вернувшаяся
   // с сервера, документ не трогает — иначе редактор перерисовывался бы после
@@ -407,10 +271,10 @@ export function useDocEditor({
 
   return {
     editor,
-    uploading,
-    error,
-    clearError: useCallback(() => setError(null), []),
-    uploadFiles,
+    uploading: uploads.uploading,
+    error: uploads.error,
+    clearError: uploads.clearError,
+    uploadFiles: uploads.uploadFiles,
     flush,
     status,
   };

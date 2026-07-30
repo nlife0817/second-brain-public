@@ -1468,7 +1468,10 @@ export function TaskSheet({
                               {c.edited_at && " · изменён"}
                             </p>
                             <div
-                              className="prose prose-sm dark:prose-invert max-w-none text-sm"
+                              // comment-body — правила для картинки в готовом
+                              // тексте: ширину задал автор, высоту ограничиваем
+                              // мы (см. globals.css).
+                              className="comment-body prose prose-sm dark:prose-invert max-w-none text-sm"
                               onClick={handleRichTextClick}
                               dangerouslySetInnerHTML={{ __html: c.body }}
                             />
@@ -1534,6 +1537,10 @@ export function TaskSheet({
                     // и при переходе «новый комментарий ↔ ответ».
                     key={`${taskId}-${replyTo ?? "root"}`}
                     placeholder={replyTo ? "Ответить…" : "Написать комментарий…"}
+                    // Картинка комментария уезжает во вложения той же задачи —
+                    // как и картинка описания.
+                    orgId={orgId}
+                    taskId={taskId}
                     onSubmit={(html) => addComment(html, replyTo)}
                   />
                 </div>

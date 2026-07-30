@@ -75,12 +75,25 @@ export function shouldOpenLink(event: MouseEvent, editable: boolean): boolean {
  * Клик по готовому тексту, который выводится разметкой, а не редактором:
  * комментарии в ленте задачи и в панели обсуждения. Правки там нет — открывает
  * любой клик.
+ *
+ * Картинка открывается так же, как ссылка: в ленте её высота ограничена
+ * (`.comment-body` в globals.css), и посмотреть скриншот целиком иначе негде.
  */
 export function handleRichTextClick(event: ReactMouseEvent<HTMLElement>): void {
+  if (!shouldOpenLink(event.nativeEvent, false)) return;
   const anchor = anchorFromEvent(event.nativeEvent);
-  if (!anchor || !shouldOpenLink(event.nativeEvent, false)) return;
+  if (anchor) {
+    event.preventDefault();
+    // `anchor.href` вместо атрибута: вложение приезжает относительной ссылкой на
+    // роут отдачи файла.
+    openLinkInNewTab(anchor.href);
+    return;
+  }
+  // Картинка внутри ссылки сюда не попадает — её уже открыла ветка выше.
+  const target = event.nativeEvent.target;
+  if (!(target instanceof HTMLImageElement)) return;
+  const src = target.currentSrc || target.src;
+  if (!src) return;
   event.preventDefault();
-  // `anchor.href` вместо атрибута: вложение приезжает относительной ссылкой на
-  // роут отдачи файла.
-  openLinkInNewTab(anchor.href);
+  openLinkInNewTab(src);
 }

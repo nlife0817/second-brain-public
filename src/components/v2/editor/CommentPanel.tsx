@@ -24,6 +24,9 @@ function when(iso: string): string {
 export interface CommentPanelProps {
   threads: DocCommentThread[];
   me: UserBrief | null;
+  /** Куда уходят картинки из комментариев — вложения той же задачи. */
+  orgId: string | null;
+  taskId: string | null;
   /** Тред под курсором в документе — он же раскрыт в панели. */
   activeThreadId: string | null;
   /** Есть ли у треда якорь в тексте: без него обсуждение висит «в воздухе». */
@@ -52,7 +55,7 @@ export interface CommentPanelProps {
 }
 
 export function CommentPanel(props: CommentPanelProps) {
-  const { threads, draftQuote, tabs } = props;
+  const { threads, draftQuote, tabs, orgId, taskId } = props;
   const [showResolved, setShowResolved] = useState(false);
 
   const open = threads.filter((t) => !t.resolved_at);
@@ -86,7 +89,13 @@ export function CommentPanel(props: CommentPanelProps) {
 
       <div className="flex-1 overflow-y-auto p-3">
         {draftQuote !== null && (
-          <DraftCard quote={draftQuote} onSubmit={props.onSubmitDraft} onCancel={props.onCancelDraft} />
+          <DraftCard
+            quote={draftQuote}
+            orgId={orgId}
+            taskId={taskId}
+            onSubmit={props.onSubmitDraft}
+            onCancel={props.onCancelDraft}
+          />
         )}
 
         {visible.length === 0 && draftQuote === null && (
@@ -107,10 +116,14 @@ export function CommentPanel(props: CommentPanelProps) {
 
 function DraftCard({
   quote,
+  orgId,
+  taskId,
   onSubmit,
   onCancel,
 }: {
   quote: string;
+  orgId: string | null;
+  taskId: string | null;
   onSubmit: (html: string) => Promise<boolean>;
   onCancel: () => void;
 }) {
@@ -125,6 +138,8 @@ function DraftCard({
         autoFocus
         placeholder="Комментарий…"
         submitLabel="Оставить"
+        orgId={orgId}
+        taskId={taskId}
         busy={busy}
         onCancel={onCancel}
         onSubmit={async (html) => {
@@ -151,6 +166,8 @@ function Quote({ text }: { text: string }) {
 function ThreadCard({
   thread,
   me,
+  orgId,
+  taskId,
   activeThreadId,
   isAnchored,
   canComment,
@@ -210,6 +227,8 @@ function ThreadCard({
             message={message}
             isRoot={index === 0}
             mine={!!me && message.author_id === me.id}
+            orgId={orgId}
+            taskId={taskId}
             onEdit={(text) => guard(() => onEdit(message.id, text))}
             onDelete={() => guard(() => onDelete(message.id))}
           />
@@ -223,6 +242,8 @@ function ThreadCard({
               autoFocus
               placeholder="Ответить…"
               submitLabel="Ответить"
+              orgId={orgId}
+              taskId={taskId}
               busy={busy}
               onCancel={() => setReplying(false)}
               onSubmit={(html) =>
@@ -279,12 +300,16 @@ function Message({
   message,
   isRoot,
   mine,
+  orgId,
+  taskId,
   onEdit,
   onDelete,
 }: {
   message: DocCommentThread["messages"][number];
   isRoot: boolean;
   mine: boolean;
+  orgId: string | null;
+  taskId: string | null;
   /** Признак успеха: по нему решаем, закрывать ли поле правки. */
   onEdit: (html: string) => Promise<boolean>;
   onDelete: () => void;
@@ -346,6 +371,8 @@ function Message({
               autoFocus
               value={message.body}
               submitLabel="Сохранить"
+              orgId={orgId}
+              taskId={taskId}
               onCancel={() => setEditing(false)}
               // Поле закрываем только при успехе и обязательно дожидаемся
               // ответа: без await правка «сохранялась» на экране и при отказе
@@ -359,7 +386,9 @@ function Message({
           </div>
         ) : (
           <div
-            className="prose prose-sm dark:prose-invert max-w-none text-sm"
+            // comment-body — правила для картинки в готовом тексте: ширину
+            // задал автор, а высоту ограничиваем мы (см. globals.css).
+            className="comment-body prose prose-sm dark:prose-invert max-w-none text-sm"
             onClick={handleRichTextClick}
             dangerouslySetInnerHTML={{ __html: message.body }}
           />

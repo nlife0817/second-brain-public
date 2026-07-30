@@ -41,12 +41,23 @@ function normalizeWidth(raw: unknown): string | null {
  * атрибутом, а не содержимым узла: иначе внутри атомарной картинки появляется
  * второй редактируемый контур, курсор проваливается в него стрелками и
  * выделение всего документа начинает вести себя непредсказуемо.
+ *
+ * `compact` — вид для комментария: размер и удаление, без подписи и выключки.
+ * Узел и разметка те же, поэтому картинка, перенесённая из описания в
+ * комментарий (и обратно), читается обоими наборами расширений.
  */
 export const DocImage = Node.create({
   name: "docImage",
   group: "block",
   atom: true,
   draggable: true,
+
+  addOptions() {
+    return {
+      /** Колонка комментария узкая: подпись и выключка там только шумят. */
+      compact: false,
+    };
+  },
 
   addAttributes() {
     return {
@@ -126,9 +137,17 @@ export const DocImage = Node.create({
   },
 });
 
-function DocImageView({ node, updateAttributes, selected, editor, deleteNode }: NodeViewProps) {
+function DocImageView({
+  node,
+  updateAttributes,
+  selected,
+  editor,
+  deleteNode,
+  extension,
+}: NodeViewProps) {
   const figureRef = useRef<HTMLElement | null>(null);
   const [dragging, setDragging] = useState(false);
+  const compact = extension.options.compact === true;
   const editable = editor.isEditable;
   const align = (node.attrs.align as Align) ?? "left";
   const width = normalizeWidth(node.attrs.width);
@@ -212,22 +231,27 @@ function DocImageView({ node, updateAttributes, selected, editor, deleteNode }: 
                 {preset}
               </button>
             ))}
-            <span className="doc-image-sep" />
-            {ALIGNMENTS.map((value) => {
-              const Icon = value === "left" ? AlignLeft : value === "center" ? AlignCenter : AlignRight;
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => updateAttributes({ align: value })}
-                  className={cn("doc-image-btn", align === value && "doc-image-btn-active")}
-                  title={`Выровнять: ${value}`}
-                >
-                  <Icon className="size-3.5" />
-                </button>
-              );
-            })}
+            {!compact && (
+              <>
+                <span className="doc-image-sep" />
+                {ALIGNMENTS.map((value) => {
+                  const Icon =
+                    value === "left" ? AlignLeft : value === "center" ? AlignCenter : AlignRight;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => updateAttributes({ align: value })}
+                      className={cn("doc-image-btn", align === value && "doc-image-btn-active")}
+                      title={`Выровнять: ${value}`}
+                    >
+                      <Icon className="size-3.5" />
+                    </button>
+                  );
+                })}
+              </>
+            )}
             <span className="doc-image-sep" />
             <button
               type="button"
@@ -241,7 +265,10 @@ function DocImageView({ node, updateAttributes, selected, editor, deleteNode }: 
           </div>
         )}
       </div>
-      {editable ? (
+      {/* Поле подписи только в описании; в комментарии подпись, приехавшую с
+          картинкой из описания, всё равно показываем — терять её при переносе
+          нельзя. */}
+      {editable && !compact ? (
         <figcaption>
           <input
             value={(node.attrs.caption as string) ?? ""}
