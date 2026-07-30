@@ -479,20 +479,20 @@
    готовом тексте комментария (`.comment-body`), где разметку рисует не редактор,
    а dangerouslySetInnerHTML поверх `prose`. Селекторы `prose` из Tailwind живут
    в `:where()` с нулевой специфичностью, поэтому эти перебивают их. */
-figure.doc-image {
+figure[data-image] {
   margin: 0.8em 0;
   max-width: 100%;
 }
-figure.doc-image[data-align="center"] { margin-left: auto; margin-right: auto; }
-figure.doc-image[data-align="right"] { margin-left: auto; margin-right: 0; }
-figure.doc-image[data-align="left"] { margin-right: auto; margin-left: 0; }
+figure[data-image][data-align="center"] { margin-left: auto; margin-right: auto; }
+figure[data-image][data-align="right"] { margin-left: auto; margin-right: 0; }
+figure[data-image][data-align="left"] { margin-right: auto; margin-left: 0; }
 
 .doc-image-frame {
   position: relative;
   line-height: 0;
 }
 
-figure.doc-image img {
+figure[data-image] img {
   width: 100%;
   height: auto;
   margin: 0;
@@ -515,7 +515,7 @@ figure.doc-image img {
   line-height: 1.2;
 }
 
-figure.doc-image figcaption {
+figure[data-image] figcaption {
   margin-top: 0.3rem;
   font-size: 0.8rem;
   line-height: 1.4;
@@ -604,7 +604,7 @@ figure.doc-image figcaption {
 
    `width: auto` вместе с `max-width: 100%` обязателен: при жёсткой ширине 100%
    ограничение высоты сплющило бы картинку вместо того, чтобы уменьшить её. */
-.comment-body figure.doc-image img {
+.comment-body figure[data-image] img {
   width: auto;
   max-width: 100%;
   max-height: 20rem;
