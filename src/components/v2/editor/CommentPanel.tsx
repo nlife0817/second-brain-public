@@ -3,7 +3,7 @@
 // Панель обсуждения документа: треды на фрагментах описания. Ведёт себя как
 // комментарии в Google Docs — ответ, правка, закрытие, переоткрытие.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Check, CornerDownRight, MessageSquare, MoreHorizontal, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { DocCommentThread, UserBrief } from "@/lib/core/types";
@@ -43,10 +43,16 @@ export interface CommentPanelProps {
   draftQuote: string | null;
   onSubmitDraft: (html: string) => Promise<boolean>;
   onCancelDraft: () => void;
+  /**
+   * Переключатель панелей (обсуждение ↔ оглавление) — он и подписывает панель.
+   * Без него, когда в описании нет заголовков и переключать не на что, панель
+   * подписывает себя сама.
+   */
+  tabs?: ReactNode;
 }
 
 export function CommentPanel(props: CommentPanelProps) {
-  const { threads, draftQuote } = props;
+  const { threads, draftQuote, tabs } = props;
   const [showResolved, setShowResolved] = useState(false);
 
   const open = threads.filter((t) => !t.resolved_at);
@@ -55,15 +61,23 @@ export function CommentPanel(props: CommentPanelProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <MessageSquare className="size-4 text-muted-foreground" />
-        <span className="text-sm font-medium">Обсуждение</span>
-        <span className="text-xs text-muted-foreground">{open.length}</span>
+      {/* flex-wrap на случай, когда в шапке сходятся всё сразу: переключатель
+          панелей, счётчик открытых и кнопка закрытых. В колонку 320 px они
+          влезают вплотную, и «Закрытые» лучше перенести на вторую строку, чем
+          обрезать подписи вкладок. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-3 py-2">
+        {tabs ?? (
+          <>
+            <MessageSquare className="size-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Обсуждение</span>
+            <span className="text-xs text-muted-foreground">{open.length}</span>
+          </>
+        )}
         <span className="flex-1" />
         {resolved.length > 0 && (
           <button
             onClick={() => setShowResolved((v) => !v)}
-            className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
           >
             {showResolved ? "Скрыть закрытые" : `Закрытые (${resolved.length})`}
           </button>
@@ -148,7 +162,7 @@ function ThreadCard({
   onResolve,
 }: { thread: DocCommentThread } & Omit<
   CommentPanelProps,
-  "threads" | "draftQuote" | "onSubmitDraft" | "onCancelDraft"
+  "threads" | "draftQuote" | "onSubmitDraft" | "onCancelDraft" | "tabs"
 >) {
   // Поле ответа монтируется по клику, а не живёт в каждом треде: редактор
   // Tiptap на тред — это десятки экземпляров ProseMirror в одной панели.
