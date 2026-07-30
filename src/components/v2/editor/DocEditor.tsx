@@ -17,6 +17,7 @@ import type { DocCommentThread, UserBrief } from "@/lib/core/types";
 import { useBackDismiss } from "@/components/v2/mobile/hooks";
 import { cn } from "@/lib/utils";
 import { CommentPanel } from "./CommentPanel";
+import { DocSaveButton } from "./SaveButton";
 import {
   anchoredThreadIds,
   markSelectionAsThread,
@@ -26,7 +27,7 @@ import {
 } from "./comment-marks";
 import { SelectionMenu } from "./SelectionMenu";
 import { EditorToolbar } from "./Toolbar";
-import { useDocEditor } from "./useDocEditor";
+import { useDocEditor, type UseDocEditorOptions } from "./useDocEditor";
 import { fileDropHint, useFileDrop } from "./useFileDrop";
 
 export interface DocEditorProps {
@@ -36,7 +37,8 @@ export interface DocEditorProps {
   taskId: string | null;
   taskTitle: string;
   value: string;
-  onSave: (html: string) => void;
+  /** `false` — сохранить не удалось; см. `UseDocEditorOptions.onSave`. */
+  onSave: UseDocEditorOptions["onSave"];
   editable: boolean;
   canComment: boolean;
   me: UserBrief | null;
@@ -256,6 +258,7 @@ export function DocEditor({
             Загрузка ({doc.uploading})
           </span>
         )}
+        {editable && <DocSaveButton status={doc.status} onSave={doc.flush} className="h-8" />}
         <Button
           variant={railOpen ? "secondary" : "outline"}
           size="sm"

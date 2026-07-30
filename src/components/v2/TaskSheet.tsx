@@ -393,12 +393,23 @@ export function TaskSheet({
   /**
    * Правка задачи. Карточка и список за ней перерисовываются сразу, запрос уходит
    * следом; при отказе состояние возвращается на место.
+   *
+   * Возвращает `false`, если сервер отказал: описание сохраняет себя само
+   * (`RichText`/`DocEditor`), и без признака успеха оно считало бы отказ
+   * сохранением, а кнопку — довольной.
    */
   async function patch(
     body: Record<string, unknown>,
     preview?: (task: TaskDetail) => TaskDetail,
-  ) {
-    if (!orgId || !taskId || !task) return;
+    /**
+     * Не откатывать при отказе. Нужно описанию: набранный текст живёт только в
+     * редакторе, и откат к серверной версии стёр бы его — спасать кнопкой
+     * «Повторить» было бы уже нечего. Остальные поля откатываются как раньше:
+     * там правка — это выбор из готовых значений, повторить его недорого.
+     */
+    keepOnError = false,
+  ): Promise<boolean> {
+    if (!orgId || !taskId || !task) return false;
     const previous = task;
     const base = previewPatch(task, body);
     const optimistic = preview ? preview(base) : base;
@@ -406,16 +417,20 @@ export function TaskSheet({
     onChanged?.({ type: "patched", task: optimistic, confirmed: false });
     try {
       const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`, body);
-      if (currentTaskRef.current !== taskId) return;
+      if (currentTaskRef.current !== taskId) return false;
       setTask(updated);
       onChanged?.({ type: "patched", task: updated, confirmed: true });
       setError(null);
       flashSaved();
+      return true;
     } catch (e) {
-      if (currentTaskRef.current !== taskId) return;
-      setTask(previous);
-      onChanged?.({ type: "patched", task: previous, confirmed: true });
+      if (currentTaskRef.current !== taskId) return false;
+      if (!keepOnError) {
+        setTask(previous);
+        onChanged?.({ type: "patched", task: previous, confirmed: true });
+      }
       setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+      return false;
     }
   }
 
@@ -1384,13 +1399,14 @@ export function TaskSheet({
                 <RichText
                   key={`desc-${task.id}`}
                   value={task.description}
-                  onSave={(html) => void patch({ description: html })}
+                  onSave={(html) => patch({ description: html }, undefined, true)}
                   orgId={orgId}
                   taskId={task.id}
                   editable={canEdit}
                   onExpand={() => setExpandedTaskId(task.id)}
                   threadCount={docThreads.filter((t) => !t.resolved_at).length}
                   collapsible
+                  showSaveButton
                 />
               )}
 
@@ -1534,7 +1550,7 @@ export function TaskSheet({
         taskId={task.id}
         taskTitle={task.title}
         value={task.description}
-        onSave={(html) => void patch({ description: html })}
+        onSave={(html) => patch({ description: html }, undefined, true)}
         editable={canEdit}
         // Право комментировать проверяет сервер: у гостя оно зависит от роли в
         // конкретном проекте, а её карточка не знает.

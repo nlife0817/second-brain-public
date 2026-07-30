@@ -5,9 +5,10 @@ import { EditorContent } from "@tiptap/react";
 import { ChevronDown, ChevronUp, Loader2, Maximize2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { DocSaveButton } from "./editor/SaveButton";
 import { SelectionMenu } from "./editor/SelectionMenu";
 import { EditorToolbar } from "./editor/Toolbar";
-import { useDocEditor } from "./editor/useDocEditor";
+import { useDocEditor, type UseDocEditorOptions } from "./editor/useDocEditor";
 import { fileDropHint, useFileDrop } from "./editor/useFileDrop";
 
 /** Высота свёрнутого описания — примерно шесть строк текста. */
@@ -50,9 +51,11 @@ export function RichText({
   onExpand,
   threadCount = 0,
   collapsible = false,
+  showSaveButton = false,
 }: {
   value: string;
-  onSave: (html: string) => void;
+  /** `false` — сохранить не удалось; см. `UseDocEditorOptions.onSave`. */
+  onSave: UseDocEditorOptions["onSave"];
   /**
    * Задача, к которой крепятся вложения. У черновика (`TaskDraftPanel`) её ещё
    * нет — прикрепить файл не к чему, поэтому кнопки загрузки не рисуются.
@@ -71,6 +74,14 @@ export function RichText({
    * там нечего.
    */
   collapsible?: boolean;
+  /**
+   * Кнопка сохранения — подстраховка автосохранения.
+   *
+   * Только там, где `onSave` действительно уходит на сервер. У черновиков
+   * (`TaskDraftPanel`, новая подзадача) описание копится в состоянии экрана до
+   * создания задачи: «Сохранено» там значило бы не то, что человек прочитает.
+   */
+  showSaveButton?: boolean;
 }) {
   const doc = useDocEditor({ value, onSave, orgId, taskId, editable, placeholder });
   const [expanded, setExpanded] = useState(false);
@@ -181,7 +192,12 @@ export function RichText({
         )}
       </div>
 
-      {editable && <p className="text-xs text-muted-foreground">{fileDropHint(canUpload)}</p>}
+      {editable && (
+        <div className="flex items-center gap-2">
+          <p className="min-w-0 flex-1 text-xs text-muted-foreground">{fileDropHint(canUpload)}</p>
+          {showSaveButton && <DocSaveButton status={doc.status} onSave={doc.flush} />}
+        </div>
+      )}
 
       {doc.error && (
         <p className="text-xs text-destructive">
