@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  archiveStatus,
   arrangementError,
   cardStatuses,
   defaultStatus,
@@ -144,6 +145,16 @@ describe("defaultStatus", () => {
   it("без флага откатывается на первый рабочий, а не на «Готово»", () => {
     const noFlag = [status("done", "done", 1), status("todo", "backlog", 2)];
     expect(defaultStatus(noFlag)?.id).toBe("todo");
+  });
+});
+
+describe("archiveStatus", () => {
+  it("кнопка «В архив» ведёт в первый архивный статус", () => {
+    expect(archiveStatus(STATUSES)?.id).toBe("archive");
+  });
+
+  it("без архивных статусов кнопке некуда вести", () => {
+    expect(archiveStatus(STATUSES.filter((s) => s.category !== "archived"))).toBeUndefined();
   });
 });
 
