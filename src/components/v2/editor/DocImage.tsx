@@ -154,6 +154,20 @@ function DocImageView({
   const uploading = !!node.attrs.uploadId && !node.attrs.src;
 
   /**
+   * Ручка перетаскивания — сама картинка.
+   *
+   * Без `data-drag-handle` узел не сдвинуть: Tiptap тащит блок только от ручки, а
+   * `NoTextDrag` вдобавок режет любой `dragstart` мимо неё (иначе выделенный
+   * текст уезжает мышью незаметно для человека). Ручка висит на медиа, а не на
+   * всём `figure`: ручка размера, панель кнопок и поле подписи — соседи внутри
+   * него, и захват за них должен остаться прежним.
+   *
+   * Место вставки рисует Dropcursor (см. extensions.ts), контейнер под курсором
+   * подсвечивает `DropTarget`.
+   */
+  const drag = editable ? { "data-drag-handle": "", draggable: true } : { draggable: false };
+
+  /**
    * Перетаскивание правого края. Слушатели вешаются на документ, а не на ручку:
    * курсор при быстром движении уходит с элемента, и события мыши до него
    * перестают доходить прямо посреди изменения размера.
@@ -198,7 +212,7 @@ function DocImageView({
         {/* Картинка из вставки ещё едет во вложения — показываем место, которое
             она займёт. Пустой <img> вместо этого выглядел бы как битая ссылка. */}
         {uploading ? (
-          <span className="doc-image-loading">
+          <span className={cn("doc-image-loading", editable && "doc-image-draggable")} {...drag}>
             <Loader2 className="size-4 animate-spin" />
             Загрузка картинки…
           </span>
@@ -207,7 +221,8 @@ function DocImageView({
           <img
             src={(node.attrs.src as string) ?? ""}
             alt={(node.attrs.alt as string) || (node.attrs.caption as string) || ""}
-            draggable={false}
+            className={cn(editable && "doc-image-draggable")}
+            {...drag}
           />
         )}
         {editable && !uploading && (

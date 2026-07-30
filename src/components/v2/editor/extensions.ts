@@ -17,6 +17,7 @@ import { Column, ColumnBlock } from "./Columns";
 import { CommentMark } from "./CommentMark";
 import { DocFile } from "./DocFile";
 import { DocImage } from "./DocImage";
+import { DropTarget } from "./DropTarget";
 import { createMention, type MentionItem } from "./Mention";
 import { OpenLinkInNewTab } from "./OpenLink";
 import { NoTextDrag } from "./TextDrag";
@@ -31,6 +32,16 @@ const LINK_OPTIONS = {
   openOnClick: false,
   HTMLAttributes: { target: "_blank", rel: "noopener noreferrer nofollow" },
 } as const;
+
+/**
+ * Линия места вставки при перетаскивании картинки (`DocImage`).
+ *
+ * Цвет отдан классу, а не опции: `color` расширение вписывает прямо в
+ * `style="background-color"`, и такая линия не знала бы ни тёмной темы, ни
+ * толщины на границе колонки. Волосок по умолчанию вдобавок теряется на фоне
+ * текста — в разметке видно только `.doc-dropcursor` из globals.css.
+ */
+const DROPCURSOR_OPTIONS = { color: false, width: 3, class: "doc-dropcursor" } as const;
 
 export interface DocExtensionsOptions {
   placeholder?: string;
@@ -56,9 +67,10 @@ export function docExtensions({
   mentionItems,
 }: DocExtensionsOptions = {}): Extensions {
   return [
-    StarterKit.configure({ link: LINK_OPTIONS }),
+    StarterKit.configure({ link: LINK_OPTIONS, dropcursor: DROPCURSOR_OPTIONS }),
     OpenLinkInNewTab,
     NoTextDrag,
+    DropTarget,
     Placeholder.configure({ placeholder }),
     TextAlign.configure({ types: ["heading", "paragraph"] }),
     Highlight,
@@ -86,6 +98,10 @@ export function docExtensions({
  * подписи и выключки: колонка комментария для них слишком узкая. Санитайзер
  * пропускает `figure`/`img` со `style: width` в любом тексте, поэтому ширина
  * переживает отправку.
+ *
+ * `DropTarget` сюда не идёт: подсвечивать в комментарии нечего — ни колонок, ни
+ * таблиц тут нет, картинка двигается между абзацами, и линии места вставки
+ * достаточно.
  */
 export function commentExtensions({
   placeholder = "Написать комментарий…",
@@ -97,6 +113,7 @@ export function commentExtensions({
       horizontalRule: false,
       codeBlock: false,
       link: LINK_OPTIONS,
+      dropcursor: DROPCURSOR_OPTIONS,
     }),
     OpenLinkInNewTab,
     NoTextDrag,
