@@ -64,7 +64,7 @@ import { useLoad } from "@/lib/core/use-load";
 import { useTaskOpenStore } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, chipStyle, dueTone, formatDue } from "./bits";
-import { DatePicker, DuePicker } from "./DuePicker";
+import { DuePicker, StartPicker } from "./DuePicker";
 import { handleRichTextClick } from "./editor/open-link";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
@@ -367,6 +367,7 @@ export function TaskSheet({
     if (typeof body.description === "string") next.description = body.description;
     if (typeof body.priority === "string") next.priority = body.priority as TaskPriority;
     if ("start_date" in body) next.start_date = body.start_date as string | null;
+    if ("start_time" in body) next.start_time = body.start_time as string | null;
     if ("due_date" in body) next.due_date = body.due_date as string | null;
     if ("due_time" in body) next.due_time = body.due_time as string | null;
     if ("estimated_minutes" in body) {
@@ -868,7 +869,7 @@ export function TaskSheet({
     <>
       <CalendarRange className="size-4 shrink-0 text-muted-foreground" />
       {task.start_date ? (
-        <span className="tabular-nums">{formatDue(task.start_date, null)}</span>
+        <span className="tabular-nums">{formatDue(task.start_date, task.start_time)}</span>
       ) : (
         <span className="text-muted-foreground">Указать начало</span>
       )}
@@ -927,13 +928,14 @@ export function TaskSheet({
           порядком, каким полоса лежит на ганте. */}
       <span className={propLabel}>Начало</span>
       {canEdit ? (
-        <DatePicker
+        <StartPicker
           date={task.start_date}
+          time={task.start_time}
           triggerClassName="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
-          onCommit={(start_date) => void patch({ start_date })}
+          onCommit={(next) => void patch(next)}
         >
           {startLabelContent}
-        </DatePicker>
+        </StartPicker>
       ) : (
         <span className="flex items-center gap-2">{startLabelContent}</span>
       )}

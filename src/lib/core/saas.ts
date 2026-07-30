@@ -328,7 +328,8 @@ export async function exportOrg(ctx: AuthContext): Promise<Record<string, unknow
        FROM core.org_members m JOIN core.users u ON u.id = m.user_id WHERE m.org_id = ?`,
     ).all(ctx.orgId),
     prepare(
-      `SELECT t.id, t.title, t.description, t.priority, t.start_date, t.due_date, t.due_time, t.completed_at,
+      `SELECT t.id, t.title, t.description, t.priority, t.start_date, t.start_time,
+              t.due_date, t.due_time, t.completed_at,
               t.parent_task_id, t.created_at, s.name AS status
        FROM core.tasks t LEFT JOIN core.task_statuses s ON s.id = t.status_id
        WHERE ${taskScope}`,

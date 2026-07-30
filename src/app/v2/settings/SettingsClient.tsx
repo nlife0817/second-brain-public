@@ -12,7 +12,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
-import { Bell, Copy, Plus, Trash2 } from "lucide-react";
+import { Bell, CalendarDays, Copy, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -437,6 +437,25 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
                 render={<Link href="/v2/settings/notifications" />}
               >
                 <Bell className="size-4" />
+                Открыть раздел
+              </Button>
+            </div>
+          </Section>
+
+          {/* Внешние календари, как и уведомления, настраивает себе каждый: это
+              личное подключение, а не настройка организации. */}
+          <Section title="Календари">
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="flex-1 text-sm text-muted-foreground">
+                Google Calendar и подписки по ссылке — рядом с задачами, только для чтения
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                nativeButton={false}
+                render={<Link href="/v2/settings/calendars" />}
+              >
+                <CalendarDays className="size-4" />
                 Открыть раздел
               </Button>
             </div>

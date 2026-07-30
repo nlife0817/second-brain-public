@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { TaskSheet } from "@/components/v2/lazy";
+import { CalendarView } from "@/components/v2/tasks/CalendarView";
 import { GanttView } from "@/components/v2/tasks/GanttView";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
 import { ViewModeSwitch } from "@/components/v2/tasks/ViewToolbar";
@@ -115,12 +116,26 @@ function AllTasksScreen({ initial }: { initial: AllTasksResult }) {
 
   const title = <h1 className="font-heading text-xl font-semibold tracking-tight">Все задачи</h1>;
   // Доски здесь нет: раскладка по статусам поверх всех проектов организации —
-  // это не доска, а свалка. Таблица и гант показывают один и тот же срез.
-  const viewSwitch = <ViewModeSwitch modes={["table", "gantt"]} />;
+  // это не доска, а свалка. Остальные виды показывают один и тот же срез.
+  const viewSwitch = <ViewModeSwitch modes={["table", "gantt", "calendar"]} />;
 
   return (
     <>
-      {mode === "gantt" ? (
+      {mode === "calendar" ? (
+        <CalendarView
+          tasks={tasks}
+          setTasks={setTasks}
+          reload={reload}
+          invalidateKey={orgId ? `/orgs/${orgId}/tasks` : null}
+          loading={loading}
+          error={error}
+          onDismissError={() => setError(null)}
+          onOpenTask={setOpenTaskId}
+          onCreateTask={createTask}
+          titleSlot={title}
+          actionsSlot={viewSwitch}
+        />
+      ) : mode === "gantt" ? (
         <GanttView
           tasks={tasks}
           setTasks={setTasks}

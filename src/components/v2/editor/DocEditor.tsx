@@ -1,22 +1,27 @@
 "use client";
 
-// Полноэкранный режим описания: документ по центру, обсуждение справа.
+// Полноэкранный режим описания: документ по центру, панель справа.
 //
 // Зачем отдельный слой, а не поле пошире: описание в карточке — узкая колонка
 // рядом с полями задачи, и читать в ней документ на несколько экранов нельзя.
 // Здесь та же разметка получает ширину страницы, полную панель инструментов и
 // комментарии к фрагментам текста.
+//
+// Правая панель одна на два списка — обсуждение и оглавление, — и они меняются
+// местами вкладками: вторая колонка в 320 px отняла бы ширину у самого текста,
+// ради которой этот режим и заведён.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { EditorContent, useEditorState } from "@tiptap/react";
-import { Loader2, MessageSquare, Minimize2, X } from "lucide-react";
+import { List, Loader2, MessageSquare, Minimize2, X, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/core/client";
 import type { DocCommentThread, UserBrief } from "@/lib/core/types";
 import { useBackDismiss } from "@/components/v2/mobile/hooks";
 import { cn } from "@/lib/utils";
 import { CommentPanel } from "./CommentPanel";
+import { DocOutline, useDocOutline } from "./DocOutline";
 import { DocSaveButton } from "./SaveButton";
 import {
   anchoredThreadIds,
@@ -29,6 +34,38 @@ import { SelectionMenu } from "./SelectionMenu";
 import { EditorToolbar } from "./Toolbar";
 import { useDocEditor, type UseDocEditorOptions } from "./useDocEditor";
 import { fileDropHint, useFileDrop } from "./useFileDrop";
+
+/** Вкладка панели. Подпись прячется только при совсем узкой панели — иконки хватает. */
+function PanelTabButton({
+  icon: Icon,
+  label,
+  count = 0,
+  active,
+  onClick,
+}: {
+  icon: LucideIcon;
+  label: string;
+  count?: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      className={cn(
+        "flex min-w-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      <Icon className="size-3.5 shrink-0" />
+      <span className="truncate">{label}</span>
+      {count > 0 && <span className="shrink-0 text-muted-foreground">{count}</span>}
+    </button>
+  );
+}
 
 export interface DocEditorProps {
   open: boolean;
@@ -50,6 +87,9 @@ export interface DocEditorProps {
 
 type Draft = { quote: string; from: number; to: number };
 
+/** Что показывает правая панель. */
+type PanelTab = "comments" | "outline";
+
 export function DocEditor({
   open,
   onClose,
@@ -67,6 +107,7 @@ export function DocEditor({
   const [threads, setThreads] = useState<DocCommentThread[]>(initialThreads);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [railOpen, setRailOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState<PanelTab>("comments");
   const [error, setError] = useState<string | null>(null);
 
   const doc = useDocEditor({
@@ -137,11 +178,26 @@ export function DocEditor({
     [editor, signals],
   );
 
+  const outline = useDocOutline(editor);
+  // Вкладка выводится, а не хранится: последний заголовок могли удалить прямо
+  // сейчас, и панель, оставшаяся на оглавлении, показывала бы пустоту.
+  const tab: PanelTab = outline.length > 0 ? panelTab : "comments";
+
+  // Курсор встал на якорь обсуждения — панель обязана показывать обсуждение,
+  // иначе клик по подсвеченному фрагменту ни к чему не приводит. Обратно на
+  // оглавление уводит только сам пользователь: смена вкладки этот переход не
+  // перезапускает.
+  useEffect(() => {
+    if (activeThreadId) setPanelTab("comments");
+  }, [activeThreadId]);
+
   const startDraft = useCallback(() => {
     if (!editor) return;
     const { from, to } = editor.state.selection;
     if (from === to) return;
     setDraft({ quote: editor.state.doc.textBetween(from, to, " ").slice(0, 2000), from, to });
+    // Черновик набирают в панели — она должна быть и открыта, и на обсуждении.
+    setPanelTab("comments");
     setRailOpen(true);
   }, [editor]);
 
@@ -244,6 +300,40 @@ export function DocEditor({
   if (!open || typeof document === "undefined") return null;
 
   const openThreadCount = threads.filter((t) => !t.resolved_at).length;
+  const hasOutline = outline.length > 0;
+
+  /**
+   * Кнопка панели на узком экране: панель там выезжает поверх текста, поэтому
+   * повторное нажатие по открытой вкладке её закрывает.
+   */
+  function toggleRail(next: PanelTab) {
+    if (railOpen && tab === next) {
+      setRailOpen(false);
+      return;
+    }
+    setPanelTab(next);
+    setRailOpen(true);
+  }
+
+  // Переключатель рисуется только когда есть что переключать: без заголовков
+  // панель остаётся обсуждением и подписывает себя сама.
+  const tabs = hasOutline ? (
+    <div className="flex min-w-0 items-center gap-0.5 rounded-lg bg-muted p-0.5">
+      <PanelTabButton
+        icon={MessageSquare}
+        label="Обсуждение"
+        count={openThreadCount}
+        active={tab === "comments"}
+        onClick={() => setPanelTab("comments")}
+      />
+      <PanelTabButton
+        icon={List}
+        label="Оглавление"
+        active={tab === "outline"}
+        onClick={() => setPanelTab("outline")}
+      />
+    </div>
+  ) : undefined;
 
   // Портал в body обязателен: слой открывается поверх карточки задачи, а та
   // едет по экрану через transform — внутри неё `fixed` считался бы от самой
@@ -260,14 +350,26 @@ export function DocEditor({
         )}
         {editable && <DocSaveButton status={doc.status} onSave={doc.flush} className="h-8" />}
         <Button
-          variant={railOpen ? "secondary" : "outline"}
+          variant={railOpen && tab === "comments" ? "secondary" : "outline"}
           size="sm"
           className="h-8 lg:hidden"
-          onClick={() => setRailOpen((v) => !v)}
+          onClick={() => toggleRail("comments")}
+          title="Обсуждение"
         >
           <MessageSquare className="size-4" />
           {openThreadCount > 0 && openThreadCount}
         </Button>
+        {hasOutline && (
+          <Button
+            variant={railOpen && tab === "outline" ? "secondary" : "outline"}
+            size="sm"
+            className="h-8 lg:hidden"
+            onClick={() => toggleRail("outline")}
+            title="Оглавление"
+          >
+            <List className="size-4" />
+          </Button>
+        )}
         <Button variant="outline" size="sm" className="h-8" onClick={onClose} title="Свернуть описание">
           <Minimize2 className="size-4" />
           <span className="hidden sm:inline">Свернуть</span>
@@ -336,8 +438,8 @@ export function DocEditor({
           )}
         </div>
 
-        {/* На широком экране обсуждение стоит рядом с текстом, на узком —
-            выезжает поверх: колонка в 320 px не оставила бы места документу. */}
+        {/* На широком экране панель стоит рядом с текстом, на узком — выезжает
+            поверх: колонка в 320 px не оставила бы места документу. */}
         <aside
           className={cn(
             "border-l border-border bg-muted/20",
@@ -345,22 +447,27 @@ export function DocEditor({
             railOpen && "absolute inset-y-0 right-0 z-10 block w-full max-w-sm shadow-xl lg:relative lg:shadow-none",
           )}
         >
-          <CommentPanel
-            threads={threads}
-            me={me}
-            activeThreadId={activeThreadId}
-            isAnchored={(id) => anchors.has(id)}
-            canComment={canComment}
-            canResolveAll={canResolveAll}
-            onSelect={(id) => editor && scrollToThread(editor, id)}
-            onReply={reply}
-            onEdit={editMessage}
-            onDelete={removeMessage}
-            onResolve={resolve}
-            draftQuote={draft?.quote ?? null}
-            onSubmitDraft={submitDraft}
-            onCancelDraft={() => setDraft(null)}
-          />
+          {tab === "outline" ? (
+            <DocOutline editor={editor} items={outline} scrollHost={scrollHost} tabs={tabs} />
+          ) : (
+            <CommentPanel
+              threads={threads}
+              me={me}
+              activeThreadId={activeThreadId}
+              isAnchored={(id) => anchors.has(id)}
+              canComment={canComment}
+              canResolveAll={canResolveAll}
+              onSelect={(id) => editor && scrollToThread(editor, id)}
+              onReply={reply}
+              onEdit={editMessage}
+              onDelete={removeMessage}
+              onResolve={resolve}
+              draftQuote={draft?.quote ?? null}
+              onSubmitDraft={submitDraft}
+              onCancelDraft={() => setDraft(null)}
+              tabs={tabs}
+            />
+          )}
         </aside>
       </div>
     </div>,
