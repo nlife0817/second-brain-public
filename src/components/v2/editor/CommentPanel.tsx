@@ -10,6 +10,7 @@ import type { DocCommentThread, UserBrief } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
 import { Avatar } from "../bits";
 import { CommentComposer } from "./CommentComposer";
+import { handleRichTextClick } from "./open-link";
 
 function when(iso: string): string {
   return new Date(iso).toLocaleString("ru-RU", {
@@ -345,6 +346,7 @@ function Message({
         ) : (
           <div
             className="prose prose-sm dark:prose-invert max-w-none text-sm"
+            onClick={handleRichTextClick}
             dangerouslySetInnerHTML={{ __html: message.body }}
           />
         )}

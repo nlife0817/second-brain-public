@@ -96,6 +96,15 @@ describe("sanitizeRichText", () => {
     expect(clean).toContain('rel="noopener noreferrer nofollow"');
   });
 
+  // Переход в текущей вкладке уносил бы из приложения вместе с несохранёнными
+  // правками, поэтому чужой target не сохраняется.
+  it("ссылка открывается в новой вкладке независимо от исходного target", () => {
+    expect(sanitizeRichText('<a href="https://example.com" target="_self">сайт</a>')).toContain(
+      'target="_blank"',
+    );
+    expect(sanitizeRichText('<a href="https://example.com">сайт</a>')).toContain('target="_blank"');
+  });
+
   // Упоминание проходит без правок allowlist (у span разрешены data-*), но
   // именно поэтому его легко потерять при следующей правке санитайзера.
   it("сохраняет упоминание участника", () => {

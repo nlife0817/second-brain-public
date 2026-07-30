@@ -63,6 +63,7 @@ import { useTaskOpenStore } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, chipStyle, dueTone, formatDue } from "./bits";
 import { DatePicker, DuePicker } from "./DuePicker";
+import { handleRichTextClick } from "./editor/open-link";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
 import { SidePanel, useWideViewport } from "./SidePanel";
@@ -1404,6 +1405,7 @@ export function TaskSheet({
                             </p>
                             <div
                               className="prose prose-sm dark:prose-invert max-w-none text-sm"
+                              onClick={handleRichTextClick}
                               dangerouslySetInnerHTML={{ __html: c.body }}
                             />
                             {orgRole !== null && replyTo !== (c.parent_id ?? c.id) && (

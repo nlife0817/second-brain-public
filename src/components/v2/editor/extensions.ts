@@ -18,6 +18,18 @@ import { CommentMark } from "./CommentMark";
 import { DocFile } from "./DocFile";
 import { DocImage } from "./DocImage";
 import { createMention, type MentionItem } from "./Mention";
+import { OpenLinkInNewTab } from "./OpenLink";
+
+/**
+ * Ссылки открывает `OpenLinkInNewTab`, а не сам `openOnClick`: тот идёт по
+ * атрибуту `target` (в унаследованных описаниях там `_self`) и не ставит
+ * `noopener`. Сам атрибут в разметке всё равно нужен — по нему уходит в новую
+ * вкладку ссылка из тела комментария, которое выводится разметкой без редактора.
+ */
+const LINK_OPTIONS = {
+  openOnClick: false,
+  HTMLAttributes: { target: "_blank", rel: "noopener noreferrer nofollow" },
+} as const;
 
 export interface DocExtensionsOptions {
   placeholder?: string;
@@ -43,12 +55,8 @@ export function docExtensions({
   mentionItems,
 }: DocExtensionsOptions = {}): Extensions {
   return [
-    StarterKit.configure({
-      link: {
-        openOnClick: false,
-        HTMLAttributes: { rel: "noopener noreferrer nofollow" },
-      },
-    }),
+    StarterKit.configure({ link: LINK_OPTIONS }),
+    OpenLinkInNewTab,
     Placeholder.configure({ placeholder }),
     TextAlign.configure({ types: ["heading", "paragraph"] }),
     Highlight,
@@ -79,11 +87,9 @@ export function commentExtensions({
       heading: false,
       horizontalRule: false,
       codeBlock: false,
-      link: {
-        openOnClick: false,
-        HTMLAttributes: { rel: "noopener noreferrer nofollow" },
-      },
+      link: LINK_OPTIONS,
     }),
+    OpenLinkInNewTab,
     Placeholder.configure({ placeholder }),
     ...(mentionItems ? [createMention(mentionItems)] : []),
   ];

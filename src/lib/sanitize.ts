@@ -57,12 +57,16 @@ const TIPTAP_OPTIONS: sanitizeHtml.IOptions = {
     img: ["http", "https", "data"],
   },
   transformTags: {
+    // Ссылка из описания или комментария всегда уходит в новую вкладку: переход
+    // в текущей уносил бы из приложения вместе с несохранёнными правками. Своё
+    // значение `target` не сохраняем — прежний `_self` в чужой разметке как раз
+    // и означал переход поверх приложения.
     a: (tagName, attribs) => ({
       tagName,
       attribs: {
         ...attribs,
         rel: "noopener noreferrer nofollow",
-        target: attribs.target === "_blank" ? "_blank" : "_self",
+        target: "_blank",
       },
     }),
   },
