@@ -8,7 +8,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, CornerDownRight, MessageSquare, Pencil, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarStack, PRIORITY_LABELS, PriorityDot, chipStyle, dueTone, formatDue } from "@/components/v2/bits";
-import { DatePicker, DuePicker } from "@/components/v2/DuePicker";
+import { DuePicker, StartPicker } from "@/components/v2/DuePicker";
 import { assigneeChoice } from "@/lib/core/assignable";
 import type {
   CoreTag,
@@ -438,20 +438,22 @@ export const TagsCell = memo(function TagsCell({ task, ctx }: { task: TaskRow; c
 // --- Начало ---------------------------------------------------------------------------
 
 export const StartCell = memo(function StartCell({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
-  const label = task.start_date ? (
-    <span className="truncate text-xs tabular-nums">{formatShortDate(task.start_date)}</span>
-  ) : null;
+  // Время показывается рядом с днём, как у срока: колонки под него отдельной не
+  // заводим — «начало 30 июля» и «начало 30 июля, 10:00» это одно поле.
+  const text = formatDue(task.start_date, task.start_time);
+  const label = text ? <span className="truncate text-xs tabular-nums">{text}</span> : null;
 
   if (!ctx.canEdit) return <ReadOnly>{label}</ReadOnly>;
 
   return (
-    <DatePicker
+    <StartPicker
       date={task.start_date}
+      time={task.start_time}
       triggerClassName={CELL_BUTTON}
-      onCommit={(start_date) => ctx.onPatch(task.id, { start_date })}
+      onCommit={(next) => ctx.onPatch(task.id, next)}
     >
       {label}
-    </DatePicker>
+    </StartPicker>
   );
 });
 

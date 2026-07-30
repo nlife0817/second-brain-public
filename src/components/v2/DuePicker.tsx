@@ -438,11 +438,22 @@ function CalendarPanel({ value, onPick }: { value: string | null; onPick: (iso: 
   );
 }
 
-export function DuePicker({
+/**
+ * День и время в одном поповере. Служит и сроку, и началу: поля у них разные, а
+ * поведение одно — черновик копится, время без дня не живёт, наружу уходит один
+ * патч при закрытии. Своя копия этого на второе поле означала бы, что «убрать
+ * время» в начале и в сроке однажды станут работать по-разному.
+ *
+ * Наружу отдаёт нейтральные `date`/`time`; в имена колонок их переводят
+ * `DuePicker` и `StartPicker` — вызывающему коду удобнее сразу получать тело
+ * патча.
+ */
+function DateTimePicker({
   date,
   time,
   align = "start",
   triggerClassName,
+  addTimeLabel,
   onCommit,
   children,
 }: {
@@ -451,8 +462,9 @@ export function DuePicker({
   time: string | null;
   align?: "start" | "center" | "end";
   triggerClassName?: string;
+  addTimeLabel: string;
   /** Дёргается один раз при закрытии и только если что-то изменилось. */
-  onCommit: (next: { due_date: string | null; due_time: string | null }) => void;
+  onCommit: (next: { date: string | null; time: string | null }) => void;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -484,7 +496,7 @@ export function DuePicker({
       const nextDate = draftDate;
       const nextTime = nextDate ? resolveTime(draftTime, raw) : null;
       if (nextDate !== date || nextTime !== savedTime) {
-        onCommit({ due_date: nextDate, due_time: nextTime });
+        onCommit({ date: nextDate, time: nextTime });
       }
     }
     setOpen(next);
@@ -520,7 +532,7 @@ export function DuePicker({
               className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-dashed border-border text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
             >
               <Clock className="size-3.5 shrink-0" />
-              {timeDisabled ? "Сначала выберите день" : "Добавить время"}
+              {timeDisabled ? "Сначала выберите день" : addTimeLabel}
             </button>
           ) : (
             <div className="flex items-center justify-between gap-2">
@@ -580,10 +592,55 @@ export function DuePicker({
   );
 }
 
+/** Общая часть подписи полей: сам патч различается только именами колонок. */
+type PickerProps = {
+  date: string | null;
+  time: string | null;
+  align?: "start" | "center" | "end";
+  triggerClassName?: string;
+  children: React.ReactNode;
+};
+
+/** Срок задачи: день и время, к которому она должна быть готова. */
+export function DuePicker({
+  onCommit,
+  ...rest
+}: PickerProps & {
+  onCommit: (next: { due_date: string | null; due_time: string | null }) => void;
+}) {
+  return (
+    <DateTimePicker
+      {...rest}
+      addTimeLabel="Добавить время"
+      onCommit={({ date, time }) => onCommit({ due_date: date, due_time: time })}
+    />
+  );
+}
+
 /**
- * Дата без времени — начало работ. Отдельный компонент, а не флаг у `DuePicker`:
- * там черновик сложный (незакоммиченный ввод времени, `resolveTime`), и половина
- * его состояния при `dateOnly` была бы мёртвой.
+ * Начало работ. Время здесь появилось вместе с календарём: пара «начало — срок»
+ * с часами и есть то, чем задача становится отрезком внутри дня, а не полосой
+ * «весь день». Гант этого времени не смотрит — он считает в днях.
+ */
+export function StartPicker({
+  onCommit,
+  ...rest
+}: PickerProps & {
+  onCommit: (next: { start_date: string | null; start_time: string | null }) => void;
+}) {
+  return (
+    <DateTimePicker
+      {...rest}
+      addTimeLabel="Добавить время начала"
+      onCommit={({ date, time }) => onCommit({ start_date: date, start_time: time })}
+    />
+  );
+}
+
+/**
+ * Дата без времени. Отдельный компонент, а не флаг у `DateTimePicker`: там
+ * черновик сложный (незакоммиченный ввод времени, `resolveTime`), и половина его
+ * состояния при `dateOnly` была бы мёртвой.
  *
  * Выбор дня закрывает поповер сразу: копить тут нечего, а лишний клик «готово»
  * на одном поле — раздражение.

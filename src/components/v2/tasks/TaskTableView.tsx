@@ -250,6 +250,7 @@ export function TaskTableView({
                     status_id: updated.status_id,
                     priority: updated.priority,
                     start_date: updated.start_date,
+                    start_time: updated.start_time,
                     due_date: updated.due_date,
                     due_time: updated.due_time,
                     estimated_minutes: updated.estimated_minutes,

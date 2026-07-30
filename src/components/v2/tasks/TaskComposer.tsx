@@ -20,7 +20,7 @@ import {
   dueTone,
   formatDue,
 } from "@/components/v2/bits";
-import { DatePicker, DuePicker } from "@/components/v2/DuePicker";
+import { DuePicker, StartPicker } from "@/components/v2/DuePicker";
 import { defaultStatus } from "@/lib/core/status-model";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField } from "@/lib/core/types";
@@ -391,18 +391,20 @@ function TagsDraftCell({ draft, patch }: CellProps) {
 }
 
 function StartDraftCell({ draft, patch }: CellProps) {
+  const text = formatDue(draft.start_date, draft.start_time);
   return (
-    <DatePicker
+    <StartPicker
       date={draft.start_date}
+      time={draft.start_time}
       triggerClassName={CELL}
-      onCommit={(start_date) => patch({ start_date })}
+      onCommit={(next) => patch(next)}
     >
-      {draft.start_date ? (
-        <span className="truncate text-xs tabular-nums">{formatDue(draft.start_date, null)}</span>
+      {text ? (
+        <span className="truncate text-xs tabular-nums">{text}</span>
       ) : (
         <span className={PLACEHOLDER}>Начало</span>
       )}
-    </DatePicker>
+    </StartPicker>
   );
 }
 

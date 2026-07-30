@@ -24,6 +24,7 @@ function task(over: Partial<TaskRow>): TaskRow {
     status_id: null,
     priority: "none",
     start_date: null,
+    start_time: null,
     due_date: null,
     due_time: null,
     estimated_minutes: null,

@@ -193,12 +193,19 @@ export interface CoreTask {
   status_id: string | null;
   priority: TaskPriority;
   /**
-   * Начало работ — левая граница полосы на ганте. Без времени: гант считает в
-   * днях, а «во сколько» осмысленно только у срока (по нему идут напоминания).
-   * Порядок относительно `due_date` не навязан — план с началом позже срока
-   * пользователь видит и правит сам.
+   * Начало работ — левая граница полосы на ганте. Порядок относительно
+   * `due_date` не навязан: план с началом позже срока пользователь видит и
+   * правит сам.
    */
   start_date: string | null;
+  /**
+   * Во сколько начинается. Пустое время означает «весь день» — как и пустой
+   * `due_time` означает срок на день целиком, а не на 00:00. Пара
+   * `start_time`/`due_time` делает задачу отрезком внутри дня: именно ею
+   * календарь ставит её в часовую сетку, а гант её не смотрит вовсе — он
+   * считает в днях.
+   */
+  start_time: string | null;
   due_date: string | null;
   due_time: string | null;
   estimated_minutes: number | null;
@@ -391,6 +398,64 @@ export interface CoreNotification {
   entity_id: string | null;
   entity_title: string | null;
   scope: NotificationScope;
+}
+
+// --- Внешние календари ---------------------------------------------------------------
+
+/**
+ * Подключения принадлежат пользователю, а не организации (миграция 0046):
+ * личный календарь один и тот же во всех организациях, где человек состоит, а
+ * привязка к тенанту означала бы, что его встречи видит чужой администратор.
+ */
+export type CalendarProvider = "google" | "ics";
+
+/** Календарь внутри подключения. Секретов здесь нет — эти поля уходят в API. */
+export interface CalendarBrief {
+  id: string;
+  account_id: string;
+  name: string;
+  /** Цвет из внешнего календаря. */
+  color: string | null;
+  /** Свой цвет вместо внешнего: палитра Google с нашей темой не согласована. */
+  color_override: string | null;
+  timezone: string | null;
+  visible: boolean;
+  last_sync_at: string | null;
+}
+
+export interface CalendarAccountWithCalendars {
+  id: string;
+  provider: CalendarProvider;
+  /** Адрес аккаунта Google или хост ICS-ссылки — сама ссылка наружу не идёт. */
+  label: string;
+  sync_error: string | null;
+  last_sync_at: string | null;
+  created_at: string;
+  calendars: CalendarBrief[];
+}
+
+/**
+ * Событие внешнего календаря. Ровно одно из двух представлений заполнено —
+ * это держит `calendar_events_span` в миграции 0046:
+ *
+ *  * `all_day` — дни включительно (`start_date`/`end_date`);
+ *  * иначе — моменты (`starts_at`/`ends_at`), которые в местные день и время
+ *    переводит `localPoint` из `calendar.ts`, и только в браузере.
+ */
+export interface CalendarEventRow {
+  id: string;
+  calendar_id: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  all_day: boolean;
+  start_date: string | null;
+  end_date: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  status: string | null;
+  organizer: string | null;
+  html_link: string | null;
 }
 
 export const ORG_ROLE_RANK: Record<OrgRole, number> = {

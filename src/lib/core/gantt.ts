@@ -2,57 +2,35 @@
 // и из чего собирается шкала. Чистые функции без React — их проверяют тесты, а
 // компонент занимается только отрисовкой и жестами.
 //
-// Всё считается в ISO-днях (`YYYY-MM-DD`), а не в объектах Date: даты приезжают
-// из базы строками (PG_TYPES в lib/sql.ts), и любое приведение к Date — это
-// местная полночь, то есть сдвиг на день для половины часовых поясов. Где Date
-// всё же нужен для арифметики, он берётся в UTC.
+// Арифметика дней живёт в `days.ts` — она общая с календарём. Здесь она
+// реэкспортируется, потому что ею пользуются и полотно ганта, и его тесты:
+// переучивать их на второй адрес ради переезда функций незачем.
 
+import {
+  MONTHS_FULL,
+  MONTHS_SHORT,
+  WEEKDAYS_SHORT,
+  addDays,
+  daysInMonth,
+  daysOf,
+  diffDays,
+  monthIndex,
+  startOfMonth,
+  startOfWeek,
+  weekday,
+} from "./days";
 import type { TaskRow } from "./types";
 
-// --- Арифметика дней -------------------------------------------------------------
-
-const DAY_MS = 86_400_000;
-
-function parseDay(iso: string): number {
-  return Date.parse(`${iso}T00:00:00Z`);
-}
-
-function toIso(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
-}
-
-export function addDays(iso: string, days: number): string {
-  return toIso(parseDay(iso) + days * DAY_MS);
-}
-
-/** Сколько дней от `from` до `to`. Отрицательное — `to` раньше. */
-export function diffDays(from: string, to: string): number {
-  return Math.round((parseDay(to) - parseDay(from)) / DAY_MS);
-}
-
-/** 0 — понедельник, 6 — воскресенье. */
-export function weekday(iso: string): number {
-  return (new Date(parseDay(iso)).getUTCDay() + 6) % 7;
-}
-
-export function isWeekend(iso: string): boolean {
-  return weekday(iso) >= 5;
-}
-
-/** Понедельник недели, в которую попадает день. */
-export function startOfWeek(iso: string): string {
-  return addDays(iso, -weekday(iso));
-}
-
-export function startOfMonth(iso: string): string {
-  return `${iso.slice(0, 7)}-01`;
-}
-
-export function daysInMonth(iso: string): number {
-  const d = new Date(parseDay(iso));
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
-}
+export {
+  addDays,
+  daysInMonth,
+  daysOf,
+  diffDays,
+  isWeekend,
+  startOfMonth,
+  startOfWeek,
+  weekday,
+} from "./days";
 
 // --- Полоса задачи ---------------------------------------------------------------
 
@@ -190,23 +168,6 @@ export interface Tick {
   label: string;
   start: string;
   days: number;
-}
-
-const MONTHS_SHORT = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
-const MONTHS_FULL = [
-  "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
-  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
-];
-const WEEKDAYS_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
-
-function monthIndex(iso: string): number {
-  return Number(iso.slice(5, 7)) - 1;
-}
-
-/** Все дни окна — нужны и для сетки, и для затенения выходных. */
-export function daysOf(range: { from: string; to: string }): string[] {
-  const total = diffDays(range.from, range.to) + 1;
-  return Array.from({ length: total }, (_, i) => addDays(range.from, i));
 }
 
 /**

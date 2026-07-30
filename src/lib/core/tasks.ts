@@ -71,7 +71,8 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
          JOIN chain c ON p.id = c.parent_task_id
        WHERE c.depth < 8
      )
-     SELECT id, org_id, title, description, status_id, priority, start_date, due_date, due_time,
+     SELECT id, org_id, title, description, status_id, priority, start_date, start_time,
+            due_date, due_time,
             estimated_minutes, completed_at, parent_task_id, source, created_by,
             created_at, updated_at
      FROM chain ORDER BY depth`,
@@ -188,7 +189,8 @@ export async function requireTaskAccess(
  * Колонки задачи без `description`: списки его не показывают, а на проекте в
  * 700 задач HTML описаний — четверть веса ответа.
  */
-const TASK_LIST_COLUMNS = `t.id, t.org_id, t.title, t.status_id, t.priority, t.start_date, t.due_date, t.due_time,
+const TASK_LIST_COLUMNS = `t.id, t.org_id, t.title, t.status_id, t.priority,
+   t.start_date, t.start_time, t.due_date, t.due_time,
    t.estimated_minutes, t.completed_at, t.parent_task_id, t.source, t.created_by, t.created_at, t.updated_at`;
 
 async function enrichTasks<T extends { id: string }>(rows: T[]): Promise<Array<T & TaskMeta>> {
@@ -646,6 +648,7 @@ export interface CreateTaskInput {
   status_id?: string | null;
   priority?: TaskPriority;
   start_date?: string | null;
+  start_time?: string | null;
   due_date?: string | null;
   due_time?: string | null;
   estimated_minutes?: number | null;
@@ -699,9 +702,10 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
     const row = await tx
       .prepare<{ id: string }>(
         `INSERT INTO core.tasks
-           (org_id, title, description, status_id, priority, start_date, due_date, due_time,
+           (org_id, title, description, status_id, priority, start_date, start_time,
+            due_date, due_time,
             estimated_minutes, parent_task_id, source, created_by, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
       )
       .get(
@@ -711,6 +715,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         status.id,
         input.priority ?? "none",
         input.start_date ?? null,
+        input.start_time ?? null,
         input.due_date ?? null,
         input.due_time ?? null,
         input.estimated_minutes ?? null,
@@ -795,6 +800,7 @@ export interface UpdateTaskInput {
   status_id?: string | null;
   priority?: TaskPriority;
   start_date?: string | null;
+  start_time?: string | null;
   due_date?: string | null;
   due_time?: string | null;
   estimated_minutes?: number | null;
@@ -881,6 +887,13 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
     if (patch.start_date !== undefined && patch.start_date !== task.start_date) {
       scalar.start_date = patch.start_date;
       changedFields.push("start_date");
+    }
+    // Уведомления о сроке начало не задевает — они шлются только по due_date и
+    // due_time (см. ниже): напоминание приходит о том, к чему задача должна быть
+    // готова, а не о том, когда за неё браться.
+    if (patch.start_time !== undefined && normalizeTime(patch.start_time) !== normalizeTime(task.start_time)) {
+      scalar.start_time = patch.start_time;
+      changedFields.push("start_time");
     }
     if (patch.due_date !== undefined && patch.due_date !== task.due_date) {
       scalar.due_date = patch.due_date;
