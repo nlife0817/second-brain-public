@@ -4,12 +4,13 @@ import { prepare, transaction } from "@/lib/sql";
 import { DomainError } from "./http";
 import { assertOrg } from "./policy";
 import {
-  CATEGORY_LABELS,
-  REQUIRED_CATEGORIES,
+  arrangementError,
   deleteBlockMessage,
   fallbackStatusId,
   isWorkingCategory,
+  moveBlockMessage,
   statusDeleteBlock,
+  statusMoveBlock,
 } from "./status-model";
 import type { AuthContext, CoreTag, StatusCategory, TaskStatus } from "./types";
 
@@ -75,21 +76,9 @@ export async function updateStatus(
   if (!current) throw new DomainError(404, "Status not found");
 
   const nextCategory = patch.category ?? current.category;
-  if (nextCategory !== current.category) {
-    if (
-      REQUIRED_CATEGORIES.includes(current.category) &&
-      !all.some((s) => s.category === current.category && s.id !== statusId)
-    ) {
-      throw new DomainError(
-        422,
-        `В категории «${CATEGORY_LABELS[current.category]}» должен остаться хотя бы один статус`,
-      );
-    }
-    // Проверяем до UPDATE: CHECK в базе отдал бы 23514 вместо внятного текста.
-    if (current.is_default && !isWorkingCategory(nextCategory)) {
-      throw new DomainError(422, "Статус по умолчанию должен оставаться рабочим — сначала назначьте другой");
-    }
-  }
+  // Проверяем до UPDATE: CHECK в базе отдал бы 23514 вместо внятного текста.
+  const moveBlock = statusMoveBlock(all, statusId, nextCategory);
+  if (moveBlock) throw new DomainError(422, moveBlockMessage(moveBlock, current.category));
   if (patch.is_default && !isWorkingCategory(nextCategory)) {
     throw new DomainError(422, "По умолчанию можно назначить только статус из «Бэклога» или «В работе»");
   }
@@ -140,6 +129,63 @@ export async function updateStatus(
       .get(statusId);
     if (!row) throw new DomainError(500, "Failed to update status");
     return row;
+  });
+}
+
+/**
+ * Новый порядок справочника целиком: одним запросом и одной транзакцией, потому
+ * что перетаскивание статуса сдвигает соседей, а перенос в другую категорию
+ * проверяется по всей раскладке сразу. Позиции нормализуются в 1..N — глобальный
+ * порядок обязан совпадать с порядком категорий, иначе ряд кнопок в карточке
+ * (`cardStatuses` идёт по позиции) начнёт перемешивать «бэклог» и «в работе».
+ */
+export async function reorderStatuses(
+  ctx: AuthContext,
+  order: Array<{ id: string; category: StatusCategory }>,
+): Promise<TaskStatus[]> {
+  assertOrg(ctx, "statuses.manage");
+  const all = await statusesOf(ctx.orgId);
+  const byId = new Map(all.map((s) => [s.id, s]));
+  // Порядок приходит целиком: частичный список молча увёл бы неупомянутые
+  // статусы в начало справочника.
+  const unique = new Set(order.map((o) => o.id));
+  if (order.length !== all.length || unique.size !== order.length || order.some((o) => !byId.has(o.id))) {
+    throw new DomainError(422, "Порядок должен перечислять все статусы организации по одному разу");
+  }
+
+  const next = order.map((o, i) => ({ ...byId.get(o.id)!, category: o.category, position: i + 1 }));
+  const invalid = arrangementError(next);
+  if (invalid) throw new DomainError(422, invalid);
+
+  return transaction(async (t) => {
+    for (const row of next) {
+      const before = byId.get(row.id)!;
+      if (before.category === row.category && before.position === row.position) continue;
+      await t
+        .prepare(`UPDATE core.task_statuses SET category = ?, position = ? WHERE id = ? AND org_id = ?`)
+        .run(row.category, row.position, row.id, ctx.orgId);
+
+      // Как и в updateStatus: отметка о завершении выводится из категории, и
+      // статус, переехавший в «Завершено» (или из него), обязан пересчитать её у
+      // своих задач. Событий на задачи не пишем — правка справочника не должна
+      // оборачиваться лавиной в ленте и push.
+      const becameDone = row.category === "done" && before.category !== "done";
+      const leftDone = before.category === "done" && row.category !== "done";
+      if (becameDone || leftDone) {
+        await t
+          .prepare(
+            `UPDATE core.tasks
+                SET completed_at = CASE WHEN ?::boolean THEN COALESCE(completed_at, now()) ELSE NULL END
+              WHERE org_id = ? AND status_id = ?`,
+          )
+          .run(becameDone, ctx.orgId, row.id);
+      }
+    }
+    return t
+      .prepare<TaskStatus>(
+        `SELECT ${STATUS_SELECT} FROM core.task_statuses WHERE org_id = ? ORDER BY position, created_at`,
+      )
+      .all(ctx.orgId);
   });
 }
 

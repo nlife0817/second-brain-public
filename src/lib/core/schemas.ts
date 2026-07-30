@@ -167,6 +167,14 @@ export const statusPatchSchema = z
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
+/**
+ * Порядок справочника целиком: перетаскивание сдвигает соседей и может сменить
+ * категорию, поэтому статусы перечисляются все и в нужном порядке.
+ */
+export const statusOrderSchema = z.object({
+  order: z.array(z.object({ id: z.uuid(), category: statusCategorySchema })).min(1).max(200),
+});
+
 export const tagCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
   color: z.string().trim().max(32).optional(),

@@ -4,11 +4,13 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  arrangementError,
   cardStatuses,
   defaultStatus,
   fallbackStatusId,
   groupByCategory,
   statusDeleteBlock,
+  statusMoveBlock,
 } from "../status-model";
 import type { StatusCategory, TaskStatus } from "../types";
 
@@ -51,6 +53,47 @@ describe("statusDeleteBlock", () => {
   it("«по умолчанию» перевешивает «последний в категории»", () => {
     const one = [status("todo", "backlog", 1, true), status("doing", "in_progress", 2)];
     expect(statusDeleteBlock(one, "todo")).toBe("default");
+  });
+});
+
+describe("statusMoveBlock", () => {
+  it("перенос второго статуса категории разрешён", () => {
+    expect(statusMoveBlock(STATUSES, "inbox", "in_progress")).toBeNull();
+  });
+
+  it("последний статус обязательной категории не уносят", () => {
+    expect(statusMoveBlock(STATUSES, "doing", "backlog")).toBe("last_in_category");
+  });
+
+  it("единственный архивный уносят: архиву разрешено пустовать", () => {
+    expect(statusMoveBlock(STATUSES, "archive", "done")).toBeNull();
+  });
+
+  it("статус по умолчанию не уезжает в нерабочую категорию", () => {
+    expect(statusMoveBlock(STATUSES, "todo", "archived")).toBe("default_not_working");
+  });
+
+  it("перенос в свою же категорию — не перенос", () => {
+    expect(statusMoveBlock(STATUSES, "doing", "in_progress")).toBeNull();
+  });
+});
+
+describe("arrangementError", () => {
+  it("сид организации проходит", () => {
+    expect(arrangementError(STATUSES)).toBeNull();
+  });
+
+  it("опустевшая обязательная категория — отказ", () => {
+    expect(arrangementError(STATUSES.filter((s) => s.category !== "done"))).toContain("Завершено");
+  });
+
+  it("пустой архив допустим", () => {
+    expect(arrangementError(STATUSES.filter((s) => s.category !== "archived"))).toBeNull();
+  });
+
+  it("дефолт в нерабочей категории — отказ", () => {
+    const moved = STATUSES.map((s) => (s.id === "todo" ? { ...s, category: "done" as const } : s));
+    expect(arrangementError(moved)).toContain("по умолчанию");
   });
 });
 

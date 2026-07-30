@@ -54,6 +54,61 @@ export function deleteBlockMessage(block: Exclude<StatusDeleteBlock, null>, cate
     : `В категории «${CATEGORY_LABELS[category]}» должен остаться хотя бы один статус`;
 }
 
+/** Почему статус нельзя перенести в другую категорию; null — можно. */
+export type StatusMoveBlock = "last_in_category" | "default_not_working" | null;
+
+/**
+ * Правило переноса статуса между категориями — перетаскиванием в настройках или
+ * патчем `category`. Те же два запрета, что и у сервера: обязательная категория
+ * не пустеет, статус по умолчанию остаётся рабочим.
+ */
+export function statusMoveBlock(
+  statuses: TaskStatus[],
+  statusId: string,
+  next: StatusCategory,
+): StatusMoveBlock {
+  const target = statuses.find((s) => s.id === statusId);
+  if (!target || target.category === next) return null;
+  if (
+    REQUIRED_CATEGORIES.includes(target.category) &&
+    !statuses.some((s) => s.category === target.category && s.id !== statusId)
+  ) {
+    return "last_in_category";
+  }
+  if (target.is_default && !isWorkingCategory(next)) return "default_not_working";
+  return null;
+}
+
+export function moveBlockMessage(
+  block: Exclude<StatusMoveBlock, null>,
+  from: StatusCategory,
+): string {
+  return block === "last_in_category"
+    ? `В категории «${CATEGORY_LABELS[from]}» должен остаться хотя бы один статус`
+    : "Статус по умолчанию должен оставаться рабочим — сначала назначьте другой";
+}
+
+/**
+ * Что не так с новой раскладкой справочника целиком; null — всё в порядке.
+ * Проверять раскладку, а не отдельный перенос, нужно там, где приходит сразу
+ * весь порядок (перетаскивание в настройках): один перенос бывает законным, а
+ * пара сразу — нет.
+ */
+export function arrangementError(
+  next: Array<Pick<TaskStatus, "category" | "is_default">>,
+): string | null {
+  for (const category of REQUIRED_CATEGORIES) {
+    if (!next.some((s) => s.category === category)) {
+      return `В категории «${CATEGORY_LABELS[category]}» должен остаться хотя бы один статус`;
+    }
+  }
+  const target = next.find((s) => s.is_default);
+  if (target && !isWorkingCategory(target.category)) {
+    return "Статус по умолчанию должен оставаться рабочим — сначала назначьте другой";
+  }
+  return null;
+}
+
 /**
  * Куда переедут задачи удаляемого статуса: сосед по категории, а если категории
  * не станет вовсе (архив) — статус по умолчанию.

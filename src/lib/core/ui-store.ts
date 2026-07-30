@@ -110,6 +110,12 @@ export interface V2State {
   /** Наполнение из серверного рендера — синхронно, без единого запроса. */
   hydrate: (initial: V2InitialState) => void;
   setFields: (fields: CustomField[]) => void;
+  /**
+   * Справочник статусов после правки в настройках. Правка отвечает уже новым
+   * состоянием, и перечитывать его отдельным запросом незачем; экраны читают
+   * статусы прямо из стора, поэтому обновлять надо именно его.
+   */
+  setStatuses: (statuses: TaskStatus[]) => void;
   setActiveTimer: (timer: ActiveTimer | null) => void;
   bootstrap: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
@@ -142,6 +148,7 @@ const EMPTY = {
   V2State,
   | "hydrate"
   | "setFields"
+  | "setStatuses"
   | "setActiveTimer"
   | "bootstrap"
   | "switchOrg"
@@ -167,6 +174,8 @@ export function createV2Store(initial?: V2InitialState | null) {
     },
 
     setFields: (fields) => set({ fields }),
+
+    setStatuses: (statuses) => set({ statuses }),
 
     bootstrap: async () => {
       // Фолбэк: серверный рендер уже наполнил стор, сюда попадаем только если
