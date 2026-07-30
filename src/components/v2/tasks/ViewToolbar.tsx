@@ -5,7 +5,7 @@
 // поиск живут в общем `ViewStore`, и своя копия разметки на втором экране
 // разъехалась бы с первой при первой же правке.
 
-import { Filter, GanttChartSquare, KanbanSquare, Search, Table2, X } from "lucide-react";
+import { CalendarDays, Filter, GanttChartSquare, KanbanSquare, Search, Table2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { FilterBuilder } from "@/components/v2/tasks/FilterBuilder";
@@ -16,12 +16,13 @@ const MODE_META: Record<ProjectViewMode, { label: string; icon: typeof Table2 }>
   table: { label: "Таблица", icon: Table2 },
   board: { label: "Доска", icon: KanbanSquare },
   gantt: { label: "Гант", icon: GanttChartSquare },
+  calendar: { label: "Календарь", icon: CalendarDays },
 };
 
 /**
  * Переключатель вида. Состав задаёт экран: доска раскладывает задачи по
  * статусам внутри проекта, и в сводном списке всех проектов организации ей
- * делать нечего — а таблица и гант есть везде.
+ * делать нечего — а таблица, гант и календарь есть везде.
  */
 export function ViewModeSwitch({ modes }: { modes: ProjectViewMode[] }) {
   const mode = useViewStore((s) => s.mode);

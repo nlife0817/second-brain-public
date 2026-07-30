@@ -156,6 +156,36 @@ export function withOrg(handler: OrgHandler, opts?: { minOrgRole?: OrgRole }): R
   };
 }
 
+/**
+ * То же, что `withUser`, но для роутов с параметром пути — например
+ * `/api/v2/calendar/calendars/[calendarId]`. Отдельная обёртка, а не третий
+ * аргумент у `withUser`: у того возвращаемая функция принимает только запрос, и
+ * добавить ей контекст значило бы задеть каждый существующий роут пользователя
+ * ради нового.
+ *
+ * Организации здесь нет вовсе: подключённые календари принадлежат пользователю
+ * (миграция 0046), и владение проверяет доменный слой.
+ */
+export function withUserParams(
+  handler: (
+    request: NextRequest,
+    user: CoreUser,
+    params: Record<string, string>,
+  ) => Promise<NextResponse>,
+): RouteHandler {
+  return async (request, context) => {
+    try {
+      const user = await getCoreUser();
+      if (!user) return jsonError(401, "Unauthorized");
+      const response = await handler(request, user, await context.params);
+      schedulePushDispatch(request.method, response.status);
+      return response;
+    } catch (err) {
+      return toHttpError(err);
+    }
+  };
+}
+
 /** Обёртка для роутов v2 вне контекста организации (/api/v2/me, /api/v2/orgs). */
 export function withUser(
   handler: (request: NextRequest, user: CoreUser) => Promise<NextResponse>,
