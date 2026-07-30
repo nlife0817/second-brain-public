@@ -69,6 +69,13 @@ export const BOARD_SECTIONS: SectionId[] = ["views", "open"];
  */
 export const GANTT_SECTIONS: SectionId[] = ["group", "subtasks", "views", "open"];
 
+/**
+ * Календарю группировка не нужна вовсе: задачу кладёт на место её дата, а не
+ * корзина. Раздел, который ничего не меняет, читается как сломанный — поэтому
+ * здесь остались представления и способ открытия карточки.
+ */
+export const CALENDAR_SECTIONS: SectionId[] = ["views", "open"];
+
 const SUBHEAD = "px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground";
 
 /**

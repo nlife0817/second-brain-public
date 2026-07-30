@@ -12,6 +12,7 @@
 import { createContext, createElement, useContext, type ReactNode } from "react";
 import { create, createStore, useStore } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import type { CalendarScale } from "./calendar";
 import type { GanttScale } from "./gantt";
 import type { FilterGroup, GroupByConfig, SortState, SubtaskMode } from "./views";
 
@@ -79,7 +80,7 @@ function storageKey(scope: ViewScope): string {
  * Как экран показывает задачи. Доска есть только у проекта: раскладка по
  * статусам поверх всех проектов организации — это не доска, а свалка.
  */
-export type ProjectViewMode = "table" | "board" | "gantt";
+export type ProjectViewMode = "table" | "board" | "gantt" | "calendar";
 
 /**
  * Снимок настроек, который сохраняется как именованное представление.
@@ -123,7 +124,7 @@ export interface ViewState extends ViewSnapshot {
    * разворачивает.
    */
   collapsedTasks: string[];
-  /** Таблица, доска или гант. */
+  /** Таблица, доска, гант или календарь. */
   mode: ProjectViewMode;
   /**
    * Масштаб полотна ганта. Не входит в снимок представления: это способ
@@ -132,9 +133,17 @@ export interface ViewState extends ViewSnapshot {
    * представление значит без конца его «править».
    */
   ganttScale: GanttScale;
+  /**
+   * Месяц, неделя или день на календаре — по той же причине рядом с
+   * `ganttScale`, а не в снимке. Опорный день здесь не хранится сознательно:
+   * «где я листаю» — состояние сессии, и человек, вернувшийся на экран через
+   * неделю, ожидает увидеть текущий месяц, а не тот, на котором ушёл.
+   */
+  calendarScale: CalendarScale;
 
   setMode: (mode: ProjectViewMode) => void;
   setGanttScale: (scale: GanttScale) => void;
+  setCalendarScale: (scale: CalendarScale) => void;
   setColumns: (columns: string[]) => void;
   setWidth: (columnId: string, width: number) => void;
   toggleSort: (column: SortState["column"]) => void;
@@ -235,9 +244,11 @@ function createViewStore(scope: ViewScope) {
         collapsedTasks: [],
         mode: "table",
         ganttScale: "day",
+        calendarScale: "month",
 
         setMode: (mode) => set({ mode }),
         setGanttScale: (ganttScale) => set({ ganttScale }),
+        setCalendarScale: (calendarScale) => set({ calendarScale }),
         setColumns: (columns) => set((s) => edit(s, { columns })),
         setWidth: (columnId, width) =>
           set((s) =>
@@ -314,6 +325,7 @@ function createViewStore(scope: ViewScope) {
           collapsedTasks: s.collapsedTasks,
           mode: s.mode,
           ganttScale: s.ganttScale,
+          calendarScale: s.calendarScale,
         }),
         version: 3,
         // Migrate обязателен: без него zustand не смог бы поднять срез старой

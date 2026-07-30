@@ -17,6 +17,7 @@ import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { CreateTaskDialog, TaskSheet } from "@/components/v2/lazy";
 import { accessLabel } from "@/components/v2/ProjectAccessPicker";
 import { ProjectIcon } from "@/components/v2/project-icons";
+import { CalendarView } from "@/components/v2/tasks/CalendarView";
 import { GanttView } from "@/components/v2/tasks/GanttView";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
 import { BOARD_SECTIONS, ViewSettingsPopover } from "@/components/v2/tasks/ViewControls";
@@ -50,7 +51,7 @@ export function ProjectBoardClient(props: {
 
 /** Переключатель вида — единственное место, где экран проекта расходится. */
 function ViewSwitch() {
-  return <ViewModeSwitch modes={["table", "board", "gantt"]} />;
+  return <ViewModeSwitch modes={["table", "board", "gantt", "calendar"]} />;
 }
 
 function ProjectScreen({
@@ -223,6 +224,28 @@ function ProjectScreen({
       />
     </>
   );
+
+  if (mode === "calendar") {
+    return (
+      <>
+        <CalendarView
+          tasks={tasks}
+          setTasks={setTasks}
+          reload={reload}
+          invalidateKey={projectPath}
+          onOpenTask={openTask}
+          onCreateTask={canEdit ? createTask : undefined}
+          draftDefaults={draftDefaults}
+          error={notice}
+          onDismissError={() => setNotice(null)}
+          emptyText="В проекте пока нет задач с датами."
+          titleSlot={title}
+          actionsSlot={<ViewSwitch />}
+        />
+        {layers}
+      </>
+    );
+  }
 
   if (mode === "gantt") {
     return (
