@@ -27,6 +27,27 @@ const AUTOSAVE_DELAY_MS = 1200;
  * перезаписывает документ ответом на собственное же сохранение — вставленная
  * секунду назад картинка при этом пропадала.
  */
+/**
+ * Есть ли в переносимых данных осмысленный текст.
+ *
+ * Word, Excel, Google Docs, Outlook и обычная веб-страница кладут в буфер рядом
+ * с разметкой ещё и картинку — рендер фрагмента. Забирать такую вставку под
+ * загрузку файла нельзя: человек вставляет несколько страниц текста, а в
+ * документе не появляется ничего, кроме картинки, — сохранять нечего.
+ *
+ * Картинка, скопированная со страницы, сюда не попадает: её разметка — один
+ * `<img>` без текста, и она по-прежнему уезжает во вложения.
+ */
+function hasTextPayload(data: DataTransfer | null | undefined): boolean {
+  if (!data) return false;
+  if (data.getData("text/plain").trim()) return true;
+  const html = data.getData("text/html");
+  if (!html) return false;
+  const holder = document.createElement("div");
+  holder.innerHTML = html;
+  return !!holder.textContent?.trim();
+}
+
 /** Разметка документа для сохранения: пустой редактор — пустое описание. */
 function docHtml(editor: Editor): string {
   return editor.isEmpty ? "" : editor.getHTML();
@@ -135,16 +156,20 @@ export function useDocEditor({
     autofocus: autofocus ? "end" : false,
     editorProps: {
       attributes: { class: "doc-content" },
+      // Текст важнее приложенной к нему картинки: см. `hasTextPayload`.
       handlePaste: (_view, event) => {
         const files = Array.from(event.clipboardData?.files ?? []);
         if (!files.length || !editable) return false;
+        if (hasTextPayload(event.clipboardData)) return false;
         event.preventDefault();
         void uploadFilesRef.current(files);
         return true;
       },
       handleDrop: (_view, event) => {
-        const files = Array.from((event as DragEvent).dataTransfer?.files ?? []);
+        const data = (event as DragEvent).dataTransfer;
+        const files = Array.from(data?.files ?? []);
         if (!files.length || !editable) return false;
+        if (hasTextPayload(data)) return false;
         event.preventDefault();
         void uploadFilesRef.current(files);
         return true;
