@@ -107,6 +107,28 @@ export function useDocEditor({
         void uploadFilesRef.current(files);
         return true;
       },
+      handleDOMEvents: {
+        /**
+         * Перенос выделенного текста мышью выключен намеренно.
+         *
+         * Жест «нажал внутри уже выделенного фрагмента и потянул» браузер
+         * считает не новым выделением, а переносом: пока набирают выделение,
+         * фрагмент молча уезжает в другое место документа — и выглядит это как
+         * мигание текста под курсором. Осознанно перенести блок в описании
+         * всё равно нечем: ручки `[data-drag-handle]` нет ни у картинки, ни у
+         * вложения, но драг от неё пропускаем — она может появиться.
+         *
+         * Сброс файлов сюда не попадает: он приходит без `dragstart`, событиями
+         * `dragover`/`drop` (см. `handleDrop` выше и `useFileDrop`).
+         */
+        dragstart: (_view, event) => {
+          const handle =
+            event.target instanceof Element ? event.target.closest("[data-drag-handle]") : null;
+          if (handle) return false;
+          event.preventDefault();
+          return true;
+        },
+      },
     },
     onUpdate: ({ editor: e }) => {
       if (timerRef.current) clearTimeout(timerRef.current);
