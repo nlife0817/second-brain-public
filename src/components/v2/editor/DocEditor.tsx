@@ -22,6 +22,7 @@ import { useBackDismiss } from "@/components/v2/mobile/hooks";
 import { cn } from "@/lib/utils";
 import { CommentPanel } from "./CommentPanel";
 import { DocOutline, useDocOutline } from "./DocOutline";
+import { DocxDownloadButton } from "./DocxButton";
 import { DocSaveButton } from "./SaveButton";
 import {
   anchoredThreadIds,
@@ -349,6 +350,15 @@ export function DocEditor({
           </span>
         )}
         {editable && <DocSaveButton status={doc.status} onSave={doc.flush} className="h-8" />}
+        <DocxDownloadButton
+          variant="outline"
+          className="h-8"
+          withLabel
+          title={taskTitle}
+          getHtml={() => editor?.getHTML() ?? value}
+          threads={threads}
+          onError={setError}
+        />
         <Button
           variant={railOpen && tab === "comments" ? "secondary" : "outline"}
           size="sm"

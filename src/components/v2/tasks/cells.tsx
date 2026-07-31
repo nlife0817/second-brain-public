@@ -191,25 +191,28 @@ export const TitleCell = memo(function TitleCell({
     >
       {/* Слот шеврона. У задачи без подзадач он пустой, но занимает место:
           кнопка, появляющаяся только у части строк, сдвигала бы их названия
-          относительно соседних. */}
-      {hasChildren ? (
-        <button
-          // -m-1 p-1: кликабельная зона и подсветка крупнее самой иконки, а
-          // место в раскладке занимает по-прежнему её 14 px.
-          className={cn(
-            "-m-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground",
-            ctx.wrapTitle && "mt-1",
-          )}
-          onClick={() => ctx.onToggleSubtree(task.id)}
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? "Развернуть подзадачи" : "Свернуть подзадачи"}
-          title={collapsed ? "Развернуть подзадачи" : "Свернуть подзадачи"}
-        >
-          {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-        </button>
-      ) : (
-        <span className="size-3.5 shrink-0" aria-hidden />
-      )}
+          относительно соседних. Высота слота задаёт вертикаль шеврона: без
+          переноса — вся строка, с переносом — одна строка названия, иначе у
+          многострочной задачи шеврон уезжает к низу текста. */}
+      <span
+        className={cn("flex shrink-0 items-center", ctx.wrapTitle ? "h-[1.375em]" : "h-full")}
+      >
+        {hasChildren ? (
+          <button
+            // -m-1 p-1: кликабельная зона и подсветка крупнее самой иконки, а
+            // место в раскладке занимает по-прежнему её 14 px.
+            className="-m-1 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={() => ctx.onToggleSubtree(task.id)}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? "Развернуть подзадачи" : "Свернуть подзадачи"}
+            title={collapsed ? "Развернуть подзадачи" : "Свернуть подзадачи"}
+          >
+            {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+          </button>
+        ) : (
+          <span className="size-3.5" aria-hidden />
+        )}
+      </span>
       {/* При группировке подзадача едет в группу родителя и её собственный
           статус в колонке отличается от заголовка группы. Без явного знака
           вложенности такая строка читается как ошибка списка; на телефоне

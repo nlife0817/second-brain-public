@@ -1457,6 +1457,7 @@ export function TaskSheet({
                   editable={canEdit}
                   onExpand={() => setExpandedTaskId(task.id)}
                   threadCount={docThreads.filter((t) => !t.resolved_at).length}
+                  docx={{ title: task.title, threads: docThreads }}
                   collapsible
                   showSaveButton
                 />
