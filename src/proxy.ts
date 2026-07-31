@@ -95,7 +95,10 @@ function isLiveApi(pathname: string): boolean {
   return (
     pathname.startsWith("/api/v2/") ||
     pathname === "/api/auth" ||
-    pathname.startsWith("/api/auth/")
+    pathname.startsWith("/api/auth/") ||
+    // Адрес достался от интеграции первой версии, но живёт снова: теперь это
+    // MCP-сервер v2 со своей проверкой токена (см. app/api/mcp/route.ts).
+    pathname === "/api/mcp"
   );
 }
 
@@ -106,9 +109,10 @@ function isLiveApi(pathname: string): boolean {
  * запроса, который всё равно будет перенаправлен.
  *
  * Под 410 попадают и внешние точки входа первой версии (`/api/cron/*`,
- * `/api/notifications/dispatch`, `/api/timing/watchdog`, `/api/mcp`): их
- * исключения убраны из `config.matcher` вместе с самими роутами, так что
- * отставшее расписание или забытый клиент получат внятный ответ, а не 404.
+ * `/api/notifications/dispatch`, `/api/timing/watchdog`): их исключения убраны
+ * из `config.matcher` вместе с самими роутами, так что отставшее расписание или
+ * забытый клиент получат внятный ответ, а не 404. Адрес `/api/mcp` из этого
+ * списка вышел — он снова живой, но уже как MCP-сервер v2.
  */
 function legacyResponse(request: NextRequest): NextResponse | null {
   const { pathname } = request.nextUrl;
@@ -211,6 +215,8 @@ export const config = {
   matcher: [
     // api/v2/invitations исключён: GET показывает приглашение до входа, POST
     // сам требует сессию через withUser.
-    "/((?!_next|api/v2/cron|api/v2/invitations|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
+    // api/mcp — вход внешних агентов по токену: сессии-cookie у них нет, и без
+    // исключения запрос уехал бы редиректом на /login.
+    "/((?!_next|api/v2/cron|api/v2/invitations|api/mcp|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
   ],
 };

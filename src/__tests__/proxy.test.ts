@@ -13,7 +13,7 @@ import { NextRequest } from "next/server";
 // в тестах первое условие выполнено всегда, второе снимаем явно.
 delete process.env.DEV_USER_EMAIL;
 
-const { proxy } = await import("../proxy");
+const { proxy, config } = await import("../proxy");
 
 const ORIGIN = "https://brain.example.com";
 
@@ -43,11 +43,20 @@ describe("живые API", () => {
     );
     expect(response.status).toBe(200);
   });
+
+  // MCP-сервер ходит по токену, а не по сессии: попади он под matcher — запрос
+  // уехал бы редиректом на /login, и до проверки токена дело бы не дошло.
+  it("не перехватывает MCP: путь исключён из matcher", () => {
+    const [pattern] = config.matcher;
+    expect(new RegExp(`^${pattern}$`).test("/api/mcp")).toBe(false);
+    expect(new RegExp(`^${pattern}$`).test("/api/v2/me")).toBe(true);
+  });
 });
 
 describe("наследие v1", () => {
   it("отвечает 410 на старые API", async () => {
-    for (const path of ["/api/cron/daily", "/api/notifications/dispatch", "/api/mcp"]) {
+    // `/api/mcp` в этом списке был, но вернулся к жизни как MCP-сервер v2.
+    for (const path of ["/api/cron/daily", "/api/notifications/dispatch", "/api/timing/watchdog"]) {
       const response = await proxy(request(path));
       expect(response.status, path).toBe(410);
     }
