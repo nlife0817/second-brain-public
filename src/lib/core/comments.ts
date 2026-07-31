@@ -2,7 +2,7 @@
 
 import { prepare, transaction } from "@/lib/sql";
 import { sanitizeRichText } from "@/lib/sanitize";
-import { currentActorSource } from "./actor-source";
+import { currentActorSource } from "./actor-source-store";
 import { emitEvent, notifyUsers, taskAudience } from "./events";
 import { DomainError } from "./http";
 import { notifyMentions } from "./mentions";

@@ -6,6 +6,7 @@
 // вебхуки сотруднику, который их не увидит, — лишний поход в базу, а гостю
 // это ещё и 403 вместо экрана.
 
+import { listApiTokens } from "@/lib/core/api-tokens";
 import { getActiveOrgAuth } from "@/lib/core/bootstrap";
 import { listFields } from "@/lib/core/fields";
 import { getOrganization, listInvitations } from "@/lib/core/identity";
@@ -32,7 +33,7 @@ export default async function SettingsPage() {
   const sections = visibleSections(auth.orgRole, config);
   const has = (id: SettingsSectionId) => sections.includes(id);
 
-  const [fields, invitations, teams, webhooks, audit] = await Promise.all([
+  const [fields, invitations, teams, webhooks, audit, apiTokens] = await Promise.all([
     has("fields") ? listFields(auth) : Promise.resolve([]),
     has("members") && canOrg(auth, "org.invite") ? listInvitations(auth.orgId) : Promise.resolve([]),
     // Команды живут внутри «Участников», но их список — структура организации:
@@ -40,6 +41,11 @@ export default async function SettingsPage() {
     has("members") && canOrg(auth, "clients.view") ? listTeams(auth) : Promise.resolve([]),
     has("webhooks") ? listWebhooks(auth) : Promise.resolve([]),
     has("audit") ? listOrgAudit(auth, { limit: AUDIT_PREVIEW }) : Promise.resolve([]),
+    // Администратору — все токены организации, остальным — только свои: токен
+    // работает правами владельца, и чужой ключ это вопрос администрирования.
+    has("integrations")
+      ? listApiTokens(auth, { all: canOrg(auth, "org.members.manage") })
+      : Promise.resolve([]),
   ]);
 
   return (
@@ -50,6 +56,7 @@ export default async function SettingsPage() {
         teams,
         webhooks,
         audit,
+        apiTokens,
         sections,
         // Настройку видит только тот, кто её правит.
         sectionsConfig: auth.orgRole === "owner" ? withDefaults(config) : null,

@@ -3,7 +3,7 @@
 // after() в withOrg/withUser шлёт сразу после ответа, cron добирает остатки.
 
 import { prepare, type TxContext } from "@/lib/sql";
-import { currentActorSource } from "./actor-source";
+import { currentActorSource } from "./actor-source-store";
 import { filterByInboxPref, filterByProjectMute } from "./notification-prefs";
 import type { CoreEvent, CoreNotification } from "./types";
 
@@ -22,7 +22,7 @@ export async function emitEvent(tx: TxContext, e: EmitInput): Promise<number> {
   // events.id — bigint; postgres.js отдаёт его строкой, приводим к number,
   // чтобы сортировки и сравнения на клиенте не сравнивали "9" > "10".
   //
-  // Источник берётся из окружения вызова (см. actor-source.ts), а не из
+  // Источник берётся из окружения вызова (см. actor-source-store.ts), а не из
   // аргумента: события пишутся из десятков мест, и признак, который надо
   // передавать руками, однажды забудут — действие интеграции станет
   // неотличимым от ручного.

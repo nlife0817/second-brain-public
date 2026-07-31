@@ -340,6 +340,13 @@ export const timeEntryPatchSchema = z
 
 export const teamCreateSchema = z.object({ name: z.string().trim().min(1).max(200) });
 
+export const apiTokenCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  // Умолчание — чтение: токен, случайно выпущенный без выбора режима, не должен
+  // уметь править данные.
+  scope: z.enum(["read", "full"]).default("read"),
+});
+
 export const webhookCreateSchema = z.object({
   url: z.string().url().max(2000).refine((u) => u.startsWith("https://"), {
     message: "Только https-адреса",

@@ -31,6 +31,7 @@ import {
 } from "@/lib/core/settings-sections";
 import { ORG_ROLE_RANK } from "@/lib/core/types";
 import type {
+  ApiToken,
   CoreEvent,
   CustomField,
   FieldType,
@@ -40,6 +41,7 @@ import type {
 } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { useLoad } from "@/lib/core/use-load";
+import { ApiTokensSection } from "@/components/v2/ApiTokensSection";
 import { AuditList } from "@/components/v2/AuditList";
 import { Avatar, chipStyle } from "@/components/v2/bits";
 import { OrgSwitcher } from "@/components/v2/OrgSwitcher";
@@ -101,6 +103,7 @@ export interface SettingsInitial {
   teams: Team[];
   webhooks: Webhook[];
   audit: CoreEvent[];
+  apiTokens: ApiToken[];
   /** Разделы, доступные этой роли, — посчитаны на сервере. */
   sections: SettingsSectionId[];
   /** Настройка видимости целиком; приходит только владельцу — он её и правит. */
@@ -614,6 +617,17 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
               initialConfig={initial.sectionsConfig}
               onError={setError}
             />
+          )}
+
+          {has("integrations") && (
+            <Section title="Интеграции: токены доступа">
+              <ApiTokensSection
+                orgId={orgId}
+                initialTokens={initial.apiTokens}
+                currentUserId={me?.id ?? null}
+                onError={setError}
+              />
+            </Section>
           )}
 
           {has("webhooks") && (

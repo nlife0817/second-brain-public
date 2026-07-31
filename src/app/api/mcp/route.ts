@@ -11,7 +11,7 @@
 
 import { NextResponse, after } from "next/server";
 import { resolveTokenAuth, touchApiToken } from "@/lib/core/api-tokens";
-import { runAs } from "@/lib/core/actor-source";
+import { runAs } from "@/lib/core/actor-source-store";
 import { dispatchPendingPush } from "@/lib/core/push";
 import { handleMessage } from "@/lib/mcp/server";
 

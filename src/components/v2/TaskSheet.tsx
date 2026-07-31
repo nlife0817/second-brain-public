@@ -46,6 +46,7 @@ import {
 } from "@/components/v2/tasks/draft-controls";
 import { SegmentedPicker } from "@/components/v2/tasks/SegmentedPicker";
 import { SubtaskSection } from "@/components/v2/tasks/SubtaskSection";
+import { actorSourceLabel } from "@/lib/core/actor-source";
 import { api } from "@/lib/core/client";
 import { archiveStatus, cardStatuses, defaultStatus } from "@/lib/core/status-model";
 import type { TaskChange } from "@/lib/core/task-change";
@@ -1527,7 +1528,9 @@ export function TaskSheet({
                           <span className="font-medium text-foreground">
                             {e.actor?.name || e.actor?.email || "Система"}
                           </span>{" "}
-                          {eventLabel(e)} ·{" "}
+                          {eventLabel(e)}
+                          {/* Действие интеграции видно в ленте так же, как в журнале. */}
+                          {actorSourceLabel(e.source) && <> ({actorSourceLabel(e.source)})</>} ·{" "}
                           {new Date(e.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                         </p>
                       ))}
@@ -1767,7 +1770,10 @@ function CommentItem({
       {comment.author ? <Avatar user={comment.author} size="sm" /> : <span className="size-6" />}
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-1 text-xs text-muted-foreground">
-          <span className="truncate font-medium text-foreground">{author}</span>·{" "}
+          <span className="truncate font-medium text-foreground">{author}</span>
+          {/* Комментарий, оставленный агентом, подписан: читатель должен видеть,
+              что за автора это написала программа. */}
+          {actorSourceLabel(comment.source) && <span>({actorSourceLabel(comment.source)})</span>}·{" "}
           {new Date(comment.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
           {comment.edited_at && " · изменён"}
           <span className="flex-1" />
