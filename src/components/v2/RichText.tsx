@@ -4,7 +4,9 @@ import { useState } from "react";
 import { EditorContent } from "@tiptap/react";
 import { ChevronDown, ChevronUp, Loader2, Maximize2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { DocCommentThread } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
+import { DocxDownloadButton } from "./editor/DocxButton";
 import { DocSaveButton } from "./editor/SaveButton";
 import { SelectionMenu } from "./editor/SelectionMenu";
 import { EditorToolbar } from "./editor/Toolbar";
@@ -50,6 +52,7 @@ export function RichText({
   editable = true,
   onExpand,
   threadCount = 0,
+  docx,
   collapsible = false,
   showSaveButton = false,
 }: {
@@ -68,6 +71,11 @@ export function RichText({
   onExpand?: () => void;
   /** Открытые обсуждения описания — счётчик на кнопке разворачивания. */
   threadCount?: number;
+  /**
+   * Выгрузка описания в .docx. Без заголовка задачи и её обсуждений собирать
+   * документ нечем, поэтому у черновиков кнопки нет.
+   */
+  docx?: { title: string; threads: readonly DocCommentThread[] };
   /**
    * Длинное описание обрезать до {@link COLLAPSED_MAX_PX} с кнопкой «Показать
    * всё». Только для карточки: в черновиках описание набирают с нуля, и прятать
@@ -111,6 +119,14 @@ export function RichText({
           </span>
         )}
         <span className="flex-1" />
+        {docx && (
+          <DocxDownloadButton
+            className="h-7"
+            title={docx.title}
+            getHtml={() => doc.editor?.getHTML() ?? value}
+            threads={docx.threads}
+          />
+        )}
         {onExpand && (
           // Не «Развернуть»: рядом теперь живёт раскрытие текста на месте, и две
           // кнопки с одним словом означали бы разное.
