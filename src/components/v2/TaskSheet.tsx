@@ -18,7 +18,9 @@ import {
   Clock,
   CornerLeftUp,
   Link2,
+  MoreHorizontal,
   MoreVertical,
+  Pencil,
   Play,
   Plus,
   Square,
@@ -216,6 +218,9 @@ export function TaskSheet({
   const storeApi = useV2StoreApi();
   // Гость связями не управляет; более тонкие права проверит сервер.
   const canEdit = orgRole !== null && orgRole !== "guest";
+  // Чужой комментарий убирает администратор организации — то же правило, что в
+  // `deleteComment` на сервере (`org.members.manage`).
+  const isOrgAdmin = orgRole === "owner" || orgRole === "admin";
   const [loaded, setLoaded] = useState<TaskDetail | null>(null);
   // Пока грузится новая задача, старую не показываем — сравнение по id вместо
   // сброса состояния в эффекте (тот вызывает каскадный ре-рендер).
@@ -469,6 +474,50 @@ export function TaskSheet({
       const current = taskRef.current;
       if (current) {
         const next = { ...current, comment_count: current.comment_count + 1 };
+        setTask(next);
+        onChanged?.({ type: "patched", task: next, confirmed: true });
+      }
+    });
+  }
+
+  /**
+   * Правка комментария. Признак успеха уходит в композер и решает, закрывать ли
+   * поле: при отказе сервера набранное должно остаться на экране. Править может
+   * только автор — это же правило стоит и на сервере (`editComment`).
+   */
+  async function patchComment(commentId: string, html: string): Promise<boolean> {
+    if (!orgId) return false;
+    return run(async () => {
+      const updated = await api.patch<CoreComment>(`/orgs/${orgId}/comments/${commentId}`, {
+        body: html,
+      });
+      if (currentTaskRef.current !== taskId) return;
+      setComments((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      flashSaved();
+    });
+  }
+
+  /**
+   * Удаление. Корень уносит с собой ответы — так делает сервер, и счётчик
+   * карточки надо уменьшать на всю ветку, иначе он разойдётся со списком.
+   * Удалять может автор или администратор организации (проверка на сервере).
+   */
+  async function removeComment(comment: CoreComment) {
+    if (!orgId) return;
+    const replies = comment.parent_id ? [] : comments.filter((c) => c.parent_id === comment.id);
+    const branch = replies.length ? ` вместе с ответами (${replies.length})` : "";
+    if (!window.confirm(`Удалить комментарий${branch} безвозвратно?`)) return;
+    await run(async () => {
+      await api.del(`/orgs/${orgId}/comments/${comment.id}`);
+      if (currentTaskRef.current !== taskId) return;
+      const gone = new Set([comment.id, ...replies.map((c) => c.id)]);
+      setComments((prev) => prev.filter((c) => !gone.has(c.id)));
+      // Ветку, в которую отвечали, только что удалили — композер внизу должен
+      // вернуться к обычному комментарию, иначе ответ уйдёт в никуда.
+      if (replyTo && gone.has(replyTo)) setReplyTo(null);
+      const current = taskRef.current;
+      if (current) {
+        const next = { ...current, comment_count: Math.max(0, current.comment_count - gone.size) };
         setTask(next);
         onChanged?.({ type: "patched", task: next, confirmed: true });
       }
@@ -1454,37 +1503,18 @@ export function TaskSheet({
                   {tab === "comments" ? (
                     <>
                       {comments.map((c) => (
-                        // Ответы сдвинуты и отчёркнуты слева: иерархия ровно
-                        // одноуровневая, ответ на ответ сервер приводит к тому
-                        // же корню — дерево в узкой колонке нечитаемо.
-                        <div key={c.id} className={cn("flex gap-2", c.parent_id && "ml-8 border-l border-border pl-3")}>
-                          {c.author ? <Avatar user={c.author} size="sm" /> : <span className="size-6" />}
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs text-muted-foreground">
-                              <span className="font-medium text-foreground">
-                                {c.author?.name || c.author?.email || c.author_label || "Неизвестный"}
-                              </span>{" "}
-                              · {new Date(c.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                              {c.edited_at && " · изменён"}
-                            </p>
-                            <div
-                              // comment-body — правила для картинки в готовом
-                              // тексте: ширину задал автор, высоту ограничиваем
-                              // мы (см. globals.css).
-                              className="comment-body prose prose-sm dark:prose-invert max-w-none text-sm"
-                              onClick={handleRichTextClick}
-                              dangerouslySetInnerHTML={{ __html: c.body }}
-                            />
-                            {orgRole !== null && replyTo !== (c.parent_id ?? c.id) && (
-                              <button
-                                onClick={() => setReplyTo(c.parent_id ?? c.id)}
-                                className="mt-0.5 text-[11px] text-muted-foreground hover:text-foreground"
-                              >
-                                Ответить
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                        <CommentItem
+                          key={c.id}
+                          comment={c}
+                          mine={!!me && c.author_id === me.id}
+                          canDelete={(!!me && c.author_id === me.id) || isOrgAdmin}
+                          canReply={orgRole !== null && replyTo !== (c.parent_id ?? c.id)}
+                          orgId={orgId}
+                          taskId={taskId}
+                          onReply={() => setReplyTo(c.parent_id ?? c.id)}
+                          onEdit={(html) => patchComment(c.id, html)}
+                          onDelete={() => void removeComment(c)}
+                        />
                       ))}
                       {comments.length === 0 && (
                         <p className="text-xs text-muted-foreground">Комментариев пока нет</p>
@@ -1689,5 +1719,144 @@ function FieldRow({
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * Комментарий в ленте задачи. Отдельный компонент, потому что у правки и меню
+ * своё состояние: держать его в карточке значило бы завести две карты состояний
+ * по id комментария.
+ *
+ * Устройство повторяет сообщение в панели обсуждений документа (`CommentPanel`):
+ * действия — под одной ручкой «⋯», правка идёт на месте тем же композером, а не
+ * в отдельном окне.
+ */
+function CommentItem({
+  comment,
+  mine,
+  canDelete,
+  canReply,
+  orgId,
+  taskId,
+  onReply,
+  onEdit,
+  onDelete,
+}: {
+  comment: CoreComment;
+  /** Автор комментария — только он может его править (правило сервера). */
+  mine: boolean;
+  /** Автор или администратор организации. */
+  canDelete: boolean;
+  /** На эту ветку уже отвечают — вторая кнопка «Ответить» ни к чему. */
+  canReply: boolean;
+  orgId: string | null;
+  taskId: string | null;
+  onReply: () => void;
+  /** Признак успеха: по нему решаем, закрывать ли поле правки. */
+  onEdit: (html: string) => Promise<boolean>;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const author = comment.author?.name || comment.author?.email || comment.author_label || "Неизвестный";
+
+  return (
+    // Ответы сдвинуты и отчёркнуты слева: иерархия ровно одноуровневая, ответ на
+    // ответ сервер приводит к тому же корню — дерево в узкой колонке нечитаемо.
+    <div className={cn("flex gap-2", comment.parent_id && "ml-8 border-l border-border pl-3")}>
+      {comment.author ? <Avatar user={comment.author} size="sm" /> : <span className="size-6" />}
+      <div className="min-w-0 flex-1">
+        <p className="flex items-center gap-1 text-xs text-muted-foreground">
+          <span className="truncate font-medium text-foreground">{author}</span>·{" "}
+          {new Date(comment.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+          {comment.edited_at && " · изменён"}
+          <span className="flex-1" />
+          {(mine || canDelete) && !editing && (
+            <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+              <PopoverTrigger
+                render={
+                  // Отступы на телефоне крупнее: 20 px мышью попадаются,
+                  // пальцем — нет (та же правка, что у кнопок шапки).
+                  <button
+                    className="-mr-1 rounded p-1.5 hover:bg-muted hover:text-foreground sm:p-0.5"
+                    aria-label="Действия с комментарием"
+                  />
+                }
+              >
+                <MoreHorizontal className="size-4 sm:size-3.5" />
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-44 p-1">
+                {mine && (
+                  <button
+                    onClick={() => {
+                      // Разметка уходит в редактор как есть: снятие тегов
+                      // регуляркой съедало бы упоминания, превращая @Ивана в
+                      // обычный текст.
+                      setMenuOpen(false);
+                      setEditing(true);
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm hover:bg-muted"
+                  >
+                    <Pencil className="size-4 shrink-0 text-muted-foreground" />
+                    Изменить
+                  </button>
+                )}
+                {canDelete && (
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onDelete();
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm text-destructive hover:bg-muted"
+                  >
+                    <Trash2 className="size-4 shrink-0" />
+                    Удалить
+                  </button>
+                )}
+              </PopoverContent>
+            </Popover>
+          )}
+        </p>
+
+        {editing ? (
+          <div className="mt-1">
+            <CommentComposer
+              autoFocus
+              value={comment.body}
+              submitLabel="Сохранить"
+              orgId={orgId}
+              taskId={taskId}
+              onCancel={() => setEditing(false)}
+              // Поле закрываем только при успехе и обязательно дожидаемся
+              // ответа: без await правка «сохранялась» бы на экране и при отказе
+              // сервера, а набранный текст исчезал вместе с полем.
+              onSubmit={async (html) => {
+                const ok = await onEdit(html);
+                if (ok) setEditing(false);
+                return ok;
+              }}
+            />
+          </div>
+        ) : (
+          <>
+            <div
+              // comment-body — правила для картинки в готовом тексте: ширину
+              // задал автор, высоту ограничиваем мы (см. globals.css).
+              className="comment-body prose prose-sm dark:prose-invert max-w-none text-sm"
+              onClick={handleRichTextClick}
+              dangerouslySetInnerHTML={{ __html: comment.body }}
+            />
+            {canReply && (
+              <button
+                onClick={onReply}
+                className="mt-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                Ответить
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }
