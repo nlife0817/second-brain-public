@@ -3,6 +3,7 @@
 // after() в withOrg/withUser шлёт сразу после ответа, cron добирает остатки.
 
 import { prepare, type TxContext } from "@/lib/sql";
+import { currentActorSource } from "./actor-source";
 import { filterByInboxPref, filterByProjectMute } from "./notification-prefs";
 import type { CoreEvent, CoreNotification } from "./types";
 
@@ -20,13 +21,26 @@ export interface EmitInput {
 export async function emitEvent(tx: TxContext, e: EmitInput): Promise<number> {
   // events.id — bigint; postgres.js отдаёт его строкой, приводим к number,
   // чтобы сортировки и сравнения на клиенте не сравнивали "9" > "10".
+  //
+  // Источник берётся из окружения вызова (см. actor-source.ts), а не из
+  // аргумента: события пишутся из десятков мест, и признак, который надо
+  // передавать руками, однажды забудут — действие интеграции станет
+  // неотличимым от ручного.
   const row = await tx
     .prepare<{ id: string | number }>(
-      `INSERT INTO core.events (org_id, actor_id, entity_type, entity_id, verb, payload)
-       VALUES (?, ?, ?, ?, ?, ?::jsonb)
+      `INSERT INTO core.events (org_id, actor_id, entity_type, entity_id, verb, payload, source)
+       VALUES (?, ?, ?, ?, ?, ?::jsonb, ?)
        RETURNING id`,
     )
-    .get(e.orgId, e.actorId, e.entityType, e.entityId, e.verb, JSON.stringify(e.payload ?? {}));
+    .get(
+      e.orgId,
+      e.actorId,
+      e.entityType,
+      e.entityId,
+      e.verb,
+      JSON.stringify(e.payload ?? {}),
+      currentActorSource(),
+    );
   if (!row) throw new Error("emitEvent: insert failed");
   return Number(row.id);
 }
@@ -94,7 +108,7 @@ export async function listEntityFeed(
   limit = 200,
 ): Promise<CoreEvent[]> {
   const rows = await prepare<CoreEvent & { actor_email: string | null; actor_name: string | null; actor_avatar: string | null }>(
-    `SELECT e.id, e.org_id, e.actor_id, e.entity_type, e.entity_id, e.verb, e.payload, e.created_at,
+    `SELECT e.id, e.org_id, e.actor_id, e.entity_type, e.entity_id, e.verb, e.payload, e.created_at, e.source,
             u.email AS actor_email, u.name AS actor_name, u.avatar_url AS actor_avatar
      FROM core.events e
      LEFT JOIN core.users u ON u.id = e.actor_id
@@ -111,6 +125,7 @@ export async function listEntityFeed(
     verb: r.verb,
     payload: r.payload,
     created_at: r.created_at,
+    source: r.source ?? null,
     actor: r.actor_id
       ? { id: r.actor_id, email: r.actor_email ?? "", name: r.actor_name ?? "", avatar_url: r.actor_avatar }
       : null,
@@ -131,6 +146,10 @@ export async function listNotifications(
             coalesce(n.entity_type, e.entity_type) AS entity_type,
             coalesce(n.entity_id, e.entity_id) AS entity_id,
             u.name AS actor_name,
+            -- Чем сделано действие: инбокс показывает ту же метку, что и лента.
+            -- У напоминания события нет вовсе — там останется null, и это верно:
+            -- напоминание не «сделано» никем.
+            e.source,
             CASE
               WHEN coalesce(n.entity_type, e.entity_type) = 'task'
                 THEN (SELECT t.title FROM core.tasks t WHERE t.id = coalesce(n.entity_id, e.entity_id))

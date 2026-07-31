@@ -2,6 +2,7 @@
 
 import { prepare, transaction } from "@/lib/sql";
 import { sanitizeRichText } from "@/lib/sanitize";
+import { currentActorSource } from "./actor-source";
 import { emitEvent, notifyUsers, taskAudience } from "./events";
 import { DomainError } from "./http";
 import { notifyMentions } from "./mentions";
@@ -11,7 +12,7 @@ import type { AuthContext, CoreComment } from "./types";
 
 const COMMENT_SELECT = `
   SELECT c.id, c.org_id, c.entity_type, c.entity_id, c.author_id, c.author_label,
-         c.body, c.created_at, c.edited_at, c.parent_id,
+         c.body, c.created_at, c.edited_at, c.parent_id, c.source,
          u.id AS u_id, u.email AS u_email, u.name AS u_name, u.avatar_url AS u_avatar
   FROM core.comments c
   LEFT JOIN core.users u ON u.id = c.author_id`;
@@ -35,6 +36,7 @@ function mapComment(r: CommentRow): CoreComment {
     created_at: r.created_at,
     edited_at: r.edited_at,
     parent_id: r.parent_id,
+    source: r.source ?? null,
     author: r.u_id
       ? { id: r.u_id, email: r.u_email ?? "", name: r.u_name ?? "", avatar_url: r.u_avatar }
       : null,
@@ -96,10 +98,10 @@ export async function addTaskComment(
   const commentId = await transaction(async (tx) => {
     const row = await tx
       .prepare<{ id: string }>(
-        `INSERT INTO core.comments (org_id, entity_type, entity_id, author_id, body, parent_id)
-         VALUES (?, 'task', ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO core.comments (org_id, entity_type, entity_id, author_id, body, parent_id, source)
+         VALUES (?, 'task', ?, ?, ?, ?, ?) RETURNING id`,
       )
-      .get(ctx.orgId, taskId, ctx.user.id, clean, rootId);
+      .get(ctx.orgId, taskId, ctx.user.id, clean, rootId, currentActorSource());
     if (!row) throw new DomainError(500, "Failed to add comment");
 
     const eventId = await emitEvent(tx, {

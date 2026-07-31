@@ -29,7 +29,7 @@ export async function listOrgAudit(
   const rows = await prepare<
     CoreEvent & { actor_email: string | null; actor_name: string | null; actor_avatar: string | null }
   >(
-    `SELECT e.id, e.org_id, e.actor_id, e.entity_type, e.entity_id, e.verb, e.payload, e.created_at,
+    `SELECT e.id, e.org_id, e.actor_id, e.entity_type, e.entity_id, e.verb, e.payload, e.created_at, e.source,
             u.email AS actor_email, u.name AS actor_name, u.avatar_url AS actor_avatar
      FROM core.events e
      LEFT JOIN core.users u ON u.id = e.actor_id
@@ -100,6 +100,7 @@ export async function listOrgAudit(
       verb: r.verb,
       payload: visible ? r.payload : {},
       created_at: r.created_at,
+      source: r.source ?? null,
       actor: r.actor_id
         ? { id: r.actor_id, email: r.actor_email ?? "", name: r.actor_name ?? "", avatar_url: r.actor_avatar }
         : null,

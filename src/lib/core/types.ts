@@ -61,6 +61,26 @@ export interface Invitation {
   created_at: string;
 }
 
+/**
+ * Режим токена доступа. `read` не даёт новых прав, а сужает права владельца до
+ * чтения: такой токен не допускается ни до одной мутации.
+ */
+export type ApiTokenScope = "read" | "full";
+
+/** Токен доступа без самого значения — его показывают ровно один раз, при выпуске. */
+export interface ApiToken {
+  id: string;
+  org_id: string;
+  user_id: string;
+  name: string;
+  /** Первые символы значения — опознать строку в списке. */
+  prefix: string;
+  scope: ApiTokenScope;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
 export interface OrgSummary {
   id: string;
   name: string;
@@ -322,6 +342,8 @@ export interface CoreComment {
    * сервер приводит к тому же корню (как в core.doc_comments).
    */
   parent_id: string | null;
+  /** Канал, которым оставлен комментарий: null — интерфейс, иначе метка интеграции. */
+  source: string | null;
   author: UserBrief | null;
 }
 
@@ -376,6 +398,11 @@ export interface CoreEvent {
   verb: string;
   payload: Record<string, unknown>;
   created_at: string;
+  /**
+   * Канал, которым сделано действие: null — руками в интерфейсе, иначе метка
+   * интеграции (`claude`). Подпись для интерфейса даёт `actorSourceLabel`.
+   */
+  source: string | null;
   actor: UserBrief | null;
 }
 
@@ -394,6 +421,8 @@ export interface CoreNotification {
   verb: string | null;
   payload: Record<string, unknown> | null;
   actor_name: string | null;
+  /** Канал действия, породившего уведомление. У напоминания события нет — null. */
+  source: string | null;
   entity_type: string | null;
   entity_id: string | null;
   entity_title: string | null;
