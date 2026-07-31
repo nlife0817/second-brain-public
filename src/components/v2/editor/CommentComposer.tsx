@@ -147,7 +147,13 @@ export function CommentComposer({
         {...drop.handlers}
         className="relative rounded-lg border border-input bg-background px-3 py-2 focus-within:border-ring"
       >
-        <EditorContent editor={editor} />
+        {/* Поле прокручивается само, а не растёт до бесконечности: композер в
+            карточке задачи — закреплённый футер, панель под ним не
+            прокручивается, и длинный комментарий выталкивал «Отправить» за
+            нижний край экрана — на телефоне до кнопки было не добраться. */}
+        <div className="max-h-40 overflow-y-auto overscroll-contain sm:max-h-72">
+          <EditorContent editor={editor} />
+        </div>
         {/* pointer-events-none обязателен: перехватив указатель, оверлей съест и
             dragleave (подсветка залипнет), и сам сброс. */}
         {drop.active && (
