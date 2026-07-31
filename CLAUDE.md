@@ -84,7 +84,7 @@
 
 БД — Postgres в контейнере `db` на VPS (не SQLite). Доступ через `prepare()` из [src/lib/sql.ts](src/lib/sql.ts), который конвертит `?` → `$N` плейсхолдеры.
 
-Новая миграция — просто файл `supabase/migrations/NNNN_<name>.sql` (следующий свободный номер — **0047**). Выкат применяет непринятые файлы сам, по одному, каждый в своей транзакции; учёт — в `public._deploy_migrations`. Подробности и ручные режимы — [docs/DEPLOY.md](docs/DEPLOY.md).
+Новая миграция — просто файл `supabase/migrations/NNNN_<name>.sql` (следующий свободный номер — **0048**). Выкат применяет непринятые файлы сам, по одному, каждый в своей транзакции; учёт — в `public._deploy_migrations`. Подробности и ручные режимы — [docs/DEPLOY.md](docs/DEPLOY.md).
 
 **Миграция обязана быть совместимой с текущим кодом**: она применяется до перезапуска приложения, то есть минуту-другую старый код работает с новой схемой. Добавить колонку или таблицу — безопасно. Удалить или переименовать — только следующим выкатом, когда код уже перестал их использовать.
 
@@ -102,7 +102,7 @@
 2. Добавь путь в `config.matcher` exclusion list в [src/proxy.ts](src/proxy.ts)
 3. Иначе запрос получит 307 на /login и до твоего кода не дойдёт
 
-Источник правды — `config.matcher` в [src/proxy.ts](src/proxy.ts). На текущий момент из proxy исключены `api/v2/cron` и `api/v2/invitations` (плюс статика: `_next`, `icons`, `favicon`, `manifest`, `sw.js`, `offline.html`). Все остальные `/api/*` проходят проверку сессии в proxy; ролевые ограничения — в `withOrg`/`withUser` из [src/lib/core/context.ts](src/lib/core/context.ts).
+Источник правды — `config.matcher` в [src/proxy.ts](src/proxy.ts). На текущий момент из proxy исключены `api/v2/cron`, `api/v2/invitations` и `api/mcp` — последний это вход внешних агентов по токену (плюс статика: `_next`, `icons`, `favicon`, `manifest`, `sw.js`, `offline.html`). Все остальные `/api/*` проходят проверку сессии в proxy; ролевые ограничения — в `withOrg`/`withUser` из [src/lib/core/context.ts](src/lib/core/context.ts).
 
 Дополнительно proxy редиректит мобильные UA с десктопных экранов на `/v2/m/*` (включая корень `/`), обойти — `?desktop` (липкая cookie), вернуть — `?mobile`.
 
