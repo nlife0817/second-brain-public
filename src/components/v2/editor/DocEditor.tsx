@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { EditorContent, useEditorState } from "@tiptap/react";
-import { List, Loader2, MessageSquare, Minimize2, X, type LucideIcon } from "lucide-react";
+import { List, Loader2, MessageSquare, Minimize2, Search, X, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/core/client";
 import type { DocCommentThread, UserBrief } from "@/lib/core/types";
@@ -31,6 +31,7 @@ import {
   scrollToThread,
   setThreadResolvedInDoc,
 } from "./comment-marks";
+import { DocSearchBar, EMPTY_SEARCH, type DocSearchValue } from "./SearchBar";
 import { SelectionMenu } from "./SelectionMenu";
 import { EditorToolbar } from "./Toolbar";
 import { useDocEditor, type UseDocEditorOptions } from "./useDocEditor";
@@ -110,6 +111,11 @@ export function DocEditor({
   const [railOpen, setRailOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<PanelTab>("comments");
   const [error, setError] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  // Запрос живёт здесь, а не в самой строке: она размонтируется при закрытии, а
+  // набранное должно пережить это — см. комментарий в SearchBar.
+  const [search, setSearch] = useState<DocSearchValue>(EMPTY_SEARCH);
+  const [searchFocus, setSearchFocus] = useState(0);
 
   const doc = useDocEditor({
     value,
@@ -138,19 +144,42 @@ export function DocEditor({
 
   useBackDismiss(open, onClose);
 
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+    // Повторный Ctrl+F при открытой строке возвращает курсор в поле.
+    setSearchFocus((n) => n + 1);
+  }, []);
+
+  // Слой закрыли — закрывается и поиск. Сам запрос остаётся: тот же документ
+  // часто открывают снова, чтобы продолжить с того же места.
+  useEffect(() => {
+    if (!open) setSearchOpen(false);
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      // Клавиша по `code`, а не по `key`: на русской раскладке Ctrl+F даёт
+      // `key === "а"`, и поиск бы не открывался.
+      if (e.code === "KeyF" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        // Поиск браузера здесь бесполезен: он не считает совпадения и не умеет
+        // переходить по ним внутри прокручиваемой колонки документа.
+        e.preventDefault();
+        openSearch();
+        return;
+      }
       if (e.key === "Escape") {
-        // Esc закрывает черновик комментария, а не весь документ: иначе
-        // случайное нажатие уносит и набранный текст.
+        // Esc снимает по одному слою: сначала черновик комментария, потом
+        // поиск, и только потом весь документ — иначе случайное нажатие уносит
+        // и набранный текст.
         if (draft) setDraft(null);
+        else if (searchOpen) setSearchOpen(false);
         else onClose();
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, draft, onClose]);
+  }, [open, draft, searchOpen, openSearch, onClose]);
 
   /**
    * Тред под курсором и набор тредов, у которых остался якорь в тексте.
@@ -350,6 +379,16 @@ export function DocEditor({
           </span>
         )}
         {editable && <DocSaveButton status={doc.status} onSave={doc.flush} className="h-8" />}
+        <Button
+          variant={searchOpen ? "secondary" : "outline"}
+          size="sm"
+          className="h-8"
+          onClick={() => (searchOpen ? setSearchOpen(false) : openSearch())}
+          title="Найти в описании (Ctrl+F)"
+          aria-label="Найти в описании"
+        >
+          <Search className="size-4" />
+        </Button>
         <DocxDownloadButton
           variant="outline"
           className="h-8"
@@ -395,6 +434,17 @@ export function DocEditor({
             onComment={canComment ? startDraft : undefined}
           />
         </div>
+      )}
+
+      {searchOpen && (
+        <DocSearchBar
+          editor={editor}
+          scrollHost={scrollHost}
+          value={search}
+          onChange={setSearch}
+          onClose={() => setSearchOpen(false)}
+          focusSignal={searchFocus}
+        />
       )}
 
       {(error || doc.error) && (

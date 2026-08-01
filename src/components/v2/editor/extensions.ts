@@ -20,6 +20,7 @@ import { DocImage } from "./DocImage";
 import { DropTarget } from "./DropTarget";
 import { createMention, type MentionItem } from "./Mention";
 import { OpenLinkInNewTab } from "./OpenLink";
+import { DocSearch } from "./Search";
 import { NoTextDrag } from "./TextDrag";
 
 /**
@@ -81,6 +82,10 @@ export function docExtensions({
     DocImage,
     DocFile,
     CommentMark,
+    // Поиск по тексту. В карточке строку поиска не открывают, но расширение идёт
+    // и туда: разметки оно не добавляет и молчит, пока запрос пуст, а держать
+    // два разных набора ради одного плагина — лишний повод им разойтись.
+    DocSearch,
     // Упоминание тоже правило разбора: редактор без него не узнает
     // <span data-type="mention"> и выбросит чужое упоминание при первом же
     // сохранении — ровно та же ловушка, что с CommentMark выше.
