@@ -719,6 +719,20 @@ figure[data-image] figcaption {
   border-bottom: 1px dotted var(--border);
 }
 
+/* Поиск по тексту -----------------------------------------------------------
+   Синий, а не привычный жёлтый: жёлтым в документе уже помечены якоря
+   обсуждений, а оранжевый — фирменный цвет выделения. Текущее совпадение
+   отличается от остальных не только заливкой, но и обводкой: на цветной
+   картинке или в ссылке одной заливки не хватает. */
+.doc-content .doc-search-hit {
+  background: color-mix(in oklab, #3b82f6 22%, transparent);
+  border-radius: 0.2rem;
+}
+.doc-content .doc-search-hit-current {
+  background: color-mix(in oklab, #3b82f6 55%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, #3b82f6 70%, transparent);
+}
+
 /* Упоминание участника -------------------------------------------------------
    Селектор по data-type, а не по классу: санитайзер вырезает class у span
    (разрешены только data-*), поэтому класс до читателя всё равно не доедет.
