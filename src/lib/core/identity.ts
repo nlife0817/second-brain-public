@@ -65,8 +65,11 @@ export async function listUserOrgs(userId: string): Promise<OrgSummary[]> {
 }
 
 export async function listOrgMembers(orgId: string): Promise<OrgMemberWithUser[]> {
+  // has_password — состояние учётки, а не секрет: сам хеш отсюда не уезжает.
+  // Владельцу он показывает, кому ещё нужна ссылка установки пароля.
   return prepare<OrgMemberWithUser>(
-    `SELECT m.org_id, m.user_id, m.role, m.created_at, u.email, u.name, u.avatar_url
+    `SELECT m.org_id, m.user_id, m.role, m.created_at, u.email, u.name, u.avatar_url,
+            u.password_hash IS NOT NULL AS has_password
      FROM core.org_members m
      JOIN core.users u ON u.id = m.user_id
      WHERE m.org_id = ?

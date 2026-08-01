@@ -37,6 +37,7 @@ function member(id: string): OrgMemberWithUser {
     email: `${id}@test.dev`,
     name: id,
     avatar_url: null,
+    has_password: true,
   };
 }
 

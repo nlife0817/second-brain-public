@@ -41,6 +41,8 @@ export interface OrgMemberWithUser extends OrgMember {
   email: string;
   name: string;
   avatar_url: string | null;
+  /** Задан ли пароль. Владельцу видно, кому ещё нужна ссылка установки. */
+  has_password: boolean;
 }
 
 export interface ProjectGrant {

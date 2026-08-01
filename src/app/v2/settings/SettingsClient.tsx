@@ -12,7 +12,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
-import { Bell, CalendarDays, Copy, Plus, Trash2 } from "lucide-react";
+import { Bell, CalendarDays, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -45,6 +45,7 @@ import { ApiTokensSection } from "@/components/v2/ApiTokensSection";
 import { AuditList } from "@/components/v2/AuditList";
 import { Avatar, chipStyle } from "@/components/v2/bits";
 import { OrgSwitcher } from "@/components/v2/OrgSwitcher";
+import { PasswordSection } from "@/components/v2/PasswordSection";
 import { StatusesSection } from "@/components/v2/StatusesSection";
 
 const PROJECT_ROLE_LABELS: Record<ProjectRole, string> = {
@@ -137,6 +138,12 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
   const [newFieldType, setNewFieldType] = useState<FieldType>("text");
   const [newFieldOptions, setNewFieldOptions] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Ссылка «задать пароль», выданная владельцем: показывается один раз, как и
+  // ссылка приглашения, — второй раз её взять уже неоткуда.
+  const [passwordLink, setPasswordLink] = useState<{ email: string; url: string } | null>(null);
+
+  // Своя строка в составе организации: из неё берём, задан ли уже пароль.
+  const myMembership = members.find((m) => m.user_id === me?.id);
 
   // Поля живут в сторе (их читает карточка задачи) — правки отсюда должны
   // обновлять именно его, иначе карточка покажет устаревший набор.
@@ -227,8 +234,34 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
                         {m.name || m.email}
                         {me?.id === m.user_id && <span className="text-muted-foreground"> (вы)</span>}
                       </p>
-                      <p className="truncate text-xs text-muted-foreground">{m.email}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {m.email}
+                        {/* Видно только владельцу: он же и выдаёт ссылку. */}
+                        {isOwner && !m.has_password && (
+                          <span className="text-destructive"> · пароль не задан</span>
+                        )}
+                      </p>
                     </div>
+                    {/* Выдать ссылку — значит войти под этим человеком, поэтому
+                        только владелец и только не себе: свой пароль он меняет
+                        в разделе «Вход в систему». */}
+                    {isOwner && m.user_id !== me?.id && (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="Ссылка для установки пароля"
+                        onClick={() =>
+                          void call(async () => {
+                            const res = await api.post<{ url: string }>(
+                              `/orgs/${orgId}/members/${m.user_id}/password-link`,
+                            );
+                            setPasswordLink({ email: m.email, url: res.url });
+                          })
+                        }
+                      >
+                        <KeyRound className="size-4" />
+                      </Button>
+                    )}
                     {isAdmin && m.user_id !== me?.id ? (
                       <>
                         <Select
@@ -275,6 +308,28 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
                   </div>
                 ))}
               </div>
+
+              {/* Письма система не шлёт — ссылку владелец передаёт лично.
+                  Показывается один раз: в базе лежит только её хеш. */}
+              {passwordLink && (
+                <div className="mt-3 rounded-lg bg-muted px-3 py-2">
+                  <p className="mb-1.5 text-xs text-muted-foreground">
+                    Ссылка для {passwordLink.email} — действует двое суток, сработает один раз.
+                    Передайте её лично: кто откроет, тот и задаст пароль.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <code className="min-w-0 flex-1 truncate text-xs">{passwordLink.url}</code>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void navigator.clipboard.writeText(passwordLink.url)}
+                    >
+                      <Copy className="size-3.5" />
+                      Копировать
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {isAdmin && (
                 <>
@@ -423,6 +478,12 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
               )}
             </Section>
           )}
+
+          {/* Вход — личный раздел, как уведомления и календари: он есть у любой
+              роли независимо от настройки видимости, которую задаёт владелец. */}
+          <Section title="Вход в систему">
+            <PasswordSection hasPassword={myMembership?.has_password ?? true} />
+          </Section>
 
           {/* Уведомления настраиваются в своём разделе: он личный и доступен
               любой роли, а состав этой страницы решает владелец организации. */}

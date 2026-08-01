@@ -12,7 +12,7 @@ import {
   calendarOAuthCookieOptions,
   type CalendarOAuthState,
 } from "@/lib/auth/calendar-oauth";
-import { appOrigin, safeNextPath } from "@/lib/auth/oauth-state";
+import { appOrigin, safeNextPath } from "@/lib/auth/urls";
 import { getCoreUser } from "@/lib/core/context";
 import {
   buildCalendarAuthUrl,

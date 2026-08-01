@@ -10,7 +10,7 @@ import {
   calendarCallbackUrl,
   type CalendarOAuthState,
 } from "@/lib/auth/calendar-oauth";
-import { appOrigin, safeNextPath } from "@/lib/auth/oauth-state";
+import { appOrigin, safeNextPath } from "@/lib/auth/urls";
 import { connectGoogleAccount, syncAccount } from "@/lib/core/calendars";
 import { getCoreUser } from "@/lib/core/context";
 import { exchangeCalendarCode } from "@/lib/core/google-calendar";

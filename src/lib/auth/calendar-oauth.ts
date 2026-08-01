@@ -1,11 +1,11 @@
-// Промежуточное состояние отдельного согласия на чтение календаря.
+// Промежуточное состояние согласия на чтение календаря.
 //
-// Своя cookie, а не общая с входом (`sb_oauth`): заходы независимы, и человек,
-// начавший подключение календаря в одной вкладке и вход в другой, не должен
-// ломать ни то, ни другое.
+// Единственное место, где в приложении остался OAuth: вход давно переведён на
+// email с паролем, а подключение внешнего календаря без согласия у Google
+// невозможно по определению.
 
 import type { NextRequest } from "next/server";
-import { appOrigin } from "./oauth-state";
+import { appOrigin } from "./urls";
 
 export const CALENDAR_OAUTH_COOKIE = "sb_cal_oauth";
 
@@ -30,9 +30,8 @@ export function calendarOAuthCookieOptions() {
 }
 
 /**
- * Адрес возврата. Отдельный от входа (`/auth/callback`), потому что обработка
- * разная — и потому что его надо отдельной строкой зарегистрировать в Google
- * Cloud Console: redirect_uri сверяется посимвольно.
+ * Адрес возврата. Его надо отдельной строкой зарегистрировать в Google Cloud
+ * Console: redirect_uri сверяется посимвольно.
  */
 export function calendarCallbackUrl(request: NextRequest): string {
   return `${appOrigin(request)}/auth/calendar/callback`;

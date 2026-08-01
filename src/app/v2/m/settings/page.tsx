@@ -12,6 +12,7 @@ import {
   ProjectMutes,
   PushTestButton,
 } from "@/components/v2/NotificationSettings";
+import { PasswordSection } from "@/components/v2/PasswordSection";
 import { PushToggle } from "@/components/v2/PushToggle";
 import { SignOutButton } from "@/components/v2/SignOutButton";
 import { IosInstallSteps, useInstallState } from "@/components/v2/mobile/InstallPrompt";
@@ -41,10 +42,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export default function MobileSettingsPage() {
-  const { me, orgs, orgId, orgName, orgRole, switchOrg } = useV2Store();
+  const { me, members, orgs, orgId, orgName, orgRole, switchOrg } = useV2Store();
   const { standalone, ios, canInstall, install } = useInstallState();
 
   if (!me) return null;
+
+  // Задан ли пароль — из своей же строки в составе организации.
+  const myMembership = members.find((m) => m.user_id === me.id);
 
   return (
     <div className="flex h-full flex-col">
@@ -67,6 +71,10 @@ export default function MobileSettingsPage() {
                 </span>
               )}
             </div>
+          </Section>
+
+          <Section title="Вход в систему">
+            <PasswordSection hasPassword={myMembership?.has_password ?? true} />
           </Section>
 
           <Section title="Организация">

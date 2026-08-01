@@ -26,8 +26,8 @@ function request(path: string, headers: Record<string, string> = {}) {
 }
 
 describe("живые API", () => {
-  it("пропускает начало входа через Google", async () => {
-    const response = await proxy(request("/api/auth/google?next=%2Fv2%2Fm%2Fmy"));
+  it("пропускает вход по паролю", async () => {
+    const response = await proxy(request("/api/auth/login"));
     expect(response.status).toBe(200);
     expect(response.headers.get("location")).toBeNull();
   });
@@ -37,10 +37,16 @@ describe("живые API", () => {
     expect(response.status).toBe(200);
   });
 
+  // Оба роута работают до входа: у их запросов сессии нет по определению.
+  it("пропускает установку пароля и регистрацию по приглашению", async () => {
+    for (const path of ["/api/auth/set-password", "/api/auth/invite-signup"]) {
+      const response = await proxy(request(path));
+      expect(response.status, path).toBe(200);
+    }
+  });
+
   it("не подменяет вход даже мобильному браузеру", async () => {
-    const response = await proxy(
-      request("/api/auth/google?next=%2Fv2%2Fm%2Fmy", { "user-agent": MOBILE_UA }),
-    );
+    const response = await proxy(request("/api/auth/login", { "user-agent": MOBILE_UA }));
     expect(response.status).toBe(200);
   });
 
@@ -84,6 +90,13 @@ describe("сессия", () => {
 
   it("пускает на страницу входа", async () => {
     const response = await proxy(request("/login?next=%2Fv2%2Fm%2Fmy"));
+    expect(response.status).toBe(200);
+  });
+
+  // Сюда приходит ровно тот, кто войти пока не может: отправить его на /login
+  // значило бы замкнуть круг.
+  it("пускает на установку пароля по ссылке", async () => {
+    const response = await proxy(request("/set-password/abc123"));
     expect(response.status).toBe(200);
   });
 
