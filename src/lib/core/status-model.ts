@@ -6,7 +6,7 @@
 // истины — сервер, интерфейс повторяет правило, чтобы не рисовать кнопку,
 // которая ответит 422.
 
-import type { StatusCategory, TaskStatus } from "./types";
+import type { StatusCategory, StatusSet, TaskStatus } from "./types";
 
 /** Порядок категорий = порядок ряда кнопок в карточке и блоков в настройках. */
 export const STATUS_CATEGORIES: readonly StatusCategory[] = [
@@ -119,6 +119,24 @@ export function fallbackStatusId(statuses: TaskStatus[], statusId: string): stri
   const sibling = statuses.find((s) => s.category === target.category && s.id !== statusId);
   if (sibling) return sibling.id;
   return statuses.find((s) => s.is_default && s.id !== statusId)?.id ?? null;
+}
+
+/**
+ * Набор проекта: его собственный либо набор организации по умолчанию. Зеркало
+ * серверного `resolveStatusSetId` — интерфейс повторяет правило, чтобы не
+ * показать не тот набор.
+ *
+ * Тонкость в двойном смысле `null`. У проекта `status_set_id === null` (0052)
+ * значит «набор по умолчанию», а НЕ «показать всё»: последнее — только там, где
+ * проекта нет вовсе (сводный список, личный инбокс). Отдать сырой `null` проекта
+ * в `statusesOfSet`/`boardStatuses` — показать статусы всех наборов сразу.
+ */
+export function resolveProjectSetId(
+  sets: Pick<StatusSet, "id" | "is_default">[],
+  projectSetId: string | null,
+): string | null {
+  if (projectSetId) return projectSetId;
+  return sets.find((s) => s.is_default)?.id ?? sets[0]?.id ?? null;
 }
 
 /**

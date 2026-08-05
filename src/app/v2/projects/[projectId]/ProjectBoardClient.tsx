@@ -24,6 +24,7 @@ import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
 import { BOARD_SECTIONS, ViewSettingsPopover } from "@/components/v2/tasks/ViewControls";
 import { FilterButton, TaskCount, TaskSearch, ViewModeSwitch } from "@/components/v2/tasks/ViewToolbar";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
+import { resolveProjectSetId } from "@/lib/core/status-model";
 import { useLoad } from "@/lib/core/use-load";
 import { applyTaskChange } from "@/lib/core/task-change";
 import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
@@ -77,7 +78,7 @@ function ProjectScreen({
   initialTasks: TaskRow[];
   initialSprints: SprintWithTotals[];
 }) {
-  const { orgId, statuses, fields, me, metaLoading, refreshProjects } = useV2Store();
+  const { orgId, statuses, statusSets, fields, me, metaLoading, refreshProjects } = useV2Store();
   const mode = useViewStore((s) => s.mode);
   const filterGroups = useViewStore((s) => s.groups);
   const search = useViewStore((s) => s.search);
@@ -209,6 +210,12 @@ function ProjectScreen({
   const isDev = project.mode === "dev";
   const view = mode === "backlog" && !isDev ? "table" : mode;
 
+  // Набор статусов проекта: свой либо набор организации по умолчанию. `null` у
+  // проекта (0052) — это «набор по умолчанию», а не «показать все наборы», и
+  // отдать его сырым в списки, доску и бэклог значило бы вывалить весь справочник
+  // организации. Резолвим один раз и раздаём во все виды.
+  const statusSetId = resolveProjectSetId(statusSets, project.status_set_id);
+
   // Шапка — только название и переключатель вида. Участники и параметры проекта
   // живут в его настройках (карандаш у строки проекта в сайдбаре), а задача
   // заводится там, где её и пишут: строкой в таблице и «плюсом» в колонке доски.
@@ -269,7 +276,7 @@ function ProjectScreen({
           onOpenTask={openTask}
           onCreateTask={canEdit ? createTask : undefined}
           draftDefaults={draftDefaults}
-          statusSetId={project.status_set_id}
+          statusSetId={statusSetId}
           reload={reload}
           titleSlot={title}
           actionsSlot={<ViewSwitch dev={isDev} />}
@@ -334,7 +341,7 @@ function ProjectScreen({
           draftDefaults={draftDefaults}
           error={notice}
           onDismissError={() => setNotice(null)}
-          statusSetId={project.status_set_id}
+          statusSetId={statusSetId}
           quickAddPlaceholder={`Быстро добавить задачу в «${project.name}»…`}
           emptyText="В проекте пока нет задач."
           titleSlot={title}
@@ -370,7 +377,7 @@ function ProjectScreen({
         tasks={tasks}
         setTasks={setTasks}
         canEdit={!!canEdit}
-        statusSetId={project.status_set_id}
+        statusSetId={statusSetId}
         onOpenTask={openTask}
         onAddTask={addTask}
       />

@@ -11,6 +11,7 @@ import {
   defaultStatus,
   fallbackStatusId,
   groupByCategory,
+  resolveProjectSetId,
   statusDeleteBlock,
   statusesOfSet,
   statusMoveBlock,
@@ -51,6 +52,28 @@ describe("наборы статусов", () => {
     expect(withCurrent([own], foreign)).toEqual([own, foreign]);
     expect(withCurrent([own], own)).toEqual([own]);
     expect(withCurrent([own], undefined)).toEqual([own]);
+  });
+
+  it("набор проекта: свой набор проходит как есть", () => {
+    const sets = [
+      { id: "def", is_default: true },
+      { id: "dev", is_default: false },
+    ];
+    expect(resolveProjectSetId(sets, "dev")).toBe("dev");
+  });
+
+  it("null у проекта — это набор по умолчанию, а не «показать все»", () => {
+    // Ровно эта подмена и есть баг: сырой null проекта уходил в statusesOfSet и
+    // показывал статусы всех наборов сразу в обычных (не dev) проектах.
+    const sets = [
+      { id: "def", is_default: true },
+      { id: "dev", is_default: false },
+    ];
+    expect(resolveProjectSetId(sets, null)).toBe("def");
+  });
+
+  it("без наборов вовсе резолвить некуда — остаётся null", () => {
+    expect(resolveProjectSetId([], null)).toBeNull();
   });
 });
 

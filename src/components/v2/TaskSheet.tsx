@@ -53,6 +53,7 @@ import {
   archiveStatus,
   cardStatuses,
   defaultStatus,
+  resolveProjectSetId,
   statusesOfSet,
   withCurrent,
 } from "@/lib/core/status-model";
@@ -223,7 +224,7 @@ export function TaskSheet({
 
   // Кастомные поля — справочник организации из стора: раньше карточка тянула
   // /fields при каждом открытии.
-  const { orgId, statuses, tags, projects, me, fields, orgRole } = useV2Store();
+  const { orgId, statuses, statusSets, tags, projects, me, fields, orgRole } = useV2Store();
   const storeApi = useV2StoreApi();
   // Гость связями не управляет; более тонкие права проверит сервер.
   const canEdit = orgRole !== null && orgRole !== "guest";
@@ -869,10 +870,14 @@ export function TaskSheet({
    * организации: с наборами (0052) у соседнего проекта может быть свой. Плюс
    * текущий статус задачи, даже если он из чужого набора: задача живёт сразу в
    * нескольких проектах, и спрятать её статус значит показать «ничего не
-   * выбрано». Без проекта (личный инбокс) набора нет — показываем всё.
+   * выбрано». Проект на наборе по умолчанию (`status_set_id === null`) и задача
+   * без проекта (личный инбокс) сводятся к набору по умолчанию — там и лежит
+   * статус такой задачи; `null` в `statusesOfSet` показал бы все наборы разом.
    */
-  const projectSetId =
-    projects.find((p) => task?.placements.some((pl) => pl.project_id === p.id))?.status_set_id ?? null;
+  const projectSetId = resolveProjectSetId(
+    statusSets,
+    projects.find((p) => task?.placements.some((pl) => pl.project_id === p.id))?.status_set_id ?? null,
+  );
   const flowStatuses = statusesOfSet(statuses, projectSetId);
   const archiveTarget = inArchive ? defaultStatus(flowStatuses) : archiveStatus(flowStatuses);
 
