@@ -25,6 +25,7 @@ import { api } from "@/lib/core/client";
 import { invalidate } from "@/lib/core/query";
 import { emptyDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type { TaskDetail, TaskRow } from "@/lib/core/types";
+import { statusesOfSet } from "@/lib/core/status-model";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
 import {
@@ -104,6 +105,11 @@ export interface TaskTableViewProps {
   quickAddPlaceholder?: string;
   /** Текст, когда задач нет вовсе (фильтр ни при чём). */
   emptyText?: string;
+  /**
+   * Набор статусов проекта: из него строится выбор статуса в строке. В сводном
+   * списке набора нет — там задачи разных проектов с разными процессами.
+   */
+  statusSetId?: string | null;
   /** Узкий экран: прячем то, что на телефоне бесполезно (история правок). */
   compact?: boolean;
   onOpenTask: (taskId: string) => void;
@@ -129,8 +135,16 @@ export function TaskTableView({
   onOpenTask,
   error: externalError = null,
   onDismissError,
+  statusSetId = null,
 }: TaskTableViewProps) {
-  const { orgId, statuses, tags, members, projects, fields, me, refreshProjects } = useV2Store();
+  const { orgId, statuses: allStatuses, tags, members, projects, fields, me, refreshProjects } = useV2Store();
+  /**
+   * Выбор статуса в строке — рабочий процесс проекта, а не весь справочник
+   * организации (наборы, 0051). В сводном списке набора нет: там задачи разных
+   * проектов, и сузить их до одного процесса нельзя. Отсев и сортировка идут по
+   * полному справочнику: статус чужого набора всё равно должен находиться.
+   */
+  const statuses = useMemo(() => statusesOfSet(allStatuses, statusSetId), [allStatuses, statusSetId]);
 
   const columnsOrder = useViewStore((s) => s.columns);
   const widths = useViewStore((s) => s.widths);
@@ -196,13 +210,13 @@ export function TaskTableView({
       // completed_at выводится из категории статуса — иначе строка «завершена»
       // осталась бы прежней до перезагрузки.
       if ("status_id" in payload) {
-        const category = statuses.find((s) => s.id === payload.status_id)?.category;
+        const category = allStatuses.find((s) => s.id === payload.status_id)?.category;
         if (category === "done" && !task.completed_at) next.completed_at = new Date().toISOString();
         if (category !== "done" && task.completed_at) next.completed_at = null;
       }
       return next;
     },
-    [members, tags, statuses],
+    [members, tags, allStatuses],
   );
 
   /**
@@ -361,19 +375,19 @@ export function TaskTableView({
    * делать нечего — иначе список без единого условия показывал бы «12 из 40».
    */
   const pool = useMemo(
-    () => visiblePool(tasks, filterGroups, statuses),
-    [tasks, filterGroups, statuses],
+    () => visiblePool(tasks, filterGroups, allStatuses),
+    [tasks, filterGroups, allStatuses],
   );
 
   const visibleTasks = useMemo(() => {
     const filtered = filterTasks(pool, filterGroups, search, matchCtx);
-    const statusPosition = new Map(statuses.map((s) => [s.id, s.position]));
+    const statusPosition = new Map(allStatuses.map((s) => [s.id, s.position]));
     const projectPosition = new Map(projects.map((p) => [p.id, p.position]));
     const projectName = new Map(projects.map((p) => [p.id, p.name]));
     return [...filtered].sort((a, b) =>
       compareTasks(a, b, sort, { statusPosition, projectPosition, projectName }),
     );
-  }, [pool, search, filterGroups, matchCtx, sort, statuses, projects]);
+  }, [pool, search, filterGroups, matchCtx, sort, allStatuses, projects]);
 
   const columns = useMemo(
     () => resolveColumns(columnsOrder, widths, fields),

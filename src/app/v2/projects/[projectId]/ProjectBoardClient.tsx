@@ -326,6 +326,7 @@ function ProjectScreen({
           draftDefaults={draftDefaults}
           error={notice}
           onDismissError={() => setNotice(null)}
+          statusSetId={project.status_set_id}
           quickAddPlaceholder={`Быстро добавить задачу в «${project.name}»…`}
           emptyText="В проекте пока нет задач."
           titleSlot={title}
