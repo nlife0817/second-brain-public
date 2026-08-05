@@ -22,7 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ProjectMuteToggle } from "@/components/v2/ProjectMuteToggle";
 import { api, ApiError } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
-import type { Project, ProjectMemberWithUser, ProjectRole } from "@/lib/core/types";
+import type { Project, ProjectMemberWithUser, ProjectMode, ProjectRole } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { ProjectAccessPicker, type ProjectAccessValue } from "./ProjectAccessPicker";
@@ -44,6 +44,11 @@ const TABS = [
   { id: "access", label: "Доступ" },
   { id: "danger", label: "Архив и удаление" },
 ] as const;
+
+const PROJECT_MODES: Array<{ id: ProjectMode; label: string }> = [
+  { id: "standard", label: "Обычный" },
+  { id: "dev", label: "Разработка" },
+];
 
 type TabId = (typeof TABS)[number]["id"];
 
@@ -159,6 +164,19 @@ export function ProjectSettings({
     setSaving(false);
   }
 
+  /**
+   * Переключение режима — обычный патч проекта: данные при этом не меняются
+   * вовсе, поэтому выключение режима ничего не теряет. Спринты остаются в базе и
+   * вернутся, если режим включить снова.
+   */
+  async function setMode(value: ProjectMode) {
+    if (value === project.mode) return;
+    await call(() => api.patch(`/orgs/${orgId}/projects/${projectId}`, { mode: value }), async () => {
+      await load();
+      await refreshProjects();
+    });
+  }
+
   async function setAccess(value: ProjectAccessValue) {
     if (value === project.default_role) return;
     // Список участников перечитываем целиком: закрытие проекта добавляет в него
@@ -232,6 +250,36 @@ export function ProjectSettings({
             hint="Заглушённый проект перестаёт присылать уведомления вам; остальных участников это не касается"
           >
             <ProjectMuteToggle projectId={projectId} />
+          </Card>
+
+          <Card
+            title="Режим проекта"
+            hint="«Разработка» добавляет спринты и бэклог с ручным порядком. Остальные виды остаются на месте, задачи не меняются"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              {PROJECT_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  disabled={!canManage || m.id === project.mode}
+                  onClick={() => void setMode(m.id)}
+                  className={cn(
+                    "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                    project.mode === m.id
+                      ? "border-foreground bg-foreground text-background"
+                      : "border-border text-muted-foreground hover:text-foreground",
+                    !canManage && "cursor-not-allowed opacity-60",
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+              <span className="text-xs text-muted-foreground">
+                {project.mode === "dev"
+                  ? "В шапке проекта появился вид «Бэклог» — там же живут спринты."
+                  : "Спринтов и бэклога у проекта нет."}
+              </span>
+            </div>
           </Card>
 
           <Card title="Название и описание">

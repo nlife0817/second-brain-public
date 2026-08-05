@@ -15,6 +15,7 @@ import {
 import { notifyMentions } from "./mentions";
 import { getDefaultStatus } from "./orgmeta";
 import { requireProject } from "./projects";
+import { getSprint } from "./sprints";
 import type {
   AllTasksResult,
   AuthContext,
@@ -73,7 +74,8 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
      )
      SELECT id, org_id, title, description, status_id, priority, start_date, start_time,
             due_date, due_time,
-            estimated_minutes, completed_at, parent_task_id, source, created_by,
+            estimated_minutes, completed_at, parent_task_id, sprint_id, sprint_carry_count,
+            source, created_by,
             created_at, updated_at
      FROM chain ORDER BY depth`,
   ).all(taskId);
@@ -192,6 +194,7 @@ export async function requireTaskAccess(
 const TASK_LIST_COLUMNS = `t.id, t.org_id, t.title, t.status_id, t.priority,
    t.start_date, t.start_time, t.due_date, t.due_time,
    t.estimated_minutes, t.completed_at, t.parent_task_id, t.subtask_position,
+   t.sprint_id, t.sprint_carry_count,
    t.source, t.created_by, t.created_at, t.updated_at`;
 
 async function enrichTasks<T extends { id: string }>(rows: T[]): Promise<Array<T & TaskMeta>> {
@@ -635,6 +638,28 @@ async function assertAssigneesInClosedProjects(
   }
 }
 
+/**
+ * Задачу можно взять только в спринт того проекта, где она размещена (своими
+ * размещениями или размещениями предков). Иначе спринт стал бы способом утащить
+ * чужую задачу в свой проект: она осталась бы невидимой в списках, но считалась
+ * бы в чужой ёмкости. Завершённый спринт закрыт для новых задач — его итог уже
+ * подведён, а незакрытые из него как раз разъехались.
+ */
+async function assertSprintFits(
+  ctx: AuthContext,
+  sprintId: string,
+  projectIds: string[],
+): Promise<void> {
+  const sprint = await getSprint(sprintId);
+  if (!sprint || sprint.org_id !== ctx.orgId) throw new DomainError(422, "Unknown sprint");
+  if (!projectIds.includes(sprint.project_id)) {
+    throw new DomainError(422, "Задача не размещена в проекте этого спринта");
+  }
+  if (sprint.state === "completed") {
+    throw new DomainError(422, "Нельзя положить задачу в завершённый спринт");
+  }
+}
+
 async function assertOrgTags(ctx: AuthContext, tagIds: string[]): Promise<void> {
   if (tagIds.length === 0) return;
   const ph = tagIds.map(() => "?").join(",");
@@ -710,6 +735,8 @@ export interface CreateTaskInput {
   due_time?: string | null;
   estimated_minutes?: number | null;
   parent_task_id?: string | null;
+  /** Спринт проекта в режиме «Разработка»; без него задача попадает в бэклог. */
+  sprint_id?: string | null;
   placements?: Array<{ project_id: string }>;
   assignee_ids?: string[];
   tag_ids?: string[];
@@ -749,6 +776,11 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
   ]);
   const tagIds = [...new Set(input.tag_ids ?? [])];
   await assertOrgTags(ctx, tagIds);
+  if (input.sprint_id) {
+    await assertSprintFits(ctx, input.sprint_id, [
+      ...new Set([...placements.map((pl) => pl.project_id), ...(parentAccess?.chainProjectIds ?? [])]),
+    ]);
+  }
   const status = await resolveNewStatus(ctx, input.status_id);
   // Один раз на всю функцию: описание уходит и в INSERT, и в разбор упоминаний,
   // а двойная очистка одного и того же текста — лишняя работа и лишний повод
@@ -761,8 +793,8 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         `INSERT INTO core.tasks
            (org_id, title, description, status_id, priority, start_date, start_time,
             due_date, due_time,
-            estimated_minutes, parent_task_id, subtask_position, source, created_by, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            estimated_minutes, parent_task_id, subtask_position, sprint_id, source, created_by, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
       )
       .get(
@@ -778,6 +810,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         input.estimated_minutes ?? null,
         input.parent_task_id ?? null,
         await nextSubtaskPosition(tx, input.parent_task_id ?? null),
+        input.sprint_id ?? null,
         input.source ?? "app",
         ctx.user.id,
         status.category === "done" ? new Date().toISOString() : null,
@@ -864,6 +897,13 @@ export interface UpdateTaskInput {
   estimated_minutes?: number | null;
   /** `null` — отвязать от родителя; uuid — переподчинить другой задаче. */
   parent_task_id?: string | null;
+  /**
+   * `null` — вернуть в бэклог, uuid — взять в спринт. Сроки при этом сервер сам
+   * не двигает: их считает интерфейс той же чистой `shiftTaskDates` и присылает
+   * обычными полями — иначе один PATCH молча менял бы дату, о которой человек с
+   * кем-то договорился.
+   */
+  sprint_id?: string | null;
   assignee_ids?: string[];
   tag_ids?: string[];
 }
@@ -931,6 +971,9 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
     );
   }
   if (patch.tag_ids) await assertOrgTags(ctx, patch.tag_ids);
+  // Проверяем по всей цепочке размещений: у подзадачи своих проектов нет, а в
+  // спринт проекта родителя она входит на общих основаниях.
+  if (patch.sprint_id) await assertSprintFits(ctx, patch.sprint_id, access.chainProjectIds);
 
   await transaction(async (tx) => {
     const changedFields: string[] = [];
@@ -972,6 +1015,10 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
     if (patch.estimated_minutes !== undefined && patch.estimated_minutes !== task.estimated_minutes) {
       scalar.estimated_minutes = patch.estimated_minutes;
       changedFields.push("estimated_minutes");
+    }
+    if (patch.sprint_id !== undefined && patch.sprint_id !== task.sprint_id) {
+      scalar.sprint_id = patch.sprint_id;
+      changedFields.push("sprint_id");
     }
     if (reparented) {
       scalar.parent_task_id = patch.parent_task_id ?? null;

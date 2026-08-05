@@ -28,6 +28,8 @@ function sub(over: Partial<TaskListItem> & { id: string }): TaskListItem {
     completed_at: null,
     parent_task_id: "parent",
     subtask_position: null,
+    sprint_id: null,
+    sprint_carry_count: 0,
     source: "app",
     created_by: null,
     created_at: "2026-07-01T00:00:00Z",

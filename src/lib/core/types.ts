@@ -129,6 +129,12 @@ export interface UserBrief {
   avatar_url: string | null;
 }
 
+/**
+ * Режим проекта. `dev` добавляет к обычным видам спринты и бэклог; на модель
+ * задач не влияет — задача остаётся той же во всех проектах, где размещена.
+ */
+export type ProjectMode = "standard" | "dev";
+
 export interface Project {
   id: string;
   org_id: string;
@@ -137,6 +143,7 @@ export interface Project {
   description: string;
   color: string;
   icon: string;
+  mode: ProjectMode;
   default_role: ProjectDefaultRole | null;
   /** Производная от `default_role` (generated-колонка): `private` ⇔ default_role is null. */
   visibility: ProjectVisibility;
@@ -240,6 +247,17 @@ export interface CoreTask {
    * конец ветки, а не ломает порядок остальных.
    */
   subtask_position: number | null;
+  /**
+   * Спринт, в который задача взята; `null` — бэклог. Спринт принадлежит проекту,
+   * а задача бывает размещена сразу в нескольких, поэтому принадлежность
+   * проверяет сервис: проект спринта обязан быть в цепочке размещений задачи.
+   */
+  sprint_id: string | null;
+  /**
+   * Сколько раз задача не поместилась в завершаемый спринт. Растёт только при
+   * завершении спринта; перепланирование до старта переездом не считается.
+   */
+  sprint_carry_count: number;
   source: string;
   created_by: string | null;
   created_at: string;
@@ -290,6 +308,48 @@ export interface TaskDetail extends TaskWithMeta {
    * списку выбор исполнителей — ровно как сервер в `updateTask`.
    */
   chain_project_ids: string[];
+}
+
+// --- Спринты (режим проекта «Разработка») ------------------------------------------
+
+/**
+ * Состояние спринта. Путь односторонний: `planned → active → completed`.
+ * Вернуть завершённый спринт в работу нельзя — незакрытые задачи из него уже
+ * разъехались, и «возврат» означал бы собрать их обратно неизвестно откуда.
+ */
+export type SprintState = "planned" | "active" | "completed";
+
+export interface Sprint {
+  id: string;
+  org_id: string;
+  project_id: string;
+  name: string;
+  goal: string;
+  starts_on: string | null;
+  ends_on: string | null;
+  state: SprintState;
+  /** Ёмкость в минутах — та же единица, что `estimated_minutes` у задачи. */
+  capacity_minutes: number | null;
+  position: number;
+  started_at: string | null;
+  completed_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Спринт с итогами по своим задачам. Считаются одним запросом на список: экран
+ * планирования показывает «набрано / ёмкость» у каждого спринта, и запрос на
+ * спринт означал бы N+1 при открытии экрана.
+ */
+export interface SprintWithTotals extends Sprint {
+  task_count: number;
+  done_count: number;
+  /** Сумма оценок задач спринта; задачи без оценки в неё не попадают. */
+  estimated_minutes: number;
+  /** Сколько задач спринта остались без оценки — «набрано» на них не отвечает. */
+  unestimated_count: number;
 }
 
 // --- Связи между сущностями ------------------------------------------------------

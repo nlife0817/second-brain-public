@@ -17,6 +17,7 @@ import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { CreateTaskDialog, TaskSheet } from "@/components/v2/lazy";
 import { accessLabel } from "@/components/v2/ProjectAccessPicker";
 import { ProjectIcon } from "@/components/v2/project-icons";
+import { BacklogView } from "@/components/v2/tasks/BacklogView";
 import { CalendarView } from "@/components/v2/tasks/CalendarView";
 import { GanttView } from "@/components/v2/tasks/GanttView";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
@@ -26,7 +27,13 @@ import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import { useLoad } from "@/lib/core/use-load";
 import { applyTaskChange } from "@/lib/core/task-change";
 import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
-import type { Project, ProjectMemberWithUser, ProjectRole, TaskRow } from "@/lib/core/types";
+import type {
+  Project,
+  ProjectMemberWithUser,
+  ProjectRole,
+  SprintWithTotals,
+  TaskRow,
+} from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { ViewStoreProvider, projectScope, useViewStore } from "@/lib/core/view-store";
 import { filterTasks, makeMatchContext, showsDone, visiblePool } from "@/lib/core/views";
@@ -41,6 +48,7 @@ export function ProjectBoardClient(props: {
   projectId: string;
   initialProject: ProjectDetail;
   initialTasks: TaskRow[];
+  initialSprints: SprintWithTotals[];
 }) {
   return (
     <ViewStoreProvider scope={projectScope(props.projectId)}>
@@ -49,19 +57,25 @@ export function ProjectBoardClient(props: {
   );
 }
 
-/** Переключатель вида — единственное место, где экран проекта расходится. */
-function ViewSwitch() {
-  return <ViewModeSwitch modes={["table", "board", "gantt", "calendar"]} />;
+/**
+ * Переключатель вида — единственное место, где экран проекта расходится. Бэклог
+ * появляется только в режиме «Разработка»: без спринтов он был бы вторым, менее
+ * удобным списком задач.
+ */
+function ViewSwitch({ dev }: { dev: boolean }) {
+  return <ViewModeSwitch modes={dev ? ["backlog", "table", "board", "gantt", "calendar"] : ["table", "board", "gantt", "calendar"]} />;
 }
 
 function ProjectScreen({
   projectId,
   initialProject,
   initialTasks,
+  initialSprints,
 }: {
   projectId: string;
   initialProject: ProjectDetail;
   initialTasks: TaskRow[];
+  initialSprints: SprintWithTotals[];
 }) {
   const { orgId, statuses, fields, me, metaLoading, refreshProjects } = useV2Store();
   const mode = useViewStore((s) => s.mode);
@@ -77,6 +91,7 @@ function ProjectScreen({
 
   const [project, setProject] = useState<ProjectDetail | null>(initialProject);
   const [tasks, setTasks] = useState<TaskRow[]>(initialTasks);
+  const [sprints, setSprints] = useState<SprintWithTotals[]>(initialSprints);
   const [openTaskId, setOpenTaskId] = useState<string | null>(deepLinkTaskId);
   const [createIn, setCreateIn] = useState<string | null | false>(false); // false = закрыт, null/statusId = открыт
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +129,11 @@ function ProjectScreen({
         ]);
         setProject(p);
         setTasks(ts);
+        // Спринты тянем только у dev-проекта: обычному этот запрос не нужен, а
+        // включённый только что режим обязан показать их без перезагрузки.
+        if (p.mode === "dev") {
+          setSprints(await cachedGet<SprintWithTotals[]>(`${projectPath}/sprints`, opts));
+        }
         setError(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Проект недоступен");
@@ -178,6 +198,12 @@ function ProjectScreen({
     return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Загрузка…</div>;
   }
 
+  // Режим «Разработка» решает состав видов. Сохранённый вид переживает
+  // выключение режима, поэтому «бэклог» в обычном проекте показываем таблицей —
+  // иначе экран открылся бы пустым видом, которого в переключателе уже нет.
+  const isDev = project.mode === "dev";
+  const view = mode === "backlog" && !isDev ? "table" : mode;
+
   // Шапка — только название и переключатель вида. Участники и параметры проекта
   // живут в его настройках (карандаш у строки проекта в сайдбаре), а задача
   // заводится там, где её и пишут: строкой в таблице и «плюсом» в колонке доски.
@@ -225,7 +251,27 @@ function ProjectScreen({
     </>
   );
 
-  if (mode === "calendar") {
+  if (view === "backlog") {
+    return (
+      <>
+        <BacklogView
+          projectId={projectId}
+          tasks={tasks}
+          setTasks={setTasks}
+          sprints={sprints}
+          setSprints={setSprints}
+          canEdit={!!canEdit}
+          onOpenTask={openTask}
+          reload={reload}
+          titleSlot={title}
+          actionsSlot={<ViewSwitch dev={isDev} />}
+        />
+        {layers}
+      </>
+    );
+  }
+
+  if (view === "calendar") {
     return (
       <>
         <CalendarView
@@ -240,14 +286,14 @@ function ProjectScreen({
           onDismissError={() => setNotice(null)}
           emptyText="В проекте пока нет задач с датами."
           titleSlot={title}
-          actionsSlot={<ViewSwitch />}
+          actionsSlot={<ViewSwitch dev={isDev} />}
         />
         {layers}
       </>
     );
   }
 
-  if (mode === "gantt") {
+  if (view === "gantt") {
     return (
       <>
         <GanttView
@@ -260,14 +306,14 @@ function ProjectScreen({
           onDismissError={() => setNotice(null)}
           emptyText="В проекте пока нет задач."
           titleSlot={title}
-          actionsSlot={<ViewSwitch />}
+          actionsSlot={<ViewSwitch dev={isDev} />}
         />
         {layers}
       </>
     );
   }
 
-  if (mode === "table") {
+  if (view === "table") {
     return (
       <>
         <TaskTableView
@@ -283,7 +329,7 @@ function ProjectScreen({
           quickAddPlaceholder={`Быстро добавить задачу в «${project.name}»…`}
           emptyText="В проекте пока нет задач."
           titleSlot={title}
-          actionsSlot={<ViewSwitch />}
+          actionsSlot={<ViewSwitch dev={isDev} />}
         />
         {layers}
       </>
@@ -301,7 +347,7 @@ function ProjectScreen({
         <TaskSearch />
         <FilterButton />
         <span className="flex-1" />
-        <ViewSwitch />
+        <ViewSwitch dev={isDev} />
         <CardSettingsPopover />
         {/* Участники, настройки проекта и «+ Задача» отсюда убраны: настройки
             открываются карандашом из сайдбара, участники видны на вкладке

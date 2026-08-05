@@ -113,6 +113,9 @@ describe("canProject: пороги проектных ролей", () => {
     ["task.create",             { viewer: false, commenter: false, editor: true,  admin: true }],
     ["task.edit",               { viewer: false, commenter: false, editor: true,  admin: true }],
     ["task.delete",             { viewer: false, commenter: false, editor: true,  admin: true }],
+    // Планирование спринта — работа команды, а не настройка проекта: порог тот
+    // же, что у правки задач, иначе команда не может передвинуть свою же задачу.
+    ["sprint.manage",           { viewer: false, commenter: false, editor: true,  admin: true }],
     ["field.value.edit",        { viewer: false, commenter: false, editor: true,  admin: true }],
     ["project.update",          { viewer: false, commenter: false, editor: false, admin: true }],
     ["project.archive",         { viewer: false, commenter: false, editor: false, admin: true }],

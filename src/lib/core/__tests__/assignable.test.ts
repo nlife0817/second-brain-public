@@ -15,6 +15,7 @@ function project(id: string, name: string, memberIds: string[] | null): ProjectW
     description: "",
     color: "#6b7280",
     icon: "Folder",
+    mode: "standard",
     default_role: memberIds === null ? "editor" : null,
     visibility: memberIds === null ? "org" : "private",
     position: 1,

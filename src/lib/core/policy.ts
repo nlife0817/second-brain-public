@@ -67,6 +67,10 @@ export type ProjectAction =
   | "task.edit"               // поля, статус, исполнители, порядок в проекте
   | "task.delete"
   | "task.comment"
+  | "sprint.manage"           // спринты проекта в режиме «Разработка»: завести,
+                              // передвинуть даты, начать и завершить. Планирование
+                              // работы — дело команды, а не администратора проекта,
+                              // поэтому порог тот же, что у правки задач
   | "field.value.edit";       // значения кастомных полей на задачах проекта
 
 const MIN_PROJECT_ROLE: Record<ProjectAction, ProjectRole> = {
@@ -80,6 +84,7 @@ const MIN_PROJECT_ROLE: Record<ProjectAction, ProjectRole> = {
   "task.edit": "editor",
   "task.delete": "editor",
   "task.comment": "commenter",
+  "sprint.manage": "editor",
   "field.value.edit": "editor",
 };
 

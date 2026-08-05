@@ -5,7 +5,16 @@
 // поиск живут в общем `ViewStore`, и своя копия разметки на втором экране
 // разъехалась бы с первой при первой же правке.
 
-import { CalendarDays, Filter, GanttChartSquare, KanbanSquare, Search, Table2, X } from "lucide-react";
+import {
+  CalendarDays,
+  Filter,
+  GanttChartSquare,
+  KanbanSquare,
+  ListOrdered,
+  Search,
+  Table2,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { FilterBuilder } from "@/components/v2/tasks/FilterBuilder";
@@ -13,6 +22,7 @@ import { useViewStore, type ProjectViewMode } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
 
 const MODE_META: Record<ProjectViewMode, { label: string; icon: typeof Table2 }> = {
+  backlog: { label: "Бэклог", icon: ListOrdered },
   table: { label: "Таблица", icon: Table2 },
   board: { label: "Доска", icon: KanbanSquare },
   gantt: { label: "Гант", icon: GanttChartSquare },

@@ -14,6 +14,7 @@ import type {
   Project,
   ProjectDefaultRole,
   ProjectMemberWithUser,
+  ProjectMode,
   ProjectRole,
   ProjectWithMeta,
 } from "./types";
@@ -155,6 +156,7 @@ export async function updateProject(
     icon: string;
     default_role: ProjectDefaultRole | null;
     position: number;
+    mode: ProjectMode;
   }>,
 ): Promise<Project> {
   const project = await requireProject(ctx, projectId, "project.update");
@@ -185,11 +187,20 @@ export async function updateProject(
     const row = await tx
       .prepare<Project>(
         `UPDATE core.projects
-         SET name = ?, description = ?, color = ?, icon = ?, default_role = ?, position = ?
+         SET name = ?, description = ?, color = ?, icon = ?, default_role = ?, position = ?, mode = ?
          WHERE id = ?
          RETURNING *`,
       )
-      .get(next.name, next.description, next.color, next.icon, next.default_role, next.position, projectId);
+      .get(
+        next.name,
+        next.description,
+        next.color,
+        next.icon,
+        next.default_role,
+        next.position,
+        next.mode,
+        projectId,
+      );
     if (!row) throw new DomainError(500, "Failed to update project");
     await emitEvent(tx, {
       orgId: ctx.orgId,

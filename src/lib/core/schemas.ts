@@ -64,6 +64,7 @@ export const projectPatchSchema = z
     position: z.number().finite().optional(),
     archived: z.boolean().optional(),
     team_id: z.uuid().nullable().optional(),
+    mode: z.enum(["standard", "dev"]).optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
@@ -91,6 +92,7 @@ export const taskCreateSchema = z.object({
   due_time: timeSchema.nullish(),
   estimated_minutes: z.number().int().min(0).max(60_000).nullish(),
   parent_task_id: z.uuid().nullish(),
+  sprint_id: z.uuid().nullish(),
   placements: z.array(z.object({ project_id: z.uuid() })).max(20).optional(),
   assignee_ids: z.array(z.uuid()).max(20).optional(),
   tag_ids: z.array(z.uuid()).max(50).optional(),
@@ -112,6 +114,8 @@ export const taskPatchSchema = z
     estimated_minutes: z.number().int().min(0).max(60_000).nullable().optional(),
     // null — «отвязать от родителя»: подзадача становится обычной задачей.
     parent_task_id: z.uuid().nullable().optional(),
+    // null — «вернуть в бэклог».
+    sprint_id: z.uuid().nullable().optional(),
     assignee_ids: z.array(z.uuid()).max(20).optional(),
     tag_ids: z.array(z.uuid()).max(50).optional(),
   })
@@ -124,6 +128,48 @@ export const taskPlacementsSchema = z.object({
 export const taskMoveSchema = z.object({
   project_id: z.uuid(),
   position: z.number().finite().optional(),
+});
+
+// --- Спринты ------------------------------------------------------------------------
+
+const sprintFields = {
+  name: z.string().trim().min(1).max(200),
+  goal: z.string().max(2000),
+  starts_on: dateSchema.nullable(),
+  ends_on: dateSchema.nullable(),
+  // Ёмкость в минутах, как estimated_minutes у задачи. Потолок — тысяча часов:
+  // это уже не спринт, а опечатка.
+  capacity_minutes: z.number().int().min(1).max(60_000).nullable(),
+};
+
+export const sprintCreateSchema = z.object({
+  name: sprintFields.name.optional(),
+  goal: sprintFields.goal.optional(),
+  starts_on: sprintFields.starts_on.optional(),
+  ends_on: sprintFields.ends_on.optional(),
+  capacity_minutes: sprintFields.capacity_minutes.optional(),
+});
+
+export const sprintPatchSchema = z
+  .object({
+    name: sprintFields.name.optional(),
+    goal: sprintFields.goal.optional(),
+    starts_on: sprintFields.starts_on.optional(),
+    ends_on: sprintFields.ends_on.optional(),
+    capacity_minutes: sprintFields.capacity_minutes.optional(),
+    /** Сдвинуть вслед за окном спринта и сроки задач, стоявшие внутри него. */
+    shift_task_dates: z.boolean().optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
+export const sprintCompleteSchema = z.object({
+  /** Спринт, куда уводить незакрытые; null — все в бэклог. */
+  carry_to: z.uuid().nullish(),
+  decisions: z
+    .array(z.object({ task_id: z.uuid(), target: z.enum(["sprint", "backlog"]) }))
+    .max(500)
+    .optional(),
+  shift_dates: z.boolean().optional(),
 });
 
 export const commentCreateSchema = z.object({
