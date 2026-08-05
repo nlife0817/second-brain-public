@@ -354,6 +354,13 @@
             <span class="lbl">Проекты</span>
             <span id="v-projects" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"></span>
 
+            <!-- Строка видна только у задачи в проекте с режимом «Разработка» -->
+            <span class="lbl" title="Проект в режиме «Разработка»">Спринт</span>
+            <span style="display:flex;align-items:center;gap:7px">
+              <button class="prop-btn" id="v-sprint" data-pop-trigger onclick="togglePop('pop-sprint-card', this)">Спринт 14 · до 17 авг.</button>
+              <span class="badge badge--warning" style="font-size:10.5px;padding:1px 6px" title="Не поместилась в два предыдущих спринта">3-й спринт</span>
+            </span>
+
             <span class="lbl" title="Кастомное поле · число">Бюджет</span>
             <span><input class="prop-input" id="f-budget" value="45 000 ₽" onblur="saveField('Бюджет', this.value)"></span>
 
@@ -477,6 +484,13 @@
   <div id="tag-items"></div>
 </div>
 <div class="pop" id="pop-project"><div class="pop__label">Добавить в проект</div><div id="project-items"></div></div>
+<div class="pop" id="pop-sprint-card" style="min-width:230px">
+  <div class="pop__label">Спринт</div>
+  <button class="pop__item" onclick="setSprint('Спринт 14 · до 17 авг.', false)"><span>Спринт 14 · активный</span></button>
+  <button class="pop__item" onclick="setSprint('Спринт 15 · до 31 авг.', true)"><span>Спринт 15 · 18 — 31 авг.</span></button>
+  <div class="pop__sep"></div>
+  <button class="pop__item" onclick="setSprint('Без спринта', false)"><span>Убрать из спринта</span></button>
+</div>
 <div class="pop" id="pop-link" style="min-width:280px">
   <div class="pop__label">Тип связи</div>
   <div style="display:flex;gap:5px;padding:2px 8px 8px" id="link-types"></div>
@@ -679,6 +693,14 @@ function setPrio(id) {
   render(); popOpen?.classList.remove('is-open');
 }
 function setRepeat(v) { S.repeat = v; log(v === 'Не повторяется' ? 'выключила повтор' : 'настроила повтор: ' + v.toLowerCase()); render(); popOpen?.classList.remove('is-open'); }
+// Перенос в другой спринт: сроки сами не едут — тост предлагает сдвинуть их,
+// потому что срок кормит гант, календарь и напоминание исполнителю.
+function setSprint(label, moved) {
+  document.getElementById('v-sprint').textContent = label;
+  log(label === 'Без спринта' ? 'убрала задачу из спринта' : 'перенесла задачу в «' + label.split(' · ')[0] + '»');
+  popOpen?.classList.remove('is-open');
+  toast(moved ? 'Перенесено · срок 14 авг. остался прежним, сдвинуть?' : 'Готово');
+}
 function toggleAssignee(id) {
   const i = S.assignees.indexOf(id);
   const m = byId(S.members, id);
