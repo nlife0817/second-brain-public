@@ -25,7 +25,7 @@ import { defaultStatus } from "@/lib/core/status-model";
 import type { TaskDraft } from "@/lib/core/task-draft";
 import type { TaskPriority } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
-import { MENU_POPOVER, TagsMenu } from "./draft-controls";
+import { MENU_POPOVER, TagsMenu, useDraftSetStatuses } from "./draft-controls";
 import { DraftFieldControl } from "./draft-fields";
 
 const RichText = dynamic(() => import("@/components/v2/RichText").then((m) => m.RichText), {
@@ -58,7 +58,10 @@ export function TaskDraftPanel({
   saving: boolean;
   error: string | null;
 }) {
-  const { statuses, tags, projects, members, fields } = useV2Store();
+  const { tags, projects, members, fields } = useV2Store();
+  // Статусы набора проекта черновика, а не весь справочник организации (наборы,
+  // 0052): новая задача рождается в процессе своего проекта.
+  const statuses = useDraftSetStatuses(draft.project_ids);
 
   const assignees = draft.assignee_ids
     .map((id) => members.find((m) => m.user_id === id))

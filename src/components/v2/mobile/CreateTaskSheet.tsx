@@ -31,6 +31,7 @@ import {
   ProjectsMenu,
   StatusMenu,
   TagsMenu,
+  useDraftSetStatuses,
 } from "@/components/v2/tasks/draft-controls";
 import { DuePicker } from "@/components/v2/DuePicker";
 import { defaultStatus } from "@/lib/core/status-model";
@@ -60,8 +61,11 @@ export function CreateTaskSheet({
   initialTitle?: string;
   onCreated?: (task: TaskDetail) => void;
 }) {
-  const { orgId, statuses, tags, members, projects } = useV2Store();
+  const { orgId, tags, members, projects } = useV2Store();
   const [draft, setDraft] = useState<TaskDraft>(() => emptyDraft(defaults));
+  // Статусы набора проекта черновика, а не весь справочник организации (наборы,
+  // 0052): новая задача рождается в процессе своего проекта.
+  const statuses = useDraftSetStatuses(draft.project_ids);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -164,7 +168,11 @@ export function CreateTaskSheet({
                 <span className="truncate">{status?.name ?? "Статус"}</span>
               </PopoverTrigger>
               <PopoverContent align="start" className={MENU_POPOVER}>
-                <StatusMenu value={draft.status_id ?? status?.id ?? null} onChange={(id) => set("status_id", id)} />
+                <StatusMenu
+                  value={draft.status_id ?? status?.id ?? null}
+                  statuses={statuses}
+                  onChange={(id) => set("status_id", id)}
+                />
               </PopoverContent>
             </Popover>
 

@@ -40,6 +40,7 @@ import {
   StatusMenu,
   TagsMenu,
   WIDE_MENU_POPOVER,
+  useDraftSetStatuses,
 } from "./draft-controls";
 import { DraftFieldControl, describeFieldValue } from "./draft-fields";
 import { SELECT_COLUMN_WIDTH } from "./TaskTable";
@@ -271,7 +272,9 @@ function PriorityDraftCell({ draft, patch }: CellProps) {
 }
 
 function StatusDraftCell({ draft, patch }: CellProps) {
-  const statuses = useV2Store((s) => s.statuses);
+  // Статусы набора проекта черновика, а не весь справочник организации (наборы,
+  // 0052): новая задача рождается в процессе своего проекта.
+  const statuses = useDraftSetStatuses(draft.project_ids);
   // Черновик хранит null, пока статус не выбрали, но показать надо тот, с
   // которым задача родится, — иначе строка врёт про будущий результат.
   const status = statuses.find((s) => s.id === draft.status_id) ?? defaultStatus(statuses);
@@ -292,7 +295,11 @@ function StatusDraftCell({ draft, patch }: CellProps) {
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className={MENU_POPOVER}>
-        <StatusMenu value={draft.status_id} onChange={(status_id) => patch({ status_id })} />
+        <StatusMenu
+          value={draft.status_id}
+          statuses={statuses}
+          onChange={(status_id) => patch({ status_id })}
+        />
       </PopoverContent>
     </Popover>
   );

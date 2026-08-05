@@ -9,6 +9,7 @@ import { Check, X } from "lucide-react";
 import { useMemo } from "react";
 import { Avatar, PRIORITY_LABELS } from "@/components/v2/bits";
 import { assigneeChoice } from "@/lib/core/assignable";
+import { resolveProjectSetId, statusesOfSet } from "@/lib/core/status-model";
 import type { TaskPriority, TaskStatus } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,22 @@ export const FIELD_POPOVER = "w-64 gap-2 p-2.5";
 const ROW = "flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted";
 const FIELD_INPUT =
   "h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring";
+
+/**
+ * Статусы набора, в котором родится черновик. Набор берём у первого проекта
+ * размещения — новая задача рождается в его процессе; без проекта (личный
+ * черновик) — набор организации по умолчанию. Тот же принцип, что и в карточке
+ * (`resolveProjectSetId`): сырой `null` показал бы статусы всех наборов сразу.
+ */
+export function useDraftSetStatuses(projectIds: string[]): TaskStatus[] {
+  const all = useV2Store((s) => s.statuses);
+  const statusSets = useV2Store((s) => s.statusSets);
+  const projects = useV2Store((s) => s.projects);
+  return useMemo(() => {
+    const projectSetId = projects.find((p) => projectIds.includes(p.id))?.status_set_id ?? null;
+    return statusesOfSet(all, resolveProjectSetId(statusSets, projectSetId));
+  }, [all, statusSets, projects, projectIds]);
+}
 
 /** Проекты, куда участник вправе положить задачу. Архивные не предлагаем. */
 export function useWritableProjects() {
