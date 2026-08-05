@@ -607,6 +607,38 @@ export function TaskSheet({
     }
   }
 
+  /**
+   * Новый порядок ветки. Строки переставляются сразу, до ответа: жест уже
+   * показал результат, и «доедет» он только после похода на сервер — это тот же
+   * оптимизм, что и у остальных правок карточки, с тем же откатом.
+   *
+   * Порядок уходит целиком, как его принимает сервер: перетаскивание сдвигает
+   * соседей, и патч одной позиции оставлял бы ветку в промежуточном состоянии.
+   */
+  async function reorderSubtasks(taskIds: string[]) {
+    if (!orgId || !taskId) return;
+    const previous = subtasks;
+    const byId = new Map(previous.map((s) => [s.id, s]));
+    const next = taskIds.map((id) => byId.get(id)).filter((s): s is TaskListItem => !!s);
+    if (next.length !== previous.length) return;
+    // Позиции проставляем и локально: по ним же считается порядок в таблице,
+    // а карточка отдаёт ей строки через onChanged.
+    setSubtasks(next.map((s, i) => ({ ...s, subtask_position: i + 1 })));
+    try {
+      const saved = await api.put<TaskListItem[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks/order`, {
+        task_ids: taskIds,
+      });
+      if (currentTaskRef.current !== taskId) return;
+      setSubtasks(saved);
+      setError(null);
+      // Список экрана рисует ветки тем же порядком — пусть перечитает.
+      onChanged?.({ type: "reload" });
+    } catch (e) {
+      setSubtasks(previous);
+      setError(e instanceof Error ? e.message : "Не удалось изменить порядок подзадач");
+    }
+  }
+
   async function toggleSubtaskDone(sub: TaskListItem) {
     if (!orgId) return;
     const doneStatus = statuses.find((s) => s.category === "done");
@@ -1474,6 +1506,7 @@ export function TaskSheet({
                 onPatch={(s, body) => void patchSubtask(s, body)}
                 onDelete={(s) => void deleteSubtask(s)}
                 onDetach={(s) => void detachSubtask(s)}
+                onReorder={(ids) => void reorderSubtasks(ids)}
               />
 
               <RelationsList

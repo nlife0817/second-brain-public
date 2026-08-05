@@ -35,6 +35,7 @@ import type {
   TaskForest,
 } from "@/lib/core/views";
 import { arrangeGroupRows, buildForest, buildGroups } from "@/lib/core/views";
+import { compareManual } from "@/lib/core/subtask-view";
 import { cn } from "@/lib/utils";
 
 /**
@@ -73,6 +74,12 @@ export interface TaskTableProps {
   groupBy: [GroupByField, GroupByField];
   matchCtx: MatchContext;
   subtaskMode: SubtaskMode;
+  /**
+   * Показывать вложенные подзадачи в порядке, заданном перетаскиванием в
+   * карточке. Пропом, а не из стора: таблицу рисуют оба экрана и оба уже
+   * приносят сюда остальные настройки представления.
+   */
+  subtaskManualOrder: boolean;
   sort: SortState;
   onToggleSort: (column: string) => void;
   onResize: (columnId: string, width: number) => void;
@@ -455,6 +462,7 @@ export function TaskTable(props: TaskTableProps) {
     groupBy,
     matchCtx,
     subtaskMode,
+    subtaskManualOrder,
     sort,
     onToggleSort,
     onResize,
@@ -479,9 +487,12 @@ export function TaskTable(props: TaskTableProps) {
 
   // Лес строится по всему набору и ДО группировки — в этом вся суть починки.
   // В режиме «отдельными строками» родство не нужно вовсе.
+  // Ручной порядок веток задан руками в карточке — сортировка списка его не
+  // трогает, пока настройка не скажет обратного.
   const forest = useMemo(
-    () => (subtaskMode === "flat" ? null : buildForest(tasks)),
-    [tasks, subtaskMode],
+    () =>
+      subtaskMode === "flat" ? null : buildForest(tasks, subtaskManualOrder ? compareManual : undefined),
+    [tasks, subtaskMode, subtaskManualOrder],
   );
 
   const nodes = useMemo(

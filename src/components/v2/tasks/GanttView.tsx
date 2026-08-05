@@ -53,6 +53,7 @@ import {
   type GanttScale,
 } from "@/lib/core/gantt";
 import { invalidate } from "@/lib/core/query";
+import { compareManual } from "@/lib/core/subtask-view";
 import type { TaskDependency, TaskDetail, TaskRow } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
@@ -258,6 +259,7 @@ export function GanttView({
   const sort = useViewStore((s) => s.sort);
   const groupBy = useViewStore((s) => s.groupBy);
   const subtaskMode = useViewStore((s) => s.subtaskMode);
+  const manualOrder = useViewStore((s) => s.subtaskManualOrder);
   const collapsedList = useViewStore((s) => s.collapsed);
   const toggleCollapsed = useViewStore((s) => s.toggleCollapsed);
   const collapsedTasksList = useViewStore((s) => s.collapsedTasks);
@@ -298,8 +300,8 @@ export function GanttView({
   // Дерево считается по всему набору ДО группировки — родство не должно
   // зависеть от того, в какую корзину попала задача.
   const forest = useMemo(
-    () => (subtaskMode === "flat" ? null : buildForest(visibleTasks)),
-    [visibleTasks, subtaskMode],
+    () => (subtaskMode === "flat" ? null : buildForest(visibleTasks, manualOrder ? compareManual : undefined)),
+    [visibleTasks, subtaskMode, manualOrder],
   );
 
   const rows = useMemo(

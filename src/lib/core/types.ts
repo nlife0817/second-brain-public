@@ -233,6 +233,13 @@ export interface CoreTask {
   estimated_minutes: number | null;
   completed_at: string | null;
   parent_task_id: string | null;
+  /**
+   * Место среди подзадач своего родителя — порядок, заданный перетаскиванием.
+   * У задачи верхнего уровня смысла не имеет и остаётся пустым; пустым оно
+   * бывает и у подзадачи, созданной кодом до миграции 0049, — такая уходит в
+   * конец ветки, а не ломает порядок остальных.
+   */
+  subtask_position: number | null;
   source: string;
   created_by: string | null;
   created_at: string;

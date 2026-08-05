@@ -177,6 +177,15 @@ export const statusOrderSchema = z.object({
   order: z.array(z.object({ id: z.uuid(), category: statusCategorySchema })).min(1).max(200),
 });
 
+/**
+ * Ручной порядок подзадач — тоже целиком, по той же причине, что и справочник
+ * статусов. Потолок общий с ним: ветка из сотен подзадач это уже отдельный
+ * список, а не карточка.
+ */
+export const subtaskOrderSchema = z.object({
+  task_ids: z.array(z.uuid()).min(1).max(500),
+});
+
 export const tagCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
   color: z.string().trim().max(32).optional(),

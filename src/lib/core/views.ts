@@ -6,7 +6,7 @@
 // Форма фильтров — `FilterGroup[]`: группы соединяются через И, условия
 // внутри группы через И/ИЛИ.
 
-import type { CustomField, StatusCategory, TaskPriority, TaskRow } from "./types";
+import type { CustomField, StatusCategory, TaskListItem, TaskPriority, TaskRow } from "./types";
 
 // --- Фильтры ------------------------------------------------------------------
 
@@ -374,7 +374,14 @@ function compareNullableString(a: string | null, b: string | null): number {
   return a < b ? -1 : 1;
 }
 
-export function compareTasks(a: TaskRow, b: TaskRow, sort: SortState, ctx: SortContext): number {
+// Принимает `TaskListItem`, а не `TaskRow`: тех же правил порядка ждёт секция
+// подзадач в карточке, а кастомных полей сортировка не смотрит вовсе.
+export function compareTasks(
+  a: TaskListItem,
+  b: TaskListItem,
+  sort: SortState,
+  ctx: SortContext,
+): number {
   const dir = sort.direction === "asc" ? 1 : -1;
   let base = 0;
   switch (sort.column) {
@@ -537,7 +544,18 @@ export interface TaskForest {
   roots: TaskRow[];
 }
 
-export function buildForest(tasks: TaskRow[]): TaskForest {
+/**
+ * `sortChildren` — порядок внутри ветки. Без него дети идут так же, как их
+ * отсортировал список, и это верно для «сортировать всё по дедлайну». Но ручной
+ * порядок подзадач задан человеком осознанно, и карточка показывает именно его,
+ * поэтому таблица умеет упорядочивать ветки тем же правилом — иначе одна и та
+ * же ветка выглядела бы в карточке и в списке по-разному. Корней это не
+ * касается: их порядок задаёт сортировка списка.
+ */
+export function buildForest(
+  tasks: TaskRow[],
+  sortChildren?: (a: TaskRow, b: TaskRow) => number,
+): TaskForest {
   const present = new Set(tasks.map((t) => t.id));
   const hasVisibleParent = (t: TaskRow) => !!t.parent_task_id && present.has(t.parent_task_id);
 
@@ -548,6 +566,7 @@ export function buildForest(tasks: TaskRow[]): TaskForest {
     if (arr) arr.push(t);
     else childrenOf.set(t.parent_task_id!, [t]);
   }
+  if (sortChildren) for (const arr of childrenOf.values()) arr.sort(sortChildren);
 
   const roots = tasks.filter((t) => !hasVisibleParent(t));
 

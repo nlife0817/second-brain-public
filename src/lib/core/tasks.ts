@@ -191,7 +191,8 @@ export async function requireTaskAccess(
  */
 const TASK_LIST_COLUMNS = `t.id, t.org_id, t.title, t.status_id, t.priority,
    t.start_date, t.start_time, t.due_date, t.due_time,
-   t.estimated_minutes, t.completed_at, t.parent_task_id, t.source, t.created_by, t.created_at, t.updated_at`;
+   t.estimated_minutes, t.completed_at, t.parent_task_id, t.subtask_position,
+   t.source, t.created_by, t.created_at, t.updated_at`;
 
 async function enrichTasks<T extends { id: string }>(rows: T[]): Promise<Array<T & TaskMeta>> {
   if (rows.length === 0) return [];
@@ -463,9 +464,50 @@ export async function listAllTasks(
 export async function listSubtasks(ctx: AuthContext, parentTaskId: string): Promise<TaskListItem[]> {
   await requireTaskAccess(ctx, parentTaskId, "view");
   const rows = await prepare<Omit<CoreTask, "description">>(
-    `SELECT ${TASK_LIST_COLUMNS} FROM core.tasks t WHERE t.parent_task_id = ? ORDER BY t.created_at`,
+    // Ручной порядок первым ключом: позиции нет у подзадач, заведённых до
+    // миграции 0049, и такая обязана встать в конец ветки, а не в начало.
+    `SELECT ${TASK_LIST_COLUMNS} FROM core.tasks t
+      WHERE t.parent_task_id = ?
+      ORDER BY t.subtask_position NULLS LAST, t.created_at`,
   ).all(parentTaskId);
   return enrichTasks(rows);
+}
+
+/**
+ * Ручной порядок подзадач. Порядок приходит целиком, как у справочника статусов
+ * (правило 16в): перетаскивание сдвигает соседей, и патч позиции по одной
+ * подзадаче оставлял бы ветку в промежуточном состоянии между запросами.
+ *
+ * Событий не пишем сознательно — как при правке справочника статусов: место
+ * строки в списке не меняет ни одной задачи по существу, а лента и push от
+ * каждого перетаскивания превратились бы в шум на всю команду.
+ */
+export async function reorderSubtasks(
+  ctx: AuthContext,
+  parentTaskId: string,
+  taskIds: string[],
+): Promise<TaskListItem[]> {
+  // Порядок подзадач — правка родителя: право на неё и решает.
+  await requireTaskAccess(ctx, parentTaskId, "edit");
+  const current = await prepare<{ id: string }>(
+    `SELECT id FROM core.tasks WHERE parent_task_id = ? AND org_id = ?`,
+  ).all(parentTaskId, ctx.orgId);
+
+  const known = new Set(current.map((r) => r.id));
+  const unique = new Set(taskIds);
+  if (taskIds.length !== known.size || unique.size !== taskIds.length || taskIds.some((id) => !known.has(id))) {
+    throw new DomainError(422, "Порядок должен перечислять все подзадачи по одному разу");
+  }
+
+  await transaction(async (tx) => {
+    for (let i = 0; i < taskIds.length; i++) {
+      await tx
+        .prepare(`UPDATE core.tasks SET subtask_position = ? WHERE id = ? AND parent_task_id = ?`)
+        .run(i + 1, taskIds[i], parentTaskId);
+    }
+  });
+
+  return listSubtasks(ctx, parentTaskId);
 }
 
 /**
@@ -610,6 +652,21 @@ async function nextPlacementPosition(tx: TxContext, projectId: string): Promise<
 }
 
 /**
+ * Место новой подзадачи — в конце ветки родителя. Новая строка появляется там,
+ * где её и набирали: композер стоит под списком, и подстановка в начало
+ * выглядела бы промахом интерфейса, а не порядком.
+ */
+async function nextSubtaskPosition(tx: TxContext, parentTaskId: string | null): Promise<number | null> {
+  if (!parentTaskId) return null;
+  const row = await tx
+    .prepare<{ p: number | null }>(
+      `SELECT max(subtask_position) AS p FROM core.tasks WHERE parent_task_id = ?`,
+    )
+    .get(parentTaskId);
+  return (row?.p ?? 0) + 1;
+}
+
+/**
  * Ровно один ответственный на задачу. Приоритет: явно переданный primaryUserId,
  * иначе текущий is_primary, иначе самый ранний назначенный. Полагаться на
  * created_at внутри одной транзакции нельзя — у всех строк одинаковый now().
@@ -704,8 +761,8 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         `INSERT INTO core.tasks
            (org_id, title, description, status_id, priority, start_date, start_time,
             due_date, due_time,
-            estimated_minutes, parent_task_id, source, created_by, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            estimated_minutes, parent_task_id, subtask_position, source, created_by, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
       )
       .get(
@@ -720,6 +777,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         input.due_time ?? null,
         input.estimated_minutes ?? null,
         input.parent_task_id ?? null,
+        await nextSubtaskPosition(tx, input.parent_task_id ?? null),
         input.source ?? "app",
         ctx.user.id,
         status.category === "done" ? new Date().toISOString() : null,
@@ -909,6 +967,10 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
     }
     if (reparented) {
       scalar.parent_task_id = patch.parent_task_id ?? null;
+      // Переезд в другую ветку — это новое место, а не старая позиция: чужой
+      // порядок о ней ничего не знает, и без пересчёта задача встала бы
+      // посреди списка, в котором её никто не двигал.
+      scalar.subtask_position = await nextSubtaskPosition(tx, patch.parent_task_id ?? null);
       changedFields.push("parent_task_id");
     }
 

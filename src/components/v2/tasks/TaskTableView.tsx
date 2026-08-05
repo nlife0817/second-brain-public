@@ -138,6 +138,7 @@ export function TaskTableView({
   const filterGroups = useViewStore((s) => s.groups);
   const search = useViewStore((s) => s.search);
   const subtaskMode = useViewStore((s) => s.subtaskMode);
+  const subtaskManualOrder = useViewStore((s) => s.subtaskManualOrder);
   const wrapTitle = useViewStore((s) => s.wrapTitle);
   const collapsedList = useViewStore((s) => s.collapsed);
   const collapsedTasksList = useViewStore((s) => s.collapsedTasks);
@@ -590,6 +591,7 @@ export function TaskTableView({
           groupBy={groupBy}
           matchCtx={matchCtx}
           subtaskMode={subtaskMode}
+          subtaskManualOrder={subtaskManualOrder}
           sort={sort}
           onToggleSort={toggleSort}
           onResize={setWidth}

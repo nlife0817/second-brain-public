@@ -12,15 +12,22 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDownWideNarrow,
+  ArrowUpDown,
+  ArrowUpNarrowWide,
   CalendarDays,
+  Check,
   ChevronDown,
   ChevronRight,
   CheckCircle2,
   Circle,
   Clock,
+  Filter,
+  GripVertical,
   MoreHorizontal,
   Plus,
   RotateCcw,
+  Square,
   Trash2,
   Unlink,
   UserPlus,
@@ -43,9 +50,18 @@ import {
 } from "@/components/v2/bits";
 import { DuePicker } from "@/components/v2/DuePicker";
 import { defaultStatus } from "@/lib/core/status-model";
+import {
+  SUBTASK_SORT_COLUMNS,
+  SUBTASK_SORT_LABELS,
+  filterSubtasks,
+  sortSubtasks,
+  subtaskFiltersActive,
+} from "@/lib/core/subtask-view";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField, TaskListItem, TaskPriority } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
+import { useSubtaskViewStore } from "@/lib/core/view-store";
+import { NONE_VALUE, type SortContext } from "@/lib/core/views";
 import { cn } from "@/lib/utils";
 import { formatEstimate } from "./cells";
 import {
@@ -62,6 +78,7 @@ import {
   WIDE_MENU_POPOVER,
 } from "./draft-controls";
 import { DraftFieldControl, describeFieldValue } from "./draft-fields";
+import { useRowDrag, type RowDragApi } from "./use-row-drag";
 
 const RichText = dynamic(() => import("@/components/v2/RichText").then((m) => m.RichText), {
   ssr: false,
@@ -101,6 +118,7 @@ export function SubtaskSection({
   onPatch,
   onDelete,
   onDetach,
+  onReorder,
 }: {
   subtasks: TaskListItem[];
   canEdit: boolean;
@@ -114,8 +132,46 @@ export function SubtaskSection({
   onPatch: (sub: TaskListItem, body: Record<string, unknown>) => void;
   onDelete: (sub: TaskListItem) => void;
   onDetach: (sub: TaskListItem) => void;
+  /** Новый порядок ветки целиком — так же, как его принимает сервер. */
+  onReorder: (taskIds: string[]) => void;
 }) {
   const done = subtasks.filter((s) => s.completed_at).length;
+  const statuses = useV2Store((s) => s.statuses);
+  const projects = useV2Store((s) => s.projects);
+  const sort = useSubtaskViewStore((s) => s.sort);
+  const direction = useSubtaskViewStore((s) => s.direction);
+  const filters = useSubtaskViewStore((s) => s.filters);
+
+  const sortCtx = useMemo<SortContext>(
+    () => ({
+      statusPosition: new Map(statuses.map((s) => [s.id, s.position])),
+      projectPosition: new Map(projects.map((p) => [p.id, p.position])),
+      projectName: new Map(projects.map((p) => [p.id, p.name])),
+    }),
+    [statuses, projects],
+  );
+
+  // Порядок и отсев считаются здесь, а не в карточке: `subtasks` — это ветка
+  // как она есть на сервере, и перетаскивание обязано работать с ней, а не с
+  // тем, что осталось после фильтра.
+  const ordered = useMemo(
+    () => sortSubtasks(subtasks, sort, direction, sortCtx),
+    [subtasks, sort, direction, sortCtx],
+  );
+  const shown = useMemo(() => filterSubtasks(ordered, filters), [ordered, filters]);
+
+  // Перетаскивание — только в ручном порядке: при сортировке по полю строка
+  // вернулась бы на место в тот же кадр, и жест выглядел бы сломанным. Фильтр
+  // отключает его по той же причине: между двумя видимыми строками может стоять
+  // спрятанная, и «поставить сюда» означало бы не то, что видно.
+  const canDrag = canEdit && sort === "manual" && shown.length === subtasks.length && subtasks.length > 1;
+
+  const drag = useRowDrag(shown.length, (from, to) => {
+    const ids = shown.map((s) => s.id);
+    const [moved] = ids.splice(from, 1);
+    ids.splice(to, 0, moved);
+    onReorder(ids);
+  });
 
   return (
     <div>
@@ -123,7 +179,8 @@ export function SubtaskSection({
         Подзадачи
         {subtasks.length > 0 && (
           <>
-            {/* Полоска прогресса: доля закрытых видна без чтения счётчика. */}
+            {/* Полоска прогресса: доля закрытых видна без чтения счётчика.
+                Считается по всей ветке — фильтр меняет показ, а не работу. */}
             <span className="h-1 w-20 overflow-hidden rounded-full bg-muted">
               <span
                 className="block h-full rounded-full bg-emerald-500 transition-all duration-300"
@@ -133,15 +190,28 @@ export function SubtaskSection({
             <span className="tabular-nums font-normal normal-case tracking-normal">
               {done}/{subtasks.length}
             </span>
+            {shown.length !== subtasks.length && (
+              <span className="font-normal normal-case tracking-normal text-muted-foreground/70">
+                · показано {shown.length}
+              </span>
+            )}
           </>
         )}
+        {subtasks.length > 1 && (
+          <span className="ml-auto flex items-center gap-0.5">
+            <SubtaskSortMenu />
+            <SubtaskFilterMenu subtasks={subtasks} />
+          </span>
+        )}
       </p>
-      <div className="flex flex-col gap-0.5">
-        {subtasks.map((s) => (
+      <div className={cn("flex select-none flex-col gap-0.5", !drag.idle && "cursor-grabbing")}>
+        {shown.map((s, i) => (
           <SubtaskRow
             key={s.id}
             sub={s}
+            index={i}
             canEdit={canEdit}
+            drag={canDrag ? drag : null}
             chainProjectIds={chainProjectIds}
             onToggleDone={onToggleDone}
             onOpen={onOpen}
@@ -150,9 +220,228 @@ export function SubtaskSection({
             onDetach={onDetach}
           />
         ))}
+        {shown.length === 0 && subtasks.length > 0 && (
+          <p className="px-1 py-1.5 text-xs text-muted-foreground">Под фильтр не попала ни одна подзадача.</p>
+        )}
         {canEdit && <SubtaskComposer defaults={defaults} onCreate={onCreate} />}
       </div>
     </div>
+  );
+}
+
+// --- Настройки секции ---------------------------------------------------------------
+
+const MENU_ITEM =
+  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted";
+
+/** Кнопка в шапке секции: тот же размер, что и чипы строки. */
+const HEAD_BUTTON =
+  "flex h-6 items-center gap-1 rounded px-1.5 text-[11px] font-normal normal-case tracking-normal " +
+  "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
+
+function SubtaskSortMenu() {
+  const sort = useSubtaskViewStore((s) => s.sort);
+  const direction = useSubtaskViewStore((s) => s.direction);
+  const setSort = useSubtaskViewStore((s) => s.setSort);
+  const setDirection = useSubtaskViewStore((s) => s.setDirection);
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            className={cn(HEAD_BUTTON, sort !== "manual" && "text-foreground")}
+            title="Порядок подзадач"
+          />
+        }
+      >
+        <ArrowUpDown className="size-3.5" />
+        {SUBTASK_SORT_LABELS[sort]}
+      </PopoverTrigger>
+      <PopoverContent align="end" className={MENU_POPOVER}>
+        {SUBTASK_SORT_COLUMNS.map((column) => (
+          <button key={column} onClick={() => setSort(column)} className={MENU_ITEM}>
+            <span className="flex-1">{SUBTASK_SORT_LABELS[column]}</span>
+            {sort === column && <Check className="size-3.5" />}
+          </button>
+        ))}
+        {/* У ручного порядка направления нет: он и есть направление. */}
+        {sort !== "manual" && (
+          <div className="mt-1 flex gap-1 border-t border-border pt-1">
+            {(["asc", "desc"] as const).map((value) => (
+              <button
+                key={value}
+                onClick={() => setDirection(value)}
+                className={cn(
+                  "flex flex-1 items-center justify-center gap-1 rounded px-2 py-1 text-xs hover:bg-muted",
+                  direction === value ? "bg-muted text-foreground" : "text-muted-foreground",
+                )}
+              >
+                {value === "asc" ? <ArrowUpNarrowWide className="size-3.5" /> : <ArrowDownWideNarrow className="size-3.5" />}
+                {value === "asc" ? "По возрастанию" : "По убыванию"}
+              </button>
+            ))}
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * Фильтр собирается из значений самой ветки, а не из справочников организации:
+ * десять статусов и весь состав команды в карточке — это список, по которому
+ * ничего не найти, и половина чипов там всё равно не дала бы ни одной строки.
+ */
+function SubtaskFilterMenu({ subtasks }: { subtasks: TaskListItem[] }) {
+  const statuses = useV2Store((s) => s.statuses);
+  const filters = useSubtaskViewStore((s) => s.filters);
+  const toggleFilterValue = useSubtaskViewStore((s) => s.toggleFilterValue);
+  const togglePriority = useSubtaskViewStore((s) => s.togglePriority);
+  const setHideDone = useSubtaskViewStore((s) => s.setHideDone);
+  const resetFilters = useSubtaskViewStore((s) => s.resetFilters);
+  const active = subtaskFiltersActive(filters);
+
+  const statusOptions = useMemo(() => {
+    const used = new Set(subtasks.map((s) => s.status_id).filter((id): id is string => !!id));
+    return statuses.filter((s) => used.has(s.id));
+  }, [subtasks, statuses]);
+
+  const assigneeOptions = useMemo(() => {
+    const map = new Map<string, { id: string; name: string }>();
+    for (const s of subtasks) {
+      for (const a of s.assignees) map.set(a.id, { id: a.id, name: a.name || a.email });
+    }
+    return [...map.values()];
+  }, [subtasks]);
+
+  const hasUnassigned = subtasks.some((s) => s.assignees.length === 0);
+  const priorityOptions = useMemo(() => {
+    const used = new Set(subtasks.map((s) => s.priority));
+    return (Object.keys(PRIORITY_LABELS) as TaskPriority[]).filter((p) => p !== "none" && used.has(p));
+  }, [subtasks]);
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            className={cn(HEAD_BUTTON, "relative px-1", active && "text-foreground")}
+            title="Фильтр подзадач"
+            aria-label="Фильтр подзадач"
+          />
+        }
+      >
+        <Filter className="size-3.5" />
+        {active && <span className="absolute right-0 top-0 size-1.5 rounded-full bg-primary" />}
+      </PopoverTrigger>
+      <PopoverContent align="end" className={WIDE_MENU_POPOVER}>
+        {statusOptions.length > 0 && (
+          <FilterChipRow label="Статус">
+            {statusOptions.map((s) => (
+              <FilterChip
+                key={s.id}
+                active={filters.statusIds.includes(s.id)}
+                color={s.color}
+                onClick={() => toggleFilterValue("statusIds", s.id)}
+              >
+                {s.name}
+              </FilterChip>
+            ))}
+          </FilterChipRow>
+        )}
+
+        {(assigneeOptions.length > 0 || hasUnassigned) && (
+          <FilterChipRow label="Исполнитель">
+            {assigneeOptions.map((a) => (
+              <FilterChip
+                key={a.id}
+                active={filters.assigneeIds.includes(a.id)}
+                onClick={() => toggleFilterValue("assigneeIds", a.id)}
+              >
+                {a.name}
+              </FilterChip>
+            ))}
+            {hasUnassigned && (
+              <FilterChip
+                active={filters.assigneeIds.includes(NONE_VALUE)}
+                onClick={() => toggleFilterValue("assigneeIds", NONE_VALUE)}
+              >
+                Без исполнителя
+              </FilterChip>
+            )}
+          </FilterChipRow>
+        )}
+
+        {priorityOptions.length > 0 && (
+          <FilterChipRow label="Приоритет">
+            {priorityOptions.map((p) => (
+              <FilterChip
+                key={p}
+                active={filters.priorities.includes(p)}
+                onClick={() => togglePriority(p)}
+              >
+                <PriorityDot priority={p} />
+                {PRIORITY_LABELS[p].label}
+              </FilterChip>
+            ))}
+          </FilterChipRow>
+        )}
+
+        <div className="mt-1 flex items-center gap-2 border-t border-border pt-1.5">
+          <button onClick={() => setHideDone(!filters.hideDone)} className={cn(MENU_ITEM, "flex-1 py-1")}>
+            <span className="flex-1">Скрывать завершённые</span>
+            {filters.hideDone ? <Check className="size-3.5" /> : <Square className="size-3.5 opacity-40" />}
+          </button>
+          {active && (
+            <button
+              onClick={resetFilters}
+              className="shrink-0 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              Сбросить
+            </button>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function FilterChipRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="mb-1.5">
+      <p className="mb-1 px-1 text-[11px] text-muted-foreground">{label}</p>
+      <div className="flex flex-wrap gap-1">{children}</div>
+    </div>
+  );
+}
+
+function FilterChip({
+  active,
+  color,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  color?: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={active && color ? chipStyle(color) : undefined}
+      className={cn(
+        "flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 text-[11px] transition-colors",
+        active
+          ? color
+            ? "tinted-chip"
+            : "bg-primary text-primary-foreground"
+          : "border border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+      )}
+    >
+      <span className="truncate">{children}</span>
+    </button>
   );
 }
 
@@ -160,7 +449,9 @@ export function SubtaskSection({
 
 function SubtaskRow({
   sub,
+  index,
   canEdit,
+  drag,
   chainProjectIds,
   onToggleDone,
   onOpen,
@@ -169,7 +460,10 @@ function SubtaskRow({
   onDetach,
 }: {
   sub: TaskListItem;
+  index: number;
   canEdit: boolean;
+  /** Жест перетаскивания или `null`, если порядок сейчас задаёт не рука. */
+  drag: RowDragApi | null;
   /** Проекты цепочки родителя — см. `projectIds` ниже. */
   chainProjectIds: string[];
   onToggleDone: (sub: TaskListItem) => void;
@@ -196,8 +490,38 @@ function SubtaskRow({
     <Circle className="size-4 text-muted-foreground" />
   );
 
+  const dragging = drag?.draggingId === sub.id;
+
   return (
-    <div className="group/sub flex items-center gap-0.5 rounded-md px-1 py-0.5 hover:bg-muted/50">
+    <div
+      style={drag ? { transform: `translate3d(0, ${drag.shiftOf(index)}px, 0)`, zIndex: dragging ? 10 : undefined } : undefined}
+      className={cn(
+        "group/sub relative flex items-center gap-0.5 rounded-md px-1 py-0.5",
+        (!drag || drag.idle) && "hover:bg-muted/50",
+        dragging && "bg-background shadow-md ring-1 ring-ring",
+        // Переход живёт только на время жеста: оставленный включённым, он
+        // проигрывает возврат из уже применённого сдвига — то есть рывок.
+        drag && !drag.idle && !dragging && "pointer-events-none transition-transform duration-150 ease-out",
+      )}
+    >
+      {/* Ручка занимает место только когда порядок и правда ручной: в остальных
+          режимах строка не должна ехать вправо ради кнопки, которой нет. */}
+      {drag && (
+        <button
+          {...drag.handlers(index, sub.id)}
+          // touch-none обязателен: без него палец на телефоне прокручивает
+          // карточку вместо перетаскивания.
+          className={cn(
+            "shrink-0 touch-none rounded p-0.5 text-muted-foreground/60 hover:bg-muted hover:text-foreground",
+            dragging ? "cursor-grabbing" : "cursor-grab",
+            !dragging && CHIP_ON_HOVER,
+          )}
+          title="Перетащите, чтобы изменить порядок (или ↑/↓)"
+          aria-label={`Переместить подзадачу «${sub.title}»`}
+        >
+          <GripVertical className="size-3.5" />
+        </button>
+      )}
       {/* Гостю кружок не кликабелен: сервер такую правку всё равно отвергнет. */}
       {canEdit ? (
         <button

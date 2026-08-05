@@ -40,6 +40,7 @@ function task(over: Partial<TaskRow>): TaskRow {
     estimated_minutes: null,
     completed_at: null,
     parent_task_id: null,
+    subtask_position: null,
     source: "app",
     created_by: null,
     created_at: "2026-07-01T00:00:00Z",

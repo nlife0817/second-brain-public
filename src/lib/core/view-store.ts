@@ -14,7 +14,9 @@ import { create, createStore, useStore } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { CalendarScale } from "./calendar";
 import type { GanttScale } from "./gantt";
-import type { FilterGroup, GroupByConfig, SortState, SubtaskMode } from "./views";
+import { EMPTY_SUBTASK_FILTERS, type SubtaskFilters, type SubtaskSortColumn } from "./subtask-view";
+import type { TaskPriority } from "./types";
+import type { FilterGroup, GroupByConfig, SortDirection, SortState, SubtaskMode } from "./views";
 
 export interface ColumnDef {
   id: string;
@@ -97,6 +99,14 @@ export interface ViewSnapshot {
   groups: FilterGroup[];
   subtaskMode: SubtaskMode;
   /**
+   * Показывать вложенные подзадачи в порядке, заданном перетаскиванием в
+   * карточке, а не текущей сортировкой списка. Действует только в режиме
+   * «вложенными под родителя» — в двух других вложенности нет вовсе.
+   * Умолчание — ручной порядок: его задали руками, и переупорядочивание такой
+   * ветки автосортировкой читается как потеря настройки.
+   */
+  subtaskManualOrder: boolean;
+  /**
    * Переносить название на следующую строку вместо обрезки многоточием.
    * Переносится только «Название»: чипы проектов и тегов растянули бы строку
    * по самой длинной ячейке, и таблица потеряла бы ритм.
@@ -151,6 +161,7 @@ export interface ViewState extends ViewSnapshot {
   setGroups: (groups: FilterGroup[]) => void;
   setSearch: (search: string) => void;
   setSubtaskMode: (mode: SubtaskMode) => void;
+  setSubtaskManualOrder: (manual: boolean) => void;
   setWrapTitle: (wrap: boolean) => void;
   toggleCollapsed: (key: string) => void;
   toggleCollapsedTask: (taskId: string) => void;
@@ -169,6 +180,7 @@ const DEFAULT_SNAPSHOT: ViewSnapshot = {
   groupBy: ["status", "none"],
   groups: [],
   subtaskMode: "nested",
+  subtaskManualOrder: true,
   wrapTitle: false,
 };
 
@@ -188,6 +200,7 @@ function snapshotOf(state: ViewSnapshot): ViewSnapshot {
     groupBy: state.groupBy,
     groups: state.groups,
     subtaskMode: state.subtaskMode,
+    subtaskManualOrder: state.subtaskManualOrder,
     wrapTitle: state.wrapTitle,
   };
 }
@@ -272,6 +285,7 @@ function createViewStore(scope: ViewScope) {
         setGroups: (groups) => set((s) => edit(s, { groups })),
         setSearch: (search) => set({ search }),
         setSubtaskMode: (subtaskMode) => set((s) => edit(s, { subtaskMode })),
+        setSubtaskManualOrder: (subtaskManualOrder) => set((s) => edit(s, { subtaskManualOrder })),
         setWrapTitle: (wrapTitle) => set((s) => edit(s, { wrapTitle })),
         toggleCollapsed: (key) =>
           set((s) => ({
@@ -327,7 +341,7 @@ function createViewStore(scope: ViewScope) {
           ganttScale: s.ganttScale,
           calendarScale: s.calendarScale,
         }),
-        version: 3,
+        version: 4,
         // Migrate обязателен: без него zustand не смог бы поднять срез старой
         // версии и молча выбросил бы его вместе со всеми именованными
         // представлениями и порядком колонок.
@@ -349,6 +363,17 @@ function createViewStore(scope: ViewScope) {
             };
           }
           if (from < 3) next = { ...next, columns: withStartDate(next.columns) };
+          // Версия 4 — ручной порядок вложенных подзадач. Здесь, в отличие от
+          // колонки «Начало», дописать значение обязаны и представления: без
+          // поля флаг читается как «выключено», и выбор сохранённого среза
+          // молча перекраивал бы порядок веток.
+          if (from < 4) {
+            next = {
+              ...next,
+              subtaskManualOrder: true,
+              savedViews: (next.savedViews ?? []).map((v) => ({ ...v, subtaskManualOrder: true })),
+            };
+          }
           return next as ViewState;
         },
       },
@@ -469,5 +494,62 @@ export const useCardStore = create<CardState>()(
       },
     }),
     { name: "sb.v2.cardFields", storage: createJSONStorage(() => localStorage), version: 1 },
+  ),
+);
+
+// --- Секция подзадач в карточке ------------------------------------------------
+
+interface SubtaskViewState {
+  sort: SubtaskSortColumn;
+  direction: SortDirection;
+  filters: SubtaskFilters;
+  setSort: (column: SubtaskSortColumn) => void;
+  setDirection: (direction: SortDirection) => void;
+  toggleFilterValue: (key: "statusIds" | "assigneeIds", value: string) => void;
+  togglePriority: (priority: TaskPriority) => void;
+  setHideDone: (hide: boolean) => void;
+  resetFilters: () => void;
+}
+
+/**
+ * Как показывать подзадачи в карточке. Стор один на приложение, а не по
+ * областям (`ViewScope`), и тем более не по задачам: «сначала срочные» или
+ * «спрятать закрытые» — привычка чтения, и переучивать её на каждой карточке
+ * означало бы настраивать секцию заново по десять раз в день. Ручной порядок
+ * здесь не хранится вовсе — он общий для команды и живёт в базе.
+ */
+export const useSubtaskViewStore = create<SubtaskViewState>()(
+  persist(
+    (set, get) => ({
+      sort: "manual",
+      direction: "asc",
+      filters: EMPTY_SUBTASK_FILTERS,
+      setSort: (sort) => set({ sort }),
+      setDirection: (direction) => set({ direction }),
+      toggleFilterValue: (key, value) => {
+        const current = get().filters;
+        const list = current[key];
+        set({
+          filters: {
+            ...current,
+            [key]: list.includes(value) ? list.filter((v) => v !== value) : [...list, value],
+          },
+        });
+      },
+      togglePriority: (priority) => {
+        const current = get().filters;
+        set({
+          filters: {
+            ...current,
+            priorities: current.priorities.includes(priority)
+              ? current.priorities.filter((p) => p !== priority)
+              : [...current.priorities, priority],
+          },
+        });
+      },
+      setHideDone: (hideDone) => set((s) => ({ filters: { ...s.filters, hideDone } })),
+      resetFilters: () => set({ filters: EMPTY_SUBTASK_FILTERS }),
+    }),
+    { name: "sb.v2.subtaskView", storage: createJSONStorage(() => localStorage), version: 1 },
   ),
 );
