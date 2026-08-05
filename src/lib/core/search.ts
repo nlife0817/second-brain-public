@@ -11,6 +11,13 @@ export interface SearchHit {
   title: string;
   subtitle: string | null;
   completed: boolean;
+  /**
+   * Задача уже чья-то подзадача. Нужно тем, кто выбирает по поиску родителя:
+   * привязка молча разорвала бы прежнюю связь, а её видно только из карточки.
+   * Название родителя не отдаём — доступ к задаче не означает доступа к нему
+   * (то же правило, что в `getParentBrief`). У клиентов и проектов — `false`.
+   */
+  has_parent: boolean;
 }
 
 export async function search(ctx: AuthContext, query: string, limit = 20): Promise<SearchHit[]> {
@@ -24,10 +31,11 @@ export async function search(ctx: AuthContext, query: string, limit = 20): Promi
     title: string;
     completed_at: string | null;
     created_by: string | null;
+    parent_task_id: string | null;
     project_ids: string[] | null;
     assignee_ids: string[] | null;
   }>(
-    `SELECT t.id, t.title, t.completed_at, t.created_by,
+    `SELECT t.id, t.title, t.completed_at, t.created_by, t.parent_task_id,
             (SELECT array_agg(tp.project_id::text) FROM core.task_projects tp WHERE tp.task_id = t.id) AS project_ids,
             (SELECT array_agg(ta.user_id::text) FROM core.task_assignees ta WHERE ta.task_id = t.id) AS assignee_ids
      FROM core.tasks t
@@ -62,6 +70,7 @@ export async function search(ctx: AuthContext, query: string, limit = 20): Promi
         ? ((projectMap.get(visibleProject.id) as { name?: string })?.name ?? null)
         : "Личная задача",
       completed: !!row.completed_at,
+      has_parent: !!row.parent_task_id,
     });
     if (hits.length >= limit) break;
   }
@@ -75,7 +84,14 @@ export async function search(ctx: AuthContext, query: string, limit = 20): Promi
        LIMIT ?`,
     ).all(ctx.orgId, like, q, limit - hits.length);
     for (const c of clients) {
-      hits.push({ type: "client", id: c.id, title: c.name, subtitle: c.status_name, completed: false });
+      hits.push({
+        type: "client",
+        id: c.id,
+        title: c.name,
+        subtitle: c.status_name,
+        completed: false,
+        has_parent: false,
+      });
     }
   }
 

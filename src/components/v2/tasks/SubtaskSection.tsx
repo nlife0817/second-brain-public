@@ -24,6 +24,7 @@ import {
   Clock,
   Filter,
   GripVertical,
+  Link2,
   MoreHorizontal,
   Plus,
   RotateCcw,
@@ -49,6 +50,7 @@ import {
   formatDue,
 } from "@/components/v2/bits";
 import { DuePicker } from "@/components/v2/DuePicker";
+import { TaskSearchField, type TaskHit } from "@/components/v2/TaskPicker";
 import { defaultStatus } from "@/lib/core/status-model";
 import {
   SUBTASK_SORT_COLUMNS,
@@ -113,6 +115,8 @@ export function SubtaskSection({
   defaults,
   chainProjectIds,
   onCreate,
+  onLinkExisting,
+  linkExcludeIds,
   onToggleDone,
   onOpen,
   onPatch,
@@ -127,6 +131,10 @@ export function SubtaskSection({
   /** Проекты цепочки родителя: по ним сужается выбор исполнителей подзадачи. */
   chainProjectIds: string[];
   onCreate: (draft: TaskDraft) => Promise<void>;
+  /** Подчинить этой задаче уже существующую. */
+  onLinkExisting: (hit: TaskHit) => Promise<void>;
+  /** Кого не предлагать в поиске: сама задача и её нынешние подзадачи. */
+  linkExcludeIds: string[];
   onToggleDone: (sub: TaskListItem) => void;
   onOpen: (taskId: string) => void;
   onPatch: (sub: TaskListItem, body: Record<string, unknown>) => void;
@@ -136,6 +144,7 @@ export function SubtaskSection({
   onReorder: (taskIds: string[]) => void;
 }) {
   const done = subtasks.filter((s) => s.completed_at).length;
+  const [linkOpen, setLinkOpen] = useState(false);
   const statuses = useV2Store((s) => s.statuses);
   const projects = useV2Store((s) => s.projects);
   const sort = useSubtaskViewStore((s) => s.sort);
@@ -175,7 +184,7 @@ export function SubtaskSection({
 
   return (
     <div>
-      <p className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Подзадачи
         {subtasks.length > 0 && (
           <>
@@ -197,13 +206,52 @@ export function SubtaskSection({
             )}
           </>
         )}
-        {subtasks.length > 1 && (
-          <span className="ml-auto flex items-center gap-0.5">
-            <SubtaskSortMenu />
-            <SubtaskFilterMenu subtasks={subtasks} />
-          </span>
-        )}
-      </p>
+        {/* Настройки показа и «связать» — одной группой справа: три отдельных
+            прижатия к краю разъезжались бы при переносе строки. */}
+        <span className="ml-auto flex items-center gap-0.5">
+          {subtasks.length > 1 && (
+            <>
+              <SubtaskSortMenu />
+              <SubtaskFilterMenu subtasks={subtasks} />
+            </>
+          )}
+          {canEdit && (
+            <Popover open={linkOpen} onOpenChange={setLinkOpen}>
+              <PopoverTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="gap-1 font-normal normal-case tracking-normal text-muted-foreground"
+                  />
+                }
+              >
+                <Link2 className="size-3" /> Связать существующую
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72 p-2.5">
+                <TaskSearchField
+                  excludeIds={linkExcludeIds}
+                  placeholder="Какую задачу подчинить?"
+                  onPick={async (hit) => {
+                    // Прежняя связь рвётся молча — из этого списка её не видно,
+                    // а тот, кто её строил, узнает об этом последним.
+                    if (
+                      hit.has_parent &&
+                      !window.confirm(
+                        `Задача «${hit.title}» уже подчинена другой. Переподчинить её этой?`,
+                      )
+                    ) {
+                      return;
+                    }
+                    await onLinkExisting(hit);
+                    setLinkOpen(false);
+                  }}
+                />
+              </PopoverContent>
+            </Popover>
+          )}
+        </span>
+      </div>
       <div className={cn("flex select-none flex-col gap-0.5", !drag.idle && "cursor-grabbing")}>
         {shown.map((s, i) => (
           <SubtaskRow

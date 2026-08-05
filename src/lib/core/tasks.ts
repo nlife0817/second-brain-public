@@ -872,14 +872,20 @@ export interface UpdateTaskInput {
  * Задача принадлежит собственной ветке — то есть назначить её родителем значит
  * замкнуть цикл. Обход идёт вниз от `taskId` и включает саму задачу, поэтому
  * попытка сделать задачу родителем самой себе тоже отсекается здесь.
+ *
+ * Обход не ограничен по глубине: с ограничением ветка длиннее лимита давала
+ * ложное «можно», и связывание двух существующих задач замыкало её в кольцо —
+ * а кольцо не разорвать ничем, кроме правки в базе, потому что списки строятся
+ * обходом сверху и такая ветка из них просто исчезает. Держит обход `UNION`
+ * (не `ALL`): повторные строки он отбрасывает, поэтому уже испорченные данные
+ * останавливают рекурсию, а не крутят её вечно.
  */
 async function isSelfOrDescendant(taskId: string, candidateId: string): Promise<boolean> {
   const row = await prepare<{ id: string }>(
     `WITH RECURSIVE down AS (
-       SELECT id, 0 AS depth FROM core.tasks WHERE id = ?
-       UNION ALL
-       SELECT c.id, d.depth + 1 FROM core.tasks c JOIN down d ON c.parent_task_id = d.id
-       WHERE d.depth < 8
+       SELECT id FROM core.tasks WHERE id = ?
+       UNION
+       SELECT c.id FROM core.tasks c JOIN down d ON c.parent_task_id = d.id
      )
      SELECT id FROM down WHERE id = ?`,
   ).get(taskId, candidateId);
@@ -896,7 +902,9 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
   if (reparented && patch.parent_task_id) {
     await requireTaskAccess(ctx, patch.parent_task_id, "edit");
     if (await isSelfOrDescendant(taskId, patch.parent_task_id)) {
-      throw new DomainError(422, "Task cannot be a subtask of its own branch");
+      // По-русски: раньше цепочку правил только код (MCP и черновики), а теперь
+      // родителя выбирают в интерфейсе, и этот текст читает человек.
+      throw new DomainError(422, "Задача не может стать подзадачей внутри собственной ветки");
     }
   }
 
