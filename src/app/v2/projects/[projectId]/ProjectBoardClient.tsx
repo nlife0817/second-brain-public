@@ -174,14 +174,19 @@ function ProjectScreen({
   );
 
   const createTask = useCallback(
-    async (draft: TaskDraft) => {
+    async (draft: TaskDraft, sprintId: string | null = null) => {
       if (!orgId) return;
       // Проект уже лежит в черновике, но подстраховываемся: задача без
-      // размещения уедет в личный инбокс и пропадёт из этого списка.
+      // размещения уедет в личный инбокс и пропадёт из этого списка. Спринта в
+      // черновике нет — его знает не форма, а секция бэклога, в которой задачу
+      // набрали.
+      const extra: Record<string, unknown> = {};
+      if (draft.project_ids.length === 0) extra.placements = [{ project_id: projectId }];
+      if (sprintId) extra.sprint_id = sprintId;
       const { fieldsWarning } = await createTaskFromDraft(
         orgId,
         draft,
-        draft.project_ids.length === 0 ? { placements: [{ project_id: projectId }] } : undefined,
+        Object.keys(extra).length > 0 ? extra : undefined,
       );
       setNotice(fieldsWarning);
       await reload();
@@ -262,6 +267,9 @@ function ProjectScreen({
           setSprints={setSprints}
           canEdit={!!canEdit}
           onOpenTask={openTask}
+          onCreateTask={canEdit ? createTask : undefined}
+          draftDefaults={draftDefaults}
+          statusSetId={project.status_set_id}
           reload={reload}
           titleSlot={title}
           actionsSlot={<ViewSwitch dev={isDev} />}

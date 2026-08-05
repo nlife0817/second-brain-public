@@ -29,6 +29,7 @@ import {
 } from "@dnd-kit/core";
 import { ChevronDown, GripVertical, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BacklogComposer } from "@/components/v2/tasks/BacklogComposer";
 import { formatEstimate } from "@/components/v2/tasks/cells";
 import {
   CompleteSprintDialog,
@@ -49,6 +50,8 @@ import {
   sprintLoad,
   SPRINT_STATE_LABELS,
 } from "@/lib/core/sprint-model";
+import { statusesOfSet } from "@/lib/core/status-model";
+import type { TaskDraft } from "@/lib/core/task-draft";
 import type { Sprint, SprintWithTotals, TaskRow, TaskStatus, UserBrief } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
@@ -66,6 +69,12 @@ export interface BacklogViewProps {
   setSprints: React.Dispatch<React.SetStateAction<SprintWithTotals[]>>;
   canEdit: boolean;
   onOpenTask: (id: string) => void;
+  /** Создание задачи из строки ввода; `sprintId` — секция, в которой её набрали. */
+  onCreateTask?: (draft: TaskDraft, sprintId: string | null) => Promise<void>;
+  /** Что экран проставляет в черновик — свой проект. */
+  draftDefaults: Partial<TaskDraft>;
+  /** Набор статусов проекта: строка ввода предлагает его, а не весь справочник. */
+  statusSetId: string | null;
   reload: () => Promise<void> | void;
   titleSlot: React.ReactNode;
   actionsSlot: React.ReactNode;
@@ -79,6 +88,9 @@ export function BacklogView({
   setSprints,
   canEdit,
   onOpenTask,
+  onCreateTask,
+  draftDefaults,
+  statusSetId,
   reload,
   titleSlot,
   actionsSlot,
@@ -291,6 +303,29 @@ export function BacklogView({
     [bySprint],
   );
 
+  // Строка ввода предлагает статусы набора проекта — как доска и таблица.
+  const composerStatuses = useMemo(() => statusesOfSet(statuses, statusSetId), [statuses, statusSetId]);
+  // Срок пустой, в отличие от таблицы: в бэклоге лежит незапланированное, и
+  // подставленное «сегодня» сделало бы каждую записанную идею просроченной —
+  // вместе с напоминанием исполнителю в тот же вечер.
+  const composerDefaults = useMemo(
+    () => ({ ...draftDefaults, due_date: null }),
+    [draftDefaults],
+  );
+
+  const composerFor = useCallback(
+    (sprint: SprintWithTotals | null) =>
+      canEdit && onCreateTask ? (
+        <BacklogComposer
+          defaults={composerDefaults}
+          statuses={composerStatuses}
+          placeholder={sprint ? `Новая задача в «${sprint.name}»…` : "Новая задача в бэклог…"}
+          onCreate={(draft) => onCreateTask(draft, sprint?.id ?? null)}
+        />
+      ) : null,
+    [canEdit, onCreateTask, composerDefaults, composerStatuses],
+  );
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
@@ -342,6 +377,7 @@ export function BacklogView({
                   const picked = pickToFill(bySprint.backlog, remaining);
                   if (picked.length > 0) setMove({ tasks: picked, target: sprint });
                 }}
+                composer={composerFor(sprint)}
               />
             ))}
             {openSprints.length === 0 && (
@@ -358,6 +394,7 @@ export function BacklogView({
             sprints={openSprints}
             onOpenTask={onOpenTask}
             onMove={(task, target) => setMove({ tasks: [task], target })}
+            composer={composerFor(null)}
           />
         </div>
 
@@ -431,6 +468,7 @@ function SprintCard({
   onStart,
   onComplete,
   onFill,
+  composer,
 }: {
   sprint: SprintWithTotals;
   tasks: TaskRow[];
@@ -443,6 +481,8 @@ function SprintCard({
   onStart: () => void;
   onComplete: () => void;
   onFill: () => void;
+  /** Строка создания задачи сразу в этом спринте. */
+  composer: React.ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: sprint.id });
   const minutes = totalEstimate(tasks);
@@ -530,11 +570,14 @@ function SprintCard({
         <div className="border-t border-border/60">
           {tasks.length === 0 ? (
             <p className="px-3 py-3 text-xs text-muted-foreground">
-              Перетащите сюда задачи из бэклога — спринт пуст.
+              {composer
+                ? "Спринт пуст: перетащите сюда задачи из бэклога или заведите новую строкой ниже."
+                : "Перетащите сюда задачи из бэклога — спринт пуст."}
             </p>
           ) : (
             <TaskLines tasks={tasks} statuses={statuses} canEdit={canEdit} onOpenTask={onOpenTask} />
           )}
+          {composer}
         </div>
       )}
     </section>
@@ -550,6 +593,7 @@ function BacklogSection({
   sprints,
   onOpenTask,
   onMove,
+  composer,
 }: {
   tasks: TaskRow[];
   statuses: TaskStatus[];
@@ -557,6 +601,8 @@ function BacklogSection({
   sprints: SprintWithTotals[];
   onOpenTask: (id: string) => void;
   onMove: (task: TaskRow, target: SprintWithTotals) => void;
+  /** Строка создания задачи в бэклоге. */
+  composer: React.ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: BACKLOG_ZONE });
   return (
@@ -575,7 +621,9 @@ function BacklogSection({
       </header>
       <div className="border-t border-border/60">
         {tasks.length === 0 ? (
-          <p className="px-3 py-3 text-xs text-muted-foreground">Бэклог пуст.</p>
+          <p className="px-3 py-3 text-xs text-muted-foreground">
+            {composer ? "Бэклог пуст — заведите первую задачу строкой ниже." : "Бэклог пуст."}
+          </p>
         ) : (
           <TaskLines
             tasks={tasks}
@@ -587,6 +635,7 @@ function BacklogSection({
             sortable
           />
         )}
+        {composer}
       </div>
     </section>
   );

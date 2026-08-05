@@ -9,7 +9,7 @@ import { Check, X } from "lucide-react";
 import { useMemo } from "react";
 import { Avatar, PRIORITY_LABELS } from "@/components/v2/bits";
 import { assigneeChoice } from "@/lib/core/assignable";
-import type { TaskPriority } from "@/lib/core/types";
+import type { TaskPriority, TaskStatus } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { formatEstimate } from "./cells";
@@ -61,14 +61,22 @@ export function PriorityMenu({
 export function StatusMenu({
   value,
   onChange,
+  statuses,
 }: {
   value: string | null;
   onChange: (statusId: string) => void;
+  /**
+   * Чем ограничен выбор. По умолчанию — весь справочник организации; экран со
+   * своим набором статусов (проект в режиме «Разработка») передаёт статусы
+   * набора: новая задача рождается в его процессе, а не в чужом.
+   */
+  statuses?: TaskStatus[];
 }) {
-  const statuses = useV2Store((s) => s.statuses);
+  const all = useV2Store((s) => s.statuses);
+  const options = statuses ?? all;
   return (
     <>
-      {statuses.map((s) => (
+      {options.map((s) => (
         <button key={s.id} onClick={() => onChange(s.id)} className={ROW}>
           <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: s.color }} />
           <span className="flex-1 truncate text-left">{s.name}</span>
