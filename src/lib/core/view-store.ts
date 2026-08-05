@@ -16,7 +16,15 @@ import type { CalendarScale } from "./calendar";
 import type { GanttScale } from "./gantt";
 import { EMPTY_SUBTASK_FILTERS, type SubtaskFilters, type SubtaskSortColumn } from "./subtask-view";
 import type { TaskPriority } from "./types";
-import type { FilterGroup, GroupByConfig, SortDirection, SortState, SubtaskMode } from "./views";
+import type {
+  FilterGroup,
+  GroupByConfig,
+  GroupByField,
+  GroupOrderMap,
+  SortDirection,
+  SortState,
+  SubtaskMode,
+} from "./views";
 
 export interface ColumnDef {
   id: string;
@@ -96,6 +104,13 @@ export interface ViewSnapshot {
   widths: Record<string, number>;
   sort: SortState;
   groupBy: GroupByConfig;
+  /**
+   * Порядок групп, расставленный руками, — по типу группировки, а не по уровню.
+   * Часть снимка: «сначала мои приоритеты, потом остальные» — такой же рабочий
+   * срез, как набор колонок и фильтры. Поля без записи выстраиваются по
+   * справочнику, как и раньше.
+   */
+  groupOrder: GroupOrderMap;
   groups: FilterGroup[];
   subtaskMode: SubtaskMode;
   /**
@@ -158,6 +173,10 @@ export interface ViewState extends ViewSnapshot {
   setWidth: (columnId: string, width: number) => void;
   toggleSort: (column: SortState["column"]) => void;
   setGroupBy: (config: GroupByConfig) => void;
+  /** Ручной порядок групп одного поля целиком: перестановка сдвигает соседей. */
+  setGroupFieldOrder: (field: GroupByField, keys: string[]) => void;
+  /** Вернуть полю порядок справочника — запись просто убирается. */
+  resetGroupFieldOrder: (field: GroupByField) => void;
   setGroups: (groups: FilterGroup[]) => void;
   setSearch: (search: string) => void;
   setSubtaskMode: (mode: SubtaskMode) => void;
@@ -178,6 +197,7 @@ const DEFAULT_SNAPSHOT: ViewSnapshot = {
   widths: {},
   sort: { column: "due_date", direction: "asc" },
   groupBy: ["status", "none"],
+  groupOrder: {},
   groups: [],
   subtaskMode: "nested",
   subtaskManualOrder: true,
@@ -198,6 +218,7 @@ function snapshotOf(state: ViewSnapshot): ViewSnapshot {
     widths: state.widths,
     sort: state.sort,
     groupBy: state.groupBy,
+    groupOrder: state.groupOrder,
     groups: state.groups,
     subtaskMode: state.subtaskMode,
     subtaskManualOrder: state.subtaskManualOrder,
@@ -282,6 +303,17 @@ function createViewStore(scope: ViewScope) {
             }),
           ),
         setGroupBy: (groupBy) => set((s) => edit(s, { groupBy })),
+        setGroupFieldOrder: (field, keys) =>
+          set((s) => edit(s, { groupOrder: { ...s.groupOrder, [field]: keys } })),
+        resetGroupFieldOrder: (field) =>
+          set((s) => {
+            // Именно удаление ключа, а не пустой массив: пустой порядок и
+            // отсутствие порядка должны читаться одинаково, а хранить в
+            // localStorage поле, которое ничего не меняет, незачем.
+            const next = { ...s.groupOrder };
+            delete next[field];
+            return edit(s, { groupOrder: next });
+          }),
         setGroups: (groups) => set((s) => edit(s, { groups })),
         setSearch: (search) => set({ search }),
         setSubtaskMode: (subtaskMode) => set((s) => edit(s, { subtaskMode })),
@@ -341,7 +373,7 @@ function createViewStore(scope: ViewScope) {
           ganttScale: s.ganttScale,
           calendarScale: s.calendarScale,
         }),
-        version: 4,
+        version: 5,
         // Migrate обязателен: без него zustand не смог бы поднять срез старой
         // версии и молча выбросил бы его вместе со всеми именованными
         // представлениями и порядком колонок.
@@ -372,6 +404,16 @@ function createViewStore(scope: ViewScope) {
               ...next,
               subtaskManualOrder: true,
               savedViews: (next.savedViews ?? []).map((v) => ({ ...v, subtaskManualOrder: true })),
+            };
+          }
+          // Версия 5 — ручной порядок групп. Пустая карта и есть «порядок по
+          // справочнику», то есть прежнее поведение: дописываем её явно, чтобы
+          // снимок представления не приезжал в стор с пропущенным полем.
+          if (from < 5) {
+            next = {
+              ...next,
+              groupOrder: {},
+              savedViews: (next.savedViews ?? []).map((v) => ({ ...v, groupOrder: {} })),
             };
           }
           return next as ViewState;

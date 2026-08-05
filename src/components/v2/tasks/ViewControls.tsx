@@ -35,6 +35,7 @@ import {
 } from "@/lib/core/view-store";
 import { GROUP_BY_LABELS, SUBTASK_MODE_LABELS, type GroupByField, type SubtaskMode } from "@/lib/core/views";
 import { cn } from "@/lib/utils";
+import { useGroupValues } from "./group-naming";
 import { useRowDrag } from "./use-row-drag";
 
 const GROUP_FIELDS: GroupByField[] = [
@@ -178,7 +179,104 @@ function GroupBySection() {
           ))}
         </div>
       )}
+
+      {/* Порядок — на каждый выбранный тип свой блок: настройка привязана к
+          полю, а не к уровню, и «Статус» вторым уровнем должен идти так же, как
+          первым. */}
+      {groupBy[0] !== "none" && <GroupOrderBlock field={groupBy[0]} />}
+      {groupBy[1] !== "none" && <GroupOrderBlock field={groupBy[1]} />}
     </>
+  );
+}
+
+/**
+ * Порядок групп внутри одного типа группировки: перетаскивание за ручку, как у
+ * колонок. Список — весь справочник поля, а не встретившиеся в данных ключи:
+ * порядок должен переживать пустую группу.
+ *
+ * Наверх уходит порядок целиком (все значения поля), а не сдвиг одного: иначе
+ * «расставленные» и «остальные» перемешивались бы после каждой перестановки.
+ * Значения, которых уже нет в справочнике (удалённый статус), остаются в
+ * сохранённой записи безвредно — их просто некому сопоставить.
+ */
+function GroupOrderBlock({ field }: { field: GroupByField }) {
+  const custom = useViewStore((s) => s.groupOrder[field] != null);
+  const setOrder = useViewStore((s) => s.setGroupFieldOrder);
+  const resetOrder = useViewStore((s) => s.resetGroupFieldOrder);
+  const values = useGroupValues(field);
+
+  const drag = useRowDrag(values.length, (from, to) => {
+    const ids = values.map((v) => v.id);
+    const [moved] = ids.splice(from, 1);
+    ids.splice(to, 0, moved);
+    setOrder(field, ids);
+  });
+
+  if (values.length < 2) return null;
+
+  return (
+    <div className="flex flex-col gap-1 border-t border-border pt-2">
+      <div className="flex items-center gap-2">
+        <span className={cn(SUBHEAD, "flex-1")}>Порядок групп: {GROUP_BY_LABELS[field]}</span>
+        {custom && (
+          <Button
+            variant="ghost"
+            size="xs"
+            className="shrink-0 gap-1 text-[11px] text-muted-foreground"
+            onClick={() => resetOrder(field)}
+            title="Вернуть порядок по умолчанию"
+          >
+            <RotateCcw className="size-3" />
+            Сбросить
+          </Button>
+        )}
+      </div>
+      <div className="flex select-none flex-col">
+        {values.map((v, i) => {
+          const dragging = drag.draggingId === v.id;
+          return (
+            <div
+              key={v.id}
+              style={{ transform: `translate3d(0, ${drag.shiftOf(i)}px, 0)`, zIndex: dragging ? 10 : undefined }}
+              className={cn(
+                "relative flex h-8 items-center gap-1 rounded px-1",
+                drag.idle && "hover:bg-muted",
+                dragging && "bg-background shadow-md ring-1 ring-ring",
+                // Переход только на время жеста — иначе к моменту отпускания
+                // проигрывается возврат из уже применённого сдвига, то есть
+                // рывок. Наведение соседям тоже незачем: подсветка бежала бы
+                // за курсором.
+                !drag.idle && !dragging && "pointer-events-none transition-transform duration-150 ease-out",
+              )}
+            >
+              <button
+                {...drag.handlers(i, v.id)}
+                // touch-none обязателен: без него палец прокручивает поповер.
+                className={cn(
+                  "shrink-0 touch-none rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground",
+                  dragging ? "cursor-grabbing" : "cursor-grab",
+                )}
+                title="Перетащите, чтобы изменить порядок (или ↑/↓)"
+                aria-label={`Переместить группу «${v.label}»`}
+              >
+                <GripVertical className="size-3.5" />
+              </button>
+              {v.color ? (
+                <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: v.color }} />
+              ) : (
+                <span className="w-1 shrink-0" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-sm">{v.label}</span>
+              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70">{i + 1}</span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="px-1 text-[11px] text-muted-foreground">
+        Порядок — перетаскиванием за ручку слева. Группы, которых здесь нет (новый статус, новый
+        проект), идут после расставленных; «без значения» — всегда последней.
+      </p>
+    </div>
   );
 }
 

@@ -85,6 +85,61 @@ export async function listProjects(ctx: AuthContext, opts: { archived?: boolean 
   }));
 }
 
+/**
+ * Порядок проектов в панели — целиком, как справочник статусов: перетаскивание
+ * сдвигает соседей, и патч одной позиции оставил бы список в промежуточном
+ * состоянии между запросами.
+ *
+ * Присланный порядок **всегда неполон**: закрытый проект не видит даже админ
+ * организации (правило 3 в core/CLAUDE.md), а архивные в панель не попадают.
+ * Поэтому раздать 1..N по одному этому списку нельзя — так перемешалось бы то,
+ * чего человек не видел. Переставляем по «слотам»: перечисленные проекты
+ * занимают ровно те места в общем порядке, что занимали до перестановки, и
+ * меняются местами только между собой.
+ *
+ * Событий не пишем — сознательное исключение из правила 7, как перестановка
+ * справочника статусов: место строки в панели не меняет ни одного проекта по
+ * существу, а лента и push от каждого движения мыши стали бы шумом на команду.
+ */
+export async function reorderProjects(ctx: AuthContext, order: string[]): Promise<ProjectWithMeta[]> {
+  assertOrg(ctx, "projects.order");
+  const moved = [...new Set(order)];
+  if (moved.length !== order.length) throw new DomainError(422, "Duplicate project in order");
+
+  const all = await prepare<Project>(
+    // Тот же порядок, что у listProjects: позиции в базе бывают и разъехавшимися
+    // (до этой правки их никто не выставлял руками), а created_at разводит равные.
+    `SELECT * FROM core.projects WHERE org_id = ? ORDER BY position, created_at`,
+  ).all(ctx.orgId);
+  const byId = new Map(all.map((p) => [p.id, p]));
+  for (const id of moved) {
+    const project = byId.get(id);
+    // Невидимый проект неотличим от несуществующего — как в requireProject.
+    if (!project || !effectiveProjectRole(ctx, project)) throw new DomainError(404, "Project not found");
+  }
+
+  const movedSet = new Set(moved);
+  const slots = all.map((_, i) => i).filter((i) => movedSet.has(all[i].id));
+  const next = [...all];
+  slots.forEach((slot, i) => {
+    next[slot] = byId.get(moved[i])!;
+  });
+
+  await transaction(async (tx) => {
+    for (const [i, project] of next.entries()) {
+      const position = i + 1;
+      if (project.position === position) continue;
+      await tx
+        .prepare(`UPDATE core.projects SET position = ? WHERE id = ? AND org_id = ?`)
+        .run(position, project.id, ctx.orgId);
+    }
+  });
+
+  // Отвечаем тем же списком, что отдаёт GET: панель читает проекты из стора, и
+  // перечитывать их отдельным запросом после перестановки незачем.
+  return listProjects(ctx);
+}
+
 // --- CRUD -------------------------------------------------------------------------
 
 export async function createProject(

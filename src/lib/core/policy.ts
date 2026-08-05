@@ -21,6 +21,8 @@ export type OrgAction =
   | "org.invite"          // приглашения (в т.ч. гостей)
   | "org.delete"
   | "project.create"
+  | "projects.order"      // порядок проектов в панели — общий для организации,
+                          // поэтому и право на него org-уровня, а не проектного
   | "task.create.personal" // задача без проекта (личный инбокс) — не для гостей
   | "clients.view"        // CRM закрыт для гостей
   | "clients.manage"
@@ -38,6 +40,9 @@ const MIN_ORG_ROLE: Record<OrgAction, OrgRole> = {
   "org.invite": "admin",
   "org.delete": "owner",
   "project.create": "member",
+  // Порядок в панели видит вся команда — двигает его тот, кто отвечает за
+  // организацию, как и справочник статусов.
+  "projects.order": "admin",
   "task.create.personal": "member",
   "clients.view": "member",
   "clients.manage": "member",
