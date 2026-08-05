@@ -28,10 +28,11 @@ export const POST = withUser(async (_request: NextRequest, user) => {
     const url = await createTelegramLinkUrl(user.id);
     return NextResponse.json({ url });
   } catch (err) {
-    // Сюда попадает нерабочий токен: без явного текста это выглядит как
-    // «нажал подключить и ничего не произошло».
+    // Сюда попадает нерабочий токен и недоступный Bot API (у нас он закрыт по
+    // IPv4 и ходит через TELEGRAM_PROXY_URL). Без явного текста это выглядит
+    // как «нажал подключить и ничего не произошло»; настоящая причина — в логе.
     console.error("[v2/telegram] не удалось выдать ссылку привязки:", err);
-    return jsonError(502, "Телеграм не ответил — проверьте токен бота на сервере");
+    return jsonError(502, "Телеграм не ответил — проверьте токен бота и прокси на сервере");
   }
 });
 

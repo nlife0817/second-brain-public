@@ -24,13 +24,20 @@ set +a
 : "${TELEGRAM_BOT_TOKEN:?не задан в .env}"
 API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
 
+# Тот же прокси, которым ходит приложение, если он задан. Хосту он может быть и
+# не нужен (у него есть IPv6, а у контейнера нет), но пусть оба пути к Telegram
+# ведут одинаково: иначе «скрипт работает, а бот молчит» приходится выяснять
+# заново каждый раз.
+PROXY_OPT=()
+[ -n "${TELEGRAM_PROXY_URL:-}" ] && PROXY_OPT=(--proxy "$TELEGRAM_PROXY_URL")
+
 case "${1:-set}" in
   info)
-    curl -sS "$API/getWebhookInfo"
+    curl -sS "${PROXY_OPT[@]}" "$API/getWebhookInfo"
     echo
     ;;
   delete)
-    curl -sS -X POST "$API/deleteWebhook"
+    curl -sS "${PROXY_OPT[@]}" -X POST "$API/deleteWebhook"
     echo
     ;;
   set)
@@ -38,7 +45,7 @@ case "${1:-set}" in
     URL="${NEXT_PUBLIC_APP_URL:-${APP_URL:?не задан в .env}}/api/v2/telegram/webhook"
     # allowed_updates ограничивает поток одними сообщениями: всё остальное
     # (изменения статуса, инлайн-запросы) боту не нужно и только шумит в логе.
-    curl -sS -X POST "$API/setWebhook" \
+    curl -sS "${PROXY_OPT[@]}" -X POST "$API/setWebhook" \
       -H 'content-type: application/json' \
       -d "$(printf '{"url":"%s","secret_token":"%s","allowed_updates":["message"],"drop_pending_updates":true}' \
             "$URL" "$TELEGRAM_WEBHOOK_SECRET")"
