@@ -25,6 +25,7 @@ import {
   Plus,
   Square,
   Trash2,
+  Unlink,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -72,6 +73,7 @@ import { handleRichTextClick } from "./editor/open-link";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
 import { SidePanel, useWideViewport } from "./SidePanel";
+import { TaskSearchField, type TaskHit } from "./TaskPicker";
 import { TaskRecurrence, type TaskRecurrenceRule } from "./TaskRecurrence";
 // Tiptap — самая тяжёлая зависимость интерфейса (≈370 КБ). Статический импорт
 // тянул её в бандл каждой страницы v2, хотя редактор нужен только когда открыта
@@ -379,6 +381,7 @@ export function TaskSheet({
     if ("estimated_minutes" in body) {
       next.estimated_minutes = body.estimated_minutes as number | null;
     }
+    if ("parent_task_id" in body) next.parent_task_id = body.parent_task_id as string | null;
     if (typeof body.status_id === "string") {
       next.status_id = body.status_id;
       const category = statuses.find((s) => s.id === body.status_id)?.category;
@@ -586,6 +589,50 @@ export function TaskSheet({
       bumpSubtaskCounters(1, sub.completed_at ? 1 : 0);
       setError(e instanceof Error ? e.message : "Не удалось удалить подзадачу");
     }
+  }
+
+  /**
+   * Подчинение уже существующей задачи — та же связь, что у новой подзадачи, но
+   * с готовым объектом на другом конце.
+   *
+   * Размещения ей НЕ меняем, в отличие от `subtaskDefaults` у новой: та без
+   * проектов родителя пропала бы из списков проекта, внутри задачи которого её
+   * завели, а эта уже живёт в своих проектах — молча вынести её оттуда значит
+   * сделать больше, чем просили. Доступ к ней всё равно расширится по цепочке.
+   */
+  async function linkExistingSubtask(hit: TaskHit) {
+    if (!orgId || !taskId) return;
+    // Без предсказания: строки подзадачи здесь ещё нет, а из подсказки поиска
+    // её не собрать — там нет ни статуса, ни исполнителей, ни срока.
+    await run(async () => {
+      const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${hit.id}`, {
+        parent_task_id: taskId,
+      });
+      if (currentTaskRef.current !== taskId) return;
+      setSubtasks((prev) => [...prev, updated]);
+      bumpSubtaskCounters(1, updated.completed_at ? 1 : 0);
+      // Задача уже есть в списках экрана — там у неё сменился родитель, и
+      // перечитывать весь список ради этого незачем.
+      onChanged?.({ type: "patched", task: updated, confirmed: true });
+      flashSaved();
+    });
+  }
+
+  /** Подчинить текущую задачу другой — то же связывание, но с другого конца. */
+  async function setParentTask(hit: TaskHit) {
+    const previous = parent;
+    // Крошка появляется сразу, вместе с остальной оптимистичной правкой: ждать
+    // ответа ради строки, текст которой уже известен, незачем.
+    setParent({ id: hit.id, title: hit.title, completed_at: null });
+    const ok = await patch({ parent_task_id: hit.id });
+    if (!ok) setParent(previous);
+  }
+
+  async function detachFromParent() {
+    const previous = parent;
+    setParent(null);
+    const ok = await patch({ parent_task_id: null });
+    if (!ok) setParent(previous);
   }
 
   /** Отвязка от родителя: подзадача становится обычной задачей и остаётся жить. */
@@ -1404,16 +1451,18 @@ export function TaskSheet({
               {error && <p className="text-sm text-destructive">{error}</p>}
 
               {/* Карточку подзадачи открывают и напрямую — из списка, поиска или
-                  пуша: без этой строки непонятно, частью чего она является. */}
-              {parent && (
-                <button
-                  onClick={() => openNested(parent.id)}
-                  className="flex max-w-full items-center gap-1 self-start text-xs text-muted-foreground hover:text-foreground"
-                  title="Открыть родительскую задачу"
-                >
-                  <CornerLeftUp className="size-3.5 shrink-0" />
-                  <span className="truncate">{parent.title}</span>
-                </button>
+                  пуша: без этой строки непонятно, частью чего она является.
+                  Она же — место, где родителя выбирают: подчинить задачу можно
+                  и с этого конца, а не только из карточки будущего родителя. */}
+              {(parent || canEdit) && (
+                <ParentRow
+                  parent={parent}
+                  canEdit={canEdit}
+                  excludeIds={[task.id, ...subtasks.map((s) => s.id)]}
+                  onOpen={openNested}
+                  onPick={setParentTask}
+                  onDetach={() => void detachFromParent()}
+                />
               )}
 
               {/* Textarea, а не Input: длинное название в поле ввода уезжает за
@@ -1469,6 +1518,14 @@ export function TaskSheet({
                 defaults={subtaskDefaults}
                 chainProjectIds={task.chain_project_ids}
                 onCreate={addSubtask}
+                onLinkExisting={linkExistingSubtask}
+                // Родителя в подсказках нет по той же причине, что и самой
+                // задачи: подчинить её собственному предку — это кольцо.
+                linkExcludeIds={[
+                  task.id,
+                  ...(parent ? [parent.id] : []),
+                  ...subtasks.map((s) => s.id),
+                ]}
                 onToggleDone={(s) => void toggleSubtaskDone(s)}
                 onOpen={openNested}
                 onPatch={(s, body) => void patchSubtask(s, body)}
@@ -1604,6 +1661,98 @@ export function TaskSheet({
       />
     )}
     </>
+  );
+}
+
+/**
+ * Строка родителя над названием: хлебная крошка и она же — управление связью.
+ *
+ * Кнопки правки проявляются по наведению: у большинства задач родителя нет, и
+ * два постоянно висящих значка в самом верху карточки читались бы как ошибка
+ * вёрстки. На телефоне наведения не существует — там они видны всегда, ровно
+ * как чипы подзадачи (`CHIP_ON_HOVER` в `SubtaskSection`).
+ */
+function ParentRow({
+  parent,
+  canEdit,
+  excludeIds,
+  onOpen,
+  onPick,
+  onDetach,
+}: {
+  parent: ParentBrief | null;
+  canEdit: boolean;
+  /** Сама задача и её подзадачи: подчинить себя своей же ветке нельзя. */
+  excludeIds: string[];
+  onOpen: (taskId: string) => void;
+  onPick: (hit: TaskHit) => Promise<void>;
+  onDetach: () => void;
+}) {
+  const [pickOpen, setPickOpen] = useState(false);
+
+  const picker = (
+    <PopoverContent align="start" className="w-72 p-2.5">
+      <TaskSearchField
+        excludeIds={excludeIds}
+        placeholder={parent ? "Кому подчинить вместо текущего?" : "Кому подчинить задачу?"}
+        onPick={async (hit) => {
+          await onPick(hit);
+          setPickOpen(false);
+        }}
+      />
+    </PopoverContent>
+  );
+
+  if (!parent) {
+    // Родителя нет — остаётся только предложение его выбрать. Кнопка
+    // приглушена: это редкое действие, а место у неё самое заметное в карточке.
+    return (
+      <Popover open={pickOpen} onOpenChange={setPickOpen}>
+        <PopoverTrigger
+          render={
+            <button
+              className="flex items-center gap-1 self-start text-xs text-muted-foreground/70 transition-colors hover:text-foreground"
+              title="Подчинить эту задачу другой"
+            />
+          }
+        >
+          <CornerLeftUp className="size-3.5 shrink-0" />
+          Сделать подзадачей
+        </PopoverTrigger>
+        {picker}
+      </Popover>
+    );
+  }
+
+  const ACTION =
+    "shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-muted hover:text-foreground " +
+    "focus-visible:opacity-100 data-[popup-open]:opacity-100 group-hover/parent:opacity-100 " +
+    "[[data-mobile-v2]_&]:opacity-100";
+
+  return (
+    <div className="group/parent flex max-w-full items-center gap-1 self-start text-xs text-muted-foreground">
+      <button
+        onClick={() => onOpen(parent.id)}
+        className="flex min-w-0 items-center gap-1 hover:text-foreground"
+        title="Открыть родительскую задачу"
+      >
+        <CornerLeftUp className="size-3.5 shrink-0" />
+        <span className="truncate">{parent.title}</span>
+      </button>
+      {canEdit && (
+        <>
+          <Popover open={pickOpen} onOpenChange={setPickOpen}>
+            <PopoverTrigger render={<button className={ACTION} title="Сменить родителя" />}>
+              <Pencil className="size-3" />
+            </PopoverTrigger>
+            {picker}
+          </Popover>
+          <button onClick={onDetach} className={ACTION} title="Отвязать от родителя">
+            <Unlink className="size-3" />
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 

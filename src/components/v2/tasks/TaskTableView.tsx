@@ -19,6 +19,7 @@ import { useGroupNaming } from "@/components/v2/tasks/group-naming";
 import { TaskTable, resolveColumns } from "@/components/v2/tasks/TaskTable";
 import { ViewSettingsPopover } from "@/components/v2/tasks/ViewControls";
 import { FilterButton, TaskCount, TaskSearch } from "@/components/v2/tasks/ViewToolbar";
+import type { TaskHit } from "@/components/v2/TaskPicker";
 import { assigneeChoice } from "@/lib/core/assignable";
 import { api } from "@/lib/core/client";
 import { invalidate } from "@/lib/core/query";
@@ -255,6 +256,7 @@ export function TaskTableView({
                     due_time: updated.due_time,
                     estimated_minutes: updated.estimated_minutes,
                     completed_at: updated.completed_at,
+                    parent_task_id: updated.parent_task_id,
                     updated_at: updated.updated_at,
                     assignees: updated.assignees,
                     tags: updated.tags,
@@ -456,6 +458,32 @@ export function TaskTableView({
     [selectedTasks, patchTasks],
   );
 
+  /**
+   * Массовое подчинение. Прежние связи рвутся молча — из панели их не видно,
+   * поэтому спрашиваем ровно тогда, когда рвать есть что. Сам родитель из
+   * выборки исключается: подчинить задачу самой себе сервер всё равно не даст,
+   * а остальные выбранные при этом переедут — отказывать им из-за одной строки
+   * значило бы требовать переделать выбор.
+   */
+  const bulkSetParent = useCallback(
+    (hit: TaskHit) => {
+      const moving = selectedTasks.filter((t) => t.id !== hit.id);
+      const attached = moving.filter((t) => t.parent_task_id && t.parent_task_id !== hit.id);
+      if (
+        attached.length > 0 &&
+        !window.confirm(
+          attached.length === 1
+            ? `У задачи «${attached[0].title}» уже есть родитель. Переподчинить её задаче «${hit.title}»?`
+            : `У ${attached.length} из выбранных задач уже есть родитель. Переподчинить их задаче «${hit.title}»?`,
+        )
+      ) {
+        return;
+      }
+      void runBulk((t) => (t.id === hit.id ? null : { parent_task_id: hit.id }));
+    },
+    [selectedTasks, runBulk],
+  );
+
   const bulkDelete = useCallback(async () => {
     const ids = selectedTasks.map((t) => t.id);
     if (ids.length === 0) return;
@@ -634,6 +662,7 @@ export function TaskTableView({
           tags={tags}
           members={bulkAssignees.members}
           restrictedBy={bulkAssignees.restrictedBy}
+          selectedIds={selectedTasks.map((t) => t.id)}
           busy={bulkBusy}
           onClear={() => setSelected(new Set())}
           onApply={(payload) => void runBulk(() => payload)}
@@ -651,6 +680,7 @@ export function TaskTableView({
                 : null,
             )
           }
+          onSetParent={bulkSetParent}
           onDelete={() => void bulkDelete()}
         />
       )}

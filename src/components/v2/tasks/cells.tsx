@@ -5,10 +5,21 @@
 // саму мутацию делает страница.
 
 import { memo, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, CornerDownRight, MessageSquare, Pencil, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CornerDownRight,
+  CornerLeftUp,
+  MessageSquare,
+  Pencil,
+  Unlink,
+  X,
+} from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarStack, PRIORITY_LABELS, PriorityDot, chipStyle, dueTone, formatDue } from "@/components/v2/bits";
 import { DuePicker, StartPicker } from "@/components/v2/DuePicker";
+import { TaskSearchField } from "@/components/v2/TaskPicker";
 import { assigneeChoice } from "@/lib/core/assignable";
 import type {
   CoreTag,
@@ -237,20 +248,87 @@ export const TitleCell = memo(function TitleCell({
         {task.title}
       </button>
       {ctx.canEdit && (
-        <button
-          onClick={() => {
-            setDraft(task.title);
-            setEditing(true);
-          }}
-          className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted focus-visible:opacity-100 group-hover/title:opacity-100"
-          title="Переименовать"
-        >
-          <Pencil className="size-3" />
-        </button>
+        <>
+          <button
+            onClick={() => {
+              setDraft(task.title);
+              setEditing(true);
+            }}
+            className={cn(ROW_ACTION, "group-hover/title:opacity-100")}
+            title="Переименовать"
+          >
+            <Pencil className="size-3" />
+          </button>
+          <ParentMenu task={task} ctx={ctx} />
+        </>
       )}
     </span>
   );
 });
+
+/**
+ * Кнопка, проявляющаяся по наведению на строку. На телефоне наведения не
+ * существует, а `data-[popup-open]` обязателен: уведённая с строки мышь иначе
+ * гасит кнопку вместе с её собственным открытым меню.
+ */
+const ROW_ACTION =
+  "shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted " +
+  "focus-visible:opacity-100 data-[popup-open]:opacity-100 [[data-mobile-v2]_&]:opacity-100";
+
+/**
+ * Связывание строки в иерархию прямо из таблицы: подчинить задачу другой или
+ * отвязать от нынешнего родителя.
+ *
+ * Поиск стоит сразу, без промежуточного меню из одного пункта: подчинение —
+ * единственное, ради чего эту кнопку открывают, а отвязка нужна лишь тем
+ * строкам, у которых родитель есть, и живёт отдельной строкой под полем.
+ *
+ * Подтверждения при смене родителя нет намеренно: это меню самой строки, её
+ * нынешний родитель виден в дереве, а поле подписано «Сменить родителя» —
+ * человек знает, что рвёт. Подтверждение стоит там, где связь тянут за чужую
+ * задачу вслепую (блок подзадач в карточке и массовое действие).
+ */
+function ParentMenu({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            className={cn(ROW_ACTION, "group-hover/title:opacity-100")}
+            title={task.parent_task_id ? "Сменить родителя" : "Сделать подзадачей"}
+          />
+        }
+      >
+        <CornerLeftUp className="size-3" />
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72 gap-2 p-2.5">
+        <TaskSearchField
+          // Подзадачи строки в срезе могут отсутствовать, поэтому полную ветку
+          // не собрать — кольцо всё равно отсечёт сервер.
+          excludeIds={[task.id]}
+          placeholder={task.parent_task_id ? "Кому подчинить вместо?" : "Кому подчинить задачу?"}
+          onPick={(hit) => {
+            ctx.onPatch(task.id, { parent_task_id: hit.id });
+            setOpen(false);
+          }}
+        />
+        {task.parent_task_id && (
+          <button
+            className="flex items-center gap-1.5 rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={() => {
+              ctx.onPatch(task.id, { parent_task_id: null });
+              setOpen(false);
+            }}
+          >
+            <Unlink className="size-3.5 shrink-0" /> Отвязать от родителя
+          </button>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 // --- Статус ----------------------------------------------------------------------
 

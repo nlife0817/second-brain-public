@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   Circle,
   Clock,
+  Link2,
   MoreHorizontal,
   Plus,
   RotateCcw,
@@ -42,6 +43,7 @@ import {
   formatDue,
 } from "@/components/v2/bits";
 import { DuePicker } from "@/components/v2/DuePicker";
+import { TaskSearchField, type TaskHit } from "@/components/v2/TaskPicker";
 import { defaultStatus } from "@/lib/core/status-model";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField, TaskListItem, TaskPriority } from "@/lib/core/types";
@@ -96,6 +98,8 @@ export function SubtaskSection({
   defaults,
   chainProjectIds,
   onCreate,
+  onLinkExisting,
+  linkExcludeIds,
   onToggleDone,
   onOpen,
   onPatch,
@@ -109,6 +113,10 @@ export function SubtaskSection({
   /** Проекты цепочки родителя: по ним сужается выбор исполнителей подзадачи. */
   chainProjectIds: string[];
   onCreate: (draft: TaskDraft) => Promise<void>;
+  /** Подчинить этой задаче уже существующую. */
+  onLinkExisting: (hit: TaskHit) => Promise<void>;
+  /** Кого не предлагать в поиске: сама задача и её нынешние подзадачи. */
+  linkExcludeIds: string[];
   onToggleDone: (sub: TaskListItem) => void;
   onOpen: (taskId: string) => void;
   onPatch: (sub: TaskListItem, body: Record<string, unknown>) => void;
@@ -116,10 +124,11 @@ export function SubtaskSection({
   onDetach: (sub: TaskListItem) => void;
 }) {
   const done = subtasks.filter((s) => s.completed_at).length;
+  const [linkOpen, setLinkOpen] = useState(false);
 
   return (
     <div>
-      <p className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Подзадачи
         {subtasks.length > 0 && (
           <>
@@ -135,7 +144,42 @@ export function SubtaskSection({
             </span>
           </>
         )}
-      </p>
+        {canEdit && (
+          <Popover open={linkOpen} onOpenChange={setLinkOpen}>
+            <PopoverTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="ml-auto gap-1 font-normal normal-case tracking-normal text-muted-foreground"
+                />
+              }
+            >
+              <Link2 className="size-3" /> Связать существующую
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 p-2.5">
+              <TaskSearchField
+                excludeIds={linkExcludeIds}
+                placeholder="Какую задачу подчинить?"
+                onPick={async (hit) => {
+                  // Прежняя связь рвётся молча — из этого списка её не видно,
+                  // а тот, кто её строил, узнает об этом последним.
+                  if (
+                    hit.has_parent &&
+                    !window.confirm(
+                      `Задача «${hit.title}» уже подчинена другой. Переподчинить её этой?`,
+                    )
+                  ) {
+                    return;
+                  }
+                  await onLinkExisting(hit);
+                  setLinkOpen(false);
+                }}
+              />
+            </PopoverContent>
+          </Popover>
+        )}
+      </div>
       <div className="flex flex-col gap-0.5">
         {subtasks.map((s) => (
           <SubtaskRow
