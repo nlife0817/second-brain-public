@@ -451,6 +451,14 @@ export type GroupByField =
 
 export type GroupByConfig = [GroupByField, GroupByField];
 
+/**
+ * Ручной порядок групп — по типу группировки, а не по уровню: одно и то же поле
+ * должно выстраиваться одинаково и первым уровнем, и вторым, иначе настройка
+ * читается как случайная. Перечислены не обязательно все значения поля: то, чего
+ * в списке нет (новый статус, новый проект), встаёт после расставленных.
+ */
+export type GroupOrderMap = Partial<Record<GroupByField, string[]>>;
+
 export const GROUP_BY_LABELS: Record<GroupByField, string> = {
   none: "Без группировки",
   status: "Статус",
@@ -633,6 +641,48 @@ export interface GroupNaming {
   labelForGroup: (field: GroupByField, key: string) => GroupLabel;
   /** Порядок ключей группы: у справочников он свой (позиция статуса и т.п.). */
   groupOrder: (field: GroupByField, keys: string[]) => string[];
+}
+
+/**
+ * Порядок ключей групп: сначала расставленные руками — в том порядке, в каком их
+ * расставили, — затем остальные по правилу справочника, «пусто» последним.
+ *
+ * Три решения, которые здесь легко потерять обратной правкой:
+ *  - неперечисленные ключи идут ПОСЛЕ расставленных, а не вперемешку с ними:
+ *    новый статус (проект, участник) не должен всплывать в начало списка только
+ *    потому, что о нём ещё никто не знает;
+ *  - «пусто» остаётся в конце даже если его затащили в ручной порядок: это не
+ *    значение поля, а его отсутствие, и место у него всегда одно;
+ *  - равные ранги разводит подпись, а не порядок ключей в наборе: иначе список
+ *    групп менялся бы от того, в каком порядке задачи приехали с сервера.
+ */
+export function orderGroupKeys(
+  keys: string[],
+  {
+    manual,
+    rank,
+    label,
+  }: {
+    /** Ручной порядок для этого поля; может не совпадать с набором ключей. */
+    manual?: readonly string[];
+    /** Ранг по справочнику: позиция статуса, вес приоритета, номер корзины. */
+    rank: (key: string) => number;
+    label: (key: string) => string;
+  },
+): string[] {
+  // «Полка» и ранг внутри неё: 0 — расставленные руками, 1 — остальные, 2 — пусто.
+  const slotOf = (key: string): [number, number] => {
+    if (key === NONE_VALUE) return [2, 0];
+    const at = manual ? manual.indexOf(key) : -1;
+    return at >= 0 ? [0, at] : [1, rank(key)];
+  };
+  return [...keys].sort((a, b) => {
+    const [sa, ra] = slotOf(a);
+    const [sb, rb] = slotOf(b);
+    if (sa !== sb) return sa - sb;
+    if (ra !== rb) return ra - rb;
+    return label(a).localeCompare(label(b), "ru");
+  });
 }
 
 /**
