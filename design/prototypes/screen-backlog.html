@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Экран · Бэклог и планирование (режим «Разработка»)</title>
+<link rel="stylesheet" href="sb.css">
+<script src="sb.js" defer></script>
+<style>
+/* Локальные стили прототипа: карточка спринта, ёмкость, ручка перетаскивания.
+   В sb.css не выносим, пока экран не утверждён. */
+.dev-section { padding: 14px 20px 0; }
+.dev-section__label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 8px;
+}
+.dev-section__label .spacer { flex: 1; }
+
+.sprint {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; margin-bottom: 9px; box-shadow: var(--shadow-xs);
+}
+.sprint--active { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.sprint__head { display: flex; align-items: center; gap: 12px; padding: 11px 14px; cursor: pointer; }
+.sprint__head:hover { background: rgba(28,25,18,.02); border-radius: 14px; }
+.sprint__chev { width: 14px; height: 14px; color: var(--text-muted); transition: transform .15s; }
+.sprint.is-collapsed .sprint__chev { transform: rotate(-90deg); }
+.sprint__name { font-size: 14px; font-weight: 650; }
+.sprint__dates { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+.sprint__goal { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
+.sprint__body { border-top: 1px solid var(--border-divider); }
+.sprint.is-collapsed .sprint__body { display: none; }
+.sprint__foot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 14px 9px; font-size: 12px; color: var(--text-muted);
+}
+
+.cap { width: 172px; flex: none; }
+.cap__bar { height: 6px; border-radius: 99px; background: rgba(28,25,18,.09); overflow: hidden; }
+.cap__fill { height: 100%; border-radius: 99px; background: var(--accent); }
+.cap__fill--over { background: var(--danger); }
+.cap__label {
+  display: flex; justify-content: space-between; margin-top: 4px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+}
+
+.drag { width: 14px; height: 14px; color: var(--text-muted); opacity: 0; cursor: grab; }
+.t-row:hover .drag, .sprint__row:hover .drag { opacity: .8; }
+.sprint__row { background: var(--surface); }
+
+.drop-hint {
+  margin: 8px 20px 0; padding: 14px; border-radius: 12px;
+  border: 1.5px dashed var(--border-active); text-align: center;
+  font-size: 12.5px; color: var(--text-muted);
+}
+
+.bulk {
+  position: sticky; bottom: 16px; margin: 12px 20px 20px;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--dark); color: #fff;
+  border-radius: 12px; padding: 9px 12px; box-shadow: var(--shadow-lg);
+}
+.bulk.is-hidden { display: none; }
+.bulk__count { font-size: 13px; font-weight: 600; }
+.bulk__sum { font-family: var(--font-mono); font-size: 12px; opacity: .7; }
+.bulk .spacer { flex: 1; }
+.bulk .btn { height: 28px; font-size: 12.5px; }
+
+.mode-switch { display: flex; border: 1.5px solid var(--border-input); border-radius: 9px; overflow: hidden; }
+.mode-switch .btn { border-radius: 0; height: 30px; font-size: 12.5px; }
+.mode-switch .btn.is-current { background: var(--text-primary); color: #fff; }
+</style>
+</head>
+<body>
+<nav class="proto-nav">
+  <span class="proto-nav__brand"><span class="dot"></span>Second Brain · Оранж</span>
+  <a href="index.html">Обзор</a>
+  <a href="foundations.html">Основы</a>
+  <a href="controls.html">Элементы</a>
+  <a href="overlays.html">Окна и слои</a>
+  <a href="task-card.html">Карточка задачи</a>
+  <a href="screen-tasks.html">Таблица</a>
+  <a href="screen-board.html">Доска</a>
+  <a href="screen-backlog.html" class="is-current">Бэклог · dev</a>
+  <a href="screen-sprint-board.html">Спринт · dev</a>
+  <a href="screen-my.html">Мои задачи</a>
+  <a href="screen-settings.html">Настройки</a>
+  <a href="screen-login.html">Вход</a>
+</nav>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="sidebar__org">
+      <span class="sidebar__org-badge">D</span>
+      <span class="sidebar__org-name">DreamUnion</span>
+    </div>
+    <button class="side-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      Поиск <kbd>⌘K</kbd>
+    </button>
+    <a class="nav-item" href="screen-my.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>Мои задачи</a>
+    <a class="nav-item" href="screen-tasks.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>Все задачи</a>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>Уведомления<span class="count">3</span></button>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Время</button>
+    <a class="nav-item" href="screen-settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>Настройки</a>
+    <div class="side-label">Проекты <button title="Новый проект"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+    <a class="nav-item is-active" href="screen-backlog.html"><span class="proj-dot" style="background:#e8734a"></span>Мобильное приложение<span class="count count--muted">23</span></a>
+    <a class="nav-item" href="screen-board.html"><span class="proj-dot" style="background:#3b82f6"></span>Сторонние проекты<span class="count count--muted">5</span></a>
+    <button class="nav-item"><span class="proj-dot" style="background:#8b5cf6"></span>Заметки<span class="count count--muted">2</span></button>
+    <button class="nav-item"><span class="proj-dot" style="background:#14b8a6"></span>Встречи</button>
+    <div style="flex:1"></div>
+  </aside>
+
+  <main class="main" style="background:var(--bg)">
+    <header class="page-header" style="background:var(--surface)">
+      <span class="proj-dot" style="background:#e8734a;width:11px;height:11px"></span>
+      <h1>Мобильное приложение</h1>
+      <span class="badge badge--accent" title="Проект в режиме разработки">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        Разработка
+      </span>
+      <span class="spacer"></span>
+      <div class="mode-switch">
+        <button class="btn btn--ghost is-current">Бэклог</button>
+        <button class="btn btn--ghost" onclick="location.href='screen-sprint-board.html'">Доска</button>
+        <button class="btn btn--ghost" onclick="location.href='screen-tasks.html'">Таблица</button>
+        <button class="btn btn--ghost" onclick="toast('Гант — как сейчас, плюс полосы спринтов сверху')">Гант</button>
+        <button class="btn btn--ghost" onclick="toast('Календарь без изменений')">Календарь</button>
+      </div>
+      <span class="search-wrap" style="width:180px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input class="input input--sm input--search" placeholder="Поиск…" style="padding-left:28px">
+      </span>
+      <button class="btn btn--secondary btn--icon btn--sm" title="Режим и статусы проекта" onclick="openModal('m-mode')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+      </button>
+      <button class="btn btn--primary btn--sm" onclick="toast('Черновик задачи — прямо в бэклоге')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Задача</button>
+    </header>
+
+    <div class="page-body">
+      <!-- ── Спринты ─────────────────────────────────────────────────── -->
+      <div class="dev-section">
+        <div class="dev-section__label">
+          Спринты
+          <span class="spacer"></span>
+          <button class="btn btn--ghost btn--sm" style="height:26px;font-size:12px" onclick="toast('Форма нового спринта')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Спринт
+          </button>
+        </div>
+
+        <!-- Активный спринт -->
+        <div class="sprint sprint--active" id="sprint-14">
+          <div class="sprint__head" onclick="toggleSprint('sprint-14')">
+            <svg class="sprint__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            <div style="min-width:0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="sprint__name">Спринт 14</span>
+                <span class="badge badge--accent">Активный</span>
+                <span class="sprint__dates">4 — 17 авг.</span>
+                <span class="badge badge--neutral">осталось 4 дня</span>
+              </div>
+              <div class="sprint__goal">Цель: экран профиля и офлайн-режим списка</div>
+            </div>
+            <span class="spacer"></span>
+            <div class="cap" onclick="event.stopPropagation()">
+              <div class="cap__bar"><div class="cap__fill" style="width:70%"></div></div>
+              <div class="cap__label"><span>28 из 40 ч</span><span>5 / 12 закрыто</span></div>
+            </div>
+            <button class="btn btn--secondary btn--sm" onclick="event.stopPropagation();openModal('m-finish')">Завершить</button>
+          </div>
+
+          <div class="sprint__body">
+            <div class="t-row sprint__row">
+              <span class="t-cell" style="width:22px"><svg class="drag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+              <span class="t-cell" style="width:24px"><span class="prio prio--urgent"></span></span>
+              <span class="t-cell t-cell--grow title">Экран профиля: вёрстка и состояния загрузки</span>
+              <span class="t-cell" style="width:150px"><span class="tinted-chip" style="--chip-color:#8b5cf6"><span class="dot"></span>Code review</span></span>
+              <span class="t-cell" style="width:110px"><span class="tinted-chip" style="--chip-color:#3b82f6">frontend</span></span>
+              <span class="t-cell" style="width:44px"><span class="avatar avatar--orange">ПБ</span></span>
+              <span class="t-cell" style="width:62px"><span class="due">6 ч</span></span>
+            </div>
+            <div class="t-row sprint__row">
+              <span class="t-cell" style="width:22px"><svg class="drag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+              <span class="t-cell" style="width:24px"><span class="prio prio--high"></span></span>
+              <span class="t-cell t-cell--grow title">Кэш списка задач для офлайна</span>
+              <span class="t-cell" style="width:150px"><span class="tinted-chip" style="--chip-color:#f59e0b"><span class="dot"></span>В работе</span></span>
+              <span class="t-cell" style="width:110px"><span class="tinted-chip" style="--chip-color:#14b8a6">pwa</span></span>
+              <span class="t-cell" style="width:44px"><span class="avatar avatar--green">ДУ</span></span>
+              <span class="t-cell" style="width:62px"><span class="due">8 ч</span></span>
+            </div>
+            <div class="t-row sprint__row">
+              <span class="t-cell" style="width:22px"><svg class="drag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+              <span class="t-cell" style="width:24px"></span>
+              <span class="t-cell t-cell--grow title">Баг: пуш открывает не ту задачу с холодного старта</span>
+              <span class="t-cell" style="width:150px"><span class="tinted-chip" style="--chip-color:#3b82f6"><span class="dot"></span>QA</span></span>
+              <span class="t-cell" style="width:110px"><span class="tinted-chip" style="--chip-color:#ef4444">баг</span></span>
+              <span class="t-cell" style="width:44px"><span class="avatar avatar--indigo">АК</span></span>
+              <span class="t-cell" style="width:62px"><span class="due">2 ч</span></span>
+            </div>
+            <div class="t-row sprint__row is-done">
+              <span class="t-cell" style="width:22px"></span>
+              <span class="t-cell" style="width:24px"></span>
+              <span class="t-cell t-cell--grow title">Ревизия токенов темы под тёмный режим</span>
+              <span class="t-cell" style="width:150px"><span class="tinted-chip" style="--chip-color:#10b981"><span class="dot"></span>Готово</span></span>
+              <span class="t-cell" style="width:110px"></span>
+              <span class="t-cell" style="width:44px"><span class="avatar avatar--orange">ПБ</span></span>
+              <span class="t-cell" style="width:62px"><span class="due">3 ч</span></span>
+            </div>
+            <div class="sprint__foot">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+              и ещё 8 задач · <button class="btn btn--ghost btn--sm" style="height:24px;font-size:12px" onclick="toast('Показали бы весь спринт')">показать все</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Планируемый спринт -->
+        <div class="sprint is-collapsed" id="sprint-15">
+          <div class="sprint__head" onclick="toggleSprint('sprint-15')">
+            <svg class="sprint__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            <div style="min-width:0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="sprint__name">Спринт 15</span>
+                <span class="badge badge--neutral">Планируется</span>
+                <span class="sprint__dates">18 — 31 авг.</span>
+              </div>
+              <div class="sprint__goal">Цель не задана — <span style="color:var(--accent-text)">добавить</span></div>
+            </div>
+            <span class="spacer"></span>
+            <div class="cap" onclick="event.stopPropagation()">
+              <div class="cap__bar"><div class="cap__fill" style="width:45%"></div></div>
+              <div class="cap__label"><span>18 из 40 ч</span><span>6 задач</span></div>
+            </div>
+            <button class="btn btn--secondary btn--sm" disabled title="Сначала завершите Спринт 14" onclick="event.stopPropagation()">Начать</button>
+          </div>
+          <div class="sprint__body">
+            <div class="t-row sprint__row">
+              <span class="t-cell" style="width:22px"></span>
+              <span class="t-cell" style="width:24px"><span class="prio prio--med"></span></span>
+              <span class="t-cell t-cell--grow title">Пуш-уведомления: группировка по проектам</span>
+              <span class="t-cell" style="width:150px"><span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>К работе</span></span>
+              <span class="t-cell" style="width:110px"></span>
+              <span class="t-cell" style="width:44px"><span class="avatar avatar--green">ДУ</span></span>
+              <span class="t-cell" style="width:62px"><span class="due">5 ч</span></span>
+            </div>
+            <div class="sprint__foot">и ещё 5 задач</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Бэклог ──────────────────────────────────────────────────── -->
+      <div class="dev-section" style="padding-top:16px">
+        <div class="dev-section__label">
+          Бэклог <span class="count-pill">14</span>
+          <span class="spacer"></span>
+          <span style="text-transform:none;letter-spacing:0;font-weight:500;font-size:11.5px">порядок задаёте перетаскиванием</span>
+        </div>
+      </div>
+
+      <div class="t-head" style="top:0">
+        <span style="width:22px"></span>
+        <span style="width:24px"></span>
+        <span style="flex:1">Название</span>
+        <span style="width:150px">Статус</span>
+        <span style="width:110px">Теги</span>
+        <span style="width:44px">Кто</span>
+        <span style="width:62px">Оценка</span>
+      </div>
+
+      <div class="t-row" onclick="pick(this)">
+        <span class="t-cell" style="width:22px"><svg class="drag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+        <span class="t-cell" style="width:24px"><span class="prio prio--urgent"></span></span>
+        <span class="t-cell t-cell--grow title">Онбординг: три экрана и пропуск</span>
+        <span class="t-cell" style="width:150px"><span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>К работе</span></span>
+        <span class="t-cell" style="width:110px"><span class="tinted-chip" style="--chip-color:#3b82f6">frontend</span></span>
+        <span class="t-cell" style="width:44px"><span class="avatar avatar--orange">ПБ</span></span>
+        <span class="t-cell" style="width:62px"><span class="due">8 ч</span></span>
+      </div>
+      <div class="t-row" onclick="pick(this)">
+        <span class="t-cell" style="width:22px"><svg class="drag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+        <span class="t-cell" style="width:24px"><span class="prio prio--high"></span></span>
+        <span class="t-cell t-cell--grow title">Поиск по задачам на телефоне</span>
+        <span class="t-cell" style="width:150px"><span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>К работе</span></span>
+        <span class="t-cell" style="width:110px"><span class="tinted-chip" style="--chip-color:#14b8a6">pwa</span></span>
+        <span class="t-cell" style="width:44px"></span>
+        <span class="t-cell" style="width:62px"><span class="due">6 ч</span></span>
+      </div>
+      <div class="t-row" onclick="pick(this)">
+        <span class="t-cell" style="width:22px"><svg class="drag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+        <span class="t-cell" style="width:24px"></span>
+        <span class="t-cell t-cell--grow title">Вынести загрузку файлов в отдельный сервис</span>
+        <span class="t-cell" style="width:150px"><span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>К работе</span></span>
+        <span class="t-cell" style="width:110px"><span class="tinted-chip" style="--chip-color:#8b5cf6">backend</span></span>
+        <span class="t-cell" style="width:44px"><span class="avatar avatar--indigo">АК</span></span>
+        <span class="t-cell" style="width:62px"><span class="due">12 ч</span></span>
+      </div>
+      <div class="t-row" onclick="pick(this)">
+        <span class="t-cell" style="width:22px"><svg class="drag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+        <span class="t-cell" style="width:24px"><span class="prio prio--low"></span></span>
+        <span class="t-cell t-cell--grow title">Экспорт отчёта по времени в xlsx</span>
+        <span class="t-cell" style="width:150px"><span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>К работе</span></span>
+        <span class="t-cell" style="width:110px"></span>
+        <span class="t-cell" style="width:44px"></span>
+        <span class="t-cell" style="width:62px"><span class="due" style="color:var(--text-muted);opacity:.6">—</span></span>
+      </div>
+      <div class="t-row" onclick="pick(this)">
+        <span class="t-cell" style="width:22px"><svg class="drag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg></span>
+        <span class="t-cell" style="width:24px"></span>
+        <span class="t-cell t-cell--grow title">Тёмная тема: вычитка контрастов</span>
+        <span class="t-cell" style="width:150px"><span class="tinted-chip" style="--chip-color:#94a3b8"><span class="dot"></span>К работе</span></span>
+        <span class="t-cell" style="width:110px"><span class="tinted-chip" style="--chip-color:#3b82f6">frontend</span></span>
+        <span class="t-cell" style="width:44px"><span class="avatar avatar--orange">ПБ</span></span>
+        <span class="t-cell" style="width:62px"><span class="due">4 ч</span></span>
+      </div>
+
+      <div class="drop-hint">Перетащите сюда задачу из спринта, чтобы вернуть её в бэклог</div>
+
+      <div class="bulk is-hidden" id="bulk">
+        <span class="bulk__count" id="bulk-count">Выбрано 0</span>
+        <span class="bulk__sum" id="bulk-sum">0 ч</span>
+        <span class="spacer"></span>
+        <button class="btn btn--ghost btn--sm" style="color:#fff" data-pop-trigger onclick="togglePop('pop-sprint', this)">
+          В спринт
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button class="btn btn--ghost btn--sm" style="color:#fff" onclick="toast('Массовая правка оценки')">Оценка</button>
+        <button class="btn btn--ghost btn--sm" style="color:#fff" onclick="clearPick()">Снять выбор</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Поповер выбора спринта для массового переноса -->
+<div class="pop" id="pop-sprint" style="width:210px">
+  <div class="pop__label">Перенести в</div>
+  <button class="pop__item" onclick="toast('Задачи ушли в Спринт 14')"><span>Спринт 14 · активный</span></button>
+  <button class="pop__item" onclick="toast('Задачи ушли в Спринт 15')"><span>Спринт 15 · 18 — 31 авг.</span></button>
+  <div class="pop__sep"></div>
+  <button class="pop__item" onclick="toast('Создали бы новый спринт')"><span>Новый спринт…</span></button>
+</div>
+
+<!-- Модалка завершения спринта -->
+<div class="modal" id="m-finish">
+  <div class="modal__head">
+    <b>Завершить «Спринт 14»</b>
+    <button class="x-btn" onclick="closeLayers()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  </div>
+  <div class="modal__body">
+    <p style="font-size:13.5px;line-height:1.6;margin-bottom:14px">
+      Закрыто <b>5 из 12</b> задач, отработано 28 из 40 ч.
+      В спринте осталось <b>7 незакрытых</b> — куда их перенести?
+    </p>
+    <label class="radio"><input type="radio" name="carry" checked><span class="dot"></span>В «Спринт 15» <span style="color:var(--text-muted);font-size:12.5px">— 18 — 31 авг., станет 32 из 40 ч</span></label>
+    <label class="radio" style="margin-top:8px"><input type="radio" name="carry"><span class="dot"></span>Вернуть в бэклог <span style="color:var(--text-muted);font-size:12.5px">— встанут в начало списка</span></label>
+    <p class="field__hint" style="margin-top:14px">
+      Перенос идёт одним действием и пишет одну запись в ленту проекта — по строке на каждую задачу лента и push захлебнулись бы.
+    </p>
+  </div>
+  <div class="modal__foot">
+    <button class="btn btn--ghost" onclick="closeLayers()">Отмена</button>
+    <button class="btn btn--primary" onclick="closeLayers();toast('Спринт 14 завершён, 7 задач в Спринте 15')">Завершить спринт</button>
+  </div>
+</div>
+
+<!-- Модалка режима проекта -->
+<div class="modal" id="m-mode">
+  <div class="modal__head">
+    <b>Режим проекта</b>
+    <button class="x-btn" onclick="closeLayers()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  </div>
+  <div class="modal__body">
+    <div class="sc-row" style="display:flex;align-items:center;gap:12px;padding:10px 0">
+      <div style="flex:1">
+        <b style="font-size:13.5px">Разработка</b>
+        <p class="sc-note" style="margin:2px 0 0">Спринты, бэклог с ручным порядком и планирование. Обычные виды остаются на месте.</p>
+      </div>
+      <button class="toggle is-on" onclick="toggleSwitch(this)"></button>
+    </div>
+    <div class="field" style="margin-top:14px">
+      <label class="field__label">Набор статусов</label>
+      <select class="select">
+        <option>Разработка — К работе · В работе · Code review · QA · Готово к релизу · Готово</option>
+        <option>Основной — Входящие · В работе · Готово</option>
+      </select>
+      <p class="field__hint">Наборы заводит администратор организации в настройках статусов. Здесь проект только выбирает свой.</p>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label class="field__label">Ёмкость спринта по умолчанию</label>
+      <input class="input" value="40 ч">
+      <p class="field__hint">Считается по оценке задач — тому же полю, что и в остальном трекере.</p>
+    </div>
+  </div>
+  <div class="modal__foot">
+    <button class="btn btn--ghost" onclick="closeLayers()">Отмена</button>
+    <button class="btn btn--primary" onclick="closeLayers();toast('Настройки режима сохранены')">Сохранить</button>
+  </div>
+</div>
+
+<div class="overlay" id="ovl" onclick="closeLayers()"></div>
+<div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Готово</span></div>
+
+<script>
+function toggleSprint(id) { document.getElementById(id)?.classList.toggle('is-collapsed'); }
+
+// Выбор строк бэклога: плашка массовых действий считает часы по колонке оценки.
+function pick(row) {
+  row.classList.toggle('is-picked');
+  row.style.background = row.classList.contains('is-picked') ? 'var(--accent-soft)' : '';
+  refreshBulk();
+}
+function clearPick() {
+  document.querySelectorAll('.t-row.is-picked').forEach(r => { r.classList.remove('is-picked'); r.style.background = ''; });
+  refreshBulk();
+}
+function refreshBulk() {
+  const rows = document.querySelectorAll('.t-row.is-picked');
+  const bulk = document.getElementById('bulk');
+  bulk.classList.toggle('is-hidden', rows.length === 0);
+  let hours = 0;
+  rows.forEach(r => {
+    const m = r.querySelector('.t-cell:last-child .due')?.textContent.match(/(\d+)\s*ч/);
+    if (m) hours += Number(m[1]);
+  });
+  document.getElementById('bulk-count').textContent = 'Выбрано ' + rows.length;
+  document.getElementById('bulk-sum').textContent = hours + ' ч';
+}
+</script>
+</body>
+</html>
