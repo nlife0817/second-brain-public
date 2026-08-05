@@ -25,7 +25,7 @@ import { api } from "@/lib/core/client";
 import { invalidate } from "@/lib/core/query";
 import { emptyDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type { TaskDetail, TaskRow } from "@/lib/core/types";
-import { statusesOfSet } from "@/lib/core/status-model";
+import { boardStatuses } from "@/lib/core/status-model";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
 import {
@@ -140,11 +140,23 @@ export function TaskTableView({
   const { orgId, statuses: allStatuses, tags, members, projects, fields, me, refreshProjects } = useV2Store();
   /**
    * Выбор статуса в строке — рабочий процесс проекта, а не весь справочник
-   * организации (наборы, 0051). В сводном списке набора нет: там задачи разных
-   * проектов, и сузить их до одного процесса нельзя. Отсев и сортировка идут по
-   * полному справочнику: статус чужого набора всё равно должен находиться.
+   * организации (наборы, 0051). Но список обязан содержать и статусы, которые у
+   * задач фактически стоят: задача живёт сразу в нескольких проектах, и статус
+   * из чужого набора иначе отрисовался бы как «Без статуса», а вернуть его было
+   * бы нечем. В сводном списке набора нет вовсе — там задачи разных процессов.
+   *
+   * Отсев и сортировка идут по полному справочнику: скрытые группы и позиции
+   * считаются одинаково во всех видах.
    */
-  const statuses = useMemo(() => statusesOfSet(allStatuses, statusSetId), [allStatuses, statusSetId]);
+  const statuses = useMemo(
+    () =>
+      boardStatuses(
+        allStatuses,
+        statusSetId,
+        tasks.map((t) => t.status_id).filter((id): id is string => !!id),
+      ),
+    [allStatuses, statusSetId, tasks],
+  );
 
   const columnsOrder = useViewStore((s) => s.columns);
   const widths = useViewStore((s) => s.widths);
