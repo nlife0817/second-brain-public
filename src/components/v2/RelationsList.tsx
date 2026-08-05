@@ -35,6 +35,7 @@ export function RelationsList({
   canEdit,
   initialRelations,
   initialTypes,
+  onOpenTask,
 }: {
   entityType: RelationEntityType;
   entityId: string;
@@ -46,6 +47,12 @@ export function RelationsList({
    */
   initialRelations?: RelationWithTarget[];
   initialTypes?: RelationType[];
+  /**
+   * Переход к связанной задаче. Передаёт карточка задачи — она открывает её у
+   * себя же, поверх стека, как это делают подзадачи. Без обработчика (клиент,
+   * проект, другие места использования) название остаётся обычным текстом.
+   */
+  onOpenTask?: (taskId: string) => void;
 }) {
   const orgId = useV2Store((s) => s.orgId);
   const [relations, setRelations] = useState<RelationWithTarget[]>(initialRelations ?? []);
@@ -255,9 +262,21 @@ export function RelationsList({
                 >
                   {type?.name ?? ENTITY_LABELS[r.entity_type]}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-sm" title={r.title}>
-                  {r.title}
-                </span>
+                {/* Связанная задача открывается прямо отсюда: раньше её
+                    приходилось искать заново в списке или через поиск. */}
+                {onOpenTask && r.entity_type === "task" ? (
+                  <button
+                    onClick={() => onOpenTask(r.entity_id)}
+                    className="min-w-0 flex-1 truncate text-left text-sm hover:underline"
+                    title={r.title}
+                  >
+                    {r.title}
+                  </button>
+                ) : (
+                  <span className="min-w-0 flex-1 truncate text-sm" title={r.title}>
+                    {r.title}
+                  </span>
+                )}
                 {canEdit && (
                   <button
                     onClick={() => void unlink(r.id)}
