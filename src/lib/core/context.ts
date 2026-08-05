@@ -17,7 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { prepare } from "@/lib/sql";
-import { dispatchPendingPush } from "./push";
+import { dispatchPendingNotifications } from "./push";
 import { isUuid, jsonError, toHttpError } from "./http";
 import {
   createUser,
@@ -102,17 +102,18 @@ export async function resolveOrgContext(
 }
 
 /**
- * Мутация могла разложить уведомления (fan-out в той же транзакции) — шлём
- * push сразу после ответа, не дожидаясь 10-минутного cron-тика. Диспетчер
- * идемпотентен и дёшев на пустой очереди, поэтому зовём после любой мутации.
+ * Мутация могла разложить уведомления (fan-out в той же транзакции) — шлём их
+ * сразу после ответа, не дожидаясь 10-минутного cron-тика. Диспетчер
+ * идемпотентен и дёшев на пустой очереди, поэтому зовём после любой мутации;
+ * он же обслуживает оба канала — push и телеграм.
  */
-function schedulePushDispatch(method: string, status: number): void {
+function scheduleNotificationDispatch(method: string, status: number): void {
   if (method === "GET" || method === "HEAD" || status >= 400) return;
   after(async () => {
     try {
-      await dispatchPendingPush();
+      await dispatchPendingNotifications();
     } catch (err) {
-      console.error("[v2/push] мгновенная отправка не удалась:", err);
+      console.error("[v2/notifications] мгновенная отправка не удалась:", err);
     }
   });
 }
@@ -147,7 +148,7 @@ export function withOrg(handler: OrgHandler, opts?: { minOrgRole?: OrgRole }): R
         }
       }
       const response = await handler(request, { params: context.params, auth: resolved.auth });
-      schedulePushDispatch(request.method, response.status);
+      scheduleNotificationDispatch(request.method, response.status);
       return response;
     } catch (err) {
       return toHttpError(err);
@@ -177,7 +178,7 @@ export function withUserParams(
       const user = await getCoreUser();
       if (!user) return jsonError(401, "Unauthorized");
       const response = await handler(request, user, await context.params);
-      schedulePushDispatch(request.method, response.status);
+      scheduleNotificationDispatch(request.method, response.status);
       return response;
     } catch (err) {
       return toHttpError(err);
@@ -195,7 +196,7 @@ export function withUser(
       if (!user) return jsonError(401, "Unauthorized");
       // Принятие приглашения (withUser) тоже раскладывает уведомления.
       const response = await handler(request, user);
-      schedulePushDispatch(request.method, response.status);
+      scheduleNotificationDispatch(request.method, response.status);
       return response;
     } catch (err) {
       return toHttpError(err);

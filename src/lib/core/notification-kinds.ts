@@ -73,15 +73,17 @@ export const NOTIFICATION_KINDS: NotificationKindMeta[] = [
 export const REMINDER_KINDS = new Set(["due_soon", "overdue", "digest"]);
 
 export interface NotificationPref {
-  /** Показывать в инбоксе. Выключено — событие не попадёт и в push. */
+  /** Показывать в инбоксе. Выключено — событие не попадёт ни в push, ни в телеграм. */
   inbox: boolean;
   /** Слать push на подписанные устройства. */
   push: boolean;
+  /** Слать сообщение в привязанный телеграм-чат. */
+  telegram: boolean;
 }
 
 export type NotificationPrefs = Record<string, NotificationPref>;
 
-export const DEFAULT_PREF: NotificationPref = { inbox: true, push: true };
+export const DEFAULT_PREF: NotificationPref = { inbox: true, push: true, telegram: true };
 
 /** Полный набор настроек: отсутствующие строки — значения по умолчанию. */
 export function withDefaults(stored: NotificationPrefs): NotificationPrefs {

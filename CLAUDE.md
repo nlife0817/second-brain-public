@@ -6,7 +6,7 @@
 - Postgres напрямую через `postgres.js` ([src/lib/sql.ts](src/lib/sql.ts)), без ORM
 - Вход по email и паролю ([src/lib/auth/](src/lib/auth/)): scrypt из `node:crypto`, сессия — подписанная cookie
 - UI: Base UI (`@base-ui/react`), Tailwind v4, shadcn, Tiptap, `@dnd-kit/core`, Zustand
-- Push: `web-push` + Service Worker (`/sw.js`)
+- Уведомления: `web-push` + Service Worker (`/sw.js`) и телеграм-бот (Bot API, без зависимостей) — один диспетчер на оба канала
 - Деплой: собственный VPS, Docker Compose ([deploy/](deploy/)) — см. [docs/VPS-MIGRATION.md](docs/VPS-MIGRATION.md)
 
 Команды: `npm run dev` · `npm run build` · `npm run lint` · `npm run test`
@@ -84,7 +84,7 @@
 
 БД — Postgres в контейнере `db` на VPS (не SQLite). Доступ через `prepare()` из [src/lib/sql.ts](src/lib/sql.ts), который конвертит `?` → `$N` плейсхолдеры.
 
-Новая миграция — просто файл `supabase/migrations/NNNN_<name>.sql` (следующий свободный номер — **0052**). Выкат применяет непринятые файлы сам, по одному, каждый в своей транзакции; учёт — в `public._deploy_migrations`. Подробности и ручные режимы — [docs/DEPLOY.md](docs/DEPLOY.md).
+Новая миграция — просто файл `supabase/migrations/NNNN_<name>.sql` (следующий свободный номер — **0053**). Выкат применяет непринятые файлы сам, по одному, каждый в своей транзакции; учёт — в `public._deploy_migrations`. Подробности и ручные режимы — [docs/DEPLOY.md](docs/DEPLOY.md).
 
 **Миграция обязана быть совместимой с текущим кодом**: она применяется до перезапуска приложения, то есть минуту-другую старый код работает с новой схемой. Добавить колонку или таблицу — безопасно. Удалить или переименовать — только следующим выкатом, когда код уже перестал их использовать.
 
@@ -102,7 +102,7 @@
 2. Добавь путь в `config.matcher` exclusion list в [src/proxy.ts](src/proxy.ts)
 3. Иначе запрос получит 307 на /login и до твоего кода не дойдёт
 
-Источник правды — `config.matcher` в [src/proxy.ts](src/proxy.ts). На текущий момент из proxy исключены `api/v2/cron`, `api/v2/invitations` и `api/mcp` — последний это вход внешних агентов по токену (плюс статика: `_next`, `icons`, `favicon`, `manifest`, `sw.js`, `offline.html`). Все остальные `/api/*` проходят проверку сессии в proxy; ролевые ограничения — в `withOrg`/`withUser` из [src/lib/core/context.ts](src/lib/core/context.ts).
+Источник правды — `config.matcher` в [src/proxy.ts](src/proxy.ts). На текущий момент из proxy исключены `api/v2/cron`, `api/v2/invitations`, `api/v2/telegram/webhook` (апдейты от Bot API, своя проверка по секрету в заголовке) и `api/mcp` — последний это вход внешних агентов по токену (плюс статика: `_next`, `icons`, `favicon`, `manifest`, `sw.js`, `offline.html`). Все остальные `/api/*` проходят проверку сессии в proxy; ролевые ограничения — в `withOrg`/`withUser` из [src/lib/core/context.ts](src/lib/core/context.ts).
 
 Дополнительно proxy редиректит мобильные UA с десктопных экранов на `/v2/m/*` (включая корень `/`), обойти — `?desktop` (липкая cookie), вернуть — `?mobile`.
 
@@ -121,6 +121,7 @@
 
 - **Расписания** — задания в [deploy/cron/crontab](deploy/cron/crontab), время в UTC. Активен только тик ядра v2 (`*/10`), задания v1 закомментированы. Секрет `CRON_SECRET` из `.env`
 - **Секреты** — `deploy/.env` на сервере (шаблон: [deploy/env.example](deploy/env.example)), в git не попадает. `NEXT_PUBLIC_*` вшиваются в бандл при сборке образа — менять их можно только пересборкой, правка `.env` не подействует
+- **Telegram-бот** — второй канал уведомлений. `TELEGRAM_BOT_TOKEN` и `TELEGRAM_WEBHOOK_SECRET` в `.env`, вебхук регистрируется разово: [deploy/telegram-webhook.sh](deploy/telegram-webhook.sh) (`set` | `info` | `delete`). Без токена канал просто выключен
 - **Миграции** — применяются выкатом автоматически ([deploy/migrate.sh](deploy/migrate.sh)), перед первой снимается дамп в `deploy/backups/pre-migrate-*.pgc`
 - **Бэкапы** — [deploy/backup.sh](deploy/backup.sh) в системном cron хоста, ежедневно в 03:20 UTC, хранение 14 дней
 - **Диск** — [deploy/cleanup.sh](deploy/cleanup.sh) раз в неделю чистит неиспользуемые образы и кеш сборки; тома не трогает никогда

@@ -217,6 +217,8 @@ export const config = {
     // сам требует сессию через withUser.
     // api/mcp — вход внешних агентов по токену: сессии-cookie у них нет, и без
     // исключения запрос уехал бы редиректом на /login.
-    "/((?!_next|api/v2/cron|api/v2/invitations|api/mcp|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
+    // api/v2/telegram/webhook — апдейты от Bot API: запрос делает телеграм, а
+    // не браузер. Свою проверку роут делает сам (секрет в заголовке).
+    "/((?!_next|api/v2/cron|api/v2/invitations|api/v2/telegram/webhook|api/mcp|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
   ],
 };

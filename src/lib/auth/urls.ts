@@ -31,7 +31,16 @@ export function safeNextPath(value: string | null | undefined): string {
  * вариантом для локального `npm run dev`.
  */
 export function appOrigin(request: NextRequest): string {
+  return configuredAppUrl() ?? request.nextUrl.origin;
+}
+
+/**
+ * Тот же адрес там, где запроса нет вовсе: фоновая рассылка уведомлений
+ * строит абсолютные ссылки для телеграма, а взять origin ей неоткуда. null
+ * означает «переменная не задана» — вызывающий обходится без ссылки, а не
+ * подставляет localhost в сообщение живому человеку.
+ */
+export function configuredAppUrl(): string | null {
   const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (configured) return configured.replace(/\/+$/, "");
-  return request.nextUrl.origin;
+  return configured ? configured.replace(/\/+$/, "") : null;
 }

@@ -12,4 +12,6 @@
 
 Все роуты живут в `/api/v2/**` и оборачиваются `withOrg`/`withUser` из [lib/core/context.ts](../../lib/core/context.ts) — они и разрешают пользователя, и проверяют членство в организации.
 
+Так же устроен [`/api/v2/telegram/webhook`](v2/telegram/webhook/route.ts): запрос делает Telegram Bot API, сессии-cookie у него нет, и роут проверяет себя сам — секрет в заголовке `X-Telegram-Bot-Api-Secret-Token`.
+
 Исключение — [`/api/mcp`](mcp/route.ts): вход внешних агентов, у которых сессии-cookie нет. Свою проверку он делает сам (`Bearer` из `core.api_tokens`) и собирает тот же `AuthContext`, что построила бы сессия владельца токена, — дальше всё решает обычный policy. Устройство — в [lib/core/CLAUDE.md](../../lib/core/CLAUDE.md), раздел «Внешние агенты».

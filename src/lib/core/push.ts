@@ -1,14 +1,22 @@
-// Push-доставка уведомлений v2: один диспетчер и для cron-тика, и для
-// мгновенной отправки после мутаций (after() в withOrg/withUser).
+// Доставка уведомлений v2: один диспетчер и для cron-тика, и для мгновенной
+// отправки после мутаций (after() в withOrg/withUser).
+//
+// Каналов доставки два — web-push на подписанные устройства и сообщение в
+// привязанный телеграм-чат, — но очередь, правила и расписание у них общие:
+// тихие часы, окно склейки, одно сводное сообщение на несколько уведомлений
+// подряд. Второй диспетчер завёл бы второй набор этих правил, и они разошлись
+// бы на первой же правке.
 //
 // Захват атомарный: пачка помечается dispatched_at в том же UPDATE, которым
 // выбирается (FOR UPDATE SKIP LOCKED) — конкурирующие вызовы не продублируют
 // отправку. Отметка ставится до отправки и при сбое не снимается: повторные
 // попытки только копили бы очередь, инбокс в приложении — источник правды.
 
+import { configuredAppUrl } from "@/lib/auth/urls";
 import { prepare } from "@/lib/sql";
 import { sendWebPush, type PushPayload } from "@/lib/notifications/push";
 import { plural } from "./plural";
+import { listTelegramChats, sendToUserChat, telegramConfigured } from "./telegram";
 
 /**
  * Окно склейки серии. Первое уведомление уходит мгновенно, следующие за ним в
@@ -45,6 +53,8 @@ type PendingRow = {
   unread: number;
   /** Настройка получателя: слать ли push по этому типу события. */
   push_enabled: boolean;
+  /** То же для телеграма — каналы выключаются независимо друг от друга. */
+  telegram_enabled: boolean;
   /** Готовый текст напоминания; у событийных уведомлений пусто. */
   payload: { title?: string; body?: string } | null;
 };
@@ -247,13 +257,36 @@ function taskUrl(row: PendingRow, mobile: boolean): string {
 }
 
 /**
- * Рассылает push по неотправленным core.notifications. Безопасно звать
- * с любой частотой: пустая очередь — один быстрый UPDATE.
+ * Сообщение в телеграм из той же полезной нагрузки, что уходит в push.
+ * Ссылка обязана быть абсолютной — в чате относительный путь никуда не ведёт;
+ * адрес десктопный, а мобильный телеграм доедет до /v2/m/* редиректом в proxy.
+ */
+function toTelegramMessage(payload: PushPayload): { title: string; body: string; url?: string } {
+  const origin = configuredAppUrl();
+  return {
+    title: payload.title,
+    body: payload.body,
+    url: origin && payload.url ? `${origin}${payload.url}` : undefined,
+  };
+}
+
+export interface DispatchResult {
+  /** Получатели, до которых дошёл push хотя бы на одно устройство. */
+  sent: number;
+  /** Получатели, до которых дошло сообщение в телеграм. */
+  telegram: number;
+  /** Получатели, до которых не дошло ничего (или доставка им выключена). */
+  skipped: number;
+}
+
+/**
+ * Рассылает неотправленные core.notifications по обоим каналам. Безопасно
+ * звать с любой частотой: пустая очередь — один быстрый UPDATE.
  *
  * Счётчики считают получателей, а не записи: несколько уведомлений одному
- * человеку — это один push.
+ * человеку — это одно сообщение в каждом канале.
  */
-export async function dispatchPendingPush(): Promise<{ sent: number; skipped: number }> {
+export async function dispatchPendingNotifications(): Promise<DispatchResult> {
   const claimed = await prepare<{ id: string }>(
     `WITH pending AS (
        SELECT n.id FROM core.notifications n
@@ -300,7 +333,7 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
      WHERE n.id = pending.id
      RETURNING n.id::text AS id`,
   ).all(COALESCE_WINDOW_SECONDS, COALESCE_WINDOW_SECONDS);
-  if (claimed.length === 0) return { sent: 0, skipped: 0 };
+  if (claimed.length === 0) return { sent: 0, telegram: 0, skipped: 0 };
 
   const placeholders = claimed.map(() => "?").join(",");
   const rows = await prepare<PendingRow>(
@@ -329,7 +362,9 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
             (SELECT count(*)::int FROM core.notifications un
              WHERE un.user_id = n.user_id AND un.read_at IS NULL) AS unread,
             coalesce((SELECT np.push FROM core.notification_prefs np
-                      WHERE np.user_id = n.user_id AND np.kind = n.kind), true) AS push_enabled
+                      WHERE np.user_id = n.user_id AND np.kind = n.kind), true) AS push_enabled,
+            coalesce((SELECT np.telegram FROM core.notification_prefs np
+                      WHERE np.user_id = n.user_id AND np.kind = n.kind), true) AS telegram_enabled
      FROM core.notifications n
      JOIN core.users u ON u.id = n.user_id
      LEFT JOIN core.events e ON e.id = n.event_id
@@ -343,35 +378,71 @@ export async function dispatchPendingPush(): Promise<{ sent: number; skipped: nu
   const byUser = new Map<string, PendingRow[]>();
   let skipped = 0;
   for (const row of rows) {
-    // Тип выключён в настройках: запись в инбоксе остаётся, шторку не трогаем.
-    if (!row.push_enabled) {
+    // Оба канала выключены в настройках: запись в инбоксе остаётся, слать
+    // нечего. Если выключен только один — получатель в разборе остаётся, а
+    // канал отсеивается ниже, каждый по своему флагу.
+    if (!row.push_enabled && !row.telegram_enabled) {
       skipped++;
       continue;
     }
     byUser.set(row.user_id, [...(byUser.get(row.user_id) ?? []), row]);
   }
 
+  // Привязки телеграма — одним запросом на всю пачку, а не по получателю:
+  // диспетчер зовётся после каждой мутации, и лишний поход в базу здесь
+  // оплачивается на каждом сохранении задачи.
+  const chats =
+    telegramConfigured() && byUser.size > 0
+      ? await listTelegramChats([...byUser.keys()])
+      : new Map<string, string>();
+
   let sent = 0;
+  let telegram = 0;
   for (const [userId, userRows] of byUser) {
-    try {
-      const targets = await listTargets(userId);
-      let delivered = 0;
-      for (const target of targets) {
-        const mobile = isMobileUserAgent(target.user_agent);
-        const payload =
-          userRows.length === 1 ? buildPayload(userRows[0], mobile) : buildGroupPayload(userRows, mobile);
-        const result = await sendWebPush(target, payload);
-        if (result === "sent") delivered++;
-        if (result === "dead") await dropTarget(target);
+    let delivered = 0;
+
+    const pushRows = userRows.filter((r) => r.push_enabled);
+    if (pushRows.length > 0) {
+      try {
+        const targets = await listTargets(userId);
+        for (const target of targets) {
+          const mobile = isMobileUserAgent(target.user_agent);
+          const payload =
+            pushRows.length === 1
+              ? buildPayload(pushRows[0], mobile)
+              : buildGroupPayload(pushRows, mobile);
+          const result = await sendWebPush(target, payload);
+          if (result === "sent") delivered++;
+          if (result === "dead") await dropTarget(target);
+        }
+      } catch (err) {
+        // Сюда попадает в основном отсутствие VAPID-ключей — без лога такая
+        // конфигурация выглядела бы как «пуши молча не ходят».
+        console.error("[v2/push] dispatch failed:", err);
       }
-      if (delivered > 0) sent++;
-      else skipped++;
-    } catch (err) {
-      // Сюда попадает в основном отсутствие VAPID-ключей — без лога такая
-      // конфигурация выглядела бы как «пуши молча не ходят».
-      console.error("[v2/push] dispatch failed:", err);
-      skipped++;
     }
+    if (delivered > 0) sent++;
+
+    const chatId = chats.get(userId);
+    const chatRows = chatId ? userRows.filter((r) => r.telegram_enabled) : [];
+    if (chatId && chatRows.length > 0) {
+      try {
+        // Тот же текст, что и у push: адрес десктопный (mobile = false), в
+        // телеграме нет подписки, по которой можно было бы отличить телефон.
+        const payload =
+          chatRows.length === 1
+            ? buildPayload(chatRows[0], false)
+            : buildGroupPayload(chatRows, false);
+        if (await sendToUserChat(chatId, toTelegramMessage(payload))) {
+          telegram++;
+          delivered++;
+        }
+      } catch (err) {
+        console.error("[v2/telegram] dispatch failed:", err);
+      }
+    }
+
+    if (delivered === 0) skipped++;
   }
-  return { sent, skipped };
+  return { sent, telegram, skipped };
 }

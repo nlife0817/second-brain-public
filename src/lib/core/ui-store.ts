@@ -120,6 +120,12 @@ export interface V2State {
    * статусы прямо из стора, поэтому обновлять надо именно его.
    */
   setStatuses: (statuses: TaskStatus[]) => void;
+  /**
+   * Проекты после перестановки в панели. По той же причине, что и `setStatuses`:
+   * ответ на перестановку — это уже новый список, а панель читает проекты прямо
+   * из стора. Он же служит откатом, если перестановка не доехала до сервера.
+   */
+  setProjects: (projects: ProjectWithMeta[]) => void;
   setActiveTimer: (timer: ActiveTimer | null) => void;
   bootstrap: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
@@ -154,6 +160,7 @@ const EMPTY = {
   | "hydrate"
   | "setFields"
   | "setStatuses"
+  | "setProjects"
   | "setActiveTimer"
   | "bootstrap"
   | "switchOrg"
@@ -181,6 +188,8 @@ export function createV2Store(initial?: V2InitialState | null) {
     setFields: (fields) => set({ fields }),
 
     setStatuses: (statuses) => set({ statuses }),
+
+    setProjects: (projects) => set({ projects }),
 
     bootstrap: async () => {
       // Фолбэк: серверный рендер уже наполнил стор, сюда попадаем только если

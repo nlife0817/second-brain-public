@@ -4,12 +4,13 @@
 // /v2/settings/notifications и мобильных настроек: правило «что присылать»
 // одно на человека, и расходиться между оболочками ему нельзя.
 
-import { useCallback, useEffect, useState } from "react";
-import { Laptop, Send, Smartphone, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Check, Laptop, Send, Smartphone, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/lib/core/client";
 import {
+  DEFAULT_PREF,
   NOTIFICATION_KINDS,
   type NotificationPref,
   type NotificationPrefs,
@@ -186,6 +187,202 @@ export function PushDevices() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ---- Телеграм ------------------------------------------------------------------------------
+
+interface TelegramLinkView {
+  chat_id: string;
+  username: string | null;
+  first_name: string | null;
+  created_at: string;
+}
+
+interface TelegramStatus {
+  /** Настроен ли бот на сервере: без токена подключать нечего. */
+  configured: boolean;
+  link: TelegramLinkView | null;
+}
+
+/**
+ * Подключение телеграма. Привязку подтверждает сам бот — приложение об этом
+ * узнаёт только следующим запросом, поэтому после перехода по ссылке экран
+ * опрашивает статус: иначе человек возвращается из телеграма на страницу,
+ * которая по-прежнему предлагает подключиться.
+ */
+const LINK_POLL_MS = 3000;
+const LINK_POLL_LIMIT = 40; // ≈2 минуты — дольше ждать возвращения нет смысла
+
+export function TelegramConnect() {
+  const [status, setStatus] = useState<TelegramStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [waiting, setWaiting] = useState(false);
+  /** Запасной путь, когда всплывающее окно заблокировано браузером. */
+  const [manualUrl, setManualUrl] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const load = useCallback(async () => {
+    const res = await api.get<TelegramStatus>("/telegram/link");
+    setStatus(res);
+    return res;
+  }, []);
+
+  useEffect(() => {
+    void load().catch((e: unknown) => {
+      setError(e instanceof Error ? e.message : "Не удалось загрузить статус");
+      setStatus({ configured: false, link: null });
+    });
+  }, [load]);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
+    setWaiting(false);
+  }, []);
+
+  useEffect(() => stopPolling, [stopPolling]);
+
+  async function connect() {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    setManualUrl(null);
+    try {
+      const res = await api.post<{ url: string }>("/telegram/link");
+      // Всплывающее окно, открытое после ответа сервера, а не прямо в
+      // обработчике клика, часть браузеров блокирует — отсюда запасная ссылка
+      // рядом с кнопкой, а не только надежда на window.open.
+      const opened = window.open(res.url, "_blank", "noopener,noreferrer");
+      if (!opened) setManualUrl(res.url);
+      setWaiting(true);
+      let ticks = 0;
+      stopPolling();
+      pollRef.current = setInterval(() => {
+        ticks++;
+        void load()
+          .then((next) => {
+            if (next.link) stopPolling();
+            else if (ticks >= LINK_POLL_LIMIT) stopPolling();
+          })
+          .catch(() => stopPolling());
+      }, LINK_POLL_MS);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось получить ссылку");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    setManualUrl(null);
+    stopPolling();
+    try {
+      await api.del("/telegram/link");
+      setStatus({ configured: true, link: null });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось отключить");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function test() {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      await api.post("/telegram/test");
+      setNote("Отправлено — проверьте чат с ботом");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось отправить");
+      // Заблокированный бот сервер уже отвязал — перечитываем статус, иначе
+      // экран продолжает показывать подключение как рабочее.
+      void load().catch(() => {});
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!status) return <p className="text-sm text-muted-foreground">Загрузка…</p>;
+
+  if (!status.configured) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Бот не настроен на сервере: в окружении нет TELEGRAM_BOT_TOKEN.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {note && <p className="text-sm text-muted-foreground">{note}</p>}
+      {manualUrl && (
+        <p className="text-sm text-muted-foreground">
+          Браузер заблокировал открытие телеграма —{" "}
+          <a
+            href={manualUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline"
+          >
+            откройте ссылку вручную
+          </a>
+          .
+        </p>
+      )}
+
+      {status.link ? (
+        <>
+          <div className="flex items-center gap-2.5 rounded-lg border border-border px-3 py-2">
+            <Check className="size-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm">
+                {status.link.username
+                  ? `@${status.link.username}`
+                  : status.link.first_name || "Чат подключён"}
+              </p>
+              <p className="truncate text-xs text-muted-foreground">
+                подключён{" "}
+                {new Date(status.link.created_at).toLocaleDateString("ru-RU", {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                })}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => void test()}>
+              <Send className="size-4" />
+              Проверить
+            </Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => void disconnect()}>
+              <Trash2 className="size-4" />
+              Отключить
+            </Button>
+          </div>
+        </>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => void connect()}>
+            <Send className="size-4" />
+            Подключить Telegram
+          </Button>
+          {waiting && (
+            <span className="text-sm text-muted-foreground">
+              Ждём подтверждения в боте — нажмите «Запустить» в открывшемся чате
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -437,6 +634,7 @@ export function NotificationKinds() {
         kind,
         inbox: next.inbox,
         push: next.push,
+        telegram: next.telegram,
       });
       setPrefs(res.prefs);
     } catch (e) {
@@ -452,39 +650,84 @@ export function NotificationKinds() {
   return (
     <div className="flex flex-col">
       {error && <p className="pb-2 text-sm text-destructive">{error}</p>}
-      <div className="flex items-center gap-4 border-b border-border pb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+      {/* Шапка колонок — только на широком экране. На телефоне три колонки не
+          оставляют месту под название события ничего, поэтому там подписи
+          переезжают к самим переключателям, а строка переносится. */}
+      <div className="hidden items-center gap-4 border-b border-border pb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground sm:flex">
         <span className="flex-1">Событие</span>
         <span className="w-24 text-center">В приложении</span>
         <span className="w-16 text-center">Push</span>
+        <span className="w-20 text-center">Telegram</span>
       </div>
       {NOTIFICATION_KINDS.map(({ kind, label, hint }) => {
-        const pref = prefs[kind] ?? { inbox: true, push: true };
+        const pref = prefs[kind] ?? DEFAULT_PREF;
         const busy = savingKind === kind;
         return (
-          <div key={kind} className="flex items-center gap-4 border-b border-border py-2.5 last:border-b-0">
-            <div className="min-w-0 flex-1">
+          <div
+            key={kind}
+            className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border py-2.5 last:border-b-0"
+          >
+            {/* На узком экране название занимает всю строку и уводит
+                переключатели на следующую — отсюда `shrink-0`: без него
+                flex-элемент со `width: 100%` просто ужимается и встаёт с ними
+                в одну строку. На широком возвращаемся к колонке: именно
+                `flex-1` (базис 0), а не `basis-auto`, — иначе колонка растёт по
+                длине пояснения и переключатели разъезжаются с шапкой. */}
+            <div className="w-full min-w-0 shrink-0 sm:w-auto sm:flex-1">
               <p className="text-sm">{label}</p>
               <p className="text-xs text-muted-foreground">{hint}</p>
             </div>
-            <div className="flex w-24 justify-center">
-              <Checkbox
-                checked={pref.inbox}
-                disabled={busy}
-                onCheckedChange={(checked) => void save(kind, { inbox: checked === true, push: pref.push })}
-              />
-            </div>
-            <div className="flex w-16 justify-center">
-              {/* Push без записи в инбоксе не существует: рассылка собирается
-                  из core.notifications, а её при выключенном инбоксе нет. */}
-              <Checkbox
-                checked={pref.inbox && pref.push}
-                disabled={busy || !pref.inbox}
-                onCheckedChange={(checked) => void save(kind, { inbox: pref.inbox, push: checked === true })}
-              />
-            </div>
+            <ChannelToggle
+              label="В приложении"
+              className="sm:w-24"
+              checked={pref.inbox}
+              disabled={busy}
+              onChange={(checked) => void save(kind, { ...pref, inbox: checked })}
+            />
+            {/* Доставки без записи в инбоксе не существует: рассылка собирается
+                из core.notifications, а её при выключенном инбоксе нет. */}
+            <ChannelToggle
+              label="Push"
+              className="sm:w-16"
+              checked={pref.inbox && pref.push}
+              disabled={busy || !pref.inbox}
+              onChange={(checked) => void save(kind, { ...pref, push: checked })}
+            />
+            <ChannelToggle
+              label="Telegram"
+              className="sm:w-20"
+              checked={pref.inbox && pref.telegram}
+              disabled={busy || !pref.inbox}
+              onChange={(checked) => void save(kind, { ...pref, telegram: checked })}
+            />
           </div>
         );
       })}
     </div>
+  );
+}
+
+function ChannelToggle({
+  label,
+  className,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  className?: string;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={cn("flex items-center justify-center gap-1.5", className)}>
+      <Checkbox
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={(next) => onChange(next === true)}
+      />
+      <span className="text-xs text-muted-foreground sm:hidden">{label}</span>
+    </label>
   );
 }

@@ -70,6 +70,15 @@ export const projectPatchSchema = z
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
+/**
+ * Порядок проектов в панели. Приходит списком видимых проектов целиком — по той
+ * же причине, что и порядок статусов; неперечисленные (закрытые, архивные)
+ * сервис оставляет на их местах.
+ */
+export const projectOrderSchema = z.object({
+  order: z.array(z.uuid()).min(1).max(500),
+});
+
 export const projectMemberSchema = z.object({
   user_id: z.uuid(),
   role: z.enum(["admin", "editor", "commenter", "viewer"]).default("editor"),
@@ -452,6 +461,10 @@ export const notificationPrefSchema = z.object({
   kind: z.string().min(1).max(64),
   inbox: z.boolean(),
   push: z.boolean(),
+  // Необязательное: вкладка со старым бандлом шлёт только inbox и push, и
+  // отвечать ей 400 на переключателе, который у неё даже не нарисован, нельзя.
+  // Пропущенное поле роут берёт из текущей настройки, а не из умолчания.
+  telegram: z.boolean().optional(),
 });
 
 export const pushSubscribeSchema = z.object({

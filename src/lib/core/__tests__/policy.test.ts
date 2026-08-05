@@ -43,6 +43,7 @@ describe("canOrg: матрица org-ролей", () => {
     ["org.invite",         { owner: true,  admin: true,  member: false, guest: false }],
     ["org.delete",         { owner: true,  admin: false, member: false, guest: false }],
     ["project.create",     { owner: true,  admin: true,  member: true,  guest: false }],
+    ["projects.order",     { owner: true,  admin: true,  member: false, guest: false }],
     ["task.create.personal", { owner: true, admin: true, member: true,  guest: false }],
     ["clients.view",       { owner: true,  admin: true,  member: true,  guest: false }],
     ["clients.manage",     { owner: true,  admin: true,  member: true,  guest: false }],
