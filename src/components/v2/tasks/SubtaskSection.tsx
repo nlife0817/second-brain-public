@@ -54,6 +54,7 @@ import {
   sortSubtasks,
   subtaskFiltersActive,
 } from "@/lib/core/subtask-view";
+import { withCurrent } from "@/lib/core/status-model";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { TaskListItem, TaskPriority } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -71,7 +72,13 @@ import {
   PriorityChip,
   StatusChip,
 } from "./draft-chips";
-import { MENU_POPOVER, ProjectsMenu, TagsMenu, WIDE_MENU_POPOVER } from "./draft-controls";
+import {
+  MENU_POPOVER,
+  ProjectsMenu,
+  TagsMenu,
+  useDraftSetStatuses,
+  WIDE_MENU_POPOVER,
+} from "./draft-controls";
 import { useRowDrag, type RowDragApi } from "./use-row-drag";
 
 const RichText = dynamic(() => import("@/components/v2/RichText").then((m) => m.RichText), {
@@ -506,6 +513,20 @@ function SubtaskRow({
     [sub.placements, chainProjectIds],
   );
 
+  // Статусы набора подзадачи (наборы, 0052), а не весь справочник организации.
+  // Плюс её текущий статус, если он из чужого набора: подзадача живёт в своих
+  // проектах, и спрятать её статус значит показать «ничего не выбрано».
+  const allStatuses = useV2Store((s) => s.statuses);
+  const setStatuses = useDraftSetStatuses(projectIds);
+  const rowStatuses = useMemo(
+    () =>
+      withCurrent(
+        setStatuses,
+        sub.status_id ? allStatuses.find((s) => s.id === sub.status_id) : undefined,
+      ),
+    [setStatuses, allStatuses, sub.status_id],
+  );
+
   const mark = isDone ? (
     <CheckCircle2 className="size-4 text-emerald-500" />
   ) : (
@@ -583,6 +604,7 @@ function SubtaskRow({
           />
           <StatusChip
             value={sub.status_id}
+            statuses={rowStatuses}
             onChange={(status_id) => onPatch(sub, { status_id })}
             className={cn("max-w-28", !sub.status_id && CHIP_ON_HOVER)}
           />
@@ -663,6 +685,9 @@ function SubtaskComposer({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+  // Статусы набора проекта черновика, а не весь справочник организации (наборы,
+  // 0052): новая подзадача рождается в процессе своего проекта.
+  const composerStatuses = useDraftSetStatuses(draft.project_ids);
 
   // Описание отдаётся редактором по blur: клик по «Сохранить» сначала снимает
   // с него фокус, и обработчик видел бы черновик прошлого рендера.
@@ -722,7 +747,11 @@ function SubtaskComposer({
           className="h-7 min-w-32 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"
         />
         <PriorityChip value={draft.priority} onChange={(priority) => patch({ priority })} />
-        <StatusChip value={draft.status_id} onChange={(status_id) => patch({ status_id })} />
+        <StatusChip
+          value={draft.status_id}
+          statuses={composerStatuses}
+          onChange={(status_id) => patch({ status_id })}
+        />
         <AssigneesChip
           value={draft.assignee_ids}
           projectIds={draft.project_ids}
