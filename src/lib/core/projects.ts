@@ -157,6 +157,7 @@ export async function updateProject(
     default_role: ProjectDefaultRole | null;
     position: number;
     mode: ProjectMode;
+    status_set_id: string | null;
   }>,
 ): Promise<Project> {
   const project = await requireProject(ctx, projectId, "project.update");
@@ -187,7 +188,8 @@ export async function updateProject(
     const row = await tx
       .prepare<Project>(
         `UPDATE core.projects
-         SET name = ?, description = ?, color = ?, icon = ?, default_role = ?, position = ?, mode = ?
+         SET name = ?, description = ?, color = ?, icon = ?, default_role = ?, position = ?, mode = ?,
+             status_set_id = ?
          WHERE id = ?
          RETURNING *`,
       )
@@ -199,6 +201,7 @@ export async function updateProject(
         next.default_role,
         next.position,
         next.mode,
+        next.status_set_id,
         projectId,
       );
     if (!row) throw new DomainError(500, "Failed to update project");

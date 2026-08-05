@@ -5,13 +5,16 @@
 import { describe, expect, it } from "vitest";
 import {
   archiveStatus,
+  boardStatuses,
   arrangementError,
   cardStatuses,
   defaultStatus,
   fallbackStatusId,
   groupByCategory,
   statusDeleteBlock,
+  statusesOfSet,
   statusMoveBlock,
+  withCurrent,
 } from "../status-model";
 import type { StatusCategory, TaskStatus } from "../types";
 
@@ -21,8 +24,35 @@ function status(
   position: number,
   is_default = false,
 ): TaskStatus {
-  return { id, org_id: "o1", name: id, color: "#000", category, is_default, position };
+  return { id, org_id: "o1", set_id: "set1", name: id, color: "#000", category, is_default, position };
 }
+
+describe("наборы статусов", () => {
+  const own = status("own", "in_progress", 1);
+  const foreign: TaskStatus = { ...status("foreign", "in_progress", 1), set_id: "set2" };
+  const all = [own, foreign];
+
+  it("без набора показываем весь справочник — так живут инбокс и сводный список", () => {
+    expect(statusesOfSet(all, null)).toEqual(all);
+  });
+
+  it("набор сужает список до своего процесса", () => {
+    expect(statusesOfSet(all, "set1")).toEqual([own]);
+  });
+
+  it("доска добавляет чужой статус, если он есть у задач проекта", () => {
+    // Задача живёт сразу в нескольких проектах, а статус у неё один: спрятать
+    // её колонку значит потерять задачу из виду, ничего не переместив.
+    expect(boardStatuses(all, "set1", ["foreign"])).toEqual(all);
+    expect(boardStatuses(all, "set1", [])).toEqual([own]);
+  });
+
+  it("текущий статус задачи не пропадает из ряда карточки", () => {
+    expect(withCurrent([own], foreign)).toEqual([own, foreign]);
+    expect(withCurrent([own], own)).toEqual([own]);
+    expect(withCurrent([own], undefined)).toEqual([own]);
+  });
+});
 
 /** Сид организации: два бэклога, один «в работе», один «готово», один архив. */
 const STATUSES: TaskStatus[] = [

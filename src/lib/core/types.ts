@@ -144,6 +144,12 @@ export interface Project {
   color: string;
   icon: string;
   mode: ProjectMode;
+  /**
+   * Набор статусов проекта; `null` — набор организации по умолчанию. Проект с
+   * чужим набором не запрещает задачам иметь другой статус (задача живёт сразу
+   * в нескольких проектах) — набор решает, что показывать.
+   */
+  status_set_id: string | null;
   default_role: ProjectDefaultRole | null;
   /** Производная от `default_role` (generated-колонка): `private` ⇔ default_role is null. */
   visibility: ProjectVisibility;
@@ -174,13 +180,33 @@ export interface ProjectMemberWithUser {
   avatar_url: string | null;
 }
 
-export interface TaskStatus {
+/**
+ * Набор статусов — рабочий процесс, который проект выбирает себе целиком.
+ * Организация всегда имеет ровно один набор по умолчанию: в него попадают
+ * проекты, которые своего не выбирали.
+ */
+export interface StatusSet {
   id: string;
   org_id: string;
   name: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskStatus {
+  id: string;
+  org_id: string;
+  /**
+   * Набор, которому принадлежит статус. Инварианты справочника (ровно один
+   * дефолт, непустые обязательные категории, позиции 1..N) действуют в границах
+   * набора, а не организации.
+   */
+  set_id: string;
+  name: string;
   color: string;
   category: StatusCategory;
-  /** Статус новой задачи. Ровно один на организацию, удалить его нельзя. */
+  /** Статус новой задачи. Ровно один на набор, удалить его нельзя. */
   is_default: boolean;
   position: number;
 }

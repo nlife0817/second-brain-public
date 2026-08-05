@@ -27,6 +27,7 @@ import {
   isWorkingCategory,
   statusDeleteBlock,
 } from "@/lib/core/status-model";
+import { statusesOfSet } from "@/lib/core/status-model";
 import type { StatusCategory, TaskStatus } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
@@ -69,7 +70,16 @@ export function StatusesSection({
 }) {
   const store = useV2Store();
   const storeApi = useV2StoreApi();
-  const { orgId, statuses } = store;
+  const { orgId, statusSets } = store;
+
+  // Набор — вкладка справочника. Все инварианты (ровно один дефолт, непустые
+  // обязательные категории, позиции 1..N) живут внутри набора, поэтому и
+  // раскладка, и перетаскивание считаются по его статусам, а не по всем.
+  const defaultSetId = statusSets.find((s) => s.is_default)?.id ?? statusSets[0]?.id ?? null;
+  const [activeSetId, setActiveSetId] = useState<string | null>(null);
+  const setId = activeSetId && statusSets.some((s) => s.id === activeSetId) ? activeSetId : defaultSetId;
+  const statuses = statusesOfSet(store.statuses, setId);
+  const [newSetName, setNewSetName] = useState("");
 
   // Своё поле на категорию: одна строка ввода на весь справочник не даёт
   // выбрать, куда именно добавляется статус.
@@ -107,9 +117,10 @@ export function StatusesSection({
     const optimistic = snapshot.map((s) =>
       s.id === id
         ? { ...s, ...patch }
-        : // Дефолт один на организацию: не снять флаг у прежнего значит показать
-          // два «по умолчанию» до следующей загрузки.
-          patch.is_default
+        : // Дефолт один на НАБОР: не снять флаг у прежнего значит показать два
+          // «по умолчанию» до следующей загрузки. Чужие наборы при этом не
+          // трогаем — у каждого свой статус новой задачи.
+          patch.is_default && s.set_id === setId
           ? { ...s, is_default: false }
           : s,
     );
@@ -119,7 +130,11 @@ export function StatusesSection({
       const current = storeApi.getState().statuses;
       storeApi.getState().setStatuses(
         current.map((s) =>
-          s.id === row.id ? row : patch.is_default ? { ...s, is_default: false } : s,
+          s.id === row.id
+            ? row
+            : patch.is_default && s.set_id === row.set_id
+              ? { ...s, is_default: false }
+              : s,
         ),
       );
       onError(null);
@@ -174,10 +189,14 @@ export function StatusesSection({
       return;
     }
     const snapshot = storeApi.getState().statuses;
-    storeApi.getState().setStatuses(next);
+    // В сторе лежит справочник всей организации — подменяем в нём только строки
+    // своего набора, иначе соседний набор исчез бы из стора до перезагрузки.
+    const nextById = new Map(next.map((s) => [s.id, s]));
+    storeApi.getState().setStatuses(snapshot.map((s) => nextById.get(s.id) ?? s));
     try {
       const rows = await api.put<TaskStatus[]>(`/orgs/${orgId}/statuses/order`, {
         order: next.map((s) => ({ id: s.id, category: s.category })),
+        set_id: setId,
       });
       storeApi.getState().setStatuses(rows);
       onError(null);
@@ -277,7 +296,7 @@ export function StatusesSection({
     const name = (adding[category] ?? "").trim();
     if (!name) return;
     await call(async () => {
-      await api.post(`/orgs/${orgId}/statuses`, { name, category });
+      await api.post(`/orgs/${orgId}/statuses`, { name, category, set_id: setId });
       setAdding((prev) => ({ ...prev, [category]: "" }));
       await store.refreshMeta();
     });
@@ -285,6 +304,86 @@ export function StatusesSection({
 
   return (
     <div className="flex select-none flex-col gap-4">
+      {/* Наборы — рабочие процессы организации. Проект выбирает себе один
+          целиком (настройки проекта), а инварианты справочника действуют внутри
+          набора: у каждого свой статус новой задачи и свой ряд категорий. */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {statusSets.map((set) => (
+          <button
+            key={set.id}
+            onClick={() => setActiveSetId(set.id)}
+            className={cn(
+              "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+              set.id === setId
+                ? "border-foreground bg-foreground text-background"
+                : "border-border text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {set.name}
+            {set.is_default && <span className="ml-1 opacity-60">· основной</span>}
+          </button>
+        ))}
+        {canManage && (
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button variant="outline" size="sm" className="h-7 rounded-full text-xs">
+                  + Набор
+                </Button>
+              }
+            />
+            <PopoverContent className="w-64 p-3">
+              <p className="mb-2 text-xs text-muted-foreground">
+                Новый набор заводится сразу со статусами разработки — пустой набор оставил бы проект
+                без статуса для новой задачи.
+              </p>
+              <Input
+                value={newSetName}
+                onChange={(e) => setNewSetName(e.target.value)}
+                placeholder="Например, «Разработка»"
+                className="mb-2 h-8 text-xs"
+              />
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={!newSetName.trim()}
+                onClick={() =>
+                  void call(async () => {
+                    const created = await api.post<{ id: string }>(`/orgs/${orgId}/status-sets`, {
+                      name: newSetName.trim(),
+                      template: "dev",
+                    });
+                    setNewSetName("");
+                    await store.refreshMeta();
+                    setActiveSetId(created.id);
+                  })
+                }
+              >
+                Создать
+              </Button>
+            </PopoverContent>
+          </Popover>
+        )}
+        {canManage && setId && setId !== defaultSetId && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-destructive"
+            onClick={() =>
+              void call(async () => {
+                await api.del(`/orgs/${orgId}/status-sets/${setId}`);
+                setActiveSetId(null);
+                await store.refreshMeta();
+                await store.refreshProjects();
+              })
+            }
+            title="Задачи переедут на статусы той же категории из основного набора"
+          >
+            Удалить набор
+          </Button>
+        )}
+      </div>
+
       {groups.map(({ category, statuses: inCategory }) => {
         const rest = inCategory.filter((s) => s.id !== drag?.id);
         const indicatorAt =

@@ -13,7 +13,7 @@ import {
   PolicyError,
 } from "./policy";
 import { notifyMentions } from "./mentions";
-import { getDefaultStatus } from "./orgmeta";
+import { getDefaultStatus, resolveStatusSetId } from "./orgmeta";
 import { requireProject } from "./projects";
 import { getSprint } from "./sprints";
 import type {
@@ -576,9 +576,20 @@ async function getOrgStatus(ctx: AuthContext, statusId: string): Promise<TaskSta
  * `status_id` без значения приходил из быстрого ввода и из повторов, и задача
  * молча оседала в группе «Без статуса».
  */
-async function resolveNewStatus(ctx: AuthContext, statusId: string | null | undefined): Promise<TaskStatus> {
+async function resolveNewStatus(
+  ctx: AuthContext,
+  statusId: string | null | undefined,
+  /**
+   * Проект, чей набор статусов задаёт умолчание. Без него берётся набор
+   * организации: так рождается задача личного инбокса. Задача в нескольких
+   * проектах получает статус первого — своего «дома»; менять его никто не
+   * мешает, а придумать «средний» набор из двух рабочих процессов нельзя.
+   */
+  projectId?: string | null,
+): Promise<TaskStatus> {
   if (statusId) return getOrgStatus(ctx, statusId);
-  const fallback = await getDefaultStatus(ctx.orgId);
+  const setId = await resolveStatusSetId(ctx.orgId, projectId ?? null);
+  const fallback = await getDefaultStatus(ctx.orgId, setId);
   if (!fallback) throw new DomainError(422, "В организации нет ни одного статуса задач");
   return fallback;
 }
@@ -781,7 +792,11 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
       ...new Set([...placements.map((pl) => pl.project_id), ...(parentAccess?.chainProjectIds ?? [])]),
     ]);
   }
-  const status = await resolveNewStatus(ctx, input.status_id);
+  const status = await resolveNewStatus(
+    ctx,
+    input.status_id,
+    placements[0]?.project_id ?? parentAccess?.chainProjectIds[0] ?? null,
+  );
   // Один раз на всю функцию: описание уходит и в INSERT, и в разбор упоминаний,
   // а двойная очистка одного и того же текста — лишняя работа и лишний повод
   // им разъехаться.

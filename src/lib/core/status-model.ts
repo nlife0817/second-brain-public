@@ -122,10 +122,57 @@ export function fallbackStatusId(statuses: TaskStatus[], statusId: string): stri
 }
 
 /**
+ * Статусы одного набора. Стор держит справочник организации целиком (у задачи
+ * из двух проектов статус может быть из чужого набора), а экран сужает его до
+ * своего рабочего процесса.
+ *
+ * `setId === null` — набор не выбран, показываем всё: так ведут себя сводный
+ * список и личный инбокс, где проекта нет вовсе.
+ */
+export function statusesOfSet(statuses: TaskStatus[], setId: string | null): TaskStatus[] {
+  if (!setId) return statuses;
+  return statuses.filter((s) => s.set_id === setId);
+}
+
+/**
+ * Колонки доски проекта: статусы его набора ПЛЮС те, что фактически встречаются
+ * у задач. Второе обязательно: задача живёт сразу в нескольких проектах, а
+ * статус у неё один — спрятать её из проекта, где она размещена, значит потерять
+ * её из виду, ничего никуда не переместив. Набор решает, что показываем, а не
+ * что запрещаем.
+ */
+export function boardStatuses(
+  statuses: TaskStatus[],
+  setId: string | null,
+  presentStatusIds: Iterable<string>,
+): TaskStatus[] {
+  if (!setId) return statuses;
+  const present = new Set(presentStatusIds);
+  // Свои колонки идут первыми и в своём порядке — доска читается как рабочий
+  // процесс проекта. Чужие статусы становятся хвостом: они не часть процесса, а
+  // напоминание, что задача живёт ещё где-то.
+  const own = statuses.filter((s) => s.set_id === setId);
+  const foreign = statuses.filter((s) => s.set_id !== setId && present.has(s.id));
+  return [...own, ...foreign];
+}
+
+/**
+ * Список набора плюс текущий статус задачи, если он из чужого набора. Нужен
+ * ровно там, где показывают выбор: спрятанный текущий статус читается как
+ * «ничего не выбрано», а задача из двух проектов с разными процессами — это
+ * норма, а не ошибка данных.
+ */
+export function withCurrent(statuses: TaskStatus[], current: TaskStatus | undefined): TaskStatus[] {
+  if (!current || statuses.some((s) => s.id === current.id)) return statuses;
+  return [...statuses, current];
+}
+
+/**
  * Ряд кнопок в карточке задачи: рабочий путь от первого статуса к последнему.
  * Архивные в него не входят — архивирование это отдельное действие, а не
  * следующий шаг работы. Исключение — статус самой задачи: без него ряд показал
- * бы «ничего не выбрано», и из архива было бы не выйти.
+ * бы «ничего не выбрано», и из архива было бы не выйти (то же и со статусом из
+ * чужого набора — он приходит сюда уже отфильтрованным списком).
  */
 export function cardStatuses(statuses: TaskStatus[], currentId: string | null): TaskStatus[] {
   const flow = statuses.filter((s) => s.category !== "archived");

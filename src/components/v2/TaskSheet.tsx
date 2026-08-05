@@ -49,7 +49,13 @@ import { SegmentedPicker } from "@/components/v2/tasks/SegmentedPicker";
 import { SubtaskSection } from "@/components/v2/tasks/SubtaskSection";
 import { actorSourceLabel } from "@/lib/core/actor-source";
 import { api } from "@/lib/core/client";
-import { archiveStatus, cardStatuses, defaultStatus } from "@/lib/core/status-model";
+import {
+  archiveStatus,
+  cardStatuses,
+  defaultStatus,
+  statusesOfSet,
+  withCurrent,
+} from "@/lib/core/status-model";
 import type { TaskChange } from "@/lib/core/task-change";
 import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type {
@@ -858,7 +864,17 @@ export function TaskSheet({
    */
   const currentStatus = task?.status_id ? statuses.find((s) => s.id === task.status_id) : undefined;
   const inArchive = currentStatus?.category === "archived";
-  const archiveTarget = inArchive ? defaultStatus(statuses) : archiveStatus(statuses);
+  /**
+   * Ряд статусов карточки — рабочий процесс её проекта, а не весь справочник
+   * организации: с наборами (0051) у соседнего проекта может быть свой. Плюс
+   * текущий статус задачи, даже если он из чужого набора: задача живёт сразу в
+   * нескольких проектах, и спрятать её статус значит показать «ничего не
+   * выбрано». Без проекта (личный инбокс) набора нет — показываем всё.
+   */
+  const projectSetId =
+    projects.find((p) => task?.placements.some((pl) => pl.project_id === p.id))?.status_set_id ?? null;
+  const flowStatuses = statusesOfSet(statuses, projectSetId);
+  const archiveTarget = inArchive ? defaultStatus(flowStatuses) : archiveStatus(flowStatuses);
 
   function toggleArchive() {
     if (!archiveTarget) return;
@@ -1017,7 +1033,7 @@ export function TaskSheet({
     <div className="flex flex-col gap-1.5">
       <SegmentedPicker
         ariaLabel="Статус задачи"
-        options={cardStatuses(statuses, task.status_id).map((s) => ({
+        options={cardStatuses(withCurrent(flowStatuses, currentStatus), task.status_id).map((s) => ({
           value: s.id,
           label: s.name,
           color: s.color,

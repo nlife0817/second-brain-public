@@ -65,6 +65,8 @@ export const projectPatchSchema = z
     archived: z.boolean().optional(),
     team_id: z.uuid().nullable().optional(),
     mode: z.enum(["standard", "dev"]).optional(),
+    /** Набор статусов проекта; null — набор организации по умолчанию. */
+    status_set_id: z.uuid().nullable().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
@@ -203,7 +205,23 @@ export const statusCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
   color: z.string().trim().max(32).optional(),
   category: statusCategorySchema.optional(),
+  /** Набор, куда добавляется статус; без него — набор организации по умолчанию. */
+  set_id: z.uuid().nullish(),
 });
+
+/**
+ * Набор статусов — рабочий процесс, который проект выбирает целиком. Новый
+ * набор рождается непустым: пустой нарушал бы инвариант «в обязательных
+ * категориях есть хотя бы один статус».
+ */
+export const statusSetCreateSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  template: z.enum(["dev", "base"]).optional(),
+});
+
+export const statusSetPatchSchema = z
+  .object({ name: z.string().trim().min(1).max(100).optional() })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 export const statusPatchSchema = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),
@@ -221,6 +239,8 @@ export const statusPatchSchema = z
  */
 export const statusOrderSchema = z.object({
   order: z.array(z.object({ id: z.uuid(), category: statusCategorySchema })).min(1).max(200),
+  /** Набор, порядок которого пришёл; без него сервер берёт его у первого статуса. */
+  set_id: z.uuid().nullish(),
 });
 
 /**

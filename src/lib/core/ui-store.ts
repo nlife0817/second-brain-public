@@ -15,6 +15,7 @@ import { api } from "./client";
 import { invalidate } from "./query";
 import { ACTIVE_ORG_COOKIE, ACTIVE_ORG_COOKIE_MAX_AGE, ACTIVE_ORG_LEGACY_KEY } from "./keys";
 import type {
+  StatusSet,
   CoreTag,
   CustomField,
   OrgMemberWithUser,
@@ -34,6 +35,7 @@ interface MeResponse {
 interface OrgMetaResponse {
   projects: ProjectWithMeta[];
   statuses: TaskStatus[];
+  statusSets: StatusSet[];
   tags: CoreTag[];
   members: OrgMemberWithUser[];
   fields: CustomField[];
@@ -101,6 +103,8 @@ export interface V2State {
   orgRole: OrgRole | null;
   projects: ProjectWithMeta[];
   statuses: TaskStatus[];
+  /** Наборы статусов организации: проект показывает статусы своего набора. */
+  statusSets: StatusSet[];
   tags: CoreTag[];
   members: OrgMemberWithUser[];
   fields: CustomField[];
@@ -139,6 +143,7 @@ const EMPTY = {
   orgRole: null,
   projects: [],
   statuses: [],
+  statusSets: [],
   tags: [],
   members: [],
   fields: [],
@@ -256,11 +261,12 @@ export function createV2Store(initial?: V2InitialState | null) {
     refreshMeta: async () => {
       const { orgId } = get();
       if (!orgId) return;
-      const [statuses, tags] = await Promise.all([
+      const [statuses, statusSets, tags] = await Promise.all([
         api.get<TaskStatus[]>(`/orgs/${orgId}/statuses`),
+        api.get<StatusSet[]>(`/orgs/${orgId}/status-sets`),
         api.get<CoreTag[]>(`/orgs/${orgId}/tags`),
       ]);
-      set({ statuses, tags });
+      set({ statuses, statusSets, tags });
     },
 
     refreshMembers: async () => {

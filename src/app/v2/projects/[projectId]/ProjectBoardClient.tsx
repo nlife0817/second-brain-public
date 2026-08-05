@@ -361,6 +361,7 @@ function ProjectScreen({
         tasks={tasks}
         setTasks={setTasks}
         canEdit={!!canEdit}
+        statusSetId={project.status_set_id}
         onOpenTask={openTask}
         onAddTask={addTask}
       />

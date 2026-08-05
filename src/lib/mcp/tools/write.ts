@@ -9,12 +9,14 @@ import { addTaskComment, deleteComment } from "@/lib/core/comments";
 import { setTaskFieldValue } from "@/lib/core/fields";
 import { DomainError } from "@/lib/core/http";
 import { listStatuses } from "@/lib/core/orgmeta";
+import { statusesOfSet } from "@/lib/core/status-model";
 import { createRelation, deleteRelation } from "@/lib/core/relations";
 import {
   createTask,
   deleteTask,
   getTaskDetail,
   setFollowing,
+  requireTaskAccess,
   setTaskPlacements,
   updateTask,
 } from "@/lib/core/tasks";
@@ -132,7 +134,12 @@ export const writeTools = [
       // нет, и модель не должна угадывать id архивного статуса.
       let statusId = patch.status_id;
       if (archive !== undefined) {
-        const statuses = await listStatuses(ctx);
+        // Статус берётся из набора проекта задачи (0051): у dev-проекта свой
+        // рабочий процесс, и архив чужого набора увёл бы задачу в колонку
+        // «статус из другого набора».
+        const access = await requireTaskAccess(ctx, taskId, "edit");
+        const setId = access.placements[0]?.project.status_set_id ?? null;
+        const statuses = statusesOfSet(await listStatuses(ctx), setId);
         const target = archive
           ? statuses.find((s) => s.category === "archived")
           : statuses.find((s) => s.is_default) ?? statuses.find((s) => s.category === "backlog");

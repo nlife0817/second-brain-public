@@ -214,14 +214,22 @@ export async function createOrganization(name: string, ownerId: string): Promise
       ["Готово", "#10b981", "done", false],
       ["Архив", "#9ca3af", "archived", false],
     ];
+    // Статусы живут в наборе (0051): у организации всегда есть набор по
+    // умолчанию, и проекты без своего выбора показывают именно его.
+    const set = await tx
+      .prepare<{ id: string }>(
+        `INSERT INTO core.status_sets (org_id, name, is_default) VALUES (?, 'Основной', true) RETURNING id`,
+      )
+      .get(org.id);
+    if (!set) throw new DomainError(500, "Failed to create status set");
     for (let i = 0; i < defaultStatuses.length; i++) {
       const [statusName, color, category, isDefault] = defaultStatuses[i];
       await tx
         .prepare(
-          `INSERT INTO core.task_statuses (org_id, name, color, category, is_default, position)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO core.task_statuses (org_id, set_id, name, color, category, is_default, position)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(org.id, statusName, color, category, isDefault, i + 1);
+        .run(org.id, set.id, statusName, color, category, isDefault, i + 1);
     }
     // Зависимость для ганта: стрелки рисуются по связям этого типа, и без него
     // вид пустой у любой новой организации. Существующим его завела миграция

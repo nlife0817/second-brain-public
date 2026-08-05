@@ -50,6 +50,9 @@ const PROJECT_MODES: Array<{ id: ProjectMode; label: string }> = [
   { id: "dev", label: "Разработка" },
 ];
 
+/** Значение «набор организации» в селекте: пустую строку Base UI не отличит от «не выбрано». */
+const DEFAULT_SET_VALUE = "__org_default__";
+
 type TabId = (typeof TABS)[number]["id"];
 
 function Card({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
@@ -75,7 +78,7 @@ export function ProjectSettings({
   exitHref: string;
 }) {
   const router = useRouter();
-  const { orgId, orgRole, refreshProjects } = useV2Store();
+  const { orgId, orgRole, statusSets, refreshProjects } = useV2Store();
   const [project, setProject] = useState<ProjectDetail>(initialProject);
   const [tab, setTab] = useState<TabId>("general");
   const [error, setError] = useState<string | null>(null);
@@ -175,6 +178,18 @@ export function ProjectSettings({
       await load();
       await refreshProjects();
     });
+  }
+
+  /** Набор статусов проекта; null — набор организации по умолчанию. */
+  async function setStatusSet(value: string | null) {
+    if (value === (project.status_set_id ?? null)) return;
+    await call(
+      () => api.patch(`/orgs/${orgId}/projects/${projectId}`, { status_set_id: value }),
+      async () => {
+        await load();
+        await refreshProjects();
+      },
+    );
   }
 
   async function setAccess(value: ProjectAccessValue) {
@@ -280,6 +295,41 @@ export function ProjectSettings({
                   : "Спринтов и бэклога у проекта нет."}
               </span>
             </div>
+
+            {/* Набор статусов — тоже параметр проекта, а не режима: свой рабочий
+                процесс бывает нужен и обычному проекту. Заводит наборы админ
+                организации в настройках статусов; проект только выбирает. */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">Набор статусов</span>
+              <Select
+                value={project.status_set_id ?? DEFAULT_SET_VALUE}
+                onValueChange={(value) =>
+                  void setStatusSet(value === DEFAULT_SET_VALUE ? null : String(value))
+                }
+                disabled={!canManage}
+              >
+                <SelectTrigger className="h-8 w-64 text-xs">
+                  <SelectValue>
+                    {statusSets.find((s) => s.id === project.status_set_id)?.name ??
+                      "Основной набор организации"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={DEFAULT_SET_VALUE}>Основной набор организации</SelectItem>
+                  {statusSets
+                    .filter((s) => !s.is_default)
+                    .map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Доска и карточка показывают статусы набора. Задача из нескольких проектов остаётся
+              видимой в каждом — её статус из чужого набора доска покажет отдельной колонкой.
+            </p>
           </Card>
 
           <Card title="Название и описание">

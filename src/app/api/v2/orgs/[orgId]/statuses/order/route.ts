@@ -10,5 +10,5 @@ import { statusOrderSchema } from "@/lib/core/schemas";
 export const PUT = withOrg(async (request, { auth }) => {
   const [body, invalid] = await parseJson(request, statusOrderSchema);
   if (invalid) return invalid;
-  return NextResponse.json(await reorderStatuses(auth, body.order));
+  return NextResponse.json(await reorderStatuses(auth, body.order, { set_id: body.set_id }));
 });
