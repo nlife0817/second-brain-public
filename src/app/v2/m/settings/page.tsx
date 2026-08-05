@@ -4,7 +4,7 @@
 // Администрирование (участники, приглашения, статусы, поля) — на десктопе.
 
 import Link from "next/link";
-import { Check, CheckCircle2, ChevronsUpDown, Download, Monitor, Smartphone } from "lucide-react";
+import { Check, CheckCircle2, ChevronsUpDown, Clock, Download, Monitor, Smartphone } from "lucide-react";
 import { Avatar } from "@/components/v2/bits";
 import {
   DeliveryPreferences,
@@ -133,6 +133,19 @@ export default function MobileSettingsPage() {
 
           <Section title="Проекты">
             <ProjectMutes />
+          </Section>
+
+          {/* Учёта времени в таб-баре больше нет — его место занял календарь.
+              Таймер по-прежнему запускается из карточки задачи, а список записей
+              за период живёт здесь. */}
+          <Section title="Учёт времени">
+            <Link
+              href="/v2/m/time"
+              className="flex items-center gap-2 text-sm text-primary underline underline-offset-2"
+            >
+              <Clock className="size-4" />
+              Таймер и записи за период
+            </Link>
           </Section>
 
           <Section title="Приложение">

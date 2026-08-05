@@ -131,6 +131,87 @@ export const VALUELESS_OPERATORS: ReadonlySet<FilterOperator> = new Set([
   "is_not_empty",
 ]);
 
+/** Идентификатор условия или группы фильтра. */
+export function newFilterId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `c${Date.now()}${Math.round(Math.random() * 1e6)}`;
+}
+
+/**
+ * Группа «быстрого» фильтра: все её условия — про одно поле и через «равно».
+ * Ровно такую собирает чип на телефоне («Мои», проект, статус, приоритет), и
+ * ровно такую он вправе править.
+ *
+ * Группа со смешанными полями или другим оператором быстрым фильтром не
+ * считается: её собрали в конструкторе условий, и чип, молча её переписавший,
+ * стирал бы работу, которой не показывает.
+ */
+function isQuickGroup(group: FilterGroup, field: FilterField): boolean {
+  return group.conditions.length > 0 && group.conditions.every((c) => c.field === field && c.operator === "is");
+}
+
+/** Что сейчас выбрано быстрым фильтром по полю. */
+export function quickFilterValues(groups: readonly FilterGroup[], field: FilterField): string[] {
+  return groups
+    .filter((g) => isQuickGroup(g, field))
+    .flatMap((g) => g.conditions.map((c) => c.value))
+    .filter((v) => v !== "");
+}
+
+/**
+ * Заменить выбор быстрого фильтра по полю. Значения объединяются через ИЛИ:
+ * два проекта в чипах означают «в любом из них», а не «сразу в обоих».
+ *
+ * Группа остаётся на своём месте в списке: перестановка в конец меняла бы
+ * порядок и в конструкторе условий, где человек его и видит.
+ */
+export function setQuickFilterValues(
+  groups: readonly FilterGroup[],
+  field: FilterField,
+  values: readonly string[],
+): FilterGroup[] {
+  const clean = values.filter((v) => v !== "");
+  const next: FilterGroup | null =
+    clean.length === 0
+      ? null
+      : {
+          id: groups.find((g) => isQuickGroup(g, field))?.id ?? newFilterId(),
+          logic: "or",
+          conditions: clean.map((value) => ({ id: newFilterId(), field, operator: "is" as const, value })),
+        };
+
+  let placed = false;
+  const out: FilterGroup[] = [];
+  for (const group of groups) {
+    if (!isQuickGroup(group, field)) {
+      out.push(group);
+      continue;
+    }
+    // Своих групп по полю могло накопиться несколько — остаётся одна.
+    if (next && !placed) {
+      out.push(next);
+      placed = true;
+    }
+  }
+  if (next && !placed) out.push(next);
+  return out;
+}
+
+/** Добавить или убрать одно значение быстрого фильтра. */
+export function toggleQuickFilterValue(
+  groups: readonly FilterGroup[],
+  field: FilterField,
+  value: string,
+): FilterGroup[] {
+  const current = quickFilterValues(groups, field);
+  return setQuickFilterValues(
+    groups,
+    field,
+    current.includes(value) ? current.filter((v) => v !== value) : [...current, value],
+  );
+}
+
 export function fieldMetaFor(field: FilterField, customFields: CustomField[]): FieldMeta {
   const base = BASE_FILTER_FIELDS.find((f) => f.field === field);
   if (base) return base;
