@@ -1482,6 +1482,7 @@ export function TaskSheet({
                 canEdit={canEdit}
                 initialRelations={relations}
                 initialTypes={relationTypes}
+                onOpenTask={openNested}
               />
 
               <div className="border-t border-border pt-3">
