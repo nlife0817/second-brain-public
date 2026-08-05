@@ -175,6 +175,45 @@ export function carryDefault(category: StatusCategory | undefined): CarryTarget 
   return category === "in_progress" ? "sprint" : "backlog";
 }
 
+// --- Перетаскивание на экране бэклога -----------------------------------------------------
+
+/** Что означает бросок задачи в ту или иную зону экрана планирования. */
+export type DropAction =
+  | { kind: "none" }
+  /** Встать в бэклоге перед этой задачей (и уйти из спринта, если была в нём). */
+  | { kind: "reorder"; beforeTaskId: string; leaveSprint: boolean }
+  /** Сменить спринт; `null` — вернуть в бэклог. */
+  | { kind: "move"; sprintId: string | null };
+
+/** Идентификатор зоны бэклога — общий у droppable-контейнера и правил. */
+export const BACKLOG_ZONE = "backlog";
+
+/** Строка бэклога тоже принимает бросок: это место вставки. */
+export function rowZone(taskId: string): string {
+  return `row:${taskId}`;
+}
+
+/**
+ * Решение по броску — отдельно от компонента, потому что это правило, а не
+ * жест: бросок на строку бэклога ранжирует, бросок на спринт переносит, бросок
+ * в ту же зону не делает ничего. Проверяется тестом — сам dnd-kit в тестовой
+ * среде не воспроизвести.
+ */
+export function dropAction(
+  task: { id: string; sprint_id: string | null },
+  overId: string | null,
+): DropAction {
+  if (!overId) return { kind: "none" };
+  if (overId.startsWith("row:")) {
+    const beforeTaskId = overId.slice(4);
+    if (beforeTaskId === task.id) return { kind: "none" };
+    return { kind: "reorder", beforeTaskId, leaveSprint: task.sprint_id !== null };
+  }
+  const sprintId = overId === BACKLOG_ZONE ? null : overId;
+  if ((task.sprint_id ?? null) === sprintId) return { kind: "none" };
+  return { kind: "move", sprintId };
+}
+
 // --- Черновик следующего спринта -------------------------------------------------------
 
 export interface SprintDraft {

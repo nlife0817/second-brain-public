@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { formatEstimate } from "@/components/v2/tasks/cells";
 import {
   CompleteSprintDialog,
+  estimateLabel,
   MoveToSprintDialog,
   StartSprintDialog,
   totalEstimate,
@@ -39,7 +40,15 @@ import {
 } from "@/components/v2/tasks/SprintDialogs";
 import { FilterButton, TaskCount, TaskSearch } from "@/components/v2/tasks/ViewToolbar";
 import { api } from "@/lib/core/client";
-import { daysLeft, shiftTaskDates, sprintLoad, SPRINT_STATE_LABELS } from "@/lib/core/sprint-model";
+import {
+  BACKLOG_ZONE,
+  daysLeft,
+  dropAction,
+  rowZone,
+  shiftTaskDates,
+  sprintLoad,
+  SPRINT_STATE_LABELS,
+} from "@/lib/core/sprint-model";
 import type { Sprint, SprintWithTotals, TaskRow, TaskStatus, UserBrief } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
@@ -48,8 +57,6 @@ import { cn } from "@/lib/utils";
 
 /** Сколько строк показывает секция сразу — тот же предел, что у колонок доски. */
 const SECTION_PAGE = 50;
-
-const BACKLOG_ZONE = "backlog";
 
 export interface BacklogViewProps {
   projectId: string;
@@ -217,26 +224,23 @@ export function BacklogView({
   const onDragEnd = useCallback(
     (event: DragEndEvent) => {
       setDragId(null);
-      const taskId = String(event.active.id);
-      const task = tasks.find((t) => t.id === taskId);
-      const over = event.over ? String(event.over.id) : null;
-      if (!task || !over) return;
+      const task = tasks.find((t) => t.id === String(event.active.id));
+      if (!task) return;
+      // Что означает бросок — правило, а не жест: оно живёт в sprint-model и
+      // покрыто тестом, потому что сам dnd-kit в тестах не воспроизвести.
+      const action = dropAction(task, event.over ? String(event.over.id) : null);
+      if (action.kind === "none") return;
 
-      // Бросок на строку бэклога — это ранжирование, на зону — смена спринта.
-      if (over.startsWith("row:")) {
-        const beforeId = over.slice(4);
-        if (beforeId === taskId) return;
-        if (task.sprint_id) {
-          void applyMove([task], null, false).then(() => reorderBacklog(taskId, beforeId));
+      if (action.kind === "reorder") {
+        if (action.leaveSprint) {
+          void applyMove([task], null, false).then(() => reorderBacklog(task.id, action.beforeTaskId));
           return;
         }
-        void reorderBacklog(taskId, beforeId);
+        void reorderBacklog(task.id, action.beforeTaskId);
         return;
       }
 
-      const targetId = over === BACKLOG_ZONE ? null : over;
-      if ((task.sprint_id ?? null) === targetId) return;
-      const target = targetId ? sprints.find((s) => s.id === targetId) ?? null : null;
+      const target = action.sprintId ? sprints.find((s) => s.id === action.sprintId) ?? null : null;
       // Диалог показываем только там, где есть о чём спросить: возврат в бэклог
       // сроков не двигает, и подтверждать в нём нечего.
       if (target) setMove({ tasks: [task], target });
@@ -280,6 +284,12 @@ export function BacklogView({
   const openSprints = sprints.filter((s) => s.state !== "completed");
   const leftoversOf = (sprint: SprintWithTotals) =>
     (bySprint.map.get(sprint.id) ?? []).filter((t) => !t.completed_at);
+  // Итоги считаем по загруженному списку, а не по ответу сервера: перетаскивание
+  // должно менять «набрано» сразу, а серверные totals остались бы вчерашними.
+  const minutesOf = useCallback(
+    (sprintId: string) => totalEstimate(bySprint.map.get(sprintId) ?? []),
+    [bySprint],
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -377,9 +387,11 @@ export function BacklogView({
           open
           onOpenChange={(open) => !open && setCompleteFor(null)}
           sprint={completeFor}
+          sprintTasks={bySprint.map.get(completeFor.id) ?? []}
           leftovers={leftoversOf(completeFor)}
           statuses={statuses}
           targets={openSprints.filter((s) => s.id !== completeFor.id)}
+          minutesOf={minutesOf}
           busy={busy}
           onConfirm={(input) => void completeSprint(completeFor, input)}
         />
@@ -392,6 +404,7 @@ export function BacklogView({
           tasks={move.tasks}
           sprintOf={sprintOf}
           target={move.target}
+          targetMinutes={move.target ? minutesOf(move.target.id) : 0}
           busy={busy}
           onConfirm={(shiftDates) => {
             const { tasks: moved, target } = move;
@@ -473,7 +486,7 @@ function SprintCard({
 
         <span className="flex flex-col items-end gap-1">
           <span className="text-[11px] tabular-nums text-muted-foreground">
-            <span className={cn(load.over && "font-semibold text-destructive")}>{formatEstimate(minutes)}</span>
+            <span className={cn(load.over && "font-semibold text-destructive")}>{estimateLabel(minutes)}</span>
             {sprint.capacity_minutes ? ` из ${formatEstimate(sprint.capacity_minutes)}` : ""}
             {tasks.length > 0 && ` · ${done}/${tasks.length} закрыто`}
           </span>
@@ -557,7 +570,7 @@ function BacklogSection({
           {tasks.length}
         </span>
         <span className="text-[11px] text-muted-foreground">
-          {formatEstimate(totalEstimate(tasks))} · порядок задаёте перетаскиванием
+          {estimateLabel(totalEstimate(tasks))} · порядок задаёте перетаскиванием
         </span>
       </header>
       <div className="border-t border-border/60">
@@ -649,7 +662,7 @@ function TaskLine({
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: task.id, disabled: !canEdit });
   // Строка бэклога — ещё и место вставки: бросок на неё ставит задачу перед ней.
   // Отдельного sortable-пакета для этого не нужно.
-  const drop = useDroppable({ id: `row:${task.id}`, disabled: !sortable });
+  const drop = useDroppable({ id: rowZone(task.id), disabled: !sortable });
 
   return (
     <div

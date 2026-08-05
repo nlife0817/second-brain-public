@@ -4,10 +4,13 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  BACKLOG_ZONE,
   carryDefault,
   daysLeft,
+  dropAction,
   dueBeforeSprintEnd,
   isInsideSprint,
+  rowZone,
   nextSprintDraft,
   nextSprintName,
   shiftTaskDates,
@@ -132,6 +135,35 @@ describe("оставшиеся дни", () => {
   it("просроченный спринт показывает минус, а не ноль", () => {
     expect(daysLeft({ ends_on: "2026-08-17" }, "2026-08-20")).toBe(-2);
     expect(daysLeft({ ends_on: null }, "2026-08-20")).toBeNull();
+  });
+});
+
+describe("бросок на экране планирования", () => {
+  const task = { id: "t1", sprint_id: null as string | null };
+
+  it("бросок в тот же контейнер ничего не делает", () => {
+    expect(dropAction(task, BACKLOG_ZONE)).toEqual({ kind: "none" });
+    expect(dropAction({ ...task, sprint_id: "s1" }, "s1")).toEqual({ kind: "none" });
+    expect(dropAction(task, null)).toEqual({ kind: "none" });
+    expect(dropAction(task, rowZone("t1"))).toEqual({ kind: "none" });
+  });
+
+  it("бросок на спринт — перенос, на бэклог — возврат", () => {
+    expect(dropAction(task, "s1")).toEqual({ kind: "move", sprintId: "s1" });
+    expect(dropAction({ ...task, sprint_id: "s1" }, BACKLOG_ZONE)).toEqual({ kind: "move", sprintId: null });
+  });
+
+  it("бросок на строку бэклога — ранжирование; из спринта задача сначала уходит", () => {
+    expect(dropAction(task, rowZone("t2"))).toEqual({
+      kind: "reorder",
+      beforeTaskId: "t2",
+      leaveSprint: false,
+    });
+    expect(dropAction({ ...task, sprint_id: "s1" }, rowZone("t2"))).toEqual({
+      kind: "reorder",
+      beforeTaskId: "t2",
+      leaveSprint: true,
+    });
   });
 });
 

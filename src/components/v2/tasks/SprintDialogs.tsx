@@ -28,6 +28,7 @@ import {
   sprintLoad,
   type CarryTarget,
 } from "@/lib/core/sprint-model";
+import { plural } from "@/lib/core/plural";
 import type { Sprint, SprintWithTotals, TaskRow, TaskStatus } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
 
@@ -36,11 +37,27 @@ export function totalEstimate(tasks: Array<Pick<TaskRow, "estimated_minutes">>):
   return tasks.reduce((sum, t) => sum + (t.estimated_minutes ?? 0), 0);
 }
 
+/**
+ * Ноль минут в планировании значит «оценок нет», а не «работы на ноль часов»:
+ * `formatEstimate` честно пишет «0 м», и в шапке спринта это читается как
+ * оценённый пустой объём.
+ */
+export function estimateLabel(minutes: number): string {
+  return minutes > 0 ? formatEstimate(minutes) : "без оценок";
+}
+
+/** «10 июл.» вместо ISO: даты в диалогах читает человек. */
+export function humanDate(iso: string): string {
+  const [, month, day] = iso.split("-");
+  const months = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+  return `${Number(day)} ${months[Number(month) - 1]}.`;
+}
+
 function LoadLine({ minutes, capacity }: { minutes: number; capacity: number | null }) {
   const load = sprintLoad({ estimated_minutes: minutes, capacity_minutes: capacity });
   return (
     <span className={cn("tabular-nums font-medium", load.over && "text-destructive")}>
-      {formatEstimate(minutes)}
+      {estimateLabel(minutes)}
       {capacity ? ` из ${formatEstimate(capacity)}` : ""}
     </span>
   );
@@ -110,18 +127,27 @@ export function StartSprintDialog({
         <DialogHeader>
           <DialogTitle>Начать «{sprint.name}»</DialogTitle>
           <DialogDescription>
-            {tasks.length} задач · набрано <LoadLine minutes={minutes} capacity={sprint.capacity_minutes} />
+            {plural(tasks.length, "задача", "задачи", "задач")} · набрано{" "}
+            <LoadLine minutes={minutes} capacity={sprint.capacity_minutes} />
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-2">
           {unestimated.length > 0 && (
-            <Warning icon={AlertTriangle} title={`${unestimated.length} задач без оценки`}>
-              Набранные {formatEstimate(minutes)} их не учитывают — реальный объём больше.
+            <Warning
+              icon={AlertTriangle}
+              title={`${plural(unestimated.length, "задача", "задачи", "задач")} без оценки`}
+            >
+              {minutes > 0
+                ? `Набранные ${formatEstimate(minutes)} их не учитывают — реальный объём больше.`
+                : "Оценок нет ни у одной задачи — сколько работы в спринте, сказать нечем."}
             </Warning>
           )}
           {unassigned.length > 0 && (
-            <Warning icon={AlertTriangle} title={`${unassigned.length} задач без исполнителя`}>
+            <Warning
+              icon={AlertTriangle}
+              title={`${plural(unassigned.length, "задача", "задачи", "задач")} без исполнителя`}
+            >
               Напоминание о сроке приходит только исполнителю — этим задачам напомнить некому.
             </Warning>
           )}
@@ -173,19 +199,29 @@ export function CompleteSprintDialog({
   open,
   onOpenChange,
   sprint,
+  sprintTasks,
   leftovers,
   statuses,
   targets,
+  minutesOf,
   busy,
   onConfirm,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  sprint: SprintWithTotals;
+  sprint: Sprint;
+  /** Задачи спринта — из них считаются «закрыто N из M». */
+  sprintTasks: TaskRow[];
   leftovers: TaskRow[];
   statuses: TaskStatus[];
   /** Куда можно перенести: незавершённые спринты того же проекта. */
   targets: SprintWithTotals[];
+  /**
+   * Набранные минуты спринта по загруженному списку задач. Серверные итоги для
+   * этого не годятся: перетаскивание уже изменило состав, а ответ сервера в
+   * состоянии экрана остался прежним — диалог показал бы «0 из 0».
+   */
+  minutesOf: (sprintId: string) => number;
   busy: boolean;
   onConfirm: (input: { carry_to: string | null; decisions: CompleteDecision[]; shift_dates: boolean }) => void;
 }) {
@@ -204,10 +240,10 @@ export function CompleteSprintDialog({
 
   const carried = leftovers.filter((t) => decisionOf(t) === "sprint");
   const returned = leftovers.filter((t) => decisionOf(t) !== "sprint");
-  const targetMinutes = targetSprint ? targetSprint.estimated_minutes + totalEstimate(carried) : 0;
+  const targetMinutes = targetSprint ? minutesOf(targetSprint.id) + totalEstimate(carried) : 0;
 
-  const done = sprint.done_count;
-  const total = sprint.task_count;
+  const done = sprintTasks.filter((t) => t.completed_at).length;
+  const total = sprintTasks.length;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -215,7 +251,8 @@ export function CompleteSprintDialog({
         <DialogHeader>
           <DialogTitle>Завершить «{sprint.name}»</DialogTitle>
           <DialogDescription>
-            Закрыто {done} из {total} задач. Осталось {leftovers.length} незакрытых: начатые предлагаем
+            Закрыто {done} из {plural(total, "задачи", "задач", "задач")}. Осталось{" "}
+            {plural(leftovers.length, "незакрытая", "незакрытые", "незакрытых")}: начатые предлагаем
             взять в следующий спринт, не начатые — вернуть в бэклог.
           </DialogDescription>
         </DialogHeader>
@@ -351,6 +388,7 @@ export function MoveToSprintDialog({
   tasks,
   sprintOf,
   target,
+  targetMinutes: targetMinutesBefore,
   busy,
   onConfirm,
 }: {
@@ -360,6 +398,8 @@ export function MoveToSprintDialog({
   /** Исходный спринт задачи (у каждой свой) — `null`, если она была в бэклоге. */
   sprintOf: (task: TaskRow) => Sprint | null;
   target: SprintWithTotals | null;
+  /** Набранное целевым спринтом до переноса — по загруженному списку задач. */
+  targetMinutes: number;
   busy: boolean;
   onConfirm: (shiftDates: boolean) => void;
 }) {
@@ -371,7 +411,7 @@ export function MoveToSprintDialog({
     (t) => !shouldShiftDates(t, sprintOf(t)) && dueBeforeSprintEnd(t, target),
   );
   const minutes = totalEstimate(tasks);
-  const targetMinutes = (target?.estimated_minutes ?? 0) + minutes;
+  const targetMinutes = targetMinutesBefore + minutes;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -379,7 +419,7 @@ export function MoveToSprintDialog({
         <DialogHeader>
           <DialogTitle>
             {target ? `Перенести в «${target.name}»` : "Вернуть в бэклог"}
-            {tasks.length > 1 ? ` · ${tasks.length} задач` : ""}
+            {tasks.length > 1 ? ` · ${plural(tasks.length, "задача", "задачи", "задач")}` : ""}
           </DialogTitle>
           {target && (
             <DialogDescription>
@@ -396,14 +436,19 @@ export function MoveToSprintDialog({
               <span className="mt-0.5 block text-muted-foreground">
                 {shiftable.length === 1
                   ? `Срок задачи «${shiftable[0].title}» стоял внутри прежнего спринта — поэтому едет вместе с ней.`
-                  : `У ${shiftable.length} задач срок стоял внутри прежнего спринта — они едут вместе с задачами.`}
+                  : `У ${plural(shiftable.length, "задачи", "задач", "задач")} срок стоял внутри прежнего спринта — они едут вместе с задачами.`}
               </span>
             </span>
           </label>
         )}
 
         {conflicts.map((task) => (
-          <Warning key={task.id} icon={CalendarClock} title={`«${task.title}» — срок ${task.due_date}`} danger>
+          <Warning
+            key={task.id}
+            icon={CalendarClock}
+            title={`«${task.title}» — срок ${task.due_date ? humanDate(task.due_date) : ""}`}
+            danger
+          >
             Он вне прежнего спринта, похоже на внешнюю договорённость: оставляем как есть. Учтите, что он
             наступит раньше конца «{target?.name}».
           </Warning>
