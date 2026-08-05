@@ -16,6 +16,7 @@ import {
   ProjectMutes,
   PushDevices,
   PushTestButton,
+  TelegramConnect,
 } from "@/components/v2/NotificationSettings";
 
 function Section({
@@ -74,8 +75,15 @@ export default function NotificationSettingsPage() {
           </Section>
 
           <Section
+            title="Telegram"
+            description="Те же уведомления сообщением от бота — по тем же правилам, что и push: тихие часы, склейка серии и сводка при нескольких событиях подряд. Привязка одна на все организации."
+          >
+            <TelegramConnect />
+          </Section>
+
+          <Section
             title="Какие события присылать"
-            description="«В приложении» — строка в этом разделе и счётчик в сайдбаре. «Push» — системное уведомление на подписанные устройства. Настройка общая для всех ваших организаций."
+            description="«В приложении» — строка в этом разделе и счётчик в сайдбаре. «Push» — системное уведомление на подписанные устройства. «Telegram» — сообщение от бота. Настройка общая для всех ваших организаций."
           >
             <NotificationKinds />
           </Section>

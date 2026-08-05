@@ -386,6 +386,10 @@ export const notificationPrefSchema = z.object({
   kind: z.string().min(1).max(64),
   inbox: z.boolean(),
   push: z.boolean(),
+  // Необязательное: вкладка со старым бандлом шлёт только inbox и push, и
+  // отвечать ей 400 на переключателе, который у неё даже не нарисован, нельзя.
+  // Пропущенное поле роут берёт из текущей настройки, а не из умолчания.
+  telegram: z.boolean().optional(),
 });
 
 export const pushSubscribeSchema = z.object({

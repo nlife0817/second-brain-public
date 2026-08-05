@@ -11,6 +11,7 @@ import {
   NotificationKinds,
   ProjectMutes,
   PushTestButton,
+  TelegramConnect,
 } from "@/components/v2/NotificationSettings";
 import { PasswordSection } from "@/components/v2/PasswordSection";
 import { PushToggle } from "@/components/v2/PushToggle";
@@ -116,6 +117,10 @@ export default function MobileSettingsPage() {
             <div className="mt-3 border-t border-border pt-3">
               <PushTestButton />
             </div>
+          </Section>
+
+          <Section title="Telegram">
+            <TelegramConnect />
           </Section>
 
           <Section title="Какие события присылать">

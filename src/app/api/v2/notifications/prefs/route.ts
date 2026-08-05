@@ -19,7 +19,14 @@ export const PUT = withUser(async (request: NextRequest, user) => {
   // Неизвестный kind — не 400 «на всякий случай», а защита от мусора в
   // таблице: настройка типа, которого не существует, никогда не сработает.
   if (!isKnownKind(body.kind)) return jsonError(400, "Unknown notification kind");
-  await setNotificationPref(user.id, body.kind, { inbox: body.inbox, push: body.push });
+  // Старый бандл про телеграм не знает и поле не шлёт — сохраняем текущее
+  // значение, иначе переключение push молча включало бы телеграм обратно.
+  const current = await getNotificationPrefs(user.id);
+  await setNotificationPref(user.id, body.kind, {
+    inbox: body.inbox,
+    push: body.push,
+    telegram: body.telegram ?? current[body.kind]?.telegram ?? true,
+  });
   const prefs = await getNotificationPrefs(user.id);
   return NextResponse.json({ prefs });
 });

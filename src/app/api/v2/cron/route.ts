@@ -2,7 +2,7 @@
 // (путь исключён из proxy — см. config.matcher в src/proxy.ts).
 //
 // Делает четыре вещи:
-//   1) рассылает push по неотправленным core.notifications;
+//   1) рассылает неотправленные core.notifications — push и в телеграм;
 //   2) материализует повторяющиеся задачи, которым подошёл срок;
 //   3) закрывает забытые таймеры (> лимита часов);
 //   4) обновляет подключённые внешние календари.
@@ -10,10 +10,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { purgeOrphanAttachments } from "@/lib/core/attachments";
 import { syncDueCalendars } from "@/lib/core/calendars";
-import { dispatchPendingPush } from "@/lib/core/push";
+import { dispatchPendingNotifications } from "@/lib/core/push";
 import { materializeDueRules } from "@/lib/core/recurring";
 import { purgeOldReminderMarks, runDueReminders } from "@/lib/core/reminders";
 import { deliverWebhooks } from "@/lib/core/saas";
+import { purgeExpiredTelegramCodes } from "@/lib/core/telegram";
 import { closeStaleTimers } from "@/lib/core/time";
 
 export const maxDuration = 60;
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
   const reminders = await runDueReminders().catch((e) => ({ error: String(e) }));
 
   const [push, recurring, timers, webhooks, attachments, calendars] = await Promise.all([
-    dispatchPendingPush().catch((e) => ({ error: String(e) })),
+    dispatchPendingNotifications().catch((e) => ({ error: String(e) })),
     materializeDueRules(today).catch((e) => ({ error: String(e) })),
     closeStaleTimers().catch((e) => ({ error: String(e) })),
     deliverWebhooks().catch((e) => ({ error: String(e) })),
@@ -54,6 +55,8 @@ export async function POST(request: NextRequest) {
   ]);
   // Отметки старше месяца чистим редко и молча — ошибка тут не повод портить ответ.
   const purged = await purgeOldReminderMarks().catch(() => 0);
+  // То же для отработавших кодов привязки телеграма: их срок жизни — минуты.
+  const telegramCodes = await purgeExpiredTelegramCodes().catch(() => 0);
   return NextResponse.json({
     reminders,
     push,
@@ -61,6 +64,7 @@ export async function POST(request: NextRequest) {
     timers,
     webhooks,
     purged,
+    telegramCodes,
     attachments,
     calendars,
   });

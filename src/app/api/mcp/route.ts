@@ -12,7 +12,7 @@
 import { NextResponse, after } from "next/server";
 import { resolveTokenAuth, touchApiToken } from "@/lib/core/api-tokens";
 import { runAs } from "@/lib/core/actor-source-store";
-import { dispatchPendingPush } from "@/lib/core/push";
+import { dispatchPendingNotifications } from "@/lib/core/push";
 import { handleMessage } from "@/lib/mcp/server";
 
 // postgres.js и node:crypto — рантайм только Node.
@@ -72,7 +72,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   after(async () => {
     try {
       await touchApiToken(resolved.tokenId);
-      await dispatchPendingPush();
+      await dispatchPendingNotifications();
     } catch (err) {
       console.error("[mcp] пост-обработка не удалась:", err);
     }
