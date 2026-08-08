@@ -3,6 +3,7 @@
 
 import { NextResponse } from "next/server";
 import { withUser } from "@/lib/core/context";
+import { getCredentialsByEmail } from "@/lib/core/credentials";
 import { DomainError, jsonError, toHttpError } from "@/lib/core/http";
 import { acceptInvitation, peekInvitation } from "@/lib/core/identity";
 import { getCoreUser } from "@/lib/core/context";
@@ -18,12 +19,17 @@ export async function GET(
     const info = await peekInvitation(token);
     if (!info) return jsonError(404, "Приглашение не найдено или истекло");
     const user = await getCoreUser();
+    // Завести пароль прямо здесь может только тот, у кого его ещё нет: иначе
+    // пересланная ссылка приглашения становится способом перезадать пароль
+    // существующей учётки (см. /api/auth/invite-signup).
+    const credentials = await getCredentialsByEmail(info.email);
     return NextResponse.json({
       org_name: info.org_name,
       email: info.email,
       org_role: info.org_role,
       signed_in_as: user?.email ?? null,
       email_matches: user ? user.email === info.email : null,
+      can_sign_up: !credentials?.password_hash,
     });
   } catch (err) {
     return toHttpError(err);

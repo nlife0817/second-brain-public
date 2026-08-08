@@ -15,6 +15,7 @@ import type {
   Organization,
   ProjectGrant,
   ProjectRole,
+  StatusCategory,
 } from "./types";
 
 // --- Users ---------------------------------------------------------------------
@@ -64,8 +65,11 @@ export async function listUserOrgs(userId: string): Promise<OrgSummary[]> {
 }
 
 export async function listOrgMembers(orgId: string): Promise<OrgMemberWithUser[]> {
+  // has_password — состояние учётки, а не секрет: сам хеш отсюда не уезжает.
+  // Владельцу он показывает, кому ещё нужна ссылка установки пароля.
   return prepare<OrgMemberWithUser>(
-    `SELECT m.org_id, m.user_id, m.role, m.created_at, u.email, u.name, u.avatar_url
+    `SELECT m.org_id, m.user_id, m.role, m.created_at, u.email, u.name, u.avatar_url,
+            u.password_hash IS NOT NULL AS has_password
      FROM core.org_members m
      JOIN core.users u ON u.id = m.user_id
      WHERE m.org_id = ?
@@ -200,21 +204,42 @@ export async function createOrganization(name: string, ownerId: string): Promise
     await tx
       .prepare(`INSERT INTO core.org_members (org_id, user_id, role) VALUES (?, ?, 'owner')`)
       .run(org.id, ownerId);
-    const defaultStatuses: Array<[string, string, string]> = [
-      ["Входящие", "#6b7280", "open"],
-      ["К выполнению", "#3b82f6", "open"],
-      ["В работе", "#f59e0b", "open"],
-      ["Готово", "#10b981", "done"],
-      ["Архив", "#9ca3af", "archived"],
+    // Состав обязан совпадать с бэкфиллом 0041_core_status_categories.sql
+    // строка в строку: разъедутся — и организации, созданные до и после
+    // выката, будут вести себя по-разному.
+    const defaultStatuses: Array<[string, string, StatusCategory, boolean]> = [
+      ["Входящие", "#6b7280", "backlog", false],
+      ["К выполнению", "#3b82f6", "backlog", true],
+      ["В работе", "#f59e0b", "in_progress", false],
+      ["Готово", "#10b981", "done", false],
+      ["Архив", "#9ca3af", "archived", false],
     ];
+    // Статусы живут в наборе (0051): у организации всегда есть набор по
+    // умолчанию, и проекты без своего выбора показывают именно его.
+    const set = await tx
+      .prepare<{ id: string }>(
+        `INSERT INTO core.status_sets (org_id, name, is_default) VALUES (?, 'Основной', true) RETURNING id`,
+      )
+      .get(org.id);
+    if (!set) throw new DomainError(500, "Failed to create status set");
     for (let i = 0; i < defaultStatuses.length; i++) {
-      const [statusName, color, kind] = defaultStatuses[i];
+      const [statusName, color, category, isDefault] = defaultStatuses[i];
       await tx
         .prepare(
-          `INSERT INTO core.task_statuses (org_id, name, color, kind, position) VALUES (?, ?, ?, ?, ?)`,
+          `INSERT INTO core.task_statuses (org_id, set_id, name, color, category, is_default, position)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(org.id, statusName, color, kind, i + 1);
+        .run(org.id, set.id, statusName, color, category, isDefault, i + 1);
     }
+    // Зависимость для ганта: стрелки рисуются по связям этого типа, и без него
+    // вид пустой у любой новой организации. Существующим его завела миграция
+    // 0044 — здесь та же строка для тех, кто заведётся после неё.
+    await tx
+      .prepare(
+        `INSERT INTO core.relation_types (org_id, name, color, icon, kind, position)
+         VALUES (?, 'Блокирует', '#ef4444', 'Ban', 'blocks', 1)`,
+      )
+      .run(org.id);
     return org;
   });
 }

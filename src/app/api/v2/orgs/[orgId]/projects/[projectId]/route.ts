@@ -5,7 +5,6 @@ import { effectiveProjectRole } from "@/lib/core/policy";
 import {
   deleteProject,
   listProjectMembers,
-  listSections,
   requireProject,
   setProjectArchived,
   updateProject,
@@ -17,14 +16,10 @@ export const GET = withOrg(async (_request, { params, auth }) => {
   const { projectId } = await params;
   if (!isUuid(projectId)) return jsonError(404, "Project not found");
   const project = await requireProject(auth, projectId, "project.view");
-  const [sections, members] = await Promise.all([
-    listSections(projectId),
-    listProjectMembers(projectId),
-  ]);
+  const members = await listProjectMembers(projectId);
   return NextResponse.json({
     ...project,
     my_role: effectiveProjectRole(auth, project),
-    sections,
     members,
   });
 });

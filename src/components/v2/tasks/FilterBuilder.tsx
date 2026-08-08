@@ -18,6 +18,7 @@ import {
   OPERATOR_LABELS,
   VALUELESS_OPERATORS,
   fieldMetaFor,
+  newFilterId,
   type FilterCondition,
   type FilterField,
   type FilterGroup,
@@ -32,11 +33,8 @@ interface Option {
   color?: string;
 }
 
-function newId(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `c${Date.now()}${Math.round(Math.random() * 1e6)}`;
-}
+/** Общий с быстрыми фильтрами телефона: id условий заводит одна функция. */
+const newId = newFilterId;
 
 const SELECT_CLS =
   "h-7 min-w-0 rounded-lg border border-input bg-background px-1.5 text-xs text-foreground outline-none focus-visible:border-ring";

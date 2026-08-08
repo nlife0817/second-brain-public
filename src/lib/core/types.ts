@@ -41,6 +41,8 @@ export interface OrgMemberWithUser extends OrgMember {
   email: string;
   name: string;
   avatar_url: string | null;
+  /** Задан ли пароль. Владельцу видно, кому ещё нужна ссылка установки. */
+  has_password: boolean;
 }
 
 export interface ProjectGrant {
@@ -59,6 +61,26 @@ export interface Invitation {
   accepted_at: string | null;
   revoked_at: string | null;
   created_at: string;
+}
+
+/**
+ * Режим токена доступа. `read` не даёт новых прав, а сужает права владельца до
+ * чтения: такой токен не допускается ни до одной мутации.
+ */
+export type ApiTokenScope = "read" | "full";
+
+/** Токен доступа без самого значения — его показывают ровно один раз, при выпуске. */
+export interface ApiToken {
+  id: string;
+  org_id: string;
+  user_id: string;
+  name: string;
+  /** Первые символы значения — опознать строку в списке. */
+  prefix: string;
+  scope: ApiTokenScope;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
 }
 
 export interface OrgSummary {
@@ -88,7 +110,15 @@ export interface PolicyProject {
 // --- Задачи и проекты -----------------------------------------------------------
 
 export type TaskPriority = "urgent" | "high" | "medium" | "low" | "none";
-export type StatusKind = "open" | "done" | "archived";
+
+/**
+ * Категория статуса. Задаёт и поведение (`done` проставляет completed_at,
+ * `archived` прячет задачу из списков), и раскладку справочника в настройках.
+ * Пришла на смену колонке `kind`, которая до следующего выката остаётся в БД
+ * живым зеркалом под триггером ради уже загруженных вкладок — см.
+ * 0041_core_status_categories.sql.
+ */
+export type StatusCategory = "backlog" | "in_progress" | "done" | "archived";
 export type FieldType =
   | "text" | "number" | "select" | "multi_select" | "date" | "user" | "checkbox" | "url";
 
@@ -99,6 +129,12 @@ export interface UserBrief {
   avatar_url: string | null;
 }
 
+/**
+ * Режим проекта. `dev` добавляет к обычным видам спринты и бэклог; на модель
+ * задач не влияет — задача остаётся той же во всех проектах, где размещена.
+ */
+export type ProjectMode = "standard" | "dev";
+
 export interface Project {
   id: string;
   org_id: string;
@@ -107,6 +143,13 @@ export interface Project {
   description: string;
   color: string;
   icon: string;
+  mode: ProjectMode;
+  /**
+   * Набор статусов проекта; `null` — набор организации по умолчанию. Проект с
+   * чужим набором не запрещает задачам иметь другой статус (задача живёт сразу
+   * в нескольких проектах) — набор решает, что показывать.
+   */
+  status_set_id: string | null;
   default_role: ProjectDefaultRole | null;
   /** Производная от `default_role` (generated-колонка): `private` ⇔ default_role is null. */
   visibility: ProjectVisibility;
@@ -128,14 +171,6 @@ export interface ProjectWithMeta extends Project {
   member_ids: string[] | null;
 }
 
-export interface Section {
-  id: string;
-  project_id: string;
-  name: string;
-  position: number;
-  created_at: string;
-}
-
 export interface ProjectMemberWithUser {
   project_id: string;
   user_id: string;
@@ -145,12 +180,34 @@ export interface ProjectMemberWithUser {
   avatar_url: string | null;
 }
 
-export interface TaskStatus {
+/**
+ * Набор статусов — рабочий процесс, который проект выбирает себе целиком.
+ * Организация всегда имеет ровно один набор по умолчанию: в него попадают
+ * проекты, которые своего не выбирали.
+ */
+export interface StatusSet {
   id: string;
   org_id: string;
   name: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskStatus {
+  id: string;
+  org_id: string;
+  /**
+   * Набор, которому принадлежит статус. Инварианты справочника (ровно один
+   * дефолт, непустые обязательные категории, позиции 1..N) действуют в границах
+   * набора, а не организации.
+   */
+  set_id: string;
+  name: string;
   color: string;
-  kind: StatusKind;
+  category: StatusCategory;
+  /** Статус новой задачи. Ровно один на набор, удалить его нельзя. */
+  is_default: boolean;
   position: number;
 }
 
@@ -180,7 +237,6 @@ export interface CustomField {
 
 export interface TaskPlacement {
   project_id: string;
-  section_id: string | null;
   position: number;
 }
 
@@ -191,11 +247,43 @@ export interface CoreTask {
   description: string;
   status_id: string | null;
   priority: TaskPriority;
+  /**
+   * Начало работ — левая граница полосы на ганте. Порядок относительно
+   * `due_date` не навязан: план с началом позже срока пользователь видит и
+   * правит сам.
+   */
+  start_date: string | null;
+  /**
+   * Во сколько начинается. Пустое время означает «весь день» — как и пустой
+   * `due_time` означает срок на день целиком, а не на 00:00. Пара
+   * `start_time`/`due_time` делает задачу отрезком внутри дня: именно ею
+   * календарь ставит её в часовую сетку, а гант её не смотрит вовсе — он
+   * считает в днях.
+   */
+  start_time: string | null;
   due_date: string | null;
   due_time: string | null;
   estimated_minutes: number | null;
   completed_at: string | null;
   parent_task_id: string | null;
+  /**
+   * Место среди подзадач своего родителя — порядок, заданный перетаскиванием.
+   * У задачи верхнего уровня смысла не имеет и остаётся пустым; пустым оно
+   * бывает и у подзадачи, созданной кодом до миграции 0049, — такая уходит в
+   * конец ветки, а не ломает порядок остальных.
+   */
+  subtask_position: number | null;
+  /**
+   * Спринт, в который задача взята; `null` — бэклог. Спринт принадлежит проекту,
+   * а задача бывает размещена сразу в нескольких, поэтому принадлежность
+   * проверяет сервис: проект спринта обязан быть в цепочке размещений задачи.
+   */
+  sprint_id: string | null;
+  /**
+   * Сколько раз задача не поместилась в завершаемый спринт. Растёт только при
+   * завершении спринта; перепланирование до старта переездом не считается.
+   */
+  sprint_carry_count: number;
   source: string;
   created_by: string | null;
   created_at: string;
@@ -248,9 +336,58 @@ export interface TaskDetail extends TaskWithMeta {
   chain_project_ids: string[];
 }
 
+// --- Спринты (режим проекта «Разработка») ------------------------------------------
+
+/**
+ * Состояние спринта. Путь односторонний: `planned → active → completed`.
+ * Вернуть завершённый спринт в работу нельзя — незакрытые задачи из него уже
+ * разъехались, и «возврат» означал бы собрать их обратно неизвестно откуда.
+ */
+export type SprintState = "planned" | "active" | "completed";
+
+export interface Sprint {
+  id: string;
+  org_id: string;
+  project_id: string;
+  name: string;
+  goal: string;
+  starts_on: string | null;
+  ends_on: string | null;
+  state: SprintState;
+  /** Ёмкость в минутах — та же единица, что `estimated_minutes` у задачи. */
+  capacity_minutes: number | null;
+  position: number;
+  started_at: string | null;
+  completed_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Спринт с итогами по своим задачам. Считаются одним запросом на список: экран
+ * планирования показывает «набрано / ёмкость» у каждого спринта, и запрос на
+ * спринт означал бы N+1 при открытии экрана.
+ */
+export interface SprintWithTotals extends Sprint {
+  task_count: number;
+  done_count: number;
+  /** Сумма оценок задач спринта; задачи без оценки в неё не попадают. */
+  estimated_minutes: number;
+  /** Сколько задач спринта остались без оценки — «набрано» на них не отвечает. */
+  unestimated_count: number;
+}
+
 // --- Связи между сущностями ------------------------------------------------------
 
 export type RelationEntityType = "task" | "client" | "project";
+
+/**
+ * Смысл типа связи. `generic` — произвольный ярлык («см. также»), `blocks` —
+ * настоящая зависимость: источник блокирует цель. Гант рисует стрелки только по
+ * второму: по одному лишь имени типа отличить зависимость от заметки нельзя.
+ */
+export type RelationKind = "generic" | "blocks";
 
 export interface RelationType {
   id: string;
@@ -258,7 +395,18 @@ export interface RelationType {
   name: string;
   color: string;
   icon: string;
+  kind: RelationKind;
   position: number;
+}
+
+/**
+ * Зависимость между задачами для ганта: `from` блокирует `to`. Плоская пара
+ * без обвязки — полотну от связи нужны только два конца, а заголовки у него уже
+ * есть в строках.
+ */
+export interface TaskDependency {
+  from: string;
+  to: string;
 }
 
 /** Связь глазами конкретной карточки: «дальняя» сторона уже разрешена. */
@@ -284,6 +432,13 @@ export interface CoreComment {
   body: string;
   created_at: string;
   edited_at: string | null;
+  /**
+   * Корень обсуждения; null — сам корень. Уровень ровно один: ответ на ответ
+   * сервер приводит к тому же корню (как в core.doc_comments).
+   */
+  parent_id: string | null;
+  /** Канал, которым оставлен комментарий: null — интерфейс, иначе метка интеграции. */
+  source: string | null;
   author: UserBrief | null;
 }
 
@@ -338,6 +493,11 @@ export interface CoreEvent {
   verb: string;
   payload: Record<string, unknown>;
   created_at: string;
+  /**
+   * Канал, которым сделано действие: null — руками в интерфейсе, иначе метка
+   * интеграции (`claude`). Подпись для интерфейса даёт `actorSourceLabel`.
+   */
+  source: string | null;
   actor: UserBrief | null;
 }
 
@@ -356,10 +516,70 @@ export interface CoreNotification {
   verb: string | null;
   payload: Record<string, unknown> | null;
   actor_name: string | null;
+  /** Канал действия, породившего уведомление. У напоминания события нет — null. */
+  source: string | null;
   entity_type: string | null;
   entity_id: string | null;
   entity_title: string | null;
   scope: NotificationScope;
+}
+
+// --- Внешние календари ---------------------------------------------------------------
+
+/**
+ * Подключения принадлежат пользователю, а не организации (миграция 0046):
+ * личный календарь один и тот же во всех организациях, где человек состоит, а
+ * привязка к тенанту означала бы, что его встречи видит чужой администратор.
+ */
+export type CalendarProvider = "google" | "ics";
+
+/** Календарь внутри подключения. Секретов здесь нет — эти поля уходят в API. */
+export interface CalendarBrief {
+  id: string;
+  account_id: string;
+  name: string;
+  /** Цвет из внешнего календаря. */
+  color: string | null;
+  /** Свой цвет вместо внешнего: палитра Google с нашей темой не согласована. */
+  color_override: string | null;
+  timezone: string | null;
+  visible: boolean;
+  last_sync_at: string | null;
+}
+
+export interface CalendarAccountWithCalendars {
+  id: string;
+  provider: CalendarProvider;
+  /** Адрес аккаунта Google или хост ICS-ссылки — сама ссылка наружу не идёт. */
+  label: string;
+  sync_error: string | null;
+  last_sync_at: string | null;
+  created_at: string;
+  calendars: CalendarBrief[];
+}
+
+/**
+ * Событие внешнего календаря. Ровно одно из двух представлений заполнено —
+ * это держит `calendar_events_span` в миграции 0046:
+ *
+ *  * `all_day` — дни включительно (`start_date`/`end_date`);
+ *  * иначе — моменты (`starts_at`/`ends_at`), которые в местные день и время
+ *    переводит `localPoint` из `calendar.ts`, и только в браузере.
+ */
+export interface CalendarEventRow {
+  id: string;
+  calendar_id: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  all_day: boolean;
+  start_date: string | null;
+  end_date: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  status: string | null;
+  organizer: string | null;
+  html_link: string | null;
 }
 
 export const ORG_ROLE_RANK: Record<OrgRole, number> = {

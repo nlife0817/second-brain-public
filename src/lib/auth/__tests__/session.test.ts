@@ -14,7 +14,7 @@ import {
   verifySessionPayload,
   type SessionUser,
 } from "../session";
-import { safeNextPath } from "../oauth-state";
+import { safeNextPath } from "../urls";
 import { utf8ToBase64Url } from "../base64url";
 
 const USER: SessionUser = {

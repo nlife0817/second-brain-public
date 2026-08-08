@@ -7,7 +7,7 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import { useCallback, useRef, useState } from "react";
-import { AlignCenter, AlignLeft, AlignRight, Trash2 } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Loader2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 declare module "@tiptap/core" {
@@ -41,12 +41,23 @@ function normalizeWidth(raw: unknown): string | null {
  * атрибутом, а не содержимым узла: иначе внутри атомарной картинки появляется
  * второй редактируемый контур, курсор проваливается в него стрелками и
  * выделение всего документа начинает вести себя непредсказуемо.
+ *
+ * `compact` — вид для комментария: размер и удаление, без подписи и выключки.
+ * Узел и разметка те же, поэтому картинка, перенесённая из описания в
+ * комментарий (и обратно), читается обоими наборами расширений.
  */
 export const DocImage = Node.create({
   name: "docImage",
   group: "block",
   atom: true,
   draggable: true,
+
+  addOptions() {
+    return {
+      /** Колонка комментария узкая: подпись и выключка там только шумят. */
+      compact: false,
+    };
+  },
 
   addAttributes() {
     return {
@@ -68,6 +79,18 @@ export const DocImage = Node.create({
           return ALIGNMENTS.includes(value as Align) ? value : "left";
         },
         renderHTML: (attributes) => ({ "data-align": (attributes.align as string) ?? "left" }),
+      },
+      /**
+       * Метка картинки, которая ещё грузится во вложения (см. paste-images.ts).
+       * Пока метка стоит, на месте картинки рисуется заглушка, а `src` пуст:
+       * исходный base64 в документ не попадает вовсе, иначе описание раздувается
+       * до мегабайтов и перестаёт помещаться в предел сохранения.
+       */
+      uploadId: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("data-upload"),
+        renderHTML: (attributes) =>
+          attributes.uploadId ? { "data-upload": String(attributes.uploadId) } : {},
       },
     };
   },
@@ -114,12 +137,35 @@ export const DocImage = Node.create({
   },
 });
 
-function DocImageView({ node, updateAttributes, selected, editor, deleteNode }: NodeViewProps) {
+function DocImageView({
+  node,
+  updateAttributes,
+  selected,
+  editor,
+  deleteNode,
+  extension,
+}: NodeViewProps) {
   const figureRef = useRef<HTMLElement | null>(null);
   const [dragging, setDragging] = useState(false);
+  const compact = extension.options.compact === true;
   const editable = editor.isEditable;
   const align = (node.attrs.align as Align) ?? "left";
   const width = normalizeWidth(node.attrs.width);
+  const uploading = !!node.attrs.uploadId && !node.attrs.src;
+
+  /**
+   * Ручка перетаскивания — сама картинка.
+   *
+   * Без `data-drag-handle` узел не сдвинуть: Tiptap тащит блок только от ручки, а
+   * `NoTextDrag` вдобавок режет любой `dragstart` мимо неё (иначе выделенный
+   * текст уезжает мышью незаметно для человека). Ручка висит на медиа, а не на
+   * всём `figure`: ручка размера, панель кнопок и поле подписи — соседи внутри
+   * него, и захват за них должен остаться прежним.
+   *
+   * Место вставки рисует Dropcursor (см. extensions.ts), контейнер под курсором
+   * подсвечивает `DropTarget`.
+   */
+  const drag = editable ? { "data-drag-handle": "", draggable: true } : { draggable: false };
 
   /**
    * Перетаскивание правого края. Слушатели вешаются на документ, а не на ручку:
@@ -163,13 +209,23 @@ function DocImageView({ node, updateAttributes, selected, editor, deleteNode }: 
       className={cn("doc-image", selected && editable && "doc-image-selected")}
     >
       <div className="doc-image-frame">
-        {/* eslint-disable-next-line @next/next/no-img-element -- вложение отдаёт наш роут, оптимизатор next/image к нему неприменим */}
-        <img
-          src={(node.attrs.src as string) ?? ""}
-          alt={(node.attrs.alt as string) || (node.attrs.caption as string) || ""}
-          draggable={false}
-        />
-        {editable && (
+        {/* Картинка из вставки ещё едет во вложения — показываем место, которое
+            она займёт. Пустой <img> вместо этого выглядел бы как битая ссылка. */}
+        {uploading ? (
+          <span className={cn("doc-image-loading", editable && "doc-image-draggable")} {...drag}>
+            <Loader2 className="size-4 animate-spin" />
+            Загрузка картинки…
+          </span>
+        ) : (
+          /* eslint-disable-next-line @next/next/no-img-element -- вложение отдаёт наш роут, оптимизатор next/image к нему неприменим */
+          <img
+            src={(node.attrs.src as string) ?? ""}
+            alt={(node.attrs.alt as string) || (node.attrs.caption as string) || ""}
+            className={cn(editable && "doc-image-draggable")}
+            {...drag}
+          />
+        )}
+        {editable && !uploading && (
           <span
             className={cn("doc-image-handle", dragging && "doc-image-handle-active")}
             onPointerDown={startResize}
@@ -190,22 +246,27 @@ function DocImageView({ node, updateAttributes, selected, editor, deleteNode }: 
                 {preset}
               </button>
             ))}
-            <span className="doc-image-sep" />
-            {ALIGNMENTS.map((value) => {
-              const Icon = value === "left" ? AlignLeft : value === "center" ? AlignCenter : AlignRight;
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => updateAttributes({ align: value })}
-                  className={cn("doc-image-btn", align === value && "doc-image-btn-active")}
-                  title={`Выровнять: ${value}`}
-                >
-                  <Icon className="size-3.5" />
-                </button>
-              );
-            })}
+            {!compact && (
+              <>
+                <span className="doc-image-sep" />
+                {ALIGNMENTS.map((value) => {
+                  const Icon =
+                    value === "left" ? AlignLeft : value === "center" ? AlignCenter : AlignRight;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => updateAttributes({ align: value })}
+                      className={cn("doc-image-btn", align === value && "doc-image-btn-active")}
+                      title={`Выровнять: ${value}`}
+                    >
+                      <Icon className="size-3.5" />
+                    </button>
+                  );
+                })}
+              </>
+            )}
             <span className="doc-image-sep" />
             <button
               type="button"
@@ -219,7 +280,10 @@ function DocImageView({ node, updateAttributes, selected, editor, deleteNode }: 
           </div>
         )}
       </div>
-      {editable ? (
+      {/* Поле подписи только в описании; в комментарии подпись, приехавшую с
+          картинкой из описания, всё равно показываем — терять её при переносе
+          нельзя. */}
+      {editable && !compact ? (
         <figcaption>
           <input
             value={(node.attrs.caption as string) ?? ""}

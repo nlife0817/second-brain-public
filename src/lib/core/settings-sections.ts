@@ -18,6 +18,7 @@ export type SettingsSectionId =
   | "fields"
   | "audit"
   | "export"
+  | "integrations"
   | "webhooks";
 
 export interface SettingsSectionMeta {
@@ -74,6 +75,18 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     hint: "Выгрузка всех данных организации в JSON",
     minRole: "admin",
     defaultRoles: ["admin"],
+  },
+  {
+    id: "integrations",
+    title: "Интеграции",
+    hint: "Токены доступа для внешних агентов (MCP)",
+    // Токен не даёт прав сверх тех, что уже есть у его владельца, поэтому порог
+    // здесь — «сотрудник», а не «администратор»: запрещать человеку выпускать
+    // ключ на его же права значит запрещать ему пользоваться своими правами
+    // из другой программы. Гость исключён: у подрядчика внешних интеграций быть
+    // не должно.
+    minRole: "member",
+    defaultRoles: ["admin", "member"],
   },
   {
     id: "webhooks",

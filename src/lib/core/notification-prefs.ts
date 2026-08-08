@@ -19,11 +19,13 @@ export function isKnownKind(kind: string): boolean {
 }
 
 export async function getNotificationPrefs(userId: string): Promise<NotificationPrefs> {
-  const rows = await prepare<{ kind: string; inbox: boolean; push: boolean }>(
-    `SELECT kind, inbox, push FROM core.notification_prefs WHERE user_id = ?`,
+  const rows = await prepare<{ kind: string; inbox: boolean; push: boolean; telegram: boolean }>(
+    `SELECT kind, inbox, push, telegram FROM core.notification_prefs WHERE user_id = ?`,
   ).all(userId);
   const stored: NotificationPrefs = {};
-  for (const row of rows) stored[row.kind] = { inbox: row.inbox, push: row.push };
+  for (const row of rows) {
+    stored[row.kind] = { inbox: row.inbox, push: row.push, telegram: row.telegram };
+  }
   return withDefaults(stored);
 }
 
@@ -32,18 +34,20 @@ export async function setNotificationPref(
   kind: string,
   pref: NotificationPref,
 ): Promise<void> {
-  // Выключенный инбокс делает push бессмысленным: уведомление не создаётся,
-  // рассылать нечего. Приводим к согласованному виду здесь, чтобы диспетчер
-  // не гадал по двум флагам.
+  // Выключенный инбокс делает доставку бессмысленной: уведомление не
+  // создаётся, рассылать нечего. Приводим к согласованному виду здесь, чтобы
+  // диспетчер не гадал по трём флагам.
   const push = pref.inbox && pref.push;
+  const telegram = pref.inbox && pref.telegram;
   await prepare(
-    `INSERT INTO core.notification_prefs (user_id, kind, inbox, push)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO core.notification_prefs (user_id, kind, inbox, push, telegram)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT (user_id, kind) DO UPDATE SET
        inbox = EXCLUDED.inbox,
        push = EXCLUDED.push,
+       telegram = EXCLUDED.telegram,
        updated_at = now()`,
-  ).run(userId, kind, pref.inbox, push);
+  ).run(userId, kind, pref.inbox, push, telegram);
 }
 
 // ---- Отключение по проекту -----------------------------------------------------------------

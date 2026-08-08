@@ -73,15 +73,23 @@ export interface UploadInput {
 }
 
 /**
- * Загрузка файла в задачу. Правка описания — право `edit`: вложение существует
- * только внутри описания, и тот, кто не может его править, не может и вложить.
+ * Загрузка файла в задачу — право `comment`, а не `edit`.
+ *
+ * Вложение живёт не только в описании: картинку прикладывают и к комментарию, а
+ * комментировать может тот, кому правка задачи недоступна (роль `commenter`,
+ * гость). Требование `edit` означало бы, что комментатор видит поле для
+ * картинки и получает на неё 403.
+ *
+ * Описание при этом защищено по-прежнему: сохраняет его `updateTask`, и он
+ * требует `edit`. Загруженный мимо описания файл — это байты, на которые никто
+ * не ссылается; их убирает уборка осиротевших вложений в тике cron.
  */
 export async function uploadAttachment(
   ctx: AuthContext,
   taskId: string,
   input: UploadInput,
 ): Promise<Attachment> {
-  await requireTaskAccess(ctx, taskId, "edit");
+  await requireTaskAccess(ctx, taskId, "comment");
   if (input.bytes.byteLength === 0) throw new DomainError(422, "Файл пустой");
   if (input.bytes.byteLength > ATTACHMENT_MAX_BYTES) {
     throw new DomainError(413, `Файл больше ${Math.round(ATTACHMENT_MAX_BYTES / 1024 / 1024)} МБ`);
@@ -147,12 +155,17 @@ export async function listTaskAttachments(
 }
 
 /**
- * Уборка файлов, которых больше нет в описании.
+ * Уборка файлов, на которые больше никто не ссылается.
  *
  * Вставленную и тут же удалённую картинку никто не «отвязывает» явно — запись
  * остаётся с байтами внутри и попадает в каждый бэкап. Сутки отсрочки нужны,
  * чтобы не снести файл, загруженный в открытый редактор, где описание ещё не
  * сохранено. Зовётся из тика cron.
+ *
+ * Ссылку ищем в трёх местах, а не только в описании: картинку прикладывают ещё
+ * и к комментарию задачи, и к комментарию в панели обсуждения. Проверка одного
+ * описания сносила бы такие картинки через сутки после отправки — комментарий
+ * оставался бы с битым изображением.
  */
 export async function purgeOrphanAttachments(): Promise<{ removed: number }> {
   const result = await prepare(
@@ -160,7 +173,19 @@ export async function purgeOrphanAttachments(): Promise<{ removed: number }> {
      USING core.tasks t
      WHERE t.id = a.task_id
        AND a.created_at < now() - interval '1 day'
-       AND position(a.id::text in t.description) = 0`,
+       AND position(a.id::text in t.description) = 0
+       AND NOT EXISTS (
+         SELECT 1 FROM core.comments c
+         WHERE c.entity_type = 'task' AND c.entity_id = a.task_id
+           AND c.deleted_at IS NULL
+           AND position(a.id::text in c.body) > 0
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM core.doc_comments d
+         WHERE d.task_id = a.task_id
+           AND d.deleted_at IS NULL
+           AND position(a.id::text in d.body) > 0
+       )`,
   ).run();
   return { removed: result.changes };
 }

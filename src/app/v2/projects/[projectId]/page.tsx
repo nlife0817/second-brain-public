@@ -6,7 +6,8 @@ import { notFound } from "next/navigation";
 import { getActiveOrgAuth } from "@/lib/core/bootstrap";
 import { isUuid } from "@/lib/core/http";
 import { effectiveProjectRole } from "@/lib/core/policy";
-import { listProjectMembers, listSections, requireProject } from "@/lib/core/projects";
+import { listProjectMembers, requireProject } from "@/lib/core/projects";
+import { listSprints } from "@/lib/core/sprints";
 import { listProjectTasks } from "@/lib/core/tasks";
 import { ProjectBoardClient } from "./ProjectBoardClient";
 
@@ -29,10 +30,12 @@ export default async function ProjectBoardPage({
     notFound();
   }
 
-  const [sections, members, tasks] = await Promise.all([
-    listSections(projectId),
+  const [members, tasks, sprints] = await Promise.all([
     listProjectMembers(projectId),
     listProjectTasks(auth, projectId, { includeDone: false }),
+    // Спринты есть только у проекта в режиме «Разработка» — обычному лишний
+    // запрос на каждом открытии экрана ни к чему.
+    project.mode === "dev" ? listSprints(auth, projectId) : Promise.resolve([]),
   ]);
 
   return (
@@ -41,10 +44,10 @@ export default async function ProjectBoardPage({
       initialProject={{
         ...project,
         my_role: effectiveProjectRole(auth, project),
-        sections,
         members,
       }}
       initialTasks={tasks}
+      initialSprints={sprints}
     />
   );
 }

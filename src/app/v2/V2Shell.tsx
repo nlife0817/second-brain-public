@@ -12,9 +12,11 @@ import {
   Bell,
   CheckCircle2,
   Clock,
+  GripVertical,
   ListChecks,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Plus,
   Search,
   Settings,
@@ -26,6 +28,8 @@ import { GlobalTimer } from "@/components/v2/GlobalTimer";
 import { PushPrompt, PushToasts } from "@/components/v2/PushDesktop";
 import { SignOutButton } from "@/components/v2/SignOutButton";
 import { ProjectIcon } from "@/components/v2/project-icons";
+import { useRowDrag } from "@/components/v2/tasks/use-row-drag";
+import { api } from "@/lib/core/client";
 import { SIDEBAR_COLLAPSED_COOKIE, SIDEBAR_COLLAPSED_COOKIE_MAX_AGE } from "@/lib/core/keys";
 import {
   readActiveOrgCookie,
@@ -38,7 +42,7 @@ import { reportTimezone } from "@/lib/core/timezone";
 import { usePollWhenVisible } from "@/lib/core/use-poll";
 import { syncReadState } from "@/lib/notifications/client";
 import type { V2BootstrapResult } from "@/lib/core/bootstrap";
-import type { UserBrief } from "@/lib/core/types";
+import type { ProjectWithMeta, UserBrief } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -58,6 +62,8 @@ function NavLink({
   badge,
   active,
   collapsed = false,
+  action,
+  handle,
 }: {
   href: string;
   icon: React.ReactNode;
@@ -66,9 +72,21 @@ function NavLink({
   active: boolean;
   /** Свёрнутая панель: остаётся только значок, подпись уходит в title. */
   collapsed?: boolean;
+  /**
+   * Действие у правого края строки — появляется по наведению (`group/nav`).
+   * В свёрнутой панели не рисуется: там на значок и подпись-то места нет.
+   */
+  action?: React.ReactNode;
+  /**
+   * Ручка перетаскивания. Рисуется соседом ссылки (кнопка внутри `<a>`
+   * недопустима), а место ей выбирает вызывающий: у проектов она встаёт поверх
+   * значка, потому что третий элемент в строке распирает узкую панель.
+   */
+  handle?: React.ReactNode;
 }) {
   const [intent, setIntent] = useState(false);
-  return (
+  const withAction = !collapsed && (!!action || !!handle);
+  const link = (
     <Link
       href={href}
       prefetch={intent ? true : false}
@@ -79,6 +97,9 @@ function NavLink({
       className={cn(
         "flex items-center rounded-lg py-1.5 text-sm transition-colors",
         collapsed ? "relative justify-center px-0" : "gap-2.5 px-2.5",
+        // Рядом с действием ссылка перестаёт быть всей строкой — иначе она
+        // выдавит кнопку за край панели длинным названием.
+        withAction && "min-w-0 flex-1",
         // Активный пункт несёт акцентный цвет: на тонированном фоне панели
         // одна лишь серая подложка почти неразличима.
         active ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -100,6 +121,39 @@ function NavLink({
           {!collapsed && (badge > 99 ? "99+" : badge)}
         </span>
       )}
+    </Link>
+  );
+
+  if (!withAction) return link;
+  // Действие — сосед ссылки, а не её потомок: <a> внутри <a> недопустим.
+  // Общая обёртка нужна ради одного состояния наведения на всю строку.
+  return (
+    <span className="group/nav relative flex items-center">
+      {handle}
+      {link}
+      {action}
+    </span>
+  );
+}
+
+/**
+ * Настройки проекта прямо из сайдбара — карандаш у правого края строки.
+ * Префетч, как и у самой строки, включается намерением: экран настроек
+ * динамический, тянуть его для каждого проекта при монтировании незачем.
+ */
+function ProjectSettingsLink({ projectId, name }: { projectId: string; name: string }) {
+  const [intent, setIntent] = useState(false);
+  return (
+    <Link
+      href={`/v2/projects/${projectId}/settings`}
+      prefetch={intent ? true : false}
+      onMouseEnter={() => setIntent(true)}
+      onFocus={() => setIntent(true)}
+      className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/nav:opacity-100"
+      title="Настройки проекта"
+      aria-label={`Настройки проекта «${name}»`}
+    >
+      <Pencil className="size-3.5" />
     </Link>
   );
 }
@@ -125,6 +179,10 @@ export function V2Shell({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(initialCollapsed);
+  // Перестановка не доехала до сервера — панель уже вернулась к прежнему
+  // порядку, но молчать об этом нельзя: человек видел бы, как строка «сама»
+  // прыгает назад.
+  const [orderError, setOrderError] = useState<string | null>(null);
   const migrated = useRef(false);
 
   const toggleCollapsed = useCallback(() => {
@@ -165,6 +223,39 @@ export function V2Shell({
     useCallback(() => void storeApi.getState().refreshUnread(), [storeApi]),
     30_000,
   );
+
+  /**
+   * Новый порядок проектов: сначала на экране, потом на сервере, с откатом —
+   * как правка справочника статусов. Список берём из стора, а не из замыкания
+   * рендера: сюда приходят из обработчика указателя, и замыкание может отстать.
+   *
+   * На сервер уходит порядок целиком (`PUT …/projects/order`); закрытые и
+   * архивные проекты в списке не участвуют, их места сервис сохраняет сам.
+   */
+  const reorderProjects = useCallback(
+    (from: number, to: number) => {
+      const { projects: snapshot, orgId, setProjects } = storeApi.getState();
+      const next = [...snapshot];
+      const [moved] = next.splice(from, 1);
+      if (!moved || !orgId) return;
+      next.splice(to, 0, moved);
+      setProjects(next);
+      setOrderError(null);
+      void (async () => {
+        try {
+          const rows = await api.put<ProjectWithMeta[]>(`/orgs/${orgId}/projects/order`, {
+            order: next.map((p) => p.id),
+          });
+          storeApi.getState().setProjects(rows);
+        } catch (e) {
+          storeApi.getState().setProjects(snapshot);
+          setOrderError(e instanceof Error ? e.message : "Не удалось сохранить порядок");
+        }
+      })();
+    },
+    [storeApi],
+  );
+  const projectDrag = useRowDrag(store.projects.length, reorderProjects);
 
   // Непрочитанных не осталось — возможно, их разобрали на телефоне. Убираем
   // из шторки этого браузера то, что там ещё висит.
@@ -222,6 +313,11 @@ export function V2Shell({
   }
 
   const isGuest = orgRole === "guest";
+  // Порядок общий для организации, поэтому и двигает его тот, кто за неё
+  // отвечает, — тот же порог, что у справочника статусов (`projects.order`
+  // в policy.ts). Сервер проверяет это ещё раз: ручка здесь — удобство, а не
+  // защита.
+  const canOrderProjects = orgRole === "owner" || orgRole === "admin";
 
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
@@ -342,18 +438,78 @@ export function V2Shell({
           )}
         </div>
         <div className="flex-1 overflow-y-auto px-2 py-1.5">
-          <div className="flex flex-col gap-0.5">
-            {projects.map((p) => (
-              <NavLink
-                key={p.id}
-                href={`/v2/projects/${p.id}`}
-                icon={<ProjectIcon name={p.icon} color={p.color} className="size-3.5" />}
-                label={p.name}
-                badge={p.open_task_count}
-                active={pathname.startsWith(`/v2/projects/${p.id}`)}
-                collapsed={collapsed}
-              />
-            ))}
+          <div className={cn("flex flex-col gap-0.5", canOrderProjects && "select-none")}>
+            {projects.map((p, i) => {
+              const dragging = projectDrag.draggingId === p.id;
+              return (
+                <div
+                  key={p.id}
+                  style={{
+                    transform: `translate3d(0, ${projectDrag.shiftOf(i)}px, 0)`,
+                    zIndex: dragging ? 10 : undefined,
+                  }}
+                  className={cn(
+                    "relative rounded-lg",
+                    dragging && "bg-sidebar shadow-md ring-1 ring-ring",
+                    // Соседи расступаются плавно, но переход живёт только на
+                    // время перетаскивания: оставить его к моменту отпускания —
+                    // значит проиграть возврат из уже применённого сдвига.
+                    // Наведение им тоже не нужно, иначе подсветка бежит за
+                    // курсором.
+                    !projectDrag.idle && !dragging && "pointer-events-none transition-transform duration-150 ease-out",
+                  )}
+                >
+                  <NavLink
+                    href={`/v2/projects/${p.id}`}
+                    icon={
+                      <ProjectIcon
+                        name={p.icon}
+                        color={p.color}
+                        // Значок уступает место ручке: третьему элементу в строке
+                        // узкая панель места не даёт.
+                        className={cn(
+                          "size-3.5",
+                          canOrderProjects && !collapsed && "group-hover/nav:opacity-0",
+                          dragging && "opacity-0",
+                        )}
+                      />
+                    }
+                    label={p.name}
+                    active={pathname.startsWith(`/v2/projects/${p.id}`)}
+                    collapsed={collapsed}
+                    // Порог тот же, что был у шестерёнки в шапке проекта: смотреть
+                    // настройки может любой участник, а править — editor и админ.
+                    action={
+                      (p.my_role === "admin" || p.my_role === "editor") && (
+                        <ProjectSettingsLink projectId={p.id} name={p.name} />
+                      )
+                    }
+                    // В свёрнутой панели перетаскивания нет: от строки остался
+                    // один значок, и ручке негде появиться, не закрыв его совсем.
+                    handle={
+                      canOrderProjects && !collapsed ? (
+                        <button
+                          {...projectDrag.handlers(i, p.id)}
+                          // touch-none обязателен: без него палец прокручивает
+                          // панель вместо перетаскивания.
+                          className={cn(
+                            "absolute left-2.5 top-1/2 z-10 -translate-y-1/2 touch-none text-muted-foreground opacity-0 group-hover/nav:opacity-100 focus-visible:opacity-100",
+                            dragging ? "cursor-grabbing opacity-100" : "cursor-grab",
+                          )}
+                          title="Перетащите, чтобы изменить порядок (или ↑/↓)"
+                          aria-label={`Переместить проект «${p.name}»`}
+                        >
+                          <GripVertical className="size-3.5" />
+                        </button>
+                      ) : undefined
+                    }
+                  />
+                </div>
+              );
+            })}
+            {orderError && !collapsed && (
+              <p className="px-2.5 py-1 text-[11px] text-destructive">{orderError}</p>
+            )}
             {/* Справочники доезжают заново только при смене организации: пока
                 они в пути — скелет, а не «проектов нет». */}
             {projects.length === 0 && metaLoading && (

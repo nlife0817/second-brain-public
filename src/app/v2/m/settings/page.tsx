@@ -4,14 +4,16 @@
 // Администрирование (участники, приглашения, статусы, поля) — на десктопе.
 
 import Link from "next/link";
-import { Check, CheckCircle2, ChevronsUpDown, Download, Monitor, Smartphone } from "lucide-react";
+import { Check, CheckCircle2, ChevronsUpDown, Clock, Download, Monitor, Smartphone } from "lucide-react";
 import { Avatar } from "@/components/v2/bits";
 import {
   DeliveryPreferences,
   NotificationKinds,
   ProjectMutes,
   PushTestButton,
+  TelegramConnect,
 } from "@/components/v2/NotificationSettings";
+import { PasswordSection } from "@/components/v2/PasswordSection";
 import { PushToggle } from "@/components/v2/PushToggle";
 import { SignOutButton } from "@/components/v2/SignOutButton";
 import { IosInstallSteps, useInstallState } from "@/components/v2/mobile/InstallPrompt";
@@ -41,10 +43,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export default function MobileSettingsPage() {
-  const { me, orgs, orgId, orgName, orgRole, switchOrg } = useV2Store();
+  const { me, members, orgs, orgId, orgName, orgRole, switchOrg } = useV2Store();
   const { standalone, ios, canInstall, install } = useInstallState();
 
   if (!me) return null;
+
+  // Задан ли пароль — из своей же строки в составе организации.
+  const myMembership = members.find((m) => m.user_id === me.id);
 
   return (
     <div className="flex h-full flex-col">
@@ -67,6 +72,10 @@ export default function MobileSettingsPage() {
                 </span>
               )}
             </div>
+          </Section>
+
+          <Section title="Вход в систему">
+            <PasswordSection hasPassword={myMembership?.has_password ?? true} />
           </Section>
 
           <Section title="Организация">
@@ -110,6 +119,10 @@ export default function MobileSettingsPage() {
             </div>
           </Section>
 
+          <Section title="Telegram">
+            <TelegramConnect />
+          </Section>
+
           <Section title="Какие события присылать">
             <NotificationKinds />
           </Section>
@@ -120,6 +133,19 @@ export default function MobileSettingsPage() {
 
           <Section title="Проекты">
             <ProjectMutes />
+          </Section>
+
+          {/* Учёта времени в таб-баре больше нет — его место занял календарь.
+              Таймер по-прежнему запускается из карточки задачи, а список записей
+              за период живёт здесь. */}
+          <Section title="Учёт времени">
+            <Link
+              href="/v2/m/time"
+              className="flex items-center gap-2 text-sm text-primary underline underline-offset-2"
+            >
+              <Clock className="size-4" />
+              Таймер и записи за период
+            </Link>
           </Section>
 
           <Section title="Приложение">

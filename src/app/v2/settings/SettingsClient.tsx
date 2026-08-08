@@ -12,7 +12,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
-import { Bell, Copy, Plus, Trash2 } from "lucide-react";
+import { Bell, CalendarDays, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -31,6 +31,7 @@ import {
 } from "@/lib/core/settings-sections";
 import { ORG_ROLE_RANK } from "@/lib/core/types";
 import type {
+  ApiToken,
   CoreEvent,
   CustomField,
   FieldType,
@@ -40,9 +41,12 @@ import type {
 } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { useLoad } from "@/lib/core/use-load";
+import { ApiTokensSection } from "@/components/v2/ApiTokensSection";
 import { AuditList } from "@/components/v2/AuditList";
 import { Avatar, chipStyle } from "@/components/v2/bits";
 import { OrgSwitcher } from "@/components/v2/OrgSwitcher";
+import { PasswordSection } from "@/components/v2/PasswordSection";
+import { StatusesSection } from "@/components/v2/StatusesSection";
 
 const PROJECT_ROLE_LABELS: Record<ProjectRole, string> = {
   admin: "Админ",
@@ -100,6 +104,7 @@ export interface SettingsInitial {
   teams: Team[];
   webhooks: Webhook[];
   audit: CoreEvent[];
+  apiTokens: ApiToken[];
   /** Разделы, доступные этой роли, — посчитаны на сервере. */
   sections: SettingsSectionId[];
   /** Настройка видимости целиком; приходит только владельцу — он её и правит. */
@@ -109,7 +114,7 @@ export interface SettingsInitial {
 export function SettingsClient({ initial }: { initial: SettingsInitial }) {
   const store = useV2Store();
   const storeApi = useV2StoreApi();
-  const { orgId, orgRole, me, members, statuses, tags, projects } = store;
+  const { orgId, orgRole, me, members, tags, projects } = store;
   const isOwner = orgRole === "owner";
   const isAdmin = isOwner || orgRole === "admin";
   // Теги и кастомные поля org-уровня доступны сотрудникам, но не гостям.
@@ -128,12 +133,17 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
   const [webhookUrl, setWebhookUrl] = useState("");
   const [newSecret, setNewSecret] = useState<string | null>(null);
   const [fields, setFields] = useState<CustomField[]>(initial.fields);
-  const [newStatus, setNewStatus] = useState("");
   const [newTag, setNewTag] = useState("");
   const [newField, setNewField] = useState("");
   const [newFieldType, setNewFieldType] = useState<FieldType>("text");
   const [newFieldOptions, setNewFieldOptions] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Ссылка «задать пароль», выданная владельцем: показывается один раз, как и
+  // ссылка приглашения, — второй раз её взять уже неоткуда.
+  const [passwordLink, setPasswordLink] = useState<{ email: string; url: string } | null>(null);
+
+  // Своя строка в составе организации: из неё берём, задан ли уже пароль.
+  const myMembership = members.find((m) => m.user_id === me?.id);
 
   // Поля живут в сторе (их читает карточка задачи) — правки отсюда должны
   // обновлять именно его, иначе карточка покажет устаревший набор.
@@ -224,8 +234,34 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
                         {m.name || m.email}
                         {me?.id === m.user_id && <span className="text-muted-foreground"> (вы)</span>}
                       </p>
-                      <p className="truncate text-xs text-muted-foreground">{m.email}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {m.email}
+                        {/* Видно только владельцу: он же и выдаёт ссылку. */}
+                        {isOwner && !m.has_password && (
+                          <span className="text-destructive"> · пароль не задан</span>
+                        )}
+                      </p>
                     </div>
+                    {/* Выдать ссылку — значит войти под этим человеком, поэтому
+                        только владелец и только не себе: свой пароль он меняет
+                        в разделе «Вход в систему». */}
+                    {isOwner && m.user_id !== me?.id && (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="Ссылка для установки пароля"
+                        onClick={() =>
+                          void call(async () => {
+                            const res = await api.post<{ url: string }>(
+                              `/orgs/${orgId}/members/${m.user_id}/password-link`,
+                            );
+                            setPasswordLink({ email: m.email, url: res.url });
+                          })
+                        }
+                      >
+                        <KeyRound className="size-4" />
+                      </Button>
+                    )}
                     {isAdmin && m.user_id !== me?.id ? (
                       <>
                         <Select
@@ -272,6 +308,28 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
                   </div>
                 ))}
               </div>
+
+              {/* Письма система не шлёт — ссылку владелец передаёт лично.
+                  Показывается один раз: в базе лежит только её хеш. */}
+              {passwordLink && (
+                <div className="mt-3 rounded-lg bg-muted px-3 py-2">
+                  <p className="mb-1.5 text-xs text-muted-foreground">
+                    Ссылка для {passwordLink.email} — действует двое суток, сработает один раз.
+                    Передайте её лично: кто откроет, тот и задаст пароль.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <code className="min-w-0 flex-1 truncate text-xs">{passwordLink.url}</code>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void navigator.clipboard.writeText(passwordLink.url)}
+                    >
+                      <Copy className="size-3.5" />
+                      Копировать
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {isAdmin && (
                 <>
@@ -421,6 +479,12 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
             </Section>
           )}
 
+          {/* Вход — личный раздел, как уведомления и календари: он есть у любой
+              роли независимо от настройки видимости, которую задаёт владелец. */}
+          <Section title="Вход в систему">
+            <PasswordSection hasPassword={myMembership?.has_password ?? true} />
+          </Section>
+
           {/* Уведомления настраиваются в своём разделе: он личный и доступен
               любой роли, а состав этой страницы решает владелец организации. */}
           <Section title="Уведомления">
@@ -442,55 +506,28 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
             </div>
           </Section>
 
+          {/* Внешние календари, как и уведомления, настраивает себе каждый: это
+              личное подключение, а не настройка организации. */}
+          <Section title="Календари">
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="flex-1 text-sm text-muted-foreground">
+                Google Calendar и подписки по ссылке — рядом с задачами, только для чтения
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                nativeButton={false}
+                render={<Link href="/v2/settings/calendars" />}
+              >
+                <CalendarDays className="size-4" />
+                Открыть раздел
+              </Button>
+            </div>
+          </Section>
+
           {has("statuses") && (
             <Section title="Статусы задач">
-              <div className="flex flex-col gap-1.5">
-                {statuses.map((s) => (
-                  <div key={s.id} className="flex items-center gap-2">
-                    <span className="size-2.5 rounded-full" style={{ backgroundColor: s.color }} />
-                    <span className="flex-1 text-sm">{s.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {s.kind === "done" ? "завершает" : s.kind === "archived" ? "архив" : ""}
-                    </span>
-                    {isAdmin && (
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() => {
-                          if (window.confirm(`Удалить статус «${s.name}»? Задачи останутся без статуса.`)) {
-                            void call(() => api.del(`/orgs/${orgId}/statuses/${s.id}`), store.refreshMeta);
-                          }
-                        }}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                ))}
-                {isAdmin && (
-                  <div className="mt-1 flex items-center gap-2">
-                    <Input
-                      placeholder="Новый статус"
-                      value={newStatus}
-                      onChange={(e) => setNewStatus(e.target.value)}
-                      className="h-8 w-56"
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!newStatus.trim()}
-                      onClick={() =>
-                        void call(async () => {
-                          await api.post(`/orgs/${orgId}/statuses`, { name: newStatus.trim() });
-                          setNewStatus("");
-                        }, store.refreshMeta)
-                      }
-                    >
-                      Добавить
-                    </Button>
-                  </div>
-                )}
-              </div>
+              <StatusesSection canManage={isAdmin} onError={setError} />
             </Section>
           )}
 
@@ -641,6 +678,17 @@ export function SettingsClient({ initial }: { initial: SettingsInitial }) {
               initialConfig={initial.sectionsConfig}
               onError={setError}
             />
+          )}
+
+          {has("integrations") && (
+            <Section title="Интеграции: токены доступа">
+              <ApiTokensSection
+                orgId={orgId}
+                initialTokens={initial.apiTokens}
+                currentUserId={me?.id ?? null}
+                onError={setError}
+              />
+            </Section>
           )}
 
           {has("webhooks") && (

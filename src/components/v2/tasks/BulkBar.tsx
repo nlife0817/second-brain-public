@@ -5,10 +5,11 @@
 // параллельностью, поэтому здесь только выбор значения и подтверждение.
 
 import { useState } from "react";
-import { Check, Trash2, X } from "lucide-react";
+import { Check, Trash2, Unlink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PRIORITY_LABELS } from "@/components/v2/bits";
+import { TaskSearchField, type TaskHit } from "@/components/v2/TaskPicker";
 import type { CoreTag, OrgMemberWithUser, TaskPriority, TaskStatus } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
 
@@ -20,11 +21,15 @@ export interface BulkBarProps {
   members: OrgMemberWithUser[];
   /** Названия закрытых проектов, сузивших список исполнителей. */
   restrictedBy?: string[];
+  /** Выбранные строки: родителем не предлагаем никого из них самих. */
+  selectedIds: string[];
   busy: boolean;
   onClear: () => void;
   onApply: (payload: Record<string, unknown>) => void;
   onAddTag: (tagId: string) => void;
   onRemoveTag: (tagId: string) => void;
+  /** Подчинить все выбранные одной задаче. Подтверждение спрашивает экран. */
+  onSetParent: (hit: TaskHit) => void;
   onDelete: () => void;
 }
 
@@ -36,14 +41,17 @@ export function BulkBar({
   tags,
   members,
   restrictedBy = [],
+  selectedIds,
   busy,
   onClear,
   onApply,
   onAddTag,
   onRemoveTag,
+  onSetParent,
   onDelete,
 }: BulkBarProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [parentOpen, setParentOpen] = useState(false);
 
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-border bg-muted/40 px-4 py-2">
@@ -139,6 +147,29 @@ export function BulkBar({
             className="flex items-center gap-1.5 rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <X className="size-3.5" /> Убрать срок
+          </button>
+        </PopoverContent>
+      </Popover>
+
+      <Popover open={parentOpen} onOpenChange={setParentOpen}>
+        <PopoverTrigger render={<Button variant="outline" size="xs" disabled={busy} />}>Родитель</PopoverTrigger>
+        <PopoverContent align="start" className="w-72 gap-2 p-2.5">
+          <TaskSearchField
+            excludeIds={selectedIds}
+            placeholder={`Кому подчинить выбранные (${count})?`}
+            onPick={(hit) => {
+              onSetParent(hit);
+              setParentOpen(false);
+            }}
+          />
+          <button
+            onClick={() => {
+              onApply({ parent_task_id: null });
+              setParentOpen(false);
+            }}
+            className="flex items-center gap-1.5 rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <Unlink className="size-3.5" /> Отвязать от родителя
           </button>
         </PopoverContent>
       </Popover>

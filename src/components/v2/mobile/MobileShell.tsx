@@ -8,7 +8,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { Bell, CheckCircle2, Clock, CloudOff, FolderKanban, Settings } from "lucide-react";
+import { Bell, CalendarDays, CheckCircle2, CloudOff, FolderKanban, Settings } from "lucide-react";
 import { OrgOnboarding } from "@/components/v2/OrgOnboarding";
 import { SignOutButton } from "@/components/v2/SignOutButton";
 import { Button } from "@/components/ui/button";
@@ -19,11 +19,14 @@ import { useV2Store } from "@/lib/core/ui-store";
 import { syncReadState } from "@/lib/notifications/client";
 import { cn } from "@/lib/utils";
 
+// Учёт времени вкладки лишился: таймер запускается из карточки задачи, а список
+// записей за период открывается из «Настроек» (/v2/m/time никуда не делся).
+// Календарь на его месте отвечает на вопрос, который задают каждый день.
 const TABS = [
   { href: "/v2/m/my", label: "Мои", icon: CheckCircle2 },
   { href: "/v2/m/inbox", label: "Входящие", icon: Bell },
   { href: "/v2/m/projects", label: "Проекты", icon: FolderKanban },
-  { href: "/v2/m/time", label: "Время", icon: Clock },
+  { href: "/v2/m/calendar", label: "Календарь", icon: CalendarDays },
   { href: "/v2/m/settings", label: "Настройки", icon: Settings },
 ] as const;
 

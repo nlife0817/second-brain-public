@@ -15,6 +15,7 @@ import { api } from "./client";
 import { invalidate } from "./query";
 import { ACTIVE_ORG_COOKIE, ACTIVE_ORG_COOKIE_MAX_AGE, ACTIVE_ORG_LEGACY_KEY } from "./keys";
 import type {
+  StatusSet,
   CoreTag,
   CustomField,
   OrgMemberWithUser,
@@ -34,6 +35,7 @@ interface MeResponse {
 interface OrgMetaResponse {
   projects: ProjectWithMeta[];
   statuses: TaskStatus[];
+  statusSets: StatusSet[];
   tags: CoreTag[];
   members: OrgMemberWithUser[];
   fields: CustomField[];
@@ -101,6 +103,8 @@ export interface V2State {
   orgRole: OrgRole | null;
   projects: ProjectWithMeta[];
   statuses: TaskStatus[];
+  /** Наборы статусов организации: проект показывает статусы своего набора. */
+  statusSets: StatusSet[];
   tags: CoreTag[];
   members: OrgMemberWithUser[];
   fields: CustomField[];
@@ -110,6 +114,18 @@ export interface V2State {
   /** Наполнение из серверного рендера — синхронно, без единого запроса. */
   hydrate: (initial: V2InitialState) => void;
   setFields: (fields: CustomField[]) => void;
+  /**
+   * Справочник статусов после правки в настройках. Правка отвечает уже новым
+   * состоянием, и перечитывать его отдельным запросом незачем; экраны читают
+   * статусы прямо из стора, поэтому обновлять надо именно его.
+   */
+  setStatuses: (statuses: TaskStatus[]) => void;
+  /**
+   * Проекты после перестановки в панели. По той же причине, что и `setStatuses`:
+   * ответ на перестановку — это уже новый список, а панель читает проекты прямо
+   * из стора. Он же служит откатом, если перестановка не доехала до сервера.
+   */
+  setProjects: (projects: ProjectWithMeta[]) => void;
   setActiveTimer: (timer: ActiveTimer | null) => void;
   bootstrap: () => Promise<void>;
   switchOrg: (orgId: string) => Promise<void>;
@@ -133,6 +149,7 @@ const EMPTY = {
   orgRole: null,
   projects: [],
   statuses: [],
+  statusSets: [],
   tags: [],
   members: [],
   fields: [],
@@ -142,6 +159,8 @@ const EMPTY = {
   V2State,
   | "hydrate"
   | "setFields"
+  | "setStatuses"
+  | "setProjects"
   | "setActiveTimer"
   | "bootstrap"
   | "switchOrg"
@@ -167,6 +186,10 @@ export function createV2Store(initial?: V2InitialState | null) {
     },
 
     setFields: (fields) => set({ fields }),
+
+    setStatuses: (statuses) => set({ statuses }),
+
+    setProjects: (projects) => set({ projects }),
 
     bootstrap: async () => {
       // Фолбэк: серверный рендер уже наполнил стор, сюда попадаем только если
@@ -247,11 +270,12 @@ export function createV2Store(initial?: V2InitialState | null) {
     refreshMeta: async () => {
       const { orgId } = get();
       if (!orgId) return;
-      const [statuses, tags] = await Promise.all([
+      const [statuses, statusSets, tags] = await Promise.all([
         api.get<TaskStatus[]>(`/orgs/${orgId}/statuses`),
+        api.get<StatusSet[]>(`/orgs/${orgId}/status-sets`),
         api.get<CoreTag[]>(`/orgs/${orgId}/tags`),
       ]);
-      set({ statuses, tags });
+      set({ statuses, statusSets, tags });
     },
 
     refreshMembers: async () => {

@@ -12,7 +12,19 @@
 import { createContext, createElement, useContext, type ReactNode } from "react";
 import { create, createStore, useStore } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { FilterGroup, GroupByConfig, SortState, SubtaskMode } from "./views";
+import type { CalendarScale } from "./calendar";
+import type { GanttScale } from "./gantt";
+import { EMPTY_SUBTASK_FILTERS, type SubtaskFilters, type SubtaskSortColumn } from "./subtask-view";
+import type { TaskPriority } from "./types";
+import type {
+  FilterGroup,
+  GroupByConfig,
+  GroupByField,
+  GroupOrderMap,
+  SortDirection,
+  SortState,
+  SubtaskMode,
+} from "./views";
 
 export interface ColumnDef {
   id: string;
@@ -29,9 +41,10 @@ export const BASE_COLUMNS: ColumnDef[] = [
   { id: "priority", label: "Приоритет", headerLabel: "P", width: 44, sortable: true, editable: true },
   { id: "title", label: "Название", width: 380, sortable: true, editable: true },
   { id: "status", label: "Статус", width: 132, sortable: true, editable: true },
-  { id: "project", label: "Проект", width: 150, sortable: true, editable: false },
+  { id: "project", label: "Проект", width: 150, sortable: true, editable: true },
   { id: "assignees", label: "Исполнители", width: 116, sortable: false, editable: true },
   { id: "tags", label: "Теги", width: 150, sortable: false, editable: true },
+  { id: "start_date", label: "Начало", width: 96, sortable: true, editable: true },
   { id: "due_date", label: "Дедлайн", width: 116, sortable: true, editable: true },
   { id: "estimated_minutes", label: "Оценка", width: 88, sortable: true, editable: true },
   { id: "subtasks", label: "Подзадачи", headerLabel: "Подз.", width: 76, sortable: true, editable: false },
@@ -47,6 +60,7 @@ export const DEFAULT_COLUMNS = [
   "project",
   "assignees",
   "tags",
+  "start_date",
   "due_date",
   "estimated_minutes",
   "subtasks",
@@ -72,8 +86,14 @@ function storageKey(scope: ViewScope): string {
   return scope === "all" ? "sb.v2.tasksView" : `sb.v2.view.${scope}`;
 }
 
-/** Как экран проекта показывает задачи. */
-export type ProjectViewMode = "table" | "board";
+/**
+ * Как экран показывает задачи. Доска есть только у проекта: раскладка по
+ * статусам поверх всех проектов организации — это не доска, а свалка. Бэклог
+ * есть только у проекта в режиме «Разработка» — вместе со спринтами, которых в
+ * обычном проекте нет; выбранный вид переживает выключение режима, поэтому
+ * экран проверяет режим сам, а не полагается на сохранённое значение.
+ */
+export type ProjectViewMode = "table" | "board" | "gantt" | "calendar" | "backlog";
 
 /**
  * Снимок настроек, который сохраняется как именованное представление.
@@ -87,8 +107,29 @@ export interface ViewSnapshot {
   widths: Record<string, number>;
   sort: SortState;
   groupBy: GroupByConfig;
+  /**
+   * Порядок групп, расставленный руками, — по типу группировки, а не по уровню.
+   * Часть снимка: «сначала мои приоритеты, потом остальные» — такой же рабочий
+   * срез, как набор колонок и фильтры. Поля без записи выстраиваются по
+   * справочнику, как и раньше.
+   */
+  groupOrder: GroupOrderMap;
   groups: FilterGroup[];
   subtaskMode: SubtaskMode;
+  /**
+   * Показывать вложенные подзадачи в порядке, заданном перетаскиванием в
+   * карточке, а не текущей сортировкой списка. Действует только в режиме
+   * «вложенными под родителя» — в двух других вложенности нет вовсе.
+   * Умолчание — ручной порядок: его задали руками, и переупорядочивание такой
+   * ветки автосортировкой читается как потеря настройки.
+   */
+  subtaskManualOrder: boolean;
+  /**
+   * Переносить название на следующую строку вместо обрезки многоточием.
+   * Переносится только «Название»: чипы проектов и тегов растянули бы строку
+   * по самой длинной ячейке, и таблица потеряла бы ритм.
+   */
+  wrapTitle: boolean;
 }
 
 export interface SavedView extends ViewSnapshot {
@@ -103,18 +144,49 @@ export interface ViewState extends ViewSnapshot {
   activeViewId: string | null;
   /** Свёрнутые группы — по ключу «уровень1/уровень2». */
   collapsed: string[];
-  /** Таблица или доска — только для экрана проекта. */
+  /**
+   * Свёрнутые задачи — по id. В отличие от групп персистится: свёрнутое
+   * поддеревьями дерево это рабочая привычка, и разворачивать его заново после
+   * каждой перезагрузки — та же потеря, что сброшенный порядок колонок. Ключ по
+   * id, а не по месту в списке, поэтому смена группировки и сортировки ветку не
+   * разворачивает.
+   */
+  collapsedTasks: string[];
+  /** Таблица, доска, гант или календарь. */
   mode: ProjectViewMode;
+  /**
+   * Масштаб полотна ганта. Не входит в снимок представления: это способ
+   * посмотреть на один и тот же срез, а не часть самого среза — как и выбор
+   * вида. Крутят его постоянно, и записывать каждое переключение в именованное
+   * представление значит без конца его «править».
+   */
+  ganttScale: GanttScale;
+  /**
+   * Месяц, неделя или день на календаре — по той же причине рядом с
+   * `ganttScale`, а не в снимке. Опорный день здесь не хранится сознательно:
+   * «где я листаю» — состояние сессии, и человек, вернувшийся на экран через
+   * неделю, ожидает увидеть текущий месяц, а не тот, на котором ушёл.
+   */
+  calendarScale: CalendarScale;
 
   setMode: (mode: ProjectViewMode) => void;
+  setGanttScale: (scale: GanttScale) => void;
+  setCalendarScale: (scale: CalendarScale) => void;
   setColumns: (columns: string[]) => void;
   setWidth: (columnId: string, width: number) => void;
   toggleSort: (column: SortState["column"]) => void;
   setGroupBy: (config: GroupByConfig) => void;
+  /** Ручной порядок групп одного поля целиком: перестановка сдвигает соседей. */
+  setGroupFieldOrder: (field: GroupByField, keys: string[]) => void;
+  /** Вернуть полю порядок справочника — запись просто убирается. */
+  resetGroupFieldOrder: (field: GroupByField) => void;
   setGroups: (groups: FilterGroup[]) => void;
   setSearch: (search: string) => void;
   setSubtaskMode: (mode: SubtaskMode) => void;
+  setSubtaskManualOrder: (manual: boolean) => void;
+  setWrapTitle: (wrap: boolean) => void;
   toggleCollapsed: (key: string) => void;
+  toggleCollapsedTask: (taskId: string) => void;
 
   saveView: (name: string) => void;
   applyView: (id: string) => void;
@@ -128,8 +200,11 @@ const DEFAULT_SNAPSHOT: ViewSnapshot = {
   widths: {},
   sort: { column: "due_date", direction: "asc" },
   groupBy: ["status", "none"],
+  groupOrder: {},
   groups: [],
   subtaskMode: "nested",
+  subtaskManualOrder: true,
+  wrapTitle: false,
 };
 
 /** В проекте колонка «Проект» повторяет заголовок экрана — её там нет. */
@@ -146,8 +221,11 @@ function snapshotOf(state: ViewSnapshot): ViewSnapshot {
     widths: state.widths,
     sort: state.sort,
     groupBy: state.groupBy,
+    groupOrder: state.groupOrder,
     groups: state.groups,
     subtaskMode: state.subtaskMode,
+    subtaskManualOrder: state.subtaskManualOrder,
+    wrapTitle: state.wrapTitle,
   };
 }
 
@@ -169,6 +247,21 @@ function edit(state: ViewState, patch: Partial<ViewSnapshot>): Partial<ViewState
   };
 }
 
+/**
+ * Сколько свёрнутых задач помнить. В отличие от групп набор персистится, а
+ * задачи удаляются — без предела список id рос бы в localStorage навсегда.
+ * Свежие вытесняют старые: свёрнутое год назад никому не нужно.
+ */
+const COLLAPSED_TASKS_LIMIT = 500;
+
+/** «Начало» перед «Дедлайном»: даты читаются парой, и порядок здесь — смысл. */
+function withStartDate(columns: string[] | undefined): string[] | undefined {
+  if (!columns || columns.includes("start_date")) return columns;
+  const at = columns.indexOf("due_date");
+  if (at < 0) return [...columns, "start_date"];
+  return [...columns.slice(0, at), "start_date", ...columns.slice(at)];
+}
+
 function newId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -185,9 +278,14 @@ function createViewStore(scope: ViewScope) {
         savedViews: [],
         activeViewId: null,
         collapsed: [],
+        collapsedTasks: [],
         mode: "table",
+        ganttScale: "day",
+        calendarScale: "month",
 
         setMode: (mode) => set({ mode }),
+        setGanttScale: (ganttScale) => set({ ganttScale }),
+        setCalendarScale: (calendarScale) => set({ calendarScale }),
         setColumns: (columns) => set((s) => edit(s, { columns })),
         setWidth: (columnId, width) =>
           set((s) =>
@@ -208,12 +306,31 @@ function createViewStore(scope: ViewScope) {
             }),
           ),
         setGroupBy: (groupBy) => set((s) => edit(s, { groupBy })),
+        setGroupFieldOrder: (field, keys) =>
+          set((s) => edit(s, { groupOrder: { ...s.groupOrder, [field]: keys } })),
+        resetGroupFieldOrder: (field) =>
+          set((s) => {
+            // Именно удаление ключа, а не пустой массив: пустой порядок и
+            // отсутствие порядка должны читаться одинаково, а хранить в
+            // localStorage поле, которое ничего не меняет, незачем.
+            const next = { ...s.groupOrder };
+            delete next[field];
+            return edit(s, { groupOrder: next });
+          }),
         setGroups: (groups) => set((s) => edit(s, { groups })),
         setSearch: (search) => set({ search }),
         setSubtaskMode: (subtaskMode) => set((s) => edit(s, { subtaskMode })),
+        setSubtaskManualOrder: (subtaskManualOrder) => set((s) => edit(s, { subtaskManualOrder })),
+        setWrapTitle: (wrapTitle) => set((s) => edit(s, { wrapTitle })),
         toggleCollapsed: (key) =>
           set((s) => ({
             collapsed: s.collapsed.includes(key) ? s.collapsed.filter((k) => k !== key) : [...s.collapsed, key],
+          })),
+        toggleCollapsedTask: (taskId) =>
+          set((s) => ({
+            collapsedTasks: s.collapsedTasks.includes(taskId)
+              ? s.collapsedTasks.filter((id) => id !== taskId)
+              : [...s.collapsedTasks, taskId].slice(-COLLAPSED_TASKS_LIMIT),
           })),
 
         saveView: (name) => {
@@ -247,14 +364,63 @@ function createViewStore(scope: ViewScope) {
         storage: createJSONStorage(() => localStorage),
         // collapsed не персистим: свёрнутые группы — состояние сессии, а не
         // настройка. Иначе после смены группировки половина списка «пропадает».
+        // С collapsedTasks иначе: ключ там — id задачи, и смена группировки его
+        // не обессмысливает.
         partialize: (s) => ({
           ...snapshotOf(s),
           search: s.search,
           savedViews: s.savedViews,
           activeViewId: s.activeViewId,
+          collapsedTasks: s.collapsedTasks,
           mode: s.mode,
+          ganttScale: s.ganttScale,
+          calendarScale: s.calendarScale,
         }),
-        version: 1,
+        version: 5,
+        // Migrate обязателен: без него zustand не смог бы поднять срез старой
+        // версии и молча выбросил бы его вместе со всеми именованными
+        // представлениями и порядком колонок.
+        //
+        // Версия 2 добавила wrapTitle, версия 3 — колонку «Начало». Второе
+        // приходится дописывать в уже сохранённый набор: у всех, кто хоть раз
+        // трогал колонки, в localStorage лежит список без неё, и умолчание её
+        // не покажет никогда. Именованные представления при этом не трогаем —
+        // их состав собирали руками под конкретный срез.
+        migrate: (persisted, from) => {
+          const s = persisted as Partial<ViewState> | undefined;
+          if (!s) return persisted as ViewState;
+          let next = s;
+          if (from < 2) {
+            next = {
+              ...next,
+              wrapTitle: false,
+              savedViews: (next.savedViews ?? []).map((v) => ({ ...v, wrapTitle: false })),
+            };
+          }
+          if (from < 3) next = { ...next, columns: withStartDate(next.columns) };
+          // Версия 4 — ручной порядок вложенных подзадач. Здесь, в отличие от
+          // колонки «Начало», дописать значение обязаны и представления: без
+          // поля флаг читается как «выключено», и выбор сохранённого среза
+          // молча перекраивал бы порядок веток.
+          if (from < 4) {
+            next = {
+              ...next,
+              subtaskManualOrder: true,
+              savedViews: (next.savedViews ?? []).map((v) => ({ ...v, subtaskManualOrder: true })),
+            };
+          }
+          // Версия 5 — ручной порядок групп. Пустая карта и есть «порядок по
+          // справочнику», то есть прежнее поведение: дописываем её явно, чтобы
+          // снимок представления не приезжал в стор с пропущенным полем.
+          if (from < 5) {
+            next = {
+              ...next,
+              groupOrder: {},
+              savedViews: (next.savedViews ?? []).map((v) => ({ ...v, groupOrder: {} })),
+            };
+          }
+          return next as ViewState;
+        },
       },
     ),
   );
@@ -373,5 +539,62 @@ export const useCardStore = create<CardState>()(
       },
     }),
     { name: "sb.v2.cardFields", storage: createJSONStorage(() => localStorage), version: 1 },
+  ),
+);
+
+// --- Секция подзадач в карточке ------------------------------------------------
+
+interface SubtaskViewState {
+  sort: SubtaskSortColumn;
+  direction: SortDirection;
+  filters: SubtaskFilters;
+  setSort: (column: SubtaskSortColumn) => void;
+  setDirection: (direction: SortDirection) => void;
+  toggleFilterValue: (key: "statusIds" | "assigneeIds", value: string) => void;
+  togglePriority: (priority: TaskPriority) => void;
+  setHideDone: (hide: boolean) => void;
+  resetFilters: () => void;
+}
+
+/**
+ * Как показывать подзадачи в карточке. Стор один на приложение, а не по
+ * областям (`ViewScope`), и тем более не по задачам: «сначала срочные» или
+ * «спрятать закрытые» — привычка чтения, и переучивать её на каждой карточке
+ * означало бы настраивать секцию заново по десять раз в день. Ручной порядок
+ * здесь не хранится вовсе — он общий для команды и живёт в базе.
+ */
+export const useSubtaskViewStore = create<SubtaskViewState>()(
+  persist(
+    (set, get) => ({
+      sort: "manual",
+      direction: "asc",
+      filters: EMPTY_SUBTASK_FILTERS,
+      setSort: (sort) => set({ sort }),
+      setDirection: (direction) => set({ direction }),
+      toggleFilterValue: (key, value) => {
+        const current = get().filters;
+        const list = current[key];
+        set({
+          filters: {
+            ...current,
+            [key]: list.includes(value) ? list.filter((v) => v !== value) : [...list, value],
+          },
+        });
+      },
+      togglePriority: (priority) => {
+        const current = get().filters;
+        set({
+          filters: {
+            ...current,
+            priorities: current.priorities.includes(priority)
+              ? current.priorities.filter((p) => p !== priority)
+              : [...current.priorities, priority],
+          },
+        });
+      },
+      setHideDone: (hideDone) => set((s) => ({ filters: { ...s.filters, hideDone } })),
+      resetFilters: () => set({ filters: EMPTY_SUBTASK_FILTERS }),
+    }),
+    { name: "sb.v2.subtaskView", storage: createJSONStorage(() => localStorage), version: 1 },
   ),
 );

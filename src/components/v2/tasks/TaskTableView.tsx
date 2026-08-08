@@ -13,30 +13,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Loader2, Plus, Redo2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { PRIORITY_LABELS } from "@/components/v2/bits";
 import { BulkBar } from "@/components/v2/tasks/BulkBar";
 import { TaskComposer } from "@/components/v2/tasks/TaskComposer";
-import { TaskTable, resolveColumns, type GroupLabel } from "@/components/v2/tasks/TaskTable";
+import { useGroupNaming } from "@/components/v2/tasks/group-naming";
+import { TaskTable, resolveColumns } from "@/components/v2/tasks/TaskTable";
 import { ViewSettingsPopover } from "@/components/v2/tasks/ViewControls";
 import { FilterButton, TaskCount, TaskSearch } from "@/components/v2/tasks/ViewToolbar";
+import type { TaskHit } from "@/components/v2/TaskPicker";
 import { assigneeChoice } from "@/lib/core/assignable";
 import { api } from "@/lib/core/client";
 import { invalidate } from "@/lib/core/query";
 import { emptyDraft, type TaskDraft } from "@/lib/core/task-draft";
-import type { TaskDetail, TaskPriority, TaskRow } from "@/lib/core/types";
+import type { TaskDetail, TaskRow } from "@/lib/core/types";
+import { boardStatuses } from "@/lib/core/status-model";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
 import {
-  DUE_BUCKETS,
-  ESTIMATE_BUCKETS,
   GROUP_BY_LABELS,
-  NONE_VALUE,
-  PRIORITY_WEIGHT,
   compareTasks,
   filterTasks,
   makeMatchContext,
   visiblePool,
-  type GroupByField,
   type SortColumn,
 } from "@/lib/core/views";
 
@@ -59,6 +56,9 @@ function capture(task: TaskRow, payload: Record<string, unknown>): Record<string
         break;
       case "tag_ids":
         before.tag_ids = task.tags.map((t) => t.id);
+        break;
+      case "project_ids":
+        before.project_ids = task.placements.map((p) => p.project_id);
         break;
       default:
         before[key] = (task as unknown as Record<string, unknown>)[key] ?? null;
@@ -105,6 +105,11 @@ export interface TaskTableViewProps {
   quickAddPlaceholder?: string;
   /** Текст, когда задач нет вовсе (фильтр ни при чём). */
   emptyText?: string;
+  /**
+   * Набор статусов проекта: из него строится выбор статуса в строке. В сводном
+   * списке набора нет — там задачи разных проектов с разными процессами.
+   */
+  statusSetId?: string | null;
   /** Узкий экран: прячем то, что на телефоне бесполезно (история правок). */
   compact?: boolean;
   onOpenTask: (taskId: string) => void;
@@ -130,8 +135,28 @@ export function TaskTableView({
   onOpenTask,
   error: externalError = null,
   onDismissError,
+  statusSetId = null,
 }: TaskTableViewProps) {
-  const { orgId, statuses, tags, members, projects, fields, me, refreshProjects } = useV2Store();
+  const { orgId, statuses: allStatuses, tags, members, projects, fields, me, refreshProjects } = useV2Store();
+  /**
+   * Выбор статуса в строке — рабочий процесс проекта, а не весь справочник
+   * организации (наборы, 0052). Но список обязан содержать и статусы, которые у
+   * задач фактически стоят: задача живёт сразу в нескольких проектах, и статус
+   * из чужого набора иначе отрисовался бы как «Без статуса», а вернуть его было
+   * бы нечем. В сводном списке набора нет вовсе — там задачи разных процессов.
+   *
+   * Отсев и сортировка идут по полному справочнику: скрытые группы и позиции
+   * считаются одинаково во всех видах.
+   */
+  const statuses = useMemo(
+    () =>
+      boardStatuses(
+        allStatuses,
+        statusSetId,
+        tasks.map((t) => t.status_id).filter((id): id is string => !!id),
+      ),
+    [allStatuses, statusSetId, tasks],
+  );
 
   const columnsOrder = useViewStore((s) => s.columns);
   const widths = useViewStore((s) => s.widths);
@@ -140,10 +165,14 @@ export function TaskTableView({
   const filterGroups = useViewStore((s) => s.groups);
   const search = useViewStore((s) => s.search);
   const subtaskMode = useViewStore((s) => s.subtaskMode);
+  const subtaskManualOrder = useViewStore((s) => s.subtaskManualOrder);
+  const wrapTitle = useViewStore((s) => s.wrapTitle);
   const collapsedList = useViewStore((s) => s.collapsed);
+  const collapsedTasksList = useViewStore((s) => s.collapsedTasks);
   const toggleSortRaw = useViewStore((s) => s.toggleSort);
   const setWidth = useViewStore((s) => s.setWidth);
   const toggleCollapsed = useViewStore((s) => s.toggleCollapsed);
+  const toggleCollapsedTask = useViewStore((s) => s.toggleCollapsedTask);
 
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -176,20 +205,52 @@ export function TaskTableView({
         } else if (key === "tag_ids") {
           const ids = new Set(value as string[]);
           next.tags = tags.filter((t) => ids.has(t.id));
+        } else if (key === "project_ids") {
+          // Позиция внутри проекта у прежних размещений сохраняется: правка из
+          // таблицы меняет состав проектов, а не место на доске.
+          next.placements = (value as string[]).map(
+            (projectId) =>
+              task.placements.find((p) => p.project_id === projectId) ?? {
+                project_id: projectId,
+                position: 0,
+              },
+          );
         } else {
           (next as unknown as Record<string, unknown>)[key] = value;
         }
       }
-      // completed_at выводится из вида статуса — иначе строка «завершена»
+      // completed_at выводится из категории статуса — иначе строка «завершена»
       // осталась бы прежней до перезагрузки.
       if ("status_id" in payload) {
-        const kind = statuses.find((s) => s.id === payload.status_id)?.kind;
-        if (kind === "done" && !task.completed_at) next.completed_at = new Date().toISOString();
-        if (kind !== "done" && task.completed_at) next.completed_at = null;
+        const category = allStatuses.find((s) => s.id === payload.status_id)?.category;
+        if (category === "done" && !task.completed_at) next.completed_at = new Date().toISOString();
+        if (category !== "done" && task.completed_at) next.completed_at = null;
       }
       return next;
     },
-    [members, tags, statuses],
+    [members, tags, allStatuses],
+  );
+
+  /**
+   * Отправка одного патча. `project_ids` — виртуальное поле, как `assignee_ids`
+   * и `tag_ids`: состав проектов PATCH задачи не принимает, его задаёт
+   * отдельный PUT размещений. Держим его в общем конвейере — иначе правка
+   * проекта выпадает и из истории Ctrl+Z, и из общей обработки ошибок.
+   */
+  const sendPatch = useCallback(
+    async (taskId: string, payload: Record<string, unknown>): Promise<TaskDetail | null> => {
+      const { project_ids: projectIds, ...rest } = payload;
+      let updated: TaskDetail | null = null;
+      if (Array.isArray(projectIds)) {
+        const placements = (projectIds as string[]).map((project_id) => ({ project_id }));
+        updated = await api.put<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}/placements`, { placements });
+      }
+      if (Object.keys(rest).length > 0) {
+        updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`, rest);
+      }
+      return updated;
+    },
+    [orgId],
   );
 
   /** Патч без записи в историю — общий шаг для правки, отмены и повтора. */
@@ -204,7 +265,10 @@ export function TaskTableView({
       const failures: string[] = [];
       await runLimited(patches, BULK_CONCURRENCY, async ({ id, payload }) => {
         try {
-          const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${id}`, payload);
+          const updated = await sendPatch(id, payload);
+          // Пустой патч уходить наружу не должен, но если ушёл — сливать в
+          // строку нечего.
+          if (!updated) return;
           setTasks((prev) =>
             prev.map((t) =>
               t.id === id
@@ -213,10 +277,13 @@ export function TaskTableView({
                     title: updated.title,
                     status_id: updated.status_id,
                     priority: updated.priority,
+                    start_date: updated.start_date,
+                    start_time: updated.start_time,
                     due_date: updated.due_date,
                     due_time: updated.due_time,
                     estimated_minutes: updated.estimated_minutes,
                     completed_at: updated.completed_at,
+                    parent_task_id: updated.parent_task_id,
                     updated_at: updated.updated_at,
                     assignees: updated.assignees,
                     tags: updated.tags,
@@ -241,7 +308,7 @@ export function TaskTableView({
         if (invalidateKey) invalidate(invalidateKey);
       }
     },
-    [applyLocal, orgId, reload, setTasks, invalidateKey],
+    [applyLocal, sendPatch, reload, setTasks, invalidateKey],
   );
 
   const patchTasks = useCallback(
@@ -268,6 +335,13 @@ export function TaskTableView({
   const patchOne = useCallback(
     (taskId: string, payload: Record<string, unknown>) => {
       void patchTasks([{ id: taskId, payload }]);
+    },
+    [patchTasks],
+  );
+
+  const setPlacements = useCallback(
+    (taskId: string, projectIds: string[]) => {
+      void patchTasks([{ id: taskId, payload: { project_ids: projectIds } }]);
     },
     [patchTasks],
   );
@@ -313,19 +387,19 @@ export function TaskTableView({
    * делать нечего — иначе список без единого условия показывал бы «12 из 40».
    */
   const pool = useMemo(
-    () => visiblePool(tasks, filterGroups, statuses),
-    [tasks, filterGroups, statuses],
+    () => visiblePool(tasks, filterGroups, allStatuses),
+    [tasks, filterGroups, allStatuses],
   );
 
   const visibleTasks = useMemo(() => {
     const filtered = filterTasks(pool, filterGroups, search, matchCtx);
-    const statusPosition = new Map(statuses.map((s) => [s.id, s.position]));
+    const statusPosition = new Map(allStatuses.map((s) => [s.id, s.position]));
     const projectPosition = new Map(projects.map((p) => [p.id, p.position]));
     const projectName = new Map(projects.map((p) => [p.id, p.name]));
     return [...filtered].sort((a, b) =>
       compareTasks(a, b, sort, { statusPosition, projectPosition, projectName }),
     );
-  }, [pool, search, filterGroups, matchCtx, sort, statuses, projects]);
+  }, [pool, search, filterGroups, matchCtx, sort, allStatuses, projects]);
 
   const columns = useMemo(
     () => resolveColumns(columnsOrder, widths, fields),
@@ -337,86 +411,24 @@ export function TaskTableView({
   const canEdit = useV2Store((s) => s.orgRole !== "guest" && s.orgRole !== null);
 
   const cellCtx = useMemo(
-    () => ({ statuses, tags, members, projectsById, canEdit, onPatch: patchOne }),
-    [statuses, tags, members, projectsById, canEdit, patchOne],
+    () => ({
+      statuses,
+      tags,
+      members,
+      projectsById,
+      canEdit,
+      wrapTitle,
+      onPatch: patchOne,
+      onPlacements: setPlacements,
+      onToggleSubtree: toggleCollapsedTask,
+    }),
+    [statuses, tags, members, projectsById, canEdit, wrapTitle, patchOne, setPlacements, toggleCollapsedTask],
   );
 
-  const labelForGroup = useCallback(
-    (field: GroupByField, key: string): GroupLabel => {
-      if (key === NONE_VALUE) {
-        const empty: Record<string, string> = {
-          status: "Без статуса",
-          project: "Без проекта",
-          assignee: "Без исполнителя",
-          tag: "Без тегов",
-          due: "Без срока",
-          estimate: "Без оценки",
-        };
-        return { text: empty[field] ?? "Прочее" };
-      }
-      switch (field) {
-        case "status": {
-          const s = statuses.find((x) => x.id === key);
-          return { text: s?.name ?? "Неизвестный статус", color: s?.color };
-        }
-        case "priority":
-          return { text: PRIORITY_LABELS[key as TaskPriority]?.label ?? key };
-        case "project": {
-          const p = projectsById.get(key);
-          return { text: p?.name ?? "Недоступный проект", color: p?.color };
-        }
-        case "assignee": {
-          const m = members.find((x) => x.user_id === key);
-          return { text: m ? m.name || m.email : "Неизвестный участник" };
-        }
-        case "tag": {
-          const t = tags.find((x) => x.id === key);
-          return { text: t?.name ?? "Неизвестный тег", color: t?.color };
-        }
-        case "due":
-          return { text: DUE_BUCKETS.find((b) => b.key === key)?.label ?? key };
-        case "estimate":
-          return { text: ESTIMATE_BUCKETS.find((b) => b.key === key)?.label ?? key };
-        default:
-          return { text: key };
-      }
-    },
-    [statuses, projectsById, members, tags],
-  );
-
-  const groupOrder = useCallback(
-    (field: GroupByField, keys: string[]): string[] => {
-      // «Пусто» всегда в конце: иначе оно всплывает в начало и отвлекает.
-      const rank = (key: string): number => {
-        if (key === NONE_VALUE) return Number.POSITIVE_INFINITY;
-        switch (field) {
-          case "status":
-            return statuses.find((s) => s.id === key)?.position ?? 9998;
-          case "priority":
-            return PRIORITY_WEIGHT[key as TaskPriority] ?? 9998;
-          case "project":
-            return projectsById.get(key)?.position ?? 9998;
-          case "tag":
-            return tags.find((t) => t.id === key)?.position ?? 9998;
-          case "due":
-            return DUE_BUCKETS.findIndex((b) => b.key === key);
-          case "estimate":
-            return ESTIMATE_BUCKETS.findIndex((b) => b.key === key);
-          default:
-            return 9998;
-        }
-      };
-      return [...keys].sort((a, b) => {
-        const ra = rank(a);
-        const rb = rank(b);
-        if (ra !== rb) return ra - rb;
-        return labelForGroup(field, a).text.localeCompare(labelForGroup(field, b).text, "ru");
-      });
-    },
-    [statuses, projectsById, tags, labelForGroup],
-  );
+  const { labelForGroup, groupOrder } = useGroupNaming();
 
   const collapsed = useMemo(() => new Set(collapsedList), [collapsedList]);
+  const collapsedTasks = useMemo(() => new Set(collapsedTasksList), [collapsedTasksList]);
 
   // --- Выбор строк ------------------------------------------------------------------
 
@@ -471,6 +483,32 @@ export function TaskTableView({
       }
     },
     [selectedTasks, patchTasks],
+  );
+
+  /**
+   * Массовое подчинение. Прежние связи рвутся молча — из панели их не видно,
+   * поэтому спрашиваем ровно тогда, когда рвать есть что. Сам родитель из
+   * выборки исключается: подчинить задачу самой себе сервер всё равно не даст,
+   * а остальные выбранные при этом переедут — отказывать им из-за одной строки
+   * значило бы требовать переделать выбор.
+   */
+  const bulkSetParent = useCallback(
+    (hit: TaskHit) => {
+      const moving = selectedTasks.filter((t) => t.id !== hit.id);
+      const attached = moving.filter((t) => t.parent_task_id && t.parent_task_id !== hit.id);
+      if (
+        attached.length > 0 &&
+        !window.confirm(
+          attached.length === 1
+            ? `У задачи «${attached[0].title}» уже есть родитель. Переподчинить её задаче «${hit.title}»?`
+            : `У ${attached.length} из выбранных задач уже есть родитель. Переподчинить их задаче «${hit.title}»?`,
+        )
+      ) {
+        return;
+      }
+      void runBulk((t) => (t.id === hit.id ? null : { parent_task_id: hit.id }));
+    },
+    [selectedTasks, runBulk],
   );
 
   const bulkDelete = useCallback(async () => {
@@ -607,6 +645,7 @@ export function TaskTableView({
           groupBy={groupBy}
           matchCtx={matchCtx}
           subtaskMode={subtaskMode}
+          subtaskManualOrder={subtaskManualOrder}
           sort={sort}
           onToggleSort={toggleSort}
           onResize={setWidth}
@@ -615,6 +654,7 @@ export function TaskTableView({
           onSelectMany={selectMany}
           collapsed={collapsed}
           onToggleCollapsed={toggleCollapsed}
+          collapsedTasks={collapsedTasks}
           onOpen={onOpenTask}
           labelForGroup={labelForGroup}
           groupOrder={groupOrder}
@@ -650,6 +690,7 @@ export function TaskTableView({
           tags={tags}
           members={bulkAssignees.members}
           restrictedBy={bulkAssignees.restrictedBy}
+          selectedIds={selectedTasks.map((t) => t.id)}
           busy={bulkBusy}
           onClear={() => setSelected(new Set())}
           onApply={(payload) => void runBulk(() => payload)}
@@ -667,6 +708,7 @@ export function TaskTableView({
                 : null,
             )
           }
+          onSetParent={bulkSetParent}
           onDelete={() => void bulkDelete()}
         />
       )}

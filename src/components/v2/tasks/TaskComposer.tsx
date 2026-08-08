@@ -20,13 +20,14 @@ import {
   dueTone,
   formatDue,
 } from "@/components/v2/bits";
-import { DuePicker } from "@/components/v2/DuePicker";
+import { DuePicker, StartPicker } from "@/components/v2/DuePicker";
+import { defaultStatus } from "@/lib/core/status-model";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import type { ColumnDef } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
-import { formatEstimate } from "./cells";
+import { TREE_TOGGLE_W, formatEstimate } from "./cells";
 import {
   AssigneesMenu,
   ESTIMATE_POPOVER,
@@ -39,13 +40,14 @@ import {
   StatusMenu,
   TagsMenu,
   WIDE_MENU_POPOVER,
+  useDraftSetStatuses,
 } from "./draft-controls";
 import { DraftFieldControl, describeFieldValue } from "./draft-fields";
 import { SELECT_COLUMN_WIDTH } from "./TaskTable";
 import { TaskDraftPanel } from "./TaskDraftPanel";
 
 const CELL =
-  "flex h-full w-full items-center gap-1 rounded px-1.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+  "flex h-full w-full items-center gap-0.5 rounded px-1 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 const PLACEHOLDER = "truncate text-xs text-muted-foreground/70";
 
 export function TaskComposer({
@@ -103,7 +105,10 @@ export function TaskComposer({
 
   return (
     <>
-      <div className="border-b border-border bg-muted/20">
+      {/* Пунктирная рамка и зазор снизу: строка создания стоит вплотную к
+          заголовку первой группы, и со сплошной нижней границей читалась как
+          ещё одна строка данных. */}
+      <div className="mb-1.5 rounded-md border border-dashed border-border bg-muted/30">
         <div className="flex h-8 items-stretch">
           <div
             className="flex shrink-0 items-center justify-center"
@@ -151,13 +156,7 @@ export function TaskComposer({
               Очистить
             </Button>
           )}
-          {error ? (
-            <span className="truncate text-xs text-destructive">{error}</span>
-          ) : (
-            <span className="hidden truncate text-[11px] text-muted-foreground lg:inline">
-              Enter — сохранить, Esc — очистить
-            </span>
-          )}
+          {error && <span className="truncate text-xs text-destructive">{error}</span>}
         </div>
       </div>
 
@@ -216,6 +215,9 @@ function DraftCell({
             }
           }}
           placeholder="Новая задача…"
+          // Слева тот же слот шеврона, что и у строк: без него поле ввода
+          // стоит на 18 px левее названий, под которые оно и подписано.
+          style={{ paddingLeft: TREE_TOGGLE_W + 6 }}
           className="h-full w-full bg-transparent px-1.5 text-sm outline-none placeholder:text-muted-foreground/70"
         />
       );
@@ -229,6 +231,8 @@ function DraftCell({
       return <AssigneesDraftCell draft={draft} patch={patch} />;
     case "tags":
       return <TagsDraftCell draft={draft} patch={patch} />;
+    case "start_date":
+      return <StartDraftCell draft={draft} patch={patch} />;
     case "due_date":
       return <DueDraftCell draft={draft} patch={patch} />;
     case "estimated_minutes":
@@ -268,8 +272,12 @@ function PriorityDraftCell({ draft, patch }: CellProps) {
 }
 
 function StatusDraftCell({ draft, patch }: CellProps) {
-  const statuses = useV2Store((s) => s.statuses);
-  const status = statuses.find((s) => s.id === draft.status_id);
+  // Статусы набора проекта черновика, а не весь справочник организации (наборы,
+  // 0052): новая задача рождается в процессе своего проекта.
+  const statuses = useDraftSetStatuses(draft.project_ids);
+  // Черновик хранит null, пока статус не выбрали, но показать надо тот, с
+  // которым задача родится, — иначе строка врёт про будущий результат.
+  const status = statuses.find((s) => s.id === draft.status_id) ?? defaultStatus(statuses);
 
   return (
     <Popover>
@@ -287,7 +295,11 @@ function StatusDraftCell({ draft, patch }: CellProps) {
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className={MENU_POPOVER}>
-        <StatusMenu value={draft.status_id} onChange={(status_id) => patch({ status_id })} />
+        <StatusMenu
+          value={draft.status_id}
+          statuses={statuses}
+          onChange={(status_id) => patch({ status_id })}
+        />
       </PopoverContent>
     </Popover>
   );
@@ -382,6 +394,24 @@ function TagsDraftCell({ draft, patch }: CellProps) {
         <TagsMenu value={draft.tag_ids} onChange={(tag_ids) => patch({ tag_ids })} />
       </PopoverContent>
     </Popover>
+  );
+}
+
+function StartDraftCell({ draft, patch }: CellProps) {
+  const text = formatDue(draft.start_date, draft.start_time);
+  return (
+    <StartPicker
+      date={draft.start_date}
+      time={draft.start_time}
+      triggerClassName={CELL}
+      onCommit={(next) => patch(next)}
+    >
+      {text ? (
+        <span className="truncate text-xs tabular-nums">{text}</span>
+      ) : (
+        <span className={PLACEHOLDER}>Начало</span>
+      )}
+    </StartPicker>
   );
 }
 

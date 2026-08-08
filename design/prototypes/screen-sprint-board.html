@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Экран · Доска спринта (режим «Разработка»)</title>
+<link rel="stylesheet" href="sb.css">
+<script src="sb.js" defer></script>
+<style>
+/* Локальные стили прототипа: чип спринта в шапке и колонка чужих статусов. */
+.sprint-chip {
+  display: inline-flex; align-items: center; gap: 10px;
+  background: var(--accent-soft); color: var(--accent-text);
+  border-radius: 10px; padding: 5px 11px; font-size: 12.5px; font-weight: 600;
+}
+.sprint-chip .bar { width: 74px; height: 5px; border-radius: 99px; background: rgba(232,115,74,.22); overflow: hidden; }
+.sprint-chip .bar i { display: block; height: 100%; width: 70%; background: var(--accent); border-radius: 99px; }
+.sprint-chip .num { font-family: var(--font-mono); font-weight: 500; }
+
+.k-col--foreign { border-style: dashed; }
+.k-col__note {
+  padding: 0 13px 8px; font-size: 11px; line-height: 1.45; color: var(--text-muted);
+}
+.mode-switch { display: flex; border: 1.5px solid var(--border-input); border-radius: 9px; overflow: hidden; }
+.mode-switch .btn { border-radius: 0; height: 30px; font-size: 12.5px; }
+.mode-switch .btn.is-current { background: var(--text-primary); color: #fff; }
+</style>
+</head>
+<body>
+<nav class="proto-nav">
+  <span class="proto-nav__brand"><span class="dot"></span>Second Brain · Оранж</span>
+  <a href="index.html">Обзор</a>
+  <a href="foundations.html">Основы</a>
+  <a href="controls.html">Элементы</a>
+  <a href="overlays.html">Окна и слои</a>
+  <a href="task-card.html">Карточка задачи</a>
+  <a href="screen-tasks.html">Таблица</a>
+  <a href="screen-board.html">Доска</a>
+  <a href="screen-crm.html">CRM</a>
+  <a href="screen-backlog.html">Бэклог · dev</a>
+  <a href="screen-sprint-board.html" class="is-current">Спринт · dev</a>
+  <a href="screen-my.html">Мои задачи</a>
+  <a href="screen-settings.html">Настройки</a>
+  <a href="screen-login.html">Вход</a>
+</nav>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="sidebar__org">
+      <span class="sidebar__org-badge">D</span>
+      <span class="sidebar__org-name">DreamUnion</span>
+    </div>
+    <button class="side-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      Поиск <kbd>⌘K</kbd>
+    </button>
+    <a class="nav-item" href="screen-my.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>Мои задачи</a>
+    <a class="nav-item" href="screen-tasks.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>Все задачи</a>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>Уведомления<span class="count">3</span></button>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Время</button>
+    <a class="nav-item" href="screen-settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>Настройки</a>
+    <div class="side-label">Проекты <button title="Новый проект"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+    <a class="nav-item is-active" href="screen-sprint-board.html"><span class="proj-dot" style="background:#e8734a"></span>Мобильное приложение<span class="count count--muted">23</span></a>
+    <a class="nav-item" href="screen-board.html"><span class="proj-dot" style="background:#3b82f6"></span>Сторонние проекты<span class="count count--muted">5</span></a>
+    <button class="nav-item"><span class="proj-dot" style="background:#8b5cf6"></span>Заметки<span class="count count--muted">2</span></button>
+    <button class="nav-item"><span class="proj-dot" style="background:#14b8a6"></span>Встречи</button>
+    <div style="flex:1"></div>
+  </aside>
+
+  <main class="main" style="background:var(--bg)">
+    <header class="page-header" style="background:var(--surface)">
+      <span class="proj-dot" style="background:#e8734a;width:11px;height:11px"></span>
+      <h1>Мобильное приложение</h1>
+      <button class="btn btn--secondary btn--sm" data-pop-trigger onclick="togglePop('pop-sprint-pick', this)">
+        Спринт 14
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <span class="sprint-chip" title="Ёмкость спринта считается по оценке задач">
+        осталось 4 дня
+        <span class="bar"><i></i></span>
+        <span class="num">28 / 40 ч</span>
+      </span>
+      <span class="spacer"></span>
+      <div class="mode-switch">
+        <button class="btn btn--ghost" onclick="location.href='screen-backlog.html'">Бэклог</button>
+        <button class="btn btn--ghost is-current">Доска</button>
+        <button class="btn btn--ghost" onclick="location.href='screen-tasks.html'">Таблица</button>
+        <button class="btn btn--ghost" onclick="toast('Гант — как сейчас')">Гант</button>
+        <button class="btn btn--ghost" onclick="toast('Календарь без изменений')">Календарь</button>
+      </div>
+      <span class="avatar-stack"><span class="avatar avatar--orange">ПБ</span><span class="avatar avatar--green">ДУ</span><span class="avatar avatar--indigo">АК</span></span>
+      <button class="btn btn--primary btn--sm" onclick="toast('Новая задача сразу в спринт')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Задача</button>
+    </header>
+
+    <div class="page-body">
+      <div class="board">
+        <!-- backlog-категория набора «Разработка» -->
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#94a3b8;border-radius:50%"></span>К работе <span class="count-pill">3</span>
+            <button class="add" onclick="toast('Задача в этот статус')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+          </div>
+          <div class="k-col__body">
+            <button class="k-card" onclick="toast('Открылась бы карточка задачи')">
+              <div class="name">Пуш-уведомления: группировка по проектам</div>
+              <div class="meta"><span style="font-family:var(--font-mono)">5 ч</span><span class="spacer"></span><span class="avatar avatar--green">ДУ</span></div>
+            </button>
+            <button class="k-card">
+              <div class="name">Иконки статусов в списке задач</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#3b82f6">frontend</span></div>
+              <div class="meta"><span style="font-family:var(--font-mono)">2 ч</span><span class="spacer"></span><span class="avatar avatar--orange">ПБ</span></div>
+            </button>
+            <button class="k-card">
+              <div class="name">Проверить размер бандла после Tiptap</div>
+              <div class="meta"><span style="font-family:var(--font-mono)">1 ч</span><span class="spacer"></span></div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#f59e0b;border-radius:50%"></span>В работе <span class="count-pill">2</span>
+            <button class="add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+          </div>
+          <div class="k-col__body">
+            <button class="k-card">
+              <div class="name">Кэш списка задач для офлайна</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#14b8a6">pwa</span></div>
+              <div class="meta"><span style="font-family:var(--font-mono)">8 ч</span><span>3/5</span><span class="spacer"></span><span class="avatar avatar--green">ДУ</span></div>
+            </button>
+            <button class="k-card">
+              <div class="name">Миграция настроек уведомлений</div>
+              <div class="meta"><span style="font-family:var(--font-mono)">4 ч</span><span class="spacer"></span><span class="avatar avatar--indigo">АК</span></div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#8b5cf6;border-radius:50%"></span>Code review <span class="count-pill">1</span>
+            <button class="add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+          </div>
+          <div class="k-col__body">
+            <button class="k-card">
+              <div class="name">Экран профиля: вёрстка и состояния загрузки</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#3b82f6">frontend</span></div>
+              <div class="meta"><span style="font-family:var(--font-mono)">6 ч</span><span style="display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>3</span><span class="spacer"></span><span class="avatar avatar--orange">ПБ</span></div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#3b82f6;border-radius:50%"></span>QA <span class="count-pill">2</span>
+            <button class="add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+          </div>
+          <div class="k-col__body">
+            <button class="k-card">
+              <div class="name">Баг: пуш открывает не ту задачу с холодного старта</div>
+              <div class="chips"><span class="tinted-chip" style="--chip-color:#ef4444">баг</span></div>
+              <div class="meta"><span style="font-family:var(--font-mono)">2 ч</span><span class="spacer"></span><span class="avatar avatar--indigo">АК</span></div>
+            </button>
+            <button class="k-card">
+              <div class="name">Проверить жест pull-to-refresh на iOS 26</div>
+              <div class="meta"><span style="font-family:var(--font-mono)">1 ч</span><span class="spacer"></span><span class="avatar avatar--green">ДУ</span></div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#14b8a6;border-radius:50%"></span>Готово к релизу <span class="count-pill">1</span>
+            <button class="add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+          </div>
+          <div class="k-col__body">
+            <button class="k-card">
+              <div class="name">Ревизия токенов темы под тёмный режим</div>
+              <div class="meta"><span style="font-family:var(--font-mono)">3 ч</span><span class="spacer"></span><span class="avatar avatar--orange">ПБ</span></div>
+            </button>
+          </div>
+        </div>
+
+        <div class="k-col">
+          <div class="k-col__head"><span class="proj-dot" style="background:#10b981;border-radius:50%"></span>Готово <span class="count-pill">5</span>
+            <button class="add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+          </div>
+          <div class="k-col__body">
+            <button class="k-card" style="opacity:.65">
+              <div class="name" style="text-decoration:line-through;color:var(--text-muted)">Вынести иконки в спрайт</div>
+              <div class="meta"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg><span class="spacer"></span><span class="avatar avatar--green">ДУ</span></div>
+            </button>
+            <div class="empty" style="padding:14px 10px 10px">
+              <div class="empty__sub" style="font-size:11.5px">и ещё 4 закрытых</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Колонка чужих статусов: задача лежит и в другом проекте, чей набор
+             статусов отличается. Прятать её нельзя — она исчезла бы из проекта,
+             не будучи никуда перемещённой. -->
+        <div class="k-col k-col--foreign">
+          <div class="k-col__head"><span class="proj-dot" style="background:#94a3b8;border-radius:50%;opacity:.5"></span>Согласование <span class="count-pill">1</span></div>
+          <div class="k-col__note">Статус из другого набора — задача лежит ещё и в «Сторонние проекты»</div>
+          <div class="k-col__body">
+            <button class="k-card">
+              <div class="name">Договор на публикацию в App Store</div>
+              <div class="chips"><span class="tinted-chip tinted-chip--sq" style="--chip-color:#3b82f6">Сторонние</span></div>
+              <div class="meta"><span class="due due--today" style="font-family:var(--font-mono)">сегодня</span><span class="spacer"></span><span class="avatar avatar--orange">ПБ</span></div>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Селектор спринта в шапке -->
+<div class="pop" id="pop-sprint-pick" style="width:230px">
+  <div class="pop__label">Показывать</div>
+  <button class="pop__item" onclick="toast('Активный спринт')">
+    <span>Спринт 14 · активный</span>
+    <svg class="check-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M20 6 9 17l-5-5"/></svg>
+  </button>
+  <button class="pop__item" onclick="toast('Спринт 15')"><span>Спринт 15 · 18 — 31 авг.</span></button>
+  <div class="pop__sep"></div>
+  <button class="pop__item" onclick="toast('Все задачи проекта')"><span>Все задачи проекта</span></button>
+  <button class="pop__item" onclick="toast('Задачи без спринта')"><span>Без спринта</span></button>
+</div>
+
+<div class="overlay" id="ovl" onclick="closeLayers()"></div>
+<div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Готово</span></div>
+</body>
+</html>

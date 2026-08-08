@@ -1,4 +1,4 @@
-// Доменный сервис проектов: список с учётом видимости, CRUD, секции, участники.
+// Доменный сервис проектов: список с учётом видимости, CRUD, участники.
 
 import { prepare, transaction, type TxContext } from "@/lib/sql";
 import { emitEvent, notifyUsers } from "./events";
@@ -14,9 +14,9 @@ import type {
   Project,
   ProjectDefaultRole,
   ProjectMemberWithUser,
+  ProjectMode,
   ProjectRole,
   ProjectWithMeta,
-  Section,
 } from "./types";
 
 // --- Загрузка и проверка --------------------------------------------------------
@@ -84,6 +84,61 @@ export async function listProjects(ctx: AuthContext, opts: { archived?: boolean 
     open_task_count: countMap.get(p.id) ?? 0,
     member_ids: p.default_role ? null : (memberMap.get(p.id) ?? []),
   }));
+}
+
+/**
+ * Порядок проектов в панели — целиком, как справочник статусов: перетаскивание
+ * сдвигает соседей, и патч одной позиции оставил бы список в промежуточном
+ * состоянии между запросами.
+ *
+ * Присланный порядок **всегда неполон**: закрытый проект не видит даже админ
+ * организации (правило 3 в core/CLAUDE.md), а архивные в панель не попадают.
+ * Поэтому раздать 1..N по одному этому списку нельзя — так перемешалось бы то,
+ * чего человек не видел. Переставляем по «слотам»: перечисленные проекты
+ * занимают ровно те места в общем порядке, что занимали до перестановки, и
+ * меняются местами только между собой.
+ *
+ * Событий не пишем — сознательное исключение из правила 7, как перестановка
+ * справочника статусов: место строки в панели не меняет ни одного проекта по
+ * существу, а лента и push от каждого движения мыши стали бы шумом на команду.
+ */
+export async function reorderProjects(ctx: AuthContext, order: string[]): Promise<ProjectWithMeta[]> {
+  assertOrg(ctx, "projects.order");
+  const moved = [...new Set(order)];
+  if (moved.length !== order.length) throw new DomainError(422, "Duplicate project in order");
+
+  const all = await prepare<Project>(
+    // Тот же порядок, что у listProjects: позиции в базе бывают и разъехавшимися
+    // (до этой правки их никто не выставлял руками), а created_at разводит равные.
+    `SELECT * FROM core.projects WHERE org_id = ? ORDER BY position, created_at`,
+  ).all(ctx.orgId);
+  const byId = new Map(all.map((p) => [p.id, p]));
+  for (const id of moved) {
+    const project = byId.get(id);
+    // Невидимый проект неотличим от несуществующего — как в requireProject.
+    if (!project || !effectiveProjectRole(ctx, project)) throw new DomainError(404, "Project not found");
+  }
+
+  const movedSet = new Set(moved);
+  const slots = all.map((_, i) => i).filter((i) => movedSet.has(all[i].id));
+  const next = [...all];
+  slots.forEach((slot, i) => {
+    next[slot] = byId.get(moved[i])!;
+  });
+
+  await transaction(async (tx) => {
+    for (const [i, project] of next.entries()) {
+      const position = i + 1;
+      if (project.position === position) continue;
+      await tx
+        .prepare(`UPDATE core.projects SET position = ? WHERE id = ? AND org_id = ?`)
+        .run(position, project.id, ctx.orgId);
+    }
+  });
+
+  // Отвечаем тем же списком, что отдаёт GET: панель читает проекты из стора, и
+  // перечитывать их отдельным запросом после перестановки незачем.
+  return listProjects(ctx);
 }
 
 // --- CRUD -------------------------------------------------------------------------
@@ -156,6 +211,8 @@ export async function updateProject(
     icon: string;
     default_role: ProjectDefaultRole | null;
     position: number;
+    mode: ProjectMode;
+    status_set_id: string | null;
   }>,
 ): Promise<Project> {
   const project = await requireProject(ctx, projectId, "project.update");
@@ -186,11 +243,22 @@ export async function updateProject(
     const row = await tx
       .prepare<Project>(
         `UPDATE core.projects
-         SET name = ?, description = ?, color = ?, icon = ?, default_role = ?, position = ?
+         SET name = ?, description = ?, color = ?, icon = ?, default_role = ?, position = ?, mode = ?,
+             status_set_id = ?
          WHERE id = ?
          RETURNING *`,
       )
-      .get(next.name, next.description, next.color, next.icon, next.default_role, next.position, projectId);
+      .get(
+        next.name,
+        next.description,
+        next.color,
+        next.icon,
+        next.default_role,
+        next.position,
+        next.mode,
+        next.status_set_id,
+        projectId,
+      );
     if (!row) throw new DomainError(500, "Failed to update project");
     await emitEvent(tx, {
       orgId: ctx.orgId,
@@ -281,48 +349,6 @@ export async function setProjectArchived(ctx: AuthContext, projectId: string, ar
       verb: archived ? "project.archived" : "project.unarchived",
     });
   });
-}
-
-// --- Секции ------------------------------------------------------------------------
-
-export async function listSections(projectId: string): Promise<Section[]> {
-  return prepare<Section>(
-    `SELECT * FROM core.sections WHERE project_id = ? ORDER BY position, created_at`,
-  ).all(projectId);
-}
-
-export async function createSection(ctx: AuthContext, projectId: string, name: string): Promise<Section> {
-  await requireProject(ctx, projectId, "section.manage");
-  const row = await prepare<Section>(
-    `INSERT INTO core.sections (project_id, name, position)
-     VALUES (?, ?, COALESCE((SELECT max(position) + 1 FROM core.sections WHERE project_id = ?), 1))
-     RETURNING *`,
-  ).get(projectId, name, projectId);
-  if (!row) throw new DomainError(500, "Failed to create section");
-  return row;
-}
-
-export async function updateSection(
-  ctx: AuthContext,
-  projectId: string,
-  sectionId: string,
-  patch: Partial<{ name: string; position: number }>,
-): Promise<Section> {
-  await requireProject(ctx, projectId, "section.manage");
-  const current = await prepare<Section>(`SELECT * FROM core.sections WHERE id = ? AND project_id = ?`).get(sectionId, projectId);
-  if (!current) throw new DomainError(404, "Section not found");
-  const next = { ...current, ...patch };
-  const row = await prepare<Section>(
-    `UPDATE core.sections SET name = ?, position = ? WHERE id = ? RETURNING *`,
-  ).get(next.name, next.position, sectionId);
-  if (!row) throw new DomainError(500, "Failed to update section");
-  return row;
-}
-
-export async function deleteSection(ctx: AuthContext, projectId: string, sectionId: string): Promise<void> {
-  await requireProject(ctx, projectId, "section.manage");
-  const changed = await prepare(`DELETE FROM core.sections WHERE id = ? AND project_id = ?`).run(sectionId, projectId);
-  if (changed.changes === 0) throw new DomainError(404, "Section not found");
 }
 
 // --- Участники проекта ----------------------------------------------------------------

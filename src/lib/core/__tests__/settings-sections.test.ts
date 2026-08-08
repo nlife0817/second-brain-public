@@ -68,9 +68,18 @@ describe("visibleSections", () => {
       "fields",
       "audit",
       "export",
+      "integrations",
       "webhooks",
     ]);
-    expect(visibleSections("member", {})).toEqual(["members", "statuses", "tags", "fields"]);
+    // Токен не даёт прав сверх собственных, поэтому «Интеграции» открыты и
+    // сотруднику — в отличие от журнала, выгрузки и вебхуков.
+    expect(visibleSections("member", {})).toEqual([
+      "members",
+      "statuses",
+      "tags",
+      "fields",
+      "integrations",
+    ]);
     expect(visibleSections("guest", {})).toEqual([]);
   });
 });

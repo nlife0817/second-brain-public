@@ -21,6 +21,8 @@ export type OrgAction =
   | "org.invite"          // приглашения (в т.ч. гостей)
   | "org.delete"
   | "project.create"
+  | "projects.order"      // порядок проектов в панели — общий для организации,
+                          // поэтому и право на него org-уровня, а не проектного
   | "task.create.personal" // задача без проекта (личный инбокс) — не для гостей
   | "clients.view"        // CRM закрыт для гостей
   | "clients.manage"
@@ -38,6 +40,9 @@ const MIN_ORG_ROLE: Record<OrgAction, OrgRole> = {
   "org.invite": "admin",
   "org.delete": "owner",
   "project.create": "member",
+  // Порядок в панели видит вся команда — двигает его тот, кто отвечает за
+  // организацию, как и справочник статусов.
+  "projects.order": "admin",
   "task.create.personal": "member",
   "clients.view": "member",
   "clients.manage": "member",
@@ -63,11 +68,14 @@ export type ProjectAction =
   | "project.archive"
   | "project.delete"
   | "project.members.manage"
-  | "section.manage"
   | "task.create"
-  | "task.edit"               // поля, статус, исполнители, перенос между секциями
+  | "task.edit"               // поля, статус, исполнители, порядок в проекте
   | "task.delete"
   | "task.comment"
+  | "sprint.manage"           // спринты проекта в режиме «Разработка»: завести,
+                              // передвинуть даты, начать и завершить. Планирование
+                              // работы — дело команды, а не администратора проекта,
+                              // поэтому порог тот же, что у правки задач
   | "field.value.edit";       // значения кастомных полей на задачах проекта
 
 const MIN_PROJECT_ROLE: Record<ProjectAction, ProjectRole> = {
@@ -77,11 +85,11 @@ const MIN_PROJECT_ROLE: Record<ProjectAction, ProjectRole> = {
   "project.archive": "admin",
   "project.delete": "admin",
   "project.members.manage": "admin",
-  "section.manage": "editor",
   "task.create": "editor",
   "task.edit": "editor",
   "task.delete": "editor",
   "task.comment": "commenter",
+  "sprint.manage": "editor",
   "field.value.edit": "editor",
 };
 

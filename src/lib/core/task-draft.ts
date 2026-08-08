@@ -13,6 +13,8 @@ export interface TaskDraft {
   description: string;
   status_id: string | null;
   priority: TaskPriority;
+  start_date: string | null;
+  start_time: string | null;
   due_date: string | null;
   due_time: string | null;
   estimated_minutes: number | null;
@@ -35,6 +37,10 @@ export function emptyDraft(defaults?: Partial<TaskDraft>): TaskDraft {
     description: "",
     status_id: null,
     priority: "none",
+    // Начало пустое, в отличие от срока: «когда начинаем» — осознанное решение,
+    // а подставленное сегодня превратило бы гант в стену однодневных полос.
+    start_date: null,
+    start_time: null,
     due_date: todayIso(),
     due_time: null,
     estimated_minutes: null,
@@ -58,6 +64,8 @@ export function draftToCreateBody(draft: TaskDraft): Record<string, unknown> {
     description: draft.description || undefined,
     status_id: draft.status_id,
     priority: draft.priority,
+    start_date: draft.start_date,
+    start_time: draft.start_date ? draft.start_time : null,
     due_date: draft.due_date,
     due_time: draft.due_date ? draft.due_time : null,
     estimated_minutes: draft.estimated_minutes,

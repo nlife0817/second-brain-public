@@ -12,7 +12,10 @@ import {
   effectiveProjectRole,
   PolicyError,
 } from "./policy";
+import { notifyMentions } from "./mentions";
+import { getDefaultStatus, resolveStatusSetId } from "./orgmeta";
 import { requireProject } from "./projects";
+import { getSprint } from "./sprints";
 import type {
   AllTasksResult,
   AuthContext,
@@ -69,8 +72,10 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
          JOIN chain c ON p.id = c.parent_task_id
        WHERE c.depth < 8
      )
-     SELECT id, org_id, title, description, status_id, priority, due_date, due_time,
-            estimated_minutes, completed_at, parent_task_id, source, created_by,
+     SELECT id, org_id, title, description, status_id, priority, start_date, start_time,
+            due_date, due_time,
+            estimated_minutes, completed_at, parent_task_id, sprint_id, sprint_carry_count,
+            source, created_by,
             created_at, updated_at
      FROM chain ORDER BY depth`,
   ).all(taskId);
@@ -89,12 +94,12 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
        SELECT task_id, 'follower' AS src FROM core.task_followers WHERE user_id = ? AND task_id IN (${ph})`,
     ).all(ctx.user.id, chainIds, ctx.user.id, chainIds),
     prepare<
-      { task_id: string; project_id: string; section_id: string | null; position: number } & {
+      { task_id: string; project_id: string; position: number } & {
         p_org_id: string;
         p_default_role: ProjectDefaultRole | null;
       }
     >(
-      `SELECT tp.task_id, tp.project_id, tp.section_id, tp.position,
+      `SELECT tp.task_id, tp.project_id, tp.position,
               p.org_id AS p_org_id, p.default_role AS p_default_role
        FROM core.task_projects tp
        JOIN core.projects p ON p.id = tp.project_id
@@ -156,7 +161,6 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
     chainProjectIds: [...new Set(chainPlacements.map((pl) => pl.project_id))],
     placements: directPlacementRows.map((pl) => ({
       project_id: pl.project_id,
-      section_id: pl.section_id,
       position: pl.position,
       project: projectsById.get(pl.project_id)!,
     })),
@@ -187,8 +191,11 @@ export async function requireTaskAccess(
  * Колонки задачи без `description`: списки его не показывают, а на проекте в
  * 700 задач HTML описаний — четверть веса ответа.
  */
-const TASK_LIST_COLUMNS = `t.id, t.org_id, t.title, t.status_id, t.priority, t.due_date, t.due_time,
-   t.estimated_minutes, t.completed_at, t.parent_task_id, t.source, t.created_by, t.created_at, t.updated_at`;
+const TASK_LIST_COLUMNS = `t.id, t.org_id, t.title, t.status_id, t.priority,
+   t.start_date, t.start_time, t.due_date, t.due_time,
+   t.estimated_minutes, t.completed_at, t.parent_task_id, t.subtask_position,
+   t.sprint_id, t.sprint_carry_count,
+   t.source, t.created_by, t.created_at, t.updated_at`;
 
 async function enrichTasks<T extends { id: string }>(rows: T[]): Promise<Array<T & TaskMeta>> {
   if (rows.length === 0) return [];
@@ -208,8 +215,8 @@ async function enrichTasks<T extends { id: string }>(rows: T[]): Promise<Array<T
        WHERE tt.task_id IN (${ph})
        ORDER BY g.position, g.name`,
     ).all(ids),
-    prepare<{ task_id: string; project_id: string; section_id: string | null; position: number }>(
-      `SELECT task_id, project_id, section_id, position FROM core.task_projects WHERE task_id IN (${ph})`,
+    prepare<{ task_id: string; project_id: string; position: number }>(
+      `SELECT task_id, project_id, position FROM core.task_projects WHERE task_id IN (${ph})`,
     ).all(ids),
     prepare<{ parent_task_id: string; total: number; done: number }>(
       `SELECT parent_task_id, count(*)::int AS total,
@@ -247,7 +254,7 @@ async function enrichTasks<T extends { id: string }>(rows: T[]): Promise<Array<T
       id: g.id, org_id: g.org_id, name: g.name, color: g.color, position: g.position,
     })),
     placements: (placementMap.get(t.id) ?? []).map((p) => ({
-      project_id: p.project_id, section_id: p.section_id, position: p.position,
+      project_id: p.project_id, position: p.position,
     })),
     subtask_count: subtaskMap.get(t.id)?.total ?? 0,
     subtask_done_count: subtaskMap.get(t.id)?.done ?? 0,
@@ -410,6 +417,12 @@ export async function filterVisibleTaskIds(ctx: AuthContext, ids: string[]): Pro
   return new Set(rows.map((r) => r.id));
 }
 
+// Транспонированная версия этого отсева — «кто из пользователей видит одну
+// задачу» — живёт в mentions.ts (`filterUsersWhoCanViewTask`). Здесь её нет
+// намеренно: она понадобилась только уведомлениям об упоминаниях, а импорт
+// оттуда сюда замкнул бы модули в кольцо. Правила видимости у обеих одни —
+// правя `taskVisibility`, правь и её.
+
 /**
  * Задачи всех доступных проектов организации + личные — для сводного экрана.
  *
@@ -454,9 +467,50 @@ export async function listAllTasks(
 export async function listSubtasks(ctx: AuthContext, parentTaskId: string): Promise<TaskListItem[]> {
   await requireTaskAccess(ctx, parentTaskId, "view");
   const rows = await prepare<Omit<CoreTask, "description">>(
-    `SELECT ${TASK_LIST_COLUMNS} FROM core.tasks t WHERE t.parent_task_id = ? ORDER BY t.created_at`,
+    // Ручной порядок первым ключом: позиции нет у подзадач, заведённых до
+    // миграции 0049, и такая обязана встать в конец ветки, а не в начало.
+    `SELECT ${TASK_LIST_COLUMNS} FROM core.tasks t
+      WHERE t.parent_task_id = ?
+      ORDER BY t.subtask_position NULLS LAST, t.created_at`,
   ).all(parentTaskId);
   return enrichTasks(rows);
+}
+
+/**
+ * Ручной порядок подзадач. Порядок приходит целиком, как у справочника статусов
+ * (правило 16в): перетаскивание сдвигает соседей, и патч позиции по одной
+ * подзадаче оставлял бы ветку в промежуточном состоянии между запросами.
+ *
+ * Событий не пишем сознательно — как при правке справочника статусов: место
+ * строки в списке не меняет ни одной задачи по существу, а лента и push от
+ * каждого перетаскивания превратились бы в шум на всю команду.
+ */
+export async function reorderSubtasks(
+  ctx: AuthContext,
+  parentTaskId: string,
+  taskIds: string[],
+): Promise<TaskListItem[]> {
+  // Порядок подзадач — правка родителя: право на неё и решает.
+  await requireTaskAccess(ctx, parentTaskId, "edit");
+  const current = await prepare<{ id: string }>(
+    `SELECT id FROM core.tasks WHERE parent_task_id = ? AND org_id = ?`,
+  ).all(parentTaskId, ctx.orgId);
+
+  const known = new Set(current.map((r) => r.id));
+  const unique = new Set(taskIds);
+  if (taskIds.length !== known.size || unique.size !== taskIds.length || taskIds.some((id) => !known.has(id))) {
+    throw new DomainError(422, "Порядок должен перечислять все подзадачи по одному разу");
+  }
+
+  await transaction(async (tx) => {
+    for (let i = 0; i < taskIds.length; i++) {
+      await tx
+        .prepare(`UPDATE core.tasks SET subtask_position = ? WHERE id = ? AND parent_task_id = ?`)
+        .run(i + 1, taskIds[i], parentTaskId);
+    }
+  });
+
+  return listSubtasks(ctx, parentTaskId);
 }
 
 /**
@@ -507,12 +561,37 @@ export async function getTaskDetail(ctx: AuthContext, taskId: string): Promise<T
 
 // --- Вспомогательное для мутаций -------------------------------------------------------
 
+const STATUS_COLUMNS = `id, org_id, name, color, category, is_default, position`;
+
 async function getOrgStatus(ctx: AuthContext, statusId: string): Promise<TaskStatus> {
   const status = await prepare<TaskStatus>(
-    `SELECT id, org_id, name, color, kind, position FROM core.task_statuses WHERE id = ? AND org_id = ?`,
+    `SELECT ${STATUS_COLUMNS} FROM core.task_statuses WHERE id = ? AND org_id = ?`,
   ).get(statusId, ctx.orgId);
   if (!status) throw new DomainError(422, "Unknown status");
   return status;
+}
+
+/**
+ * Статус, с которым рождается задача. Пустого статуса больше не бывает:
+ * `status_id` без значения приходил из быстрого ввода и из повторов, и задача
+ * молча оседала в группе «Без статуса».
+ */
+async function resolveNewStatus(
+  ctx: AuthContext,
+  statusId: string | null | undefined,
+  /**
+   * Проект, чей набор статусов задаёт умолчание. Без него берётся набор
+   * организации: так рождается задача личного инбокса. Задача в нескольких
+   * проектах получает статус первого — своего «дома»; менять его никто не
+   * мешает, а придумать «средний» набор из двух рабочих процессов нельзя.
+   */
+  projectId?: string | null,
+): Promise<TaskStatus> {
+  if (statusId) return getOrgStatus(ctx, statusId);
+  const setId = await resolveStatusSetId(ctx.orgId, projectId ?? null);
+  const fallback = await getDefaultStatus(ctx.orgId, setId);
+  if (!fallback) throw new DomainError(422, "В организации нет ни одного статуса задач");
+  return fallback;
 }
 
 async function assertOrgUsers(ctx: AuthContext, userIds: string[]): Promise<void> {
@@ -570,6 +649,28 @@ async function assertAssigneesInClosedProjects(
   }
 }
 
+/**
+ * Задачу можно взять только в спринт того проекта, где она размещена (своими
+ * размещениями или размещениями предков). Иначе спринт стал бы способом утащить
+ * чужую задачу в свой проект: она осталась бы невидимой в списках, но считалась
+ * бы в чужой ёмкости. Завершённый спринт закрыт для новых задач — его итог уже
+ * подведён, а незакрытые из него как раз разъехались.
+ */
+async function assertSprintFits(
+  ctx: AuthContext,
+  sprintId: string,
+  projectIds: string[],
+): Promise<void> {
+  const sprint = await getSprint(sprintId);
+  if (!sprint || sprint.org_id !== ctx.orgId) throw new DomainError(422, "Unknown sprint");
+  if (!projectIds.includes(sprint.project_id)) {
+    throw new DomainError(422, "Задача не размещена в проекте этого спринта");
+  }
+  if (sprint.state === "completed") {
+    throw new DomainError(422, "Нельзя положить задачу в завершённый спринт");
+  }
+}
+
 async function assertOrgTags(ctx: AuthContext, tagIds: string[]): Promise<void> {
   if (tagIds.length === 0) return;
   const ph = tagIds.map(() => "?").join(",");
@@ -579,18 +680,26 @@ async function assertOrgTags(ctx: AuthContext, tagIds: string[]): Promise<void> 
   if (rows.length !== new Set(tagIds).size) throw new DomainError(422, "Unknown tag");
 }
 
-async function nextPlacementPosition(tx: TxContext, projectId: string, sectionId: string | null): Promise<number> {
+async function nextPlacementPosition(tx: TxContext, projectId: string): Promise<number> {
   const row = await tx
-    .prepare<{ p: number | null }>(
-      `SELECT max(position) AS p FROM core.task_projects WHERE project_id = ? AND section_id IS NOT DISTINCT FROM ?`,
-    )
-    .get(projectId, sectionId);
+    .prepare<{ p: number | null }>(`SELECT max(position) AS p FROM core.task_projects WHERE project_id = ?`)
+    .get(projectId);
   return (row?.p ?? 0) + 1;
 }
 
-async function assertSectionInProject(sectionId: string, projectId: string): Promise<void> {
-  const row = await prepare(`SELECT 1 FROM core.sections WHERE id = ? AND project_id = ?`).get(sectionId, projectId);
-  if (!row) throw new DomainError(422, "Section does not belong to the project");
+/**
+ * Место новой подзадачи — в конце ветки родителя. Новая строка появляется там,
+ * где её и набирали: композер стоит под списком, и подстановка в начало
+ * выглядела бы промахом интерфейса, а не порядком.
+ */
+async function nextSubtaskPosition(tx: TxContext, parentTaskId: string | null): Promise<number | null> {
+  if (!parentTaskId) return null;
+  const row = await tx
+    .prepare<{ p: number | null }>(
+      `SELECT max(subtask_position) AS p FROM core.tasks WHERE parent_task_id = ?`,
+    )
+    .get(parentTaskId);
+  return (row?.p ?? 0) + 1;
 }
 
 /**
@@ -631,11 +740,15 @@ export interface CreateTaskInput {
   description?: string;
   status_id?: string | null;
   priority?: TaskPriority;
+  start_date?: string | null;
+  start_time?: string | null;
   due_date?: string | null;
   due_time?: string | null;
   estimated_minutes?: number | null;
   parent_task_id?: string | null;
-  placements?: Array<{ project_id: string; section_id?: string | null }>;
+  /** Спринт проекта в режиме «Разработка»; без него задача попадает в бэклог. */
+  sprint_id?: string | null;
+  placements?: Array<{ project_id: string }>;
   assignee_ids?: string[];
   tag_ids?: string[];
   source?: string;
@@ -645,7 +758,6 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
   const placements = input.placements ?? [];
   for (const pl of placements) {
     await requireProject(ctx, pl.project_id, "task.create");
-    if (pl.section_id) await assertSectionInProject(pl.section_id, pl.project_id);
   }
 
   let parentAccess: TaskAccess | undefined;
@@ -675,30 +787,48 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
   ]);
   const tagIds = [...new Set(input.tag_ids ?? [])];
   await assertOrgTags(ctx, tagIds);
-  const status = input.status_id ? await getOrgStatus(ctx, input.status_id) : null;
+  if (input.sprint_id) {
+    await assertSprintFits(ctx, input.sprint_id, [
+      ...new Set([...placements.map((pl) => pl.project_id), ...(parentAccess?.chainProjectIds ?? [])]),
+    ]);
+  }
+  const status = await resolveNewStatus(
+    ctx,
+    input.status_id,
+    placements[0]?.project_id ?? parentAccess?.chainProjectIds[0] ?? null,
+  );
+  // Один раз на всю функцию: описание уходит и в INSERT, и в разбор упоминаний,
+  // а двойная очистка одного и того же текста — лишняя работа и лишний повод
+  // им разъехаться.
+  const description = sanitizeRichText(input.description ?? "");
 
   const taskId = await transaction(async (tx) => {
     const row = await tx
       .prepare<{ id: string }>(
         `INSERT INTO core.tasks
-           (org_id, title, description, status_id, priority, due_date, due_time,
-            estimated_minutes, parent_task_id, source, created_by, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (org_id, title, description, status_id, priority, start_date, start_time,
+            due_date, due_time,
+            estimated_minutes, parent_task_id, subtask_position, sprint_id, source, created_by, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
       )
       .get(
         ctx.orgId,
         input.title.trim(),
-        sanitizeRichText(input.description ?? ""),
-        status?.id ?? null,
+        description,
+        status.id,
         input.priority ?? "none",
+        input.start_date ?? null,
+        input.start_time ?? null,
         input.due_date ?? null,
         input.due_time ?? null,
         input.estimated_minutes ?? null,
         input.parent_task_id ?? null,
+        await nextSubtaskPosition(tx, input.parent_task_id ?? null),
+        input.sprint_id ?? null,
         input.source ?? "app",
         ctx.user.id,
-        status?.kind === "done" ? new Date().toISOString() : null,
+        status.category === "done" ? new Date().toISOString() : null,
       );
     if (!row) throw new DomainError(500, "Failed to create task");
     const id = row.id;
@@ -706,10 +836,10 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
     for (const pl of placements) {
       await tx
         .prepare(
-          `INSERT INTO core.task_projects (task_id, project_id, section_id, position) VALUES (?, ?, ?, ?)
+          `INSERT INTO core.task_projects (task_id, project_id, position) VALUES (?, ?, ?)
            ON CONFLICT (task_id, project_id) DO NOTHING`,
         )
-        .run(id, pl.project_id, pl.section_id ?? null, await nextPlacementPosition(tx, pl.project_id, pl.section_id ?? null));
+        .run(id, pl.project_id, await nextPlacementPosition(tx, pl.project_id));
     }
     for (let i = 0; i < assigneeIds.length; i++) {
       await tx
@@ -731,14 +861,35 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
       verb: "task.created",
       payload: { title: input.title.trim() },
     });
+    let notifiedAsAssignee = new Set<string>();
     if (assigneeIds.length > 0) {
-      await notifyUsers(tx, {
+      notifiedAsAssignee = new Set(
+        await notifyUsers(tx, {
+          orgId: ctx.orgId,
+          eventId,
+          kind: "assigned",
+          userIds: assigneeIds,
+          excludeUserId: ctx.user.id,
+          taskId: id,
+        }),
+      );
+    }
+    // Задачу заводят вместе с описанием (развёрнутый черновик, форма создания),
+    // и упоминание в нём — такое же упоминание. Без этого оно не доходило
+    // никогда: notifyMentions стоял только на правке.
+    //
+    // Назначение важнее упоминания и идёт первым: кому уже сказали «вам назначена
+    // задача», второй строкой про то же событие сообщать нечего — у
+    // core.notifications нет уникального ключа по (user_id, event_id), и в
+    // инбоксе появились бы две записи об одном создании.
+    if (description) {
+      await notifyMentions(tx, {
         orgId: ctx.orgId,
         eventId,
-        kind: "assigned",
-        userIds: assigneeIds,
-        excludeUserId: ctx.user.id,
         taskId: id,
+        actorId: ctx.user.id,
+        html: description,
+        skipUserIds: notifiedAsAssignee,
       });
     }
     return id;
@@ -754,11 +905,20 @@ export interface UpdateTaskInput {
   description?: string;
   status_id?: string | null;
   priority?: TaskPriority;
+  start_date?: string | null;
+  start_time?: string | null;
   due_date?: string | null;
   due_time?: string | null;
   estimated_minutes?: number | null;
   /** `null` — отвязать от родителя; uuid — переподчинить другой задаче. */
   parent_task_id?: string | null;
+  /**
+   * `null` — вернуть в бэклог, uuid — взять в спринт. Сроки при этом сервер сам
+   * не двигает: их считает интерфейс той же чистой `shiftTaskDates` и присылает
+   * обычными полями — иначе один PATCH молча менял бы дату, о которой человек с
+   * кем-то договорился.
+   */
+  sprint_id?: string | null;
   assignee_ids?: string[];
   tag_ids?: string[];
 }
@@ -767,14 +927,20 @@ export interface UpdateTaskInput {
  * Задача принадлежит собственной ветке — то есть назначить её родителем значит
  * замкнуть цикл. Обход идёт вниз от `taskId` и включает саму задачу, поэтому
  * попытка сделать задачу родителем самой себе тоже отсекается здесь.
+ *
+ * Обход не ограничен по глубине: с ограничением ветка длиннее лимита давала
+ * ложное «можно», и связывание двух существующих задач замыкало её в кольцо —
+ * а кольцо не разорвать ничем, кроме правки в базе, потому что списки строятся
+ * обходом сверху и такая ветка из них просто исчезает. Держит обход `UNION`
+ * (не `ALL`): повторные строки он отбрасывает, поэтому уже испорченные данные
+ * останавливают рекурсию, а не крутят её вечно.
  */
 async function isSelfOrDescendant(taskId: string, candidateId: string): Promise<boolean> {
   const row = await prepare<{ id: string }>(
     `WITH RECURSIVE down AS (
-       SELECT id, 0 AS depth FROM core.tasks WHERE id = ?
-       UNION ALL
-       SELECT c.id, d.depth + 1 FROM core.tasks c JOIN down d ON c.parent_task_id = d.id
-       WHERE d.depth < 8
+       SELECT id FROM core.tasks WHERE id = ?
+       UNION
+       SELECT c.id FROM core.tasks c JOIN down d ON c.parent_task_id = d.id
      )
      SELECT id FROM down WHERE id = ?`,
   ).get(taskId, candidateId);
@@ -791,14 +957,18 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
   if (reparented && patch.parent_task_id) {
     await requireTaskAccess(ctx, patch.parent_task_id, "edit");
     if (await isSelfOrDescendant(taskId, patch.parent_task_id)) {
-      throw new DomainError(422, "Task cannot be a subtask of its own branch");
+      // По-русски: раньше цепочку правил только код (MCP и черновики), а теперь
+      // родителя выбирают в интерфейсе, и этот текст читает человек.
+      throw new DomainError(422, "Задача не может стать подзадачей внутри собственной ветки");
     }
   }
 
+  // null в патче — «вернуть статус по умолчанию»: пустого статуса больше нет,
+  // но вкладка со старым бандлом всё ещё умеет жать «Снять статус».
   const nextStatus =
-    patch.status_id !== undefined && patch.status_id !== null ? await getOrgStatus(ctx, patch.status_id) : null;
+    patch.status_id !== undefined ? await resolveNewStatus(ctx, patch.status_id) : null;
   const prevStatus = task.status_id
-    ? await prepare<TaskStatus>(`SELECT id, org_id, name, color, kind, position FROM core.task_statuses WHERE id = ?`).get(task.status_id)
+    ? await prepare<TaskStatus>(`SELECT ${STATUS_COLUMNS} FROM core.task_statuses WHERE id = ?`).get(task.status_id)
     : undefined;
 
   if (patch.assignee_ids) {
@@ -816,6 +986,9 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
     );
   }
   if (patch.tag_ids) await assertOrgTags(ctx, patch.tag_ids);
+  // Проверяем по всей цепочке размещений: у подзадачи своих проектов нет, а в
+  // спринт проекта родителя она входит на общих основаниях.
+  if (patch.sprint_id) await assertSprintFits(ctx, patch.sprint_id, access.chainProjectIds);
 
   await transaction(async (tx) => {
     const changedFields: string[] = [];
@@ -835,6 +1008,17 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
       scalar.priority = patch.priority;
       changedFields.push("priority");
     }
+    if (patch.start_date !== undefined && patch.start_date !== task.start_date) {
+      scalar.start_date = patch.start_date;
+      changedFields.push("start_date");
+    }
+    // Уведомления о сроке начало не задевает — они шлются только по due_date и
+    // due_time (см. ниже): напоминание приходит о том, к чему задача должна быть
+    // готова, а не о том, когда за неё браться.
+    if (patch.start_time !== undefined && normalizeTime(patch.start_time) !== normalizeTime(task.start_time)) {
+      scalar.start_time = patch.start_time;
+      changedFields.push("start_time");
+    }
     if (patch.due_date !== undefined && patch.due_date !== task.due_date) {
       scalar.due_date = patch.due_date;
       changedFields.push("due_date");
@@ -847,16 +1031,24 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
       scalar.estimated_minutes = patch.estimated_minutes;
       changedFields.push("estimated_minutes");
     }
+    if (patch.sprint_id !== undefined && patch.sprint_id !== task.sprint_id) {
+      scalar.sprint_id = patch.sprint_id;
+      changedFields.push("sprint_id");
+    }
     if (reparented) {
       scalar.parent_task_id = patch.parent_task_id ?? null;
+      // Переезд в другую ветку — это новое место, а не старая позиция: чужой
+      // порядок о ней ничего не знает, и без пересчёта задача встала бы
+      // посреди списка, в котором её никто не двигал.
+      scalar.subtask_position = await nextSubtaskPosition(tx, patch.parent_task_id ?? null);
       changedFields.push("parent_task_id");
     }
 
-    const statusChanged = patch.status_id !== undefined && patch.status_id !== task.status_id;
+    const statusChanged = nextStatus !== null && nextStatus.id !== task.status_id;
     if (statusChanged) {
-      scalar.status_id = patch.status_id;
-      const becameDone = nextStatus?.kind === "done";
-      const wasDone = prevStatus?.kind === "done";
+      scalar.status_id = nextStatus.id;
+      const becameDone = nextStatus.category === "done";
+      const wasDone = prevStatus?.category === "done";
       if (becameDone && !wasDone) scalar.completed_at = new Date().toISOString();
       if (!becameDone && wasDone) scalar.completed_at = null;
     }
@@ -887,6 +1079,19 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
           taskId,
         });
       }
+      // Только появившиеся упоминания: описание автосохраняется раз в 1.2 с, и
+      // без разницы с прошлой версией человек получал бы уведомление на каждую
+      // правку абзаца, в котором его когда-то упомянули.
+      if (changedFields.includes("description")) {
+        await notifyMentions(tx, {
+          orgId: ctx.orgId,
+          eventId,
+          taskId,
+          actorId: ctx.user.id,
+          html: scalar.description as string,
+          prevHtml: task.description,
+        });
+      }
     }
 
     if (statusChanged) {
@@ -895,7 +1100,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
         actorId: ctx.user.id,
         entityType: "task",
         entityId: taskId,
-        verb: nextStatus?.kind === "done" ? "task.completed" : "task.status_changed",
+        verb: nextStatus.category === "done" ? "task.completed" : "task.status_changed",
         payload: {
           from: prevStatus?.name ?? null,
           to: nextStatus?.name ?? null,
@@ -904,7 +1109,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
       await notifyUsers(tx, {
         orgId: ctx.orgId,
         eventId,
-        kind: nextStatus?.kind === "done" ? "completed" : "status_changed",
+        kind: nextStatus.category === "done" ? "completed" : "status_changed",
         userIds: audience,
         excludeUserId: ctx.user.id,
         taskId,
@@ -988,7 +1193,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
 export async function setTaskPlacements(
   ctx: AuthContext,
   taskId: string,
-  placements: Array<{ project_id: string; section_id?: string | null }>,
+  placements: Array<{ project_id: string }>,
 ): Promise<TaskDetail> {
   const access = await requireTaskAccess(ctx, taskId, "edit");
   const currentByProject = new Map(access.placements.map((p) => [p.project_id, p]));
@@ -1005,11 +1210,10 @@ export async function setTaskPlacements(
     }
   }
 
-  for (const [projectId, pl] of nextByProject) {
+  for (const projectId of nextByProject.keys()) {
     if (!currentByProject.has(projectId)) {
       await requireProject(ctx, projectId, "task.create");
     }
-    if (pl.section_id) await assertSectionInProject(pl.section_id, projectId);
   }
   for (const projectId of currentByProject.keys()) {
     if (!nextByProject.has(projectId)) {
@@ -1041,48 +1245,38 @@ export async function setTaskPlacements(
         });
       }
     }
-    for (const [projectId, pl] of nextByProject) {
-      const existing = currentByProject.get(projectId);
-      if (!existing) {
-        await tx
-          .prepare(`INSERT INTO core.task_projects (task_id, project_id, section_id, position) VALUES (?, ?, ?, ?)`)
-          .run(taskId, projectId, pl.section_id ?? null, await nextPlacementPosition(tx, projectId, pl.section_id ?? null));
-        await emitEvent(tx, {
-          orgId: ctx.orgId,
-          actorId: ctx.user.id,
-          entityType: "task",
-          entityId: taskId,
-          verb: "task.homed",
-          payload: { project_id: projectId },
-        });
-      } else if ((pl.section_id ?? null) !== existing.section_id) {
-        await tx
-          .prepare(`UPDATE core.task_projects SET section_id = ?, position = ? WHERE task_id = ? AND project_id = ?`)
-          .run(pl.section_id ?? null, await nextPlacementPosition(tx, projectId, pl.section_id ?? null), taskId, projectId);
-      }
+    for (const projectId of nextByProject.keys()) {
+      if (currentByProject.has(projectId)) continue;
+      await tx
+        .prepare(`INSERT INTO core.task_projects (task_id, project_id, position) VALUES (?, ?, ?)`)
+        .run(taskId, projectId, await nextPlacementPosition(tx, projectId));
+      await emitEvent(tx, {
+        orgId: ctx.orgId,
+        actorId: ctx.user.id,
+        entityType: "task",
+        entityId: taskId,
+        verb: "task.homed",
+        payload: { project_id: projectId },
+      });
     }
   });
 
   return getTaskDetail(ctx, taskId);
 }
 
-/** Перемещение внутри проекта (канбан drag&drop): секция и/или позиция. */
+/** Перемещение внутри проекта (канбан drag&drop): позиция в списке. */
 export async function moveTaskInProject(
   ctx: AuthContext,
   taskId: string,
   projectId: string,
-  target: { section_id?: string | null; position?: number },
+  target: { position?: number },
 ): Promise<void> {
   await requireProject(ctx, projectId, "task.edit");
   const access = await requireTaskAccess(ctx, taskId, "view");
   const placement = access.placements.find((p) => p.project_id === projectId);
   if (!placement) throw new DomainError(404, "Task is not in this project");
-  if (target.section_id) await assertSectionInProject(target.section_id, projectId);
 
-  await prepare(
-    `UPDATE core.task_projects SET section_id = ?, position = ? WHERE task_id = ? AND project_id = ?`,
-  ).run(
-    target.section_id === undefined ? placement.section_id : target.section_id,
+  await prepare(`UPDATE core.task_projects SET position = ? WHERE task_id = ? AND project_id = ?`).run(
     target.position ?? placement.position,
     taskId,
     projectId,

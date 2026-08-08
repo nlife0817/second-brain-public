@@ -14,7 +14,7 @@ import { cookies } from "next/headers";
 import { getCoreUser, getOrgAuth } from "./context";
 import { listOrgMembers, listUserOrgs } from "./identity";
 import { listProjects } from "./projects";
-import { listStatuses, listTags } from "./orgmeta";
+import { listStatuses, listStatusSets, listTags } from "./orgmeta";
 import { listFields } from "./fields";
 import { unreadNotificationCount } from "./events";
 import { getActiveTimer, type TimeEntryWithTask } from "./time";
@@ -28,6 +28,7 @@ import type {
   OrgRole,
   OrgSummary,
   ProjectWithMeta,
+  StatusSet,
   TaskStatus,
   UserBrief,
 } from "./types";
@@ -36,6 +37,7 @@ import type {
 export interface OrgMeta {
   projects: ProjectWithMeta[];
   statuses: TaskStatus[];
+  statusSets: StatusSet[];
   tags: CoreTag[];
   members: OrgMemberWithUser[];
   fields: CustomField[];
@@ -72,16 +74,17 @@ function toBrief(user: { id: string; email: string; name: string; avatar_url: st
  * данные, на которые право уже подтверждено членством.
  */
 export const loadOrgMeta = cache(async (auth: AuthContext): Promise<OrgMeta> => {
-  const [projects, statuses, tags, members, fields, unreadCount, activeTimer] = await Promise.all([
+  const [projects, statuses, statusSets, tags, members, fields, unreadCount, activeTimer] = await Promise.all([
     listProjects(auth),
     listStatuses(auth),
+    listStatusSets(auth),
     listTags(auth),
     canOrg(auth, "org.members.view") ? listOrgMembers(auth.orgId) : Promise.resolve([]),
     listFields(auth),
     unreadNotificationCount(auth.orgId, auth.user.id),
     getActiveTimer(auth),
   ]);
-  return { projects, statuses, tags, members, fields, unreadCount, activeTimer };
+  return { projects, statuses, statusSets, tags, members, fields, unreadCount, activeTimer };
 });
 
 /**

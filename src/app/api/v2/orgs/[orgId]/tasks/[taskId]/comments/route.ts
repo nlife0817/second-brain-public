@@ -15,6 +15,6 @@ export const POST = withOrg(async (request, { params, auth }) => {
   if (!isUuid(taskId)) return jsonError(404, "Task not found");
   const [body, invalid] = await parseJson(request, commentCreateSchema);
   if (invalid) return invalid;
-  const comment = await addTaskComment(auth, taskId, body.body);
+  const comment = await addTaskComment(auth, taskId, body.body, body.parent_id ?? null);
   return NextResponse.json(comment, { status: 201 });
 });

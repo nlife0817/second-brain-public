@@ -325,6 +325,59 @@
   margin: 1.2em 0;
 }
 
+/* Списки --------------------------------------------------------------------
+   Preflight Tailwind снимает маркеры и обнуляет поля у `ul`/`ol` глобально, так
+   что без своих правил список в описании рисуется как набор абзацев. Поля и
+   `padding-left` перечислены явно: у `.tiptap ul` выше по файлу та же
+   специфичность, и опущенное свойство молча приехало бы оттуда. */
+.doc-content ul,
+.doc-content ol {
+  margin: 0.6em 0;
+  padding-left: 1.5rem;
+  list-style-position: outside;
+}
+.doc-content ul { list-style-type: disc; }
+.doc-content ol { list-style-type: decimal; }
+
+/* Уровни различаются на глаз: одинаковые точки на всех уровнях читаются как
+   один плоский список. */
+.doc-content ul ul { list-style-type: circle; }
+.doc-content ul ul ul { list-style-type: square; }
+.doc-content ol ol { list-style-type: lower-alpha; }
+.doc-content ol ol ol { list-style-type: lower-roman; }
+
+/* Вложенный список — часть своего пункта, а не соседний блок: полный
+   межблочный отступ разрывал бы его с родительской строкой. */
+.doc-content li > ul,
+.doc-content li > ol {
+  margin: 0.15em 0;
+}
+
+.doc-content li {
+  margin: 0.15em 0;
+}
+
+/* Единственный абзац пункта и есть сам пункт — собственных полей у него нет. */
+.doc-content li p {
+  margin: 0;
+}
+
+.doc-content li::marker {
+  color: var(--muted-foreground);
+}
+
+/* Отступ между блоками внутри пункта, цитаты и ячейки: `> * + *` выше достаёт
+   только прямых детей корня, поэтому второй абзац прижимался к первому.
+   Строка `li > * + p` дублирует правило намеренно — у `.tiptap li p` выше
+   специфичность больше, и без неё абзац остался бы с нулевым полем. */
+.doc-content li > * + *,
+.doc-content li > * + p,
+.doc-content blockquote > * + *,
+.doc-content td > * + *,
+.doc-content th > * + * {
+  margin-top: 0.6em;
+}
+
 /* Подложка выделения светлая в обеих темах, поэтому чернила задаются явно:
    с `color: inherit` в тёмной теме получался белый текст на жёлтом. */
 .doc-content mark {
@@ -409,9 +462,34 @@
 
 .doc-content [data-column] {
   min-width: 0;
+  position: relative;
 }
 .doc-content [data-column] > * + * {
   margin-top: 0.6em;
+}
+
+/* Границу колонок в тексте не видно: раскладка — это сетка с промежутком, и
+   пока абзацы не разной длины, две колонки читаются как один текст. При
+   наведении показываем разделитель в промежутке — черта рисуется поверх пустого
+   места, поэтому вёрстка не сдвигается ни на пиксель.
+
+   Только в редакторе (`contenteditable`): в готовом описании на карточке и в
+   ленте комментариев разделителям делать нечего — там раскладку никто не
+   правит. */
+.doc-content[contenteditable="true"] [data-column] + [data-column]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -0.5rem;
+  width: 1px;
+  background: var(--border);
+  opacity: 0;
+  transition: opacity 0.12s;
+  pointer-events: none;
+}
+.doc-content[contenteditable="true"] [data-columns]:hover > [data-column] + [data-column]::before {
+  opacity: 1;
 }
 
 /* На телефоне колонки складываются в одну: 320 px делить надвое бессмысленно. */
@@ -419,23 +497,56 @@
   .doc-content [data-columns] {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* Колонки встали друг под друга — вертикальная черта между ними легла бы
+     поперёк смысла. */
+  .doc-content[contenteditable="true"] [data-column] + [data-column]::before {
+    display: none;
+  }
 }
 
-/* Картинки ------------------------------------------------------------------ */
-.doc-content figure.doc-image {
+/* Перетаскивание блоков ------------------------------------------------------
+   Линия места вставки (Dropcursor) и обводка контейнера, в который блок упадёт
+   (`DropTarget`). Обе появляются только на время перетаскивания. */
+/* Позицию, слой и «сквозной» курсор расширение проставляет само, инлайном —
+   здесь только вид линии. Селектор намеренно вне `.doc-content`: линия живёт не
+   в самом редакторе, а в его ближайшем позиционированном предке. */
+.doc-dropcursor {
+  border-radius: 2px;
+  background: var(--primary);
+}
+
+.doc-content .doc-drop-target {
+  border-radius: 0.375rem;
+  outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
+  outline-offset: 2px;
+  background: color-mix(in oklab, var(--primary) 7%, transparent);
+}
+/* У ячейки таблицы своя рамка и свой фон выделения — обводка снаружи налезала
+   бы на соседнюю ячейку. */
+.doc-content td.doc-drop-target,
+.doc-content th.doc-drop-target {
+  outline-offset: -2px;
+}
+
+/* Картинки ------------------------------------------------------------------
+   Правила намеренно не привязаны к `.doc-content`: та же картинка выводится и в
+   готовом тексте комментария (`.comment-body`), где разметку рисует не редактор,
+   а dangerouslySetInnerHTML поверх `prose`. Селекторы `prose` из Tailwind живут
+   в `:where()` с нулевой специфичностью, поэтому эти перебивают их. */
+figure[data-image] {
   margin: 0.8em 0;
   max-width: 100%;
 }
-.doc-content figure.doc-image[data-align="center"] { margin-left: auto; margin-right: auto; }
-.doc-content figure.doc-image[data-align="right"] { margin-left: auto; margin-right: 0; }
-.doc-content figure.doc-image[data-align="left"] { margin-right: auto; margin-left: 0; }
+figure[data-image][data-align="center"] { margin-left: auto; margin-right: auto; }
+figure[data-image][data-align="right"] { margin-left: auto; margin-right: 0; }
+figure[data-image][data-align="left"] { margin-right: auto; margin-left: 0; }
 
-.doc-content .doc-image-frame {
+.doc-image-frame {
   position: relative;
   line-height: 0;
 }
 
-.doc-content figure.doc-image img {
+figure[data-image] img {
   width: 100%;
   height: auto;
   margin: 0;
@@ -443,7 +554,31 @@
   display: block;
 }
 
-.doc-content figure.doc-image figcaption {
+/* Картинку тащат за неё саму (ручка перетаскивания в DocImage.tsx) — курсор
+   единственное, чем это видно до начала жеста. */
+.doc-image-draggable {
+  cursor: grab;
+}
+.doc-image-draggable:active {
+  cursor: grabbing;
+}
+
+/* Место картинки, которая ещё грузится во вложения (см. paste-images.ts). */
+.doc-image-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 6rem;
+  border: 1px dashed var(--border);
+  border-radius: 0.5rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.2;
+}
+
+figure[data-image] figcaption {
   margin-top: 0.3rem;
   font-size: 0.8rem;
   line-height: 1.4;
@@ -459,7 +594,7 @@
   color: inherit;
 }
 
-.doc-content .doc-image-selected img {
+.doc-image-selected img {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
@@ -467,7 +602,7 @@
 /* Ручка изменения размера шире самой кромки — в два пикселя мышью не попасть.
    Растёт она внутрь картинки: вынос наружу давал бы описанию несколько
    пикселей горизонтальной прокрутки на ровном месте. */
-.doc-content .doc-image-handle {
+.doc-image-handle {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -477,7 +612,7 @@
   opacity: 0;
   transition: opacity 0.12s;
 }
-.doc-content .doc-image-handle::after {
+.doc-image-handle::after {
   content: "";
   position: absolute;
   top: 50%;
@@ -489,12 +624,12 @@
   background: var(--primary);
   box-shadow: 0 0 0 1px var(--background);
 }
-.doc-content .doc-image-frame:hover .doc-image-handle,
-.doc-content .doc-image-handle-active {
+.doc-image-frame:hover .doc-image-handle,
+.doc-image-handle-active {
   opacity: 1;
 }
 
-.doc-content .doc-image-toolbar {
+.doc-image-toolbar {
   position: absolute;
   top: 0.4rem;
   left: 0.4rem;
@@ -523,6 +658,21 @@
 .doc-image-btn:hover { background: var(--muted); color: var(--foreground); }
 .doc-image-btn-active { background: var(--muted); color: var(--foreground); }
 .doc-image-sep { width: 1px; height: 1rem; background: var(--border); }
+
+/* Картинка в готовом комментарии --------------------------------------------
+   Ширину выбрал автор (она в стиле самого figure), а высоту ограничиваем мы:
+   вертикальный скриншот во всю длину растягивал бы ленту на несколько экранов,
+   и следующего комментария за ним не видно. Оригинал открывается кликом —
+   handleRichTextClick в editor/open-link.ts.
+
+   `width: auto` вместе с `max-width: 100%` обязателен: при жёсткой ширине 100%
+   ограничение высоты сплющило бы картинку вместо того, чтобы уменьшить её. */
+.comment-body figure[data-image] img {
+  width: auto;
+  max-width: 100%;
+  max-height: 20rem;
+  cursor: zoom-in;
+}
 
 /* Файловое вложение --------------------------------------------------------- */
 .doc-content .doc-file {
@@ -567,6 +717,34 @@
 .doc-content .doc-comment-anchor[data-comment-resolved="true"] {
   background: transparent;
   border-bottom: 1px dotted var(--border);
+}
+
+/* Поиск по тексту -----------------------------------------------------------
+   Синий, а не привычный жёлтый: жёлтым в документе уже помечены якоря
+   обсуждений, а оранжевый — фирменный цвет выделения. Текущее совпадение
+   отличается от остальных не только заливкой, но и обводкой: на цветной
+   картинке или в ссылке одной заливки не хватает. */
+.doc-content .doc-search-hit {
+  background: color-mix(in oklab, #3b82f6 22%, transparent);
+  border-radius: 0.2rem;
+}
+.doc-content .doc-search-hit-current {
+  background: color-mix(in oklab, #3b82f6 55%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, #3b82f6 70%, transparent);
+}
+
+/* Упоминание участника -------------------------------------------------------
+   Селектор по data-type, а не по классу: санитайзер вырезает class у span
+   (разрешены только data-*), поэтому класс до читателя всё равно не доедет.
+   Вне .doc-content намеренно — упоминание рисуется и в ленте комментариев,
+   которая идёт классами prose. */
+[data-type="mention"] {
+  border-radius: 0.3rem;
+  padding: 0 0.25em;
+  background: color-mix(in oklab, var(--primary) 16%, transparent);
+  color: var(--primary-ink, var(--primary));
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 /* Comment rendered prose: tighter lists */
@@ -622,7 +800,10 @@
      задачи (text-sm) попадали под это правило браузера. */
   [data-mobile-v2] input,
   [data-mobile-v2] textarea,
-  [data-mobile-v2] select {
+  [data-mobile-v2] select,
+  /* Редактор описания и поле комментария — не textarea, а contenteditable:
+     под перечисление выше они не попадали, и фокус в них зумил экран так же. */
+  [data-mobile-v2] [contenteditable="true"] {
     font-size: 16px;
   }
 }

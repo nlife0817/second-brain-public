@@ -64,16 +64,20 @@ export const projectPatchSchema = z
     position: z.number().finite().optional(),
     archived: z.boolean().optional(),
     team_id: z.uuid().nullable().optional(),
+    mode: z.enum(["standard", "dev"]).optional(),
+    /** Набор статусов проекта; null — набор организации по умолчанию. */
+    status_set_id: z.uuid().nullable().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
-export const sectionCreateSchema = z.object({ name: z.string().trim().min(1).max(200) });
-export const sectionPatchSchema = z
-  .object({
-    name: z.string().trim().min(1).max(200).optional(),
-    position: z.number().finite().optional(),
-  })
-  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+/**
+ * Порядок проектов в панели. Приходит списком видимых проектов целиком — по той
+ * же причине, что и порядок статусов; неперечисленные (закрытые, архивные)
+ * сервис оставляет на их местах.
+ */
+export const projectOrderSchema = z.object({
+  order: z.array(z.uuid()).min(1).max(500),
+});
 
 export const projectMemberSchema = z.object({
   user_id: z.uuid(),
@@ -93,14 +97,14 @@ export const taskCreateSchema = z.object({
   description: z.string().max(500_000).optional(),
   status_id: z.uuid().nullish(),
   priority: prioritySchema.optional(),
+  start_date: dateSchema.nullish(),
+  start_time: timeSchema.nullish(),
   due_date: dateSchema.nullish(),
   due_time: timeSchema.nullish(),
   estimated_minutes: z.number().int().min(0).max(60_000).nullish(),
   parent_task_id: z.uuid().nullish(),
-  placements: z
-    .array(z.object({ project_id: z.uuid(), section_id: z.uuid().nullish() }))
-    .max(20)
-    .optional(),
+  sprint_id: z.uuid().nullish(),
+  placements: z.array(z.object({ project_id: z.uuid() })).max(20).optional(),
   assignee_ids: z.array(z.uuid()).max(20).optional(),
   tag_ids: z.array(z.uuid()).max(50).optional(),
 });
@@ -109,31 +113,84 @@ export const taskPatchSchema = z
   .object({
     title: z.string().trim().min(1).max(500).optional(),
     description: z.string().max(500_000).optional(),
+    // null трактуется сервисом как «вернуть статус по умолчанию»: пустого
+    // статуса у задачи больше не бывает, но вкладка со старым бандлом всё ещё
+    // умеет жать «Снять статус», и отвечать ей 400 незачем.
     status_id: z.uuid().nullable().optional(),
     priority: prioritySchema.optional(),
+    start_date: dateSchema.nullable().optional(),
+    start_time: timeSchema.nullable().optional(),
     due_date: dateSchema.nullable().optional(),
     due_time: timeSchema.nullable().optional(),
     estimated_minutes: z.number().int().min(0).max(60_000).nullable().optional(),
     // null — «отвязать от родителя»: подзадача становится обычной задачей.
     parent_task_id: z.uuid().nullable().optional(),
+    // null — «вернуть в бэклог».
+    sprint_id: z.uuid().nullable().optional(),
     assignee_ids: z.array(z.uuid()).max(20).optional(),
     tag_ids: z.array(z.uuid()).max(50).optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 
 export const taskPlacementsSchema = z.object({
-  placements: z
-    .array(z.object({ project_id: z.uuid(), section_id: z.uuid().nullish() }))
-    .max(20),
+  placements: z.array(z.object({ project_id: z.uuid() })).max(20),
 });
 
 export const taskMoveSchema = z.object({
   project_id: z.uuid(),
-  section_id: z.uuid().nullable().optional(),
   position: z.number().finite().optional(),
 });
 
-export const commentCreateSchema = z.object({ body: z.string().min(1).max(50_000) });
+// --- Спринты ------------------------------------------------------------------------
+
+const sprintFields = {
+  name: z.string().trim().min(1).max(200),
+  goal: z.string().max(2000),
+  starts_on: dateSchema.nullable(),
+  ends_on: dateSchema.nullable(),
+  // Ёмкость в минутах, как estimated_minutes у задачи. Потолок — тысяча часов:
+  // это уже не спринт, а опечатка.
+  capacity_minutes: z.number().int().min(1).max(60_000).nullable(),
+};
+
+export const sprintCreateSchema = z.object({
+  name: sprintFields.name.optional(),
+  goal: sprintFields.goal.optional(),
+  starts_on: sprintFields.starts_on.optional(),
+  ends_on: sprintFields.ends_on.optional(),
+  capacity_minutes: sprintFields.capacity_minutes.optional(),
+});
+
+export const sprintPatchSchema = z
+  .object({
+    name: sprintFields.name.optional(),
+    goal: sprintFields.goal.optional(),
+    starts_on: sprintFields.starts_on.optional(),
+    ends_on: sprintFields.ends_on.optional(),
+    capacity_minutes: sprintFields.capacity_minutes.optional(),
+    /** Сдвинуть вслед за окном спринта и сроки задач, стоявшие внутри него. */
+    shift_task_dates: z.boolean().optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
+export const sprintCompleteSchema = z.object({
+  /** Спринт, куда уводить незакрытые; null — все в бэклог. */
+  carry_to: z.uuid().nullish(),
+  decisions: z
+    .array(z.object({ task_id: z.uuid(), target: z.enum(["sprint", "backlog"]) }))
+    .max(500)
+    .optional(),
+  shift_dates: z.boolean().optional(),
+});
+
+export const commentCreateSchema = z.object({
+  body: z.string().min(1).max(50_000),
+  /** Ответ в обсуждении. Ответ на ответ сервер приведёт к тому же корню. */
+  parent_id: z.uuid().nullish(),
+});
+
+/** Правка не меняет место в ленте — parent_id здесь не принимается. */
+export const commentEditSchema = z.object({ body: z.string().min(1).max(50_000) });
 
 // --- Комментарии к описанию (треды на фрагменте текста) ------------------------------
 
@@ -149,19 +206,60 @@ export const docThreadResolveSchema = z.object({ resolved: z.boolean() });
 
 // --- Справочники и поля ---------------------------------------------------------------
 
+const statusCategorySchema = z.enum(["backlog", "in_progress", "done", "archived"]);
+
+// Схемы не strict намеренно: вкладка со старым бандлом ещё шлёт `kind`, и
+// правильный ответ на него — молча отбросить поле, а не 400.
 export const statusCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
   color: z.string().trim().max(32).optional(),
-  kind: z.enum(["open", "done", "archived"]).optional(),
+  category: statusCategorySchema.optional(),
+  /** Набор, куда добавляется статус; без него — набор организации по умолчанию. */
+  set_id: z.uuid().nullish(),
 });
+
+/**
+ * Набор статусов — рабочий процесс, который проект выбирает целиком. Новый
+ * набор рождается непустым: пустой нарушал бы инвариант «в обязательных
+ * категориях есть хотя бы один статус».
+ */
+export const statusSetCreateSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  template: z.enum(["dev", "base"]).optional(),
+});
+
+export const statusSetPatchSchema = z
+  .object({ name: z.string().trim().min(1).max(100).optional() })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
 export const statusPatchSchema = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),
     color: z.string().trim().max(32).optional(),
-    kind: z.enum(["open", "done", "archived"]).optional(),
+    category: statusCategorySchema.optional(),
+    /** Только true: дефолт не снимают, его переносят на другой статус. */
+    is_default: z.literal(true).optional(),
     position: z.number().finite().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
+/**
+ * Порядок справочника целиком: перетаскивание сдвигает соседей и может сменить
+ * категорию, поэтому статусы перечисляются все и в нужном порядке.
+ */
+export const statusOrderSchema = z.object({
+  order: z.array(z.object({ id: z.uuid(), category: statusCategorySchema })).min(1).max(200),
+  /** Набор, порядок которого пришёл; без него сервер берёт его у первого статуса. */
+  set_id: z.uuid().nullish(),
+});
+
+/**
+ * Ручной порядок подзадач — тоже целиком, по той же причине, что и справочник
+ * статусов. Потолок общий с ним: ветка из сотен подзадач это уже отдельный
+ * список, а не карточка.
+ */
+export const subtaskOrderSchema = z.object({
+  task_ids: z.array(z.uuid()).min(1).max(500),
+});
 
 export const tagCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
@@ -192,16 +290,27 @@ export const relationQuerySchema = z.object({
   entity_id: z.uuid(),
 });
 
+/** Стрелка ганта: `from` блокирует `to`. Тип связи подставляет сервер. */
+export const dependencySchema = z.object({
+  from: z.uuid(),
+  to: z.uuid(),
+});
+
+/** `blocks` — связь читается гантом как зависимость и рисуется стрелкой. */
+const relationKindSchema = z.enum(["generic", "blocks"]);
+
 export const relationTypeCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
   color: z.string().trim().max(32).optional(),
   icon: z.string().trim().max(64).optional(),
+  kind: relationKindSchema.optional(),
 });
 export const relationTypePatchSchema = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),
     color: z.string().trim().max(32).optional(),
     icon: z.string().trim().max(64).optional(),
+    kind: relationKindSchema.optional(),
     position: z.number().finite().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
@@ -315,6 +424,13 @@ export const timeEntryPatchSchema = z
 
 export const teamCreateSchema = z.object({ name: z.string().trim().min(1).max(200) });
 
+export const apiTokenCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  // Умолчание — чтение: токен, случайно выпущенный без выбора режима, не должен
+  // уметь править данные.
+  scope: z.enum(["read", "full"]).default("read"),
+});
+
 export const webhookCreateSchema = z.object({
   url: z.string().url().max(2000).refine((u) => u.startsWith("https://"), {
     message: "Только https-адреса",
@@ -345,6 +461,10 @@ export const notificationPrefSchema = z.object({
   kind: z.string().min(1).max(64),
   inbox: z.boolean(),
   push: z.boolean(),
+  // Необязательное: вкладка со старым бандлом шлёт только inbox и push, и
+  // отвечать ей 400 на переключателе, который у неё даже не нарисован, нельзя.
+  // Пропущенное поле роут берёт из текущей настройки, а не из умолчания.
+  telegram: z.boolean().optional(),
 });
 
 export const pushSubscribeSchema = z.object({

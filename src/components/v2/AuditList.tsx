@@ -5,6 +5,7 @@
 //
 // Общий для блока в настройках (первые записи) и для экрана «все действия».
 
+import { actorSourceLabel } from "@/lib/core/actor-source";
 import type { CoreEvent } from "@/lib/core/types";
 
 const VERB_LABELS: Record<string, string> = {
@@ -44,7 +45,9 @@ export function AuditList({ events }: { events: CoreEvent[] }) {
           <span className="font-medium text-foreground">
             {e.actor?.name || e.actor?.email || "Система"}
           </span>{" "}
-          {label(e)} ·{" "}
+          {label(e)}
+          {/* Сделано интеграцией, а не руками: в журнале это важнее всего. */}
+          {actorSourceLabel(e.source) && <> ({actorSourceLabel(e.source)})</>} ·{" "}
           {new Date(e.created_at).toLocaleString("ru-RU", {
             day: "numeric",
             month: "short",

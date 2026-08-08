@@ -20,6 +20,7 @@ import { Plus } from "lucide-react";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { api } from "@/lib/core/client";
 import { invalidate } from "@/lib/core/query";
+import { boardStatuses } from "@/lib/core/status-model";
 import type { TaskDetail, TaskRow, TaskStatus } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
@@ -134,6 +135,7 @@ export function ProjectBoard({
   tasks,
   setTasks,
   canEdit,
+  statusSetId,
   onOpenTask,
   onAddTask,
 }: {
@@ -143,6 +145,8 @@ export function ProjectBoard({
   tasks: TaskRow[];
   setTasks: Dispatch<SetStateAction<TaskRow[]>>;
   canEdit: boolean;
+  /** Набор статусов проекта; null — набор организации по умолчанию. */
+  statusSetId: string | null;
   onOpenTask: (id: string) => void;
   onAddTask: (statusId: string | null) => void;
 }) {
@@ -167,12 +171,17 @@ export function ProjectBoard({
     const matched = new Set(filterTasks(tasks, filterGroups, search, matchCtx).map((t) => t.id));
     const byStatus = new Map<string, TaskRow[]>();
     const noStatusTasks: TaskRow[] = [];
+    // Какие статусы реально встречаются у ВИДИМЫХ задач — только ради них доска
+    // рисует колонку чужого набора. Считать по всем задачам нельзя: скрытые
+    // фильтром добавляли бы пустые колонки, объясняющие пустоту ничем.
+    const present = new Set<string>();
     for (const t of tasks) {
       // Скрытая группа не просто убирает колонку: сама задача не должна
       // всплыть нигде — ни в «Без статуса», ни в счётчиках.
       if (t.status_id && hidden.has(t.status_id)) continue;
       if (!matched.has(t.id)) continue;
       if (t.status_id && known.has(t.status_id)) {
+        present.add(t.status_id);
         const bucket = byStatus.get(t.status_id);
         if (bucket) bucket.push(t);
         else byStatus.set(t.status_id, [t]);
@@ -183,9 +192,15 @@ export function ProjectBoard({
     // Колонку убираем только у архива. «Готово» — конец рабочего потока: без
     // него карточку на доске нечем завершить, а перетащенная туда задача просто
     // уходит с доски вместе с остальными завершёнными.
-    const visible = statuses.filter((s) => s.kind !== "archived" || !hidden.has(s.id));
+    //
+    // Состав колонок — набор проекта ПЛЮС статусы, которые фактически есть у его
+    // задач: задача живёт сразу в нескольких проектах, а статус у неё один, и
+    // спрятать её здесь значило бы потерять её из виду, ничего не переместив.
+    const visible = boardStatuses(statuses, statusSetId, present).filter(
+      (s) => s.category !== "archived" || !hidden.has(s.id),
+    );
     return { visible, byStatus, noStatusTasks };
-  }, [statuses, tasks, filterGroups, search, matchCtx]);
+  }, [statuses, statusSetId, tasks, filterGroups, search, matchCtx]);
 
   const openNoStatusAdd = useCallback(() => onAddTask(null), [onAddTask]);
 

@@ -73,21 +73,27 @@ nullable-ссылка на Supabase, которая заново простав�
 
 ---
 
-## 4. Google OAuth: свой клиент
+## 4. Вход: email и пароль
 
-Раньше redirect-URI указывал на Supabase (`<project>.supabase.co/auth/v1/callback`).
-Теперь — на ваш домен.
+Google из входа убран целиком — ни OAuth-клиента, ни redirect-URI для него не
+требуется (клиент нужен только тем, кто хочет подключать Google Calendar, см.
+[DEPLOY.md](DEPLOY.md)). Из окружения вход читает единственную переменную —
+`SESSION_SECRET`, ключ подписи cookie.
 
-1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → проект →
-   **Create credentials → OAuth client ID → Web application**.
-2. **Authorized redirect URIs:** `https://<домен>/auth/callback`
-   (для локальной отладки добавьте `http://localhost:3000/auth/callback`).
-3. На экране согласия (OAuth consent screen) достаточно scope `openid email profile`.
-4. Полученные `Client ID` и `Client secret` кладём в `.env` как `GOOGLE_CLIENT_ID`
-   и `GOOGLE_CLIENT_SECRET`.
+Первому участнику пароля взяться неоткуда: в интерфейсе ссылку выдаёт владелец
+организации, а самому владельцу выдать её некому. Для этого есть скрипт —
+он пишет одноразовый токен прямо в базу и печатает ссылку:
 
-> После переезда все пользователи разлогинятся один раз — cookie Supabase перестанет
-> распознаваться. Доступ при этом сохранится: он привязан к email, а не к сессии.
+```bash
+deploy/password-link.sh you@example.com
+```
+
+Ссылка ведёт на `/set-password/<token>`, срабатывает один раз и живёт двое суток.
+Дальше владелец выдаёт такие же ссылки остальным в «Настройках → Участники», а
+новые люди заводят пароль сразу на странице приглашения.
+
+> Смена `SESSION_SECRET` разлогинивает всех разом — это же и способ отозвать все
+> сессии. Доступ при этом сохранится: он привязан к email и членству, а не к cookie.
 
 ---
 
@@ -235,8 +241,9 @@ build-аргументами в `docker compose build`, а не только ч�
 Что больше не нужно: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
 `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `DATABASE_POOL_URL` (пулер Supabase).
 
-Что появилось: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`
-(ключ подписи cookie сессии, 32+ байта случайных данных).
+Что появилось: `SESSION_SECRET` (ключ подписи cookie сессии, 32+ байта случайных
+данных). `GOOGLE_CLIENT_ID` и `GOOGLE_CLIENT_SECRET` остались, но нужны только
+для подключения Google Calendar — вход их не читает.
 
 ---
 

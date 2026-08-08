@@ -96,6 +96,26 @@ describe("sanitizeRichText", () => {
     expect(clean).toContain('rel="noopener noreferrer nofollow"');
   });
 
+  // Переход в текущей вкладке уносил бы из приложения вместе с несохранёнными
+  // правками, поэтому чужой target не сохраняется.
+  it("ссылка открывается в новой вкладке независимо от исходного target", () => {
+    expect(sanitizeRichText('<a href="https://example.com" target="_self">сайт</a>')).toContain(
+      'target="_blank"',
+    );
+    expect(sanitizeRichText('<a href="https://example.com">сайт</a>')).toContain('target="_blank"');
+  });
+
+  // Упоминание проходит без правок allowlist (у span разрешены data-*), но
+  // именно поэтому его легко потерять при следующей правке санитайзера.
+  it("сохраняет упоминание участника", () => {
+    const clean = sanitizeRichText(
+      '<p><span data-type="mention" data-id="6d9ab062-6145-45e0-ac59-4085083b66d4" data-label="Иван">@Иван</span> глянь</p>',
+    );
+    expect(clean).toContain('data-type="mention"');
+    expect(clean).toContain('data-id="6d9ab062-6145-45e0-ac59-4085083b66d4"');
+    expect(clean).toContain("@Иван");
+  });
+
   it("не строка — пустое описание, а не падение", () => {
     expect(sanitizeRichText(null)).toBe("");
     expect(sanitizeRichText(undefined)).toBe("");

@@ -15,6 +15,8 @@ function project(id: string, name: string, memberIds: string[] | null): ProjectW
     description: "",
     color: "#6b7280",
     icon: "Folder",
+    mode: "standard",
+    status_set_id: null,
     default_role: memberIds === null ? "editor" : null,
     visibility: memberIds === null ? "org" : "private",
     position: 1,
@@ -37,6 +39,7 @@ function member(id: string): OrgMemberWithUser {
     email: `${id}@test.dev`,
     name: id,
     avatar_url: null,
+    has_password: true,
   };
 }
 

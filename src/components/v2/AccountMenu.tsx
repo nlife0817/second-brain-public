@@ -6,7 +6,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Bell, ChevronUp, LogOut, Smartphone } from "lucide-react";
+import { Bell, CalendarDays, ChevronUp, LogOut, Smartphone } from "lucide-react";
 import { Avatar } from "@/components/v2/bits";
 import {
   DropdownMenu,
@@ -76,6 +76,10 @@ export function AccountMenu({
         <DropdownMenuItem render={<Link href="/v2/settings/notifications" />}>
           <Bell className="size-4" />
           Уведомления
+        </DropdownMenuItem>
+        <DropdownMenuItem render={<Link href="/v2/settings/calendars" />}>
+          <CalendarDays className="size-4" />
+          Календари
         </DropdownMenuItem>
         <DropdownMenuItem render={<Link href="/v2/m/my?mobile" />}>
           <Smartphone className="size-4" />

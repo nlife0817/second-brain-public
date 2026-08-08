@@ -12,19 +12,19 @@
 // пары запросов после гидрации. Дальше список живёт в клиентском кэше.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { KanbanSquare, Plus, Settings, Table2, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { AvatarStack } from "@/components/v2/bits";
 import { CardSettingsPopover } from "@/components/v2/CardSettings";
-import { CreateTaskDialog, ProjectMembersDialog, TaskSheet } from "@/components/v2/lazy";
+import { CreateTaskDialog, TaskSheet } from "@/components/v2/lazy";
 import { accessLabel } from "@/components/v2/ProjectAccessPicker";
 import { ProjectIcon } from "@/components/v2/project-icons";
+import { BacklogView } from "@/components/v2/tasks/BacklogView";
+import { CalendarView } from "@/components/v2/tasks/CalendarView";
+import { GanttView } from "@/components/v2/tasks/GanttView";
 import { TaskTableView } from "@/components/v2/tasks/TaskTableView";
 import { BOARD_SECTIONS, ViewSettingsPopover } from "@/components/v2/tasks/ViewControls";
-import { FilterButton, TaskCount, TaskSearch } from "@/components/v2/tasks/ViewToolbar";
+import { FilterButton, TaskCount, TaskSearch, ViewModeSwitch } from "@/components/v2/tasks/ViewToolbar";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
+import { resolveProjectSetId } from "@/lib/core/status-model";
 import { useLoad } from "@/lib/core/use-load";
 import { applyTaskChange } from "@/lib/core/task-change";
 import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
@@ -32,18 +32,16 @@ import type {
   Project,
   ProjectMemberWithUser,
   ProjectRole,
-  Section,
+  SprintWithTotals,
   TaskRow,
 } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { ViewStoreProvider, projectScope, useViewStore } from "@/lib/core/view-store";
 import { filterTasks, makeMatchContext, showsDone, visiblePool } from "@/lib/core/views";
-import { cn } from "@/lib/utils";
 import { ProjectBoard } from "./ProjectBoard";
 
 export type ProjectDetail = Project & {
   my_role: ProjectRole | null;
-  sections: Section[];
   members: ProjectMemberWithUser[];
 };
 
@@ -51,6 +49,7 @@ export function ProjectBoardClient(props: {
   projectId: string;
   initialProject: ProjectDetail;
   initialTasks: TaskRow[];
+  initialSprints: SprintWithTotals[];
 }) {
   return (
     <ViewStoreProvider scope={projectScope(props.projectId)}>
@@ -59,43 +58,27 @@ export function ProjectBoardClient(props: {
   );
 }
 
-/** Переключатель вида — единственное место, где экран проекта расходится. */
-function ViewSwitch() {
-  const mode = useViewStore((s) => s.mode);
-  const setMode = useViewStore((s) => s.setMode);
-  const item = "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium";
-  return (
-    <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-      <button
-        onClick={() => setMode("table")}
-        className={cn(item, mode === "table" ? "bg-background shadow-sm" : "text-muted-foreground")}
-        title="Таблица"
-      >
-        <Table2 className="size-3.5" />
-        <span className="hidden xl:inline">Таблица</span>
-      </button>
-      <button
-        onClick={() => setMode("board")}
-        className={cn(item, mode === "board" ? "bg-background shadow-sm" : "text-muted-foreground")}
-        title="Доска"
-      >
-        <KanbanSquare className="size-3.5" />
-        <span className="hidden xl:inline">Доска</span>
-      </button>
-    </div>
-  );
+/**
+ * Переключатель вида — единственное место, где экран проекта расходится. Бэклог
+ * появляется только в режиме «Разработка»: без спринтов он был бы вторым, менее
+ * удобным списком задач.
+ */
+function ViewSwitch({ dev }: { dev: boolean }) {
+  return <ViewModeSwitch modes={dev ? ["backlog", "table", "board", "gantt", "calendar"] : ["table", "board", "gantt", "calendar"]} />;
 }
 
 function ProjectScreen({
   projectId,
   initialProject,
   initialTasks,
+  initialSprints,
 }: {
   projectId: string;
   initialProject: ProjectDetail;
   initialTasks: TaskRow[];
+  initialSprints: SprintWithTotals[];
 }) {
-  const { orgId, statuses, fields, me, metaLoading, refreshProjects } = useV2Store();
+  const { orgId, statuses, statusSets, fields, me, metaLoading, refreshProjects } = useV2Store();
   const mode = useViewStore((s) => s.mode);
   const filterGroups = useViewStore((s) => s.groups);
   const search = useViewStore((s) => s.search);
@@ -109,9 +92,9 @@ function ProjectScreen({
 
   const [project, setProject] = useState<ProjectDetail | null>(initialProject);
   const [tasks, setTasks] = useState<TaskRow[]>(initialTasks);
+  const [sprints, setSprints] = useState<SprintWithTotals[]>(initialSprints);
   const [openTaskId, setOpenTaskId] = useState<string | null>(deepLinkTaskId);
   const [createIn, setCreateIn] = useState<string | null | false>(false); // false = закрыт, null/statusId = открыт
-  const [membersOpen, setMembersOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Отдельно от `error`: тот означает «экран показать нечем» и подменяет собой
   // всю страницу. Замечание по только что созданной задаче — полоса над списком.
@@ -147,6 +130,11 @@ function ProjectScreen({
         ]);
         setProject(p);
         setTasks(ts);
+        // Спринты тянем только у dev-проекта: обычному этот запрос не нужен, а
+        // включённый только что режим обязан показать их без перезагрузки.
+        if (p.mode === "dev") {
+          setSprints(await cachedGet<SprintWithTotals[]>(`${projectPath}/sprints`, opts));
+        }
         setError(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Проект недоступен");
@@ -187,14 +175,19 @@ function ProjectScreen({
   );
 
   const createTask = useCallback(
-    async (draft: TaskDraft) => {
+    async (draft: TaskDraft, sprintId: string | null = null) => {
       if (!orgId) return;
       // Проект уже лежит в черновике, но подстраховываемся: задача без
-      // размещения уедет в личный инбокс и пропадёт из этого списка.
+      // размещения уедет в личный инбокс и пропадёт из этого списка. Спринта в
+      // черновике нет — его знает не форма, а секция бэклога, в которой задачу
+      // набрали.
+      const extra: Record<string, unknown> = {};
+      if (draft.project_ids.length === 0) extra.placements = [{ project_id: projectId }];
+      if (sprintId) extra.sprint_id = sprintId;
       const { fieldsWarning } = await createTaskFromDraft(
         orgId,
         draft,
-        draft.project_ids.length === 0 ? { placements: [{ project_id: projectId }] } : undefined,
+        Object.keys(extra).length > 0 ? extra : undefined,
       );
       setNotice(fieldsWarning);
       await reload();
@@ -211,6 +204,21 @@ function ProjectScreen({
     return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Загрузка…</div>;
   }
 
+  // Режим «Разработка» решает состав видов. Сохранённый вид переживает
+  // выключение режима, поэтому «бэклог» в обычном проекте показываем таблицей —
+  // иначе экран открылся бы пустым видом, которого в переключателе уже нет.
+  const isDev = project.mode === "dev";
+  const view = mode === "backlog" && !isDev ? "table" : mode;
+
+  // Набор статусов проекта: свой либо набор организации по умолчанию. `null` у
+  // проекта (0052) — это «набор по умолчанию», а не «показать все наборы», и
+  // отдать его сырым в списки, доску и бэклог значило бы вывалить весь справочник
+  // организации. Резолвим один раз и раздаём во все виды.
+  const statusSetId = resolveProjectSetId(statusSets, project.status_set_id);
+
+  // Шапка — только название и переключатель вида. Участники и параметры проекта
+  // живут в его настройках (карандаш у строки проекта в сайдбаре), а задача
+  // заводится там, где её и пишут: строкой в таблице и «плюсом» в колонке доски.
   const title = (
     <>
       <ProjectIcon name={project.icon} color={project.color} className="size-4" />
@@ -219,36 +227,6 @@ function ProjectScreen({
         {accessLabel(project.default_role)}
       </span>
     </>
-  );
-
-  const membersButton = (
-    <button
-      onClick={() => setMembersOpen(true)}
-      className="flex items-center gap-1.5 rounded-lg px-2 py-1 hover:bg-muted"
-      title="Участники проекта"
-    >
-      <AvatarStack
-        users={project.members.map((m) => ({ id: m.user_id, email: m.email, name: m.name, avatar_url: m.avatar_url }))}
-      />
-      <Users className="size-4 text-muted-foreground" />
-    </button>
-  );
-
-  const settingsLink = canEdit && (
-    <Link
-      href={`/v2/projects/${projectId}/settings`}
-      className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-      title="Настройки проекта"
-    >
-      <Settings className="size-4" />
-    </Link>
-  );
-
-  const addButton = canEdit && (
-    <Button size="sm" onClick={() => setCreateIn(null)}>
-      <Plus className="size-4" />
-      Задача
-    </Button>
   );
 
   const layers = (
@@ -282,17 +260,75 @@ function ProjectScreen({
           void refreshProjects();
         }}
       />
-      <ProjectMembersDialog
-        open={membersOpen}
-        onOpenChange={setMembersOpen}
-        project={project}
-        onChanged={() => void reload()}
-        settingsHref={`/v2/projects/${projectId}/settings`}
-      />
     </>
   );
 
-  if (mode === "table") {
+  if (view === "backlog") {
+    return (
+      <>
+        <BacklogView
+          projectId={projectId}
+          tasks={tasks}
+          setTasks={setTasks}
+          sprints={sprints}
+          setSprints={setSprints}
+          canEdit={!!canEdit}
+          onOpenTask={openTask}
+          onCreateTask={canEdit ? createTask : undefined}
+          draftDefaults={draftDefaults}
+          statusSetId={statusSetId}
+          reload={reload}
+          titleSlot={title}
+          actionsSlot={<ViewSwitch dev={isDev} />}
+        />
+        {layers}
+      </>
+    );
+  }
+
+  if (view === "calendar") {
+    return (
+      <>
+        <CalendarView
+          tasks={tasks}
+          setTasks={setTasks}
+          reload={reload}
+          invalidateKey={projectPath}
+          onOpenTask={openTask}
+          onCreateTask={canEdit ? createTask : undefined}
+          draftDefaults={draftDefaults}
+          error={notice}
+          onDismissError={() => setNotice(null)}
+          emptyText="В проекте пока нет задач с датами."
+          titleSlot={title}
+          actionsSlot={<ViewSwitch dev={isDev} />}
+        />
+        {layers}
+      </>
+    );
+  }
+
+  if (view === "gantt") {
+    return (
+      <>
+        <GanttView
+          tasks={tasks}
+          setTasks={setTasks}
+          reload={reload}
+          invalidateKey={projectPath}
+          onOpenTask={openTask}
+          error={notice}
+          onDismissError={() => setNotice(null)}
+          emptyText="В проекте пока нет задач."
+          titleSlot={title}
+          actionsSlot={<ViewSwitch dev={isDev} />}
+        />
+        {layers}
+      </>
+    );
+  }
+
+  if (view === "table") {
     return (
       <>
         <TaskTableView
@@ -305,17 +341,11 @@ function ProjectScreen({
           draftDefaults={draftDefaults}
           error={notice}
           onDismissError={() => setNotice(null)}
+          statusSetId={statusSetId}
           quickAddPlaceholder={`Быстро добавить задачу в «${project.name}»…`}
           emptyText="В проекте пока нет задач."
           titleSlot={title}
-          actionsSlot={
-            <>
-              <ViewSwitch />
-              {membersButton}
-              {settingsLink}
-              {addButton}
-            </>
-          }
+          actionsSlot={<ViewSwitch dev={isDev} />}
         />
         {layers}
       </>
@@ -333,11 +363,11 @@ function ProjectScreen({
         <TaskSearch />
         <FilterButton />
         <span className="flex-1" />
-        <ViewSwitch />
+        <ViewSwitch dev={isDev} />
         <CardSettingsPopover />
-        {membersButton}
-        {settingsLink}
-        {addButton}
+        {/* Участники, настройки проекта и «+ Задача» отсюда убраны: настройки
+            открываются карандашом из сайдбара, участники видны на вкладке
+            «Доступ», задачу заводят кнопкой «+» в колонке. */}
         <ViewSettingsPopover customFields={fields} sections={BOARD_SECTIONS} />
       </header>
 
@@ -347,6 +377,7 @@ function ProjectScreen({
         tasks={tasks}
         setTasks={setTasks}
         canEdit={!!canEdit}
+        statusSetId={statusSetId}
         onOpenTask={openTask}
         onAddTask={addTask}
       />

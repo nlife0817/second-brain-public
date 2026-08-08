@@ -1,13 +1,13 @@
 "use client";
 
-// Настройки проекта: общие параметры, доступ сотрудников, секции, архив и удаление.
+// Настройки проекта: общие параметры, доступ сотрудников, архив и удаление.
 // Общий экран для десктопа (/v2/projects/[id]/settings) и мобильного
 // (/v2/m/projects/[id]/settings) — правила доступа к проекту должны выглядеть
 // одинаково в обеих оболочках.
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, Check, Trash2 } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -22,12 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ProjectMuteToggle } from "@/components/v2/ProjectMuteToggle";
 import { api, ApiError } from "@/lib/core/client";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
-import type {
-  Project,
-  ProjectMemberWithUser,
-  ProjectRole,
-  Section,
-} from "@/lib/core/types";
+import type { Project, ProjectMemberWithUser, ProjectMode, ProjectRole } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { ProjectAccessPicker, type ProjectAccessValue } from "./ProjectAccessPicker";
@@ -36,7 +31,6 @@ import { PROJECT_COLORS, PROJECT_ICON_NAMES, ProjectIcon } from "./project-icons
 
 export type ProjectDetail = Project & {
   my_role: ProjectRole | null;
-  sections: Section[];
   members: ProjectMemberWithUser[];
 };
 
@@ -48,9 +42,16 @@ export interface Team {
 const TABS = [
   { id: "general", label: "Общие" },
   { id: "access", label: "Доступ" },
-  { id: "sections", label: "Секции" },
   { id: "danger", label: "Архив и удаление" },
 ] as const;
+
+const PROJECT_MODES: Array<{ id: ProjectMode; label: string }> = [
+  { id: "standard", label: "Обычный" },
+  { id: "dev", label: "Разработка" },
+];
+
+/** Значение «набор организации» в селекте: пустую строку Base UI не отличит от «не выбрано». */
+const DEFAULT_SET_VALUE = "__org_default__";
 
 type TabId = (typeof TABS)[number]["id"];
 
@@ -77,14 +78,14 @@ export function ProjectSettings({
   exitHref: string;
 }) {
   const router = useRouter();
-  const { orgId, orgRole, refreshProjects } = useV2Store();
+  const { orgId, orgRole, statusSets, refreshProjects } = useV2Store();
   const [project, setProject] = useState<ProjectDetail>(initialProject);
   const [tab, setTab] = useState<TabId>("general");
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Черновик общих параметров: правки применяются кнопкой, доступ и секции —
-  // сразу (там каждое действие самостоятельно и обратимо).
+  // Черновик общих параметров: правки применяются кнопкой, доступ — сразу
+  // (там каждое действие самостоятельно и обратимо).
   const [draft, setDraft] = useState({
     name: initialProject.name,
     description: initialProject.description,
@@ -94,7 +95,6 @@ export function ProjectSettings({
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [newSection, setNewSection] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -129,10 +129,9 @@ export function ProjectSettings({
 
   const canManage = project?.my_role === "admin";
   const canManageAccess = canManage && orgRole !== "guest";
-  const canManageSections = project?.my_role === "admin" || project?.my_role === "editor";
 
   /**
-   * Любая мутация здесь меняет и то, что показывает доска (секции, роль, доступ),
+   * Любая мутация здесь меняет и то, что показывает доска (роль, доступ),
    * поэтому кэш пути проекта сбрасывается вместе с перечитыванием.
    */
   async function call(fn: () => Promise<unknown>, after: () => Promise<void> | void = load) {
@@ -168,6 +167,31 @@ export function ProjectSettings({
     setSaving(false);
   }
 
+  /**
+   * Переключение режима — обычный патч проекта: данные при этом не меняются
+   * вовсе, поэтому выключение режима ничего не теряет. Спринты остаются в базе и
+   * вернутся, если режим включить снова.
+   */
+  async function setMode(value: ProjectMode) {
+    if (value === project.mode) return;
+    await call(() => api.patch(`/orgs/${orgId}/projects/${projectId}`, { mode: value }), async () => {
+      await load();
+      await refreshProjects();
+    });
+  }
+
+  /** Набор статусов проекта; null — набор организации по умолчанию. */
+  async function setStatusSet(value: string | null) {
+    if (value === (project.status_set_id ?? null)) return;
+    await call(
+      () => api.patch(`/orgs/${orgId}/projects/${projectId}`, { status_set_id: value }),
+      async () => {
+        await load();
+        await refreshProjects();
+      },
+    );
+  }
+
   async function setAccess(value: ProjectAccessValue) {
     if (value === project.default_role) return;
     // Список участников перечитываем целиком: закрытие проекта добавляет в него
@@ -175,21 +199,6 @@ export function ProjectSettings({
     await call(() => api.patch(`/orgs/${orgId}/projects/${projectId}`, { default_role: value }), async () => {
       await load();
       await refreshProjects();
-    });
-  }
-
-  async function moveSection(section: Section, delta: -1 | 1) {
-    const ordered = [...project.sections].sort((a, b) => a.position - b.position);
-    const index = ordered.findIndex((s) => s.id === section.id);
-    const neighbour = ordered[index + delta];
-    if (!neighbour) return;
-    await call(async () => {
-      await api.patch(`/orgs/${orgId}/projects/${projectId}/sections/${section.id}`, {
-        position: neighbour.position,
-      });
-      await api.patch(`/orgs/${orgId}/projects/${projectId}/sections/${neighbour.id}`, {
-        position: section.position,
-      });
     });
   }
 
@@ -256,6 +265,71 @@ export function ProjectSettings({
             hint="Заглушённый проект перестаёт присылать уведомления вам; остальных участников это не касается"
           >
             <ProjectMuteToggle projectId={projectId} />
+          </Card>
+
+          <Card
+            title="Режим проекта"
+            hint="«Разработка» добавляет спринты и бэклог с ручным порядком. Остальные виды остаются на месте, задачи не меняются"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              {PROJECT_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  disabled={!canManage || m.id === project.mode}
+                  onClick={() => void setMode(m.id)}
+                  className={cn(
+                    "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                    project.mode === m.id
+                      ? "border-foreground bg-foreground text-background"
+                      : "border-border text-muted-foreground hover:text-foreground",
+                    !canManage && "cursor-not-allowed opacity-60",
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+              <span className="text-xs text-muted-foreground">
+                {project.mode === "dev"
+                  ? "В шапке проекта появился вид «Бэклог» — там же живут спринты."
+                  : "Спринтов и бэклога у проекта нет."}
+              </span>
+            </div>
+
+            {/* Набор статусов — тоже параметр проекта, а не режима: свой рабочий
+                процесс бывает нужен и обычному проекту. Заводит наборы админ
+                организации в настройках статусов; проект только выбирает. */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">Набор статусов</span>
+              <Select
+                value={project.status_set_id ?? DEFAULT_SET_VALUE}
+                onValueChange={(value) =>
+                  void setStatusSet(value === DEFAULT_SET_VALUE ? null : String(value))
+                }
+                disabled={!canManage}
+              >
+                <SelectTrigger className="h-8 w-64 text-xs">
+                  <SelectValue>
+                    {statusSets.find((s) => s.id === project.status_set_id)?.name ??
+                      "Основной набор организации"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={DEFAULT_SET_VALUE}>Основной набор организации</SelectItem>
+                  {statusSets
+                    .filter((s) => !s.is_default)
+                    .map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Доска и карточка показывают статусы набора. Задача из нескольких проектов остаётся
+              видимой в каждом — её статус из чужого набора доска покажет отдельной колонкой.
+            </p>
           </Card>
 
           <Card title="Название и описание">
@@ -398,100 +472,6 @@ export function ProjectSettings({
             />
           </Card>
         </>
-      )}
-
-      {tab === "sections" && (
-        <Card title="Секции" hint="Разделы доски внутри проекта; порядок повторяет порядок на доске">
-          <div className="flex flex-col gap-2">
-            {[...project.sections]
-              .sort((a, b) => a.position - b.position)
-              .map((s, i, arr) => (
-                <div key={s.id} className="flex items-center gap-2">
-                  <Input
-                    defaultValue={s.name}
-                    disabled={!canManageSections}
-                    onBlur={(e) => {
-                      const name = e.target.value.trim();
-                      if (!name || name === s.name) return;
-                      void call(() =>
-                        api.patch(`/orgs/${orgId}/projects/${projectId}/sections/${s.id}`, { name }),
-                      );
-                    }}
-                    className="flex-1"
-                  />
-                  {canManageSections && (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Выше"
-                        disabled={i === 0}
-                        onClick={() => void moveSection(s, -1)}
-                      >
-                        <ArrowUp className="size-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Ниже"
-                        disabled={i === arr.length - 1}
-                        onClick={() => void moveSection(s, 1)}
-                      >
-                        <ArrowDown className="size-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Удалить секцию"
-                        onClick={() =>
-                          void call(() =>
-                            api.del(`/orgs/${orgId}/projects/${projectId}/sections/${s.id}`),
-                          )
-                        }
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </>
-                  )}
-                </div>
-              ))}
-            {project.sections.length === 0 && (
-              <p className="text-sm text-muted-foreground">Секций пока нет</p>
-            )}
-            {canManageSections && (
-              <div className="mt-2 flex items-center gap-2 border-t border-border pt-3">
-                <Input
-                  value={newSection}
-                  onChange={(e) => setNewSection(e.target.value)}
-                  placeholder="Новая секция"
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter" || !newSection.trim()) return;
-                    void call(async () => {
-                      await api.post(`/orgs/${orgId}/projects/${projectId}/sections`, {
-                        name: newSection.trim(),
-                      });
-                      setNewSection("");
-                    });
-                  }}
-                />
-                <Button
-                  size="sm"
-                  disabled={!newSection.trim()}
-                  onClick={() =>
-                    void call(async () => {
-                      await api.post(`/orgs/${orgId}/projects/${projectId}/sections`, {
-                        name: newSection.trim(),
-                      });
-                      setNewSection("");
-                    })
-                  }
-                >
-                  Добавить
-                </Button>
-              </div>
-            )}
-          </div>
-        </Card>
       )}
 
       {tab === "danger" && (

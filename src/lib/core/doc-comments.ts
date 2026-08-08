@@ -9,6 +9,7 @@ import { prepare, transaction, type TxContext } from "@/lib/sql";
 import { sanitizeRichText } from "@/lib/sanitize";
 import { emitEvent, notifyUsers, taskAudience } from "./events";
 import { DomainError } from "./http";
+import { notifyMentions } from "./mentions";
 import { canOrg } from "./policy";
 import { requireTaskAccess } from "./tasks";
 import type { AuthContext, DocCommentMessage, DocCommentThread } from "./types";
@@ -146,11 +147,21 @@ export async function createDocThread(
       verb: "doc_comment.added",
       payload: { thread_id: threadId, doc_comment_id: threadId },
     });
+    // Упомянутые вычитаются из общей аудитории: у core.notifications нет
+    // уникального ключа по (user_id, event_id), и подписчик, которого ещё и
+    // упомянули, получил бы две строки на одно событие.
+    const mentioned = await notifyMentions(tx, {
+      orgId: ctx.orgId,
+      eventId,
+      taskId,
+      actorId: ctx.user.id,
+      html: clean,
+    });
     await notifyUsers(tx, {
       orgId: ctx.orgId,
       eventId,
       kind: "doc_comment",
-      userIds: await taskAudience(tx, taskId),
+      userIds: (await taskAudience(tx, taskId)).filter((id) => !mentioned.has(id)),
       excludeUserId: ctx.user.id,
     });
     // Как и обычный комментарий: обсуждающий начинает следить за задачей.
@@ -193,11 +204,18 @@ export async function replyToDocThread(
       verb: "doc_comment.replied",
       payload: { thread_id: threadId, doc_comment_id: replyId },
     });
+    const mentioned = await notifyMentions(tx, {
+      orgId: ctx.orgId,
+      eventId,
+      taskId,
+      actorId: ctx.user.id,
+      html: clean,
+    });
     await notifyUsers(tx, {
       orgId: ctx.orgId,
       eventId,
       kind: "doc_comment",
-      userIds: await threadAudience(tx, taskId, threadId),
+      userIds: (await threadAudience(tx, taskId, threadId)).filter((id) => !mentioned.has(id)),
       excludeUserId: ctx.user.id,
     });
     await tx

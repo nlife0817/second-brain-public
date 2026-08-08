@@ -6,18 +6,26 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Archive,
+  ArchiveRestore,
   ArrowLeft,
   Bell,
   BellOff,
   Calendar,
+  CalendarRange,
   Check,
   CheckCircle2,
+  Clock,
   CornerLeftUp,
   Link2,
+  MoreHorizontal,
+  MoreVertical,
+  Pencil,
   Play,
   Plus,
   Square,
   Trash2,
+  Unlink,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -31,9 +39,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SheetHeader } from "@/components/ui/sheet";
-import { Textarea } from "@/components/ui/textarea";
+import { formatEstimate } from "@/components/v2/tasks/cells";
+import {
+  ESTIMATE_POPOVER,
+  EstimateForm,
+  PRIORITY_ORDER,
+} from "@/components/v2/tasks/draft-controls";
+import { SegmentedPicker } from "@/components/v2/tasks/SegmentedPicker";
 import { SubtaskSection } from "@/components/v2/tasks/SubtaskSection";
+import { actorSourceLabel } from "@/lib/core/actor-source";
 import { api } from "@/lib/core/client";
+import {
+  archiveStatus,
+  cardStatuses,
+  defaultStatus,
+  resolveProjectSetId,
+  statusesOfSet,
+  withCurrent,
+} from "@/lib/core/status-model";
 import type { TaskChange } from "@/lib/core/task-change";
 import { createTaskFromDraft, type TaskDraft } from "@/lib/core/task-draft";
 import type {
@@ -51,11 +74,13 @@ import { useV2Store, useV2StoreApi, type ActiveTimer } from "@/lib/core/ui-store
 import { useLoad } from "@/lib/core/use-load";
 import { useTaskOpenStore } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
-import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle, dueTone, formatDue } from "./bits";
-import { DuePicker } from "./DuePicker";
+import { Avatar, PRIORITY_LABELS, chipStyle, dueTone, formatDue } from "./bits";
+import { DuePicker, StartPicker } from "./DuePicker";
+import { handleRichTextClick } from "./editor/open-link";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
 import { SidePanel, useWideViewport } from "./SidePanel";
+import { TaskSearchField, type TaskHit } from "./TaskPicker";
 import { TaskRecurrence, type TaskRecurrenceRule } from "./TaskRecurrence";
 // Tiptap — самая тяжёлая зависимость интерфейса (≈370 КБ). Статический импорт
 // тянул её в бандл каждой страницы v2, хотя редактор нужен только когда открыта
@@ -73,6 +98,30 @@ const RichText = dynamic(() => import("./RichText").then((m) => m.RichText), {
 const DocEditor = dynamic(() => import("./editor/DocEditor").then((m) => m.DocEditor), {
   ssr: false,
 });
+// Композер комментария — тот же Tiptap, что и редактор описания, поэтому и он
+// приезжает отдельным чанком: карточку открывают и ради одного взгляда на срок.
+const CommentComposer = dynamic(
+  () => import("./editor/CommentComposer").then((m) => m.CommentComposer),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="min-h-9 rounded-lg border border-input px-3 py-2 text-sm text-muted-foreground">
+        Написать комментарий…
+      </div>
+    ),
+  },
+);
+
+/**
+ * Высота поля названия по содержимому. Ref-колбэк, а не эффект: правило
+ * `set-state-in-effect` считает нарушением любую правку состояния в эффекте, а
+ * здесь состояния и нет — только стиль узла, который уже в DOM.
+ */
+function autoGrow(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
 
 const VERB_LABELS: Record<string, string> = {
   "task.created": "создал(а) задачу",
@@ -102,6 +151,14 @@ function eventLabel(e: CoreEvent): string {
   }
   return base;
 }
+
+/**
+ * Чип и кнопка в сетке свойств. Высоту держит `h-7` — тот же рост, что у полей
+ * и селектов карточки; вертикальные паддинги при ней не нужны. Раньше каждый ряд
+ * набирал свою высоту паддингами (проекты 20 px, теги 24, исполнители 26), и
+ * значения в соседних строках не стояли на одной линии.
+ */
+const PROP_CHIP = "inline-flex h-7 items-center gap-1.5 text-xs";
 
 /** Родитель подзадачи — ровно то, что нужно хлебной крошке. */
 interface ParentBrief {
@@ -167,10 +224,13 @@ export function TaskSheet({
 
   // Кастомные поля — справочник организации из стора: раньше карточка тянула
   // /fields при каждом открытии.
-  const { orgId, statuses, tags, projects, me, fields, orgRole } = useV2Store();
+  const { orgId, statuses, statusSets, tags, projects, me, fields, orgRole } = useV2Store();
   const storeApi = useV2StoreApi();
   // Гость связями не управляет; более тонкие права проверит сервер.
   const canEdit = orgRole !== null && orgRole !== "guest";
+  // Чужой комментарий убирает администратор организации — то же правило, что в
+  // `deleteComment` на сервере (`org.members.manage`).
+  const isOrgAdmin = orgRole === "owner" || orgRole === "admin";
   const [loaded, setLoaded] = useState<TaskDetail | null>(null);
   // Пока грузится новая задача, старую не показываем — сравнение по id вместо
   // сброса состояния в эффекте (тот вызывает каскадный ре-рендер).
@@ -189,7 +249,8 @@ export function TaskSheet({
   // означало бы лишний каскад перерисовок.
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [tab, setTab] = useState<"comments" | "feed">("comments");
-  const [commentText, setCommentText] = useState("");
+  /** Корень обсуждения, в который уйдёт следующий комментарий; null — в ленту. */
+  const [replyTo, setReplyTo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Тихое «Сохранено ✓» в шапке: blur сохраняет молча, и без подтверждения
@@ -294,13 +355,19 @@ export function TaskSheet({
   }, [taskId, load]);
   useLoad(loadTask);
 
-  /** Единая точка вызова API: показывает ошибку вместо тихого падения. */
-  async function run(fn: () => Promise<void>) {
+  /**
+   * Единая точка вызова API: показывает ошибку вместо тихого падения.
+   * Возвращает признак успеха — вызывающему иногда нужно знать, что не вышло
+   * (композер комментария по этому признаку решает, стирать ли набранное).
+   */
+  async function run(fn: () => Promise<void>): Promise<boolean> {
     try {
       await fn();
       setError(null);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+      return false;
     }
   }
 
@@ -314,13 +381,22 @@ export function TaskSheet({
     if (typeof body.title === "string") next.title = body.title;
     if (typeof body.description === "string") next.description = body.description;
     if (typeof body.priority === "string") next.priority = body.priority as TaskPriority;
+    if ("start_date" in body) next.start_date = body.start_date as string | null;
+    if ("start_time" in body) next.start_time = body.start_time as string | null;
     if ("due_date" in body) next.due_date = body.due_date as string | null;
     if ("due_time" in body) next.due_time = body.due_time as string | null;
+    if ("estimated_minutes" in body) {
+      next.estimated_minutes = body.estimated_minutes as number | null;
+    }
+    if ("parent_task_id" in body) next.parent_task_id = body.parent_task_id as string | null;
     if (typeof body.status_id === "string") {
       next.status_id = body.status_id;
-      const kind = statuses.find((s) => s.id === body.status_id)?.kind;
-      if (kind === "done") next.completed_at = prev.completed_at ?? new Date().toISOString();
-      else if (kind === "open") next.completed_at = null;
+      const category = statuses.find((s) => s.id === body.status_id)?.category;
+      // Снимает метку любая категория кроме `done`, а не только «рабочая»:
+      // ровно так считает сервер (`becameDone`) и таблица (`applyLocal`).
+      // Проверка на «открытый» пропускала архив — карточка мигала ответом.
+      if (category === "done") next.completed_at = prev.completed_at ?? new Date().toISOString();
+      else if (category) next.completed_at = null;
     }
     if (Array.isArray(body.tag_ids)) {
       const ids = body.tag_ids as string[];
@@ -334,12 +410,23 @@ export function TaskSheet({
   /**
    * Правка задачи. Карточка и список за ней перерисовываются сразу, запрос уходит
    * следом; при отказе состояние возвращается на место.
+   *
+   * Возвращает `false`, если сервер отказал: описание сохраняет себя само
+   * (`RichText`/`DocEditor`), и без признака успеха оно считало бы отказ
+   * сохранением, а кнопку — довольной.
    */
   async function patch(
     body: Record<string, unknown>,
     preview?: (task: TaskDetail) => TaskDetail,
-  ) {
-    if (!orgId || !taskId || !task) return;
+    /**
+     * Не откатывать при отказе. Нужно описанию: набранный текст живёт только в
+     * редакторе, и откат к серверной версии стёр бы его — спасать кнопкой
+     * «Повторить» было бы уже нечего. Остальные поля откатываются как раньше:
+     * там правка — это выбор из готовых значений, повторить его недорого.
+     */
+    keepOnError = false,
+  ): Promise<boolean> {
+    if (!orgId || !taskId || !task) return false;
     const previous = task;
     const base = previewPatch(task, body);
     const optimistic = preview ? preview(base) : base;
@@ -347,51 +434,104 @@ export function TaskSheet({
     onChanged?.({ type: "patched", task: optimistic, confirmed: false });
     try {
       const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`, body);
-      if (currentTaskRef.current !== taskId) return;
+      if (currentTaskRef.current !== taskId) return false;
       setTask(updated);
       onChanged?.({ type: "patched", task: updated, confirmed: true });
       setError(null);
       flashSaved();
+      return true;
     } catch (e) {
-      if (currentTaskRef.current !== taskId) return;
-      setTask(previous);
-      onChanged?.({ type: "patched", task: previous, confirmed: true });
+      if (currentTaskRef.current !== taskId) return false;
+      if (!keepOnError) {
+        setTask(previous);
+        onChanged?.({ type: "patched", task: previous, confirmed: true });
+      }
       setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+      return false;
     }
   }
 
-  /** Многострочный ввод → HTML: иначе переносы строк теряются при рендере. */
-  function textToHtml(text: string): string {
-    const escape = (s: string) =>
-      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    return text
-      .split(/\n{2,}/)
-      .map((block) => `<p>${block.split("\n").map(escape).join("<br>")}</p>`)
-      .join("");
-  }
-
-  async function addComment() {
-    if (!orgId || !taskId || !commentText.trim()) return;
-    const text = commentText.trim();
-    // Поле очищаем сразу: ждать ответа сервера, чтобы убрать свой же текст,
-    // выглядит как зависшая кнопка.
-    setCommentText("");
-    await run(async () => {
+  /**
+   * Разметка приходит из редактора: комментарии набирают в нём, потому что в них
+   * живут @-упоминания. Ручная свёртка текста в <p> съедала бы их.
+   *
+   * `parentId` — корень обсуждения; ответ на ответ сервер приведёт к тому же
+   * корню, поэтому здесь достаточно передать, на что нажали.
+   */
+  async function addComment(html: string, parentId: string | null = null): Promise<boolean> {
+    if (!orgId || !taskId) return false;
+    return run(async () => {
       const comment = await api.post<CoreComment>(`/orgs/${orgId}/tasks/${taskId}/comments`, {
-        body: textToHtml(text),
+        body: html,
+        parent_id: parentId,
       });
       if (currentTaskRef.current !== taskId) return;
-      setComments((prev) => [...prev, comment]);
+      // Ответ встаёт за последним ответом своего корня, а не в конец ленты:
+      // иначе он прыгнет на место после первой же перезагрузки карточки.
+      setComments((prev) => {
+        if (!comment.parent_id) return [...prev, comment];
+        const last = prev.findLastIndex(
+          (c) => c.id === comment.parent_id || c.parent_id === comment.parent_id,
+        );
+        if (last < 0) return [...prev, comment];
+        return [...prev.slice(0, last + 1), comment, ...prev.slice(last + 1)];
+      });
+      setReplyTo(null);
       // Композер закреплён внизу и виден из обеих вкладок — отправка из
       // «Истории» должна показать, куда упал комментарий.
       setTab("comments");
       flashSaved();
-      setTask((prev) => {
-        if (!prev) return prev;
-        const next = { ...prev, comment_count: prev.comment_count + 1 };
+      // Через зеркало, а не апдейтером: см. комментарий к taskRef.
+      const current = taskRef.current;
+      if (current) {
+        const next = { ...current, comment_count: current.comment_count + 1 };
+        setTask(next);
         onChanged?.({ type: "patched", task: next, confirmed: true });
-        return next;
+      }
+    });
+  }
+
+  /**
+   * Правка комментария. Признак успеха уходит в композер и решает, закрывать ли
+   * поле: при отказе сервера набранное должно остаться на экране. Править может
+   * только автор — это же правило стоит и на сервере (`editComment`).
+   */
+  async function patchComment(commentId: string, html: string): Promise<boolean> {
+    if (!orgId) return false;
+    return run(async () => {
+      const updated = await api.patch<CoreComment>(`/orgs/${orgId}/comments/${commentId}`, {
+        body: html,
       });
+      if (currentTaskRef.current !== taskId) return;
+      setComments((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      flashSaved();
+    });
+  }
+
+  /**
+   * Удаление. Корень уносит с собой ответы — так делает сервер, и счётчик
+   * карточки надо уменьшать на всю ветку, иначе он разойдётся со списком.
+   * Удалять может автор или администратор организации (проверка на сервере).
+   */
+  async function removeComment(comment: CoreComment) {
+    if (!orgId) return;
+    const replies = comment.parent_id ? [] : comments.filter((c) => c.parent_id === comment.id);
+    const branch = replies.length ? ` вместе с ответами (${replies.length})` : "";
+    if (!window.confirm(`Удалить комментарий${branch} безвозвратно?`)) return;
+    await run(async () => {
+      await api.del(`/orgs/${orgId}/comments/${comment.id}`);
+      if (currentTaskRef.current !== taskId) return;
+      const gone = new Set([comment.id, ...replies.map((c) => c.id)]);
+      setComments((prev) => prev.filter((c) => !gone.has(c.id)));
+      // Ветку, в которую отвечали, только что удалили — композер внизу должен
+      // вернуться к обычному комментарию, иначе ответ уйдёт в никуда.
+      if (replyTo && gone.has(replyTo)) setReplyTo(null);
+      const current = taskRef.current;
+      if (current) {
+        const next = { ...current, comment_count: Math.max(0, current.comment_count - gone.size) };
+        setTask(next);
+        onChanged?.({ type: "patched", task: next, confirmed: true });
+      }
     });
   }
 
@@ -458,6 +598,50 @@ export function TaskSheet({
     }
   }
 
+  /**
+   * Подчинение уже существующей задачи — та же связь, что у новой подзадачи, но
+   * с готовым объектом на другом конце.
+   *
+   * Размещения ей НЕ меняем, в отличие от `subtaskDefaults` у новой: та без
+   * проектов родителя пропала бы из списков проекта, внутри задачи которого её
+   * завели, а эта уже живёт в своих проектах — молча вынести её оттуда значит
+   * сделать больше, чем просили. Доступ к ней всё равно расширится по цепочке.
+   */
+  async function linkExistingSubtask(hit: TaskHit) {
+    if (!orgId || !taskId) return;
+    // Без предсказания: строки подзадачи здесь ещё нет, а из подсказки поиска
+    // её не собрать — там нет ни статуса, ни исполнителей, ни срока.
+    await run(async () => {
+      const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${hit.id}`, {
+        parent_task_id: taskId,
+      });
+      if (currentTaskRef.current !== taskId) return;
+      setSubtasks((prev) => [...prev, updated]);
+      bumpSubtaskCounters(1, updated.completed_at ? 1 : 0);
+      // Задача уже есть в списках экрана — там у неё сменился родитель, и
+      // перечитывать весь список ради этого незачем.
+      onChanged?.({ type: "patched", task: updated, confirmed: true });
+      flashSaved();
+    });
+  }
+
+  /** Подчинить текущую задачу другой — то же связывание, но с другого конца. */
+  async function setParentTask(hit: TaskHit) {
+    const previous = parent;
+    // Крошка появляется сразу, вместе с остальной оптимистичной правкой: ждать
+    // ответа ради строки, текст которой уже известен, незачем.
+    setParent({ id: hit.id, title: hit.title, completed_at: null });
+    const ok = await patch({ parent_task_id: hit.id });
+    if (!ok) setParent(previous);
+  }
+
+  async function detachFromParent() {
+    const previous = parent;
+    setParent(null);
+    const ok = await patch({ parent_task_id: null });
+    if (!ok) setParent(previous);
+  }
+
   /** Отвязка от родителя: подзадача становится обычной задачей и остаётся жить. */
   async function detachSubtask(sub: TaskListItem) {
     if (!orgId) return;
@@ -477,9 +661,41 @@ export function TaskSheet({
     }
   }
 
+  /**
+   * Новый порядок ветки. Строки переставляются сразу, до ответа: жест уже
+   * показал результат, и «доедет» он только после похода на сервер — это тот же
+   * оптимизм, что и у остальных правок карточки, с тем же откатом.
+   *
+   * Порядок уходит целиком, как его принимает сервер: перетаскивание сдвигает
+   * соседей, и патч одной позиции оставлял бы ветку в промежуточном состоянии.
+   */
+  async function reorderSubtasks(taskIds: string[]) {
+    if (!orgId || !taskId) return;
+    const previous = subtasks;
+    const byId = new Map(previous.map((s) => [s.id, s]));
+    const next = taskIds.map((id) => byId.get(id)).filter((s): s is TaskListItem => !!s);
+    if (next.length !== previous.length) return;
+    // Позиции проставляем и локально: по ним же считается порядок в таблице,
+    // а карточка отдаёт ей строки через onChanged.
+    setSubtasks(next.map((s, i) => ({ ...s, subtask_position: i + 1 })));
+    try {
+      const saved = await api.put<TaskListItem[]>(`/orgs/${orgId}/tasks/${taskId}/subtasks/order`, {
+        task_ids: taskIds,
+      });
+      if (currentTaskRef.current !== taskId) return;
+      setSubtasks(saved);
+      setError(null);
+      // Список экрана рисует ветки тем же порядком — пусть перечитает.
+      onChanged?.({ type: "reload" });
+    } catch (e) {
+      setSubtasks(previous);
+      setError(e instanceof Error ? e.message : "Не удалось изменить порядок подзадач");
+    }
+  }
+
   async function toggleSubtaskDone(sub: TaskListItem) {
     if (!orgId) return;
-    const doneStatus = statuses.find((s) => s.kind === "done");
+    const doneStatus = statuses.find((s) => s.category === "done");
     const openStatus = reopenStatus();
     const target = sub.completed_at ? openStatus : doneStatus;
     if (!target) return;
@@ -505,19 +721,67 @@ export function TaskSheet({
     }
   }
 
+  /**
+   * Предсказание для строки подзадачи. Правила те же, что у таблицы
+   * (`applyLocal` в `TaskTableView`) и у сервера: метку завершения снимает
+   * любой статус не вида `done`.
+   */
+  function previewSubtask(prev: TaskListItem, body: Record<string, unknown>): TaskListItem {
+    const { members } = storeApi.getState();
+    const next: TaskListItem = { ...prev };
+    for (const [key, value] of Object.entries(body)) {
+      if (key === "assignee_ids") {
+        const ids = new Set(value as string[]);
+        next.assignees = members
+          .filter((m) => ids.has(m.user_id))
+          .map((m) => ({ id: m.user_id, email: m.email, name: m.name, avatar_url: m.avatar_url }));
+      } else {
+        (next as unknown as Record<string, unknown>)[key] = value;
+      }
+    }
+    if ("status_id" in body) {
+      const category = statuses.find((s) => s.id === body.status_id)?.category;
+      if (category === "done" && !prev.completed_at) next.completed_at = new Date().toISOString();
+      if (category && category !== "done" && prev.completed_at) next.completed_at = null;
+    }
+    return next;
+  }
+
+  /**
+   * Правка поля подзадачи прямо в её строке — не открывая карточку. Счётчики
+   * родителя двигаем только когда метка завершения действительно поменялась:
+   * иначе колонка «Подзадачи» в списке за карточкой начнёт врать.
+   */
+  async function patchSubtask(sub: TaskListItem, body: Record<string, unknown>) {
+    if (!orgId) return;
+    const previous = subtasks;
+    const optimistic = previewSubtask(sub, body);
+    const deltaDone = (optimistic.completed_at ? 1 : 0) - (sub.completed_at ? 1 : 0);
+    setSubtasks((prev) => prev.map((s) => (s.id === sub.id ? optimistic : s)));
+    if (deltaDone !== 0) bumpSubtaskCounters(0, deltaDone, false);
+    try {
+      const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${sub.id}`, body);
+      if (currentTaskRef.current !== taskId) return;
+      setSubtasks((prev) => prev.map((s) => (s.id === sub.id ? { ...s, ...updated } : s)));
+      // Строка подзадачи живёт и в списке за карточкой — отдаём ей ответ сервера.
+      onChanged?.({ type: "patched", task: updated, confirmed: true });
+      setError(null);
+    } catch (e) {
+      setSubtasks(previous);
+      if (deltaDone !== 0) bumpSubtaskCounters(0, -deltaDone);
+      setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
+    }
+  }
+
   async function setPlacements(projectIds: string[]) {
     if (!orgId || !taskId || !task) return;
-    const placements = projectIds.map((pid) => {
-      const existing = task.placements.find((p) => p.project_id === pid);
-      return { project_id: pid, section_id: existing?.section_id ?? null };
-    });
+    const placements = projectIds.map((pid) => ({ project_id: pid }));
     const previous = task;
     const optimistic: TaskDetail = {
       ...task,
       placements: placements.map((p) => ({
         ...(task.placements.find((x) => x.project_id === p.project_id) ?? {
           project_id: p.project_id,
-          section_id: p.section_id,
           position: 0,
         }),
       })),
@@ -589,8 +853,37 @@ export function TaskSheet({
    * снятая галочка отбрасывает задачу в начало процесса.
    */
   function reopenStatus() {
-    const open = statuses.filter((s) => s.kind === "open");
-    return open.length > 0 ? open[open.length - 1] : undefined;
+    const working = statuses.filter((s) => s.category === "backlog" || s.category === "in_progress");
+    return working.length > 0 ? working[working.length - 1] : undefined;
+  }
+
+  /**
+   * Архивирование — отдельное действие, а не следующий шаг работы, поэтому у
+   * него своя кнопка в шапке: в ряду статусов архивных нет (кроме случая, когда
+   * задача уже там). Возврат ведёт в статус по умолчанию — тот же, в который
+   * встаёт новая задача.
+   */
+  const currentStatus = task?.status_id ? statuses.find((s) => s.id === task.status_id) : undefined;
+  const inArchive = currentStatus?.category === "archived";
+  /**
+   * Ряд статусов карточки — рабочий процесс её проекта, а не весь справочник
+   * организации: с наборами (0052) у соседнего проекта может быть свой. Плюс
+   * текущий статус задачи, даже если он из чужого набора: задача живёт сразу в
+   * нескольких проектах, и спрятать её статус значит показать «ничего не
+   * выбрано». Проект на наборе по умолчанию (`status_set_id === null`) и задача
+   * без проекта (личный инбокс) сводятся к набору по умолчанию — там и лежит
+   * статус такой задачи; `null` в `statusesOfSet` показал бы все наборы разом.
+   */
+  const projectSetId = resolveProjectSetId(
+    statusSets,
+    projects.find((p) => task?.placements.some((pl) => pl.project_id === p.id))?.status_set_id ?? null,
+  );
+  const flowStatuses = statusesOfSet(statuses, projectSetId);
+  const archiveTarget = inArchive ? defaultStatus(flowStatuses) : archiveStatus(flowStatuses);
+
+  function toggleArchive() {
+    if (!archiveTarget) return;
+    void patch({ status_id: archiveTarget.id });
   }
 
   /** Учёт времени начинается там, где идёт работа — в карточке задачи. */
@@ -659,7 +952,7 @@ export function TaskSheet({
     }
   }
 
-  const doneStatus = statuses.find((s) => s.kind === "done");
+  const doneStatus = statuses.find((s) => s.category === "done");
   const isDone = !!task?.completed_at;
   const visibleFields = fields.filter(
     (f) => !f.project_id || task?.placements.some((p) => p.project_id === f.project_id),
@@ -716,12 +1009,58 @@ export function TaskSheet({
         <span className="text-muted-foreground">Указать срок</span>
       )}
       {overdueDays > 0 && (
-        <span className="shrink-0 rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+        <span className="shrink-0 rounded-full bg-destructive/10 px-1.5 text-[10px] font-semibold leading-5 text-destructive">
           просрочено {overdueDays} дн.
         </span>
       )}
     </>
   );
+  const startLabelContent = task && (
+    <>
+      <CalendarRange className="size-4 shrink-0 text-muted-foreground" />
+      {task.start_date ? (
+        <span className="tabular-nums">{formatDue(task.start_date, task.start_time)}</span>
+      ) : (
+        <span className="text-muted-foreground">Указать начало</span>
+      )}
+    </>
+  );
+
+  /**
+   * Статус и приоритет — ряды кнопок во всю ширину под заголовком, а не строки
+   * в сетке свойств: это самые частые действия в карточке, и прятать их в
+   * выпадающий список значит два клика вместо одного каждый раз.
+   *
+   * Архивные статусы в ряд не входят (архивирование — не следующий шаг работы),
+   * кроме случая, когда задача уже в архиве: иначе из него было бы не выйти.
+   */
+  const flowRows = task && (
+    <div className="flex flex-col gap-1.5">
+      <SegmentedPicker
+        ariaLabel="Статус задачи"
+        options={cardStatuses(withCurrent(flowStatuses, currentStatus), task.status_id).map((s) => ({
+          value: s.id,
+          label: s.name,
+          color: s.color,
+        }))}
+        value={task.status_id}
+        disabled={!canEdit}
+        onChange={(id) => void patch({ status_id: id })}
+      />
+      <SegmentedPicker
+        ariaLabel="Приоритет задачи"
+        options={PRIORITY_ORDER.map((p) => ({
+          value: p,
+          label: PRIORITY_LABELS[p].label,
+          dotClass: PRIORITY_LABELS[p].dot,
+        }))}
+        value={task.priority}
+        disabled={!canEdit}
+        onChange={(p) => void patch({ priority: p })}
+      />
+    </div>
+  );
+
   const propsGrid = task && (
     <div
       className={cn(
@@ -731,41 +1070,25 @@ export function TaskSheet({
           : "grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-2.5",
       )}
     >
-      <span className={propLabel}>Статус</span>
-      <Select
-        value={task.status_id ?? ""}
-        onValueChange={(v) => v && void patch({ status_id: v })}
-      >
-        <SelectTrigger size="sm" className="w-fit min-w-36">
-          <SelectValue placeholder="Без статуса">
-            <StatusPill status={statuses.find((s) => s.id === task.status_id)} />
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {statuses.map((s) => (
-            <SelectItem key={s.id} value={s.id}>
-              {s.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {/* Статуса и приоритета здесь больше нет: они переехали под заголовок
+          задачи рядами кнопок (`flowRows`). Два способа поменять одно и то же
+          поле — это два места, которые разъедутся. */}
 
-      <span className={propLabel}>Приоритет</span>
-      <Select
-        value={task.priority}
-        onValueChange={(v) => v && void patch({ priority: v as TaskPriority })}
-      >
-        <SelectTrigger size="sm" className="w-fit min-w-36">
-          <SelectValue>{PRIORITY_LABELS[task.priority].label}</SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {(Object.keys(PRIORITY_LABELS) as TaskPriority[]).map((p) => (
-            <SelectItem key={p} value={p}>
-              {PRIORITY_LABELS[p].label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {/* Начало стоит перед сроком: слева направо читается как отрезок, тем же
+          порядком, каким полоса лежит на ганте. */}
+      <span className={propLabel}>Начало</span>
+      {canEdit ? (
+        <StartPicker
+          date={task.start_date}
+          time={task.start_time}
+          triggerClassName="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+          onCommit={(next) => void patch(next)}
+        >
+          {startLabelContent}
+        </StartPicker>
+      ) : (
+        <span className="flex items-center gap-2">{startLabelContent}</span>
+      )}
 
       <span className={propLabel}>Срок</span>
       {canEdit ? (
@@ -774,13 +1097,51 @@ export function TaskSheet({
         <DuePicker
           date={task.due_date}
           time={task.due_time}
-          triggerClassName="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+          triggerClassName="-ml-2 flex h-7 w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 text-sm transition-colors hover:border-input hover:bg-background"
           onCommit={(next) => void patch(next)}
         >
           {dueLabelContent}
         </DuePicker>
       ) : (
         <span className="flex items-center gap-2">{dueLabelContent}</span>
+      )}
+
+      {/* Оценку правит и таблица, и черновик, и строка подзадачи — а в самой
+          карточке её не было вовсе. */}
+      <span className={propLabel}>Оценка</span>
+      {canEdit ? (
+        <Popover>
+          <PopoverTrigger
+            render={
+              <button
+                className="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+                title="Оценка"
+              />
+            }
+          >
+            <Clock className="size-4 shrink-0 text-muted-foreground" />
+            {task.estimated_minutes != null ? (
+              <span className="tabular-nums">{formatEstimate(task.estimated_minutes)}</span>
+            ) : (
+              <span className="text-muted-foreground">Указать оценку</span>
+            )}
+          </PopoverTrigger>
+          <PopoverContent align="start" className={ESTIMATE_POPOVER}>
+            <EstimateForm
+              value={task.estimated_minutes}
+              onChange={(estimated_minutes) => void patch({ estimated_minutes })}
+            />
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <span className="flex items-center gap-2">
+          <Clock className="size-4 shrink-0 text-muted-foreground" />
+          {task.estimated_minutes != null ? (
+            <span className="tabular-nums">{formatEstimate(task.estimated_minutes)}</span>
+          ) : (
+            <span className="text-muted-foreground">Не задана</span>
+          )}
+        </span>
       )}
 
       {/* Повтор — свойство самой задачи: отдельного экрана правил больше нет,
@@ -795,11 +1156,15 @@ export function TaskSheet({
       />
 
       <span className={propLabel}>Исполнители</span>
-      <div className="flex flex-wrap items-center gap-1.5">
+      {/* Кнопку «Назначить» рисует MemberPicker, общий на несколько экранов:
+          свой рост она задаёт паддингом внутри себя, и в ряду с чипами
+          получалась на пару пикселей выше. Правим здесь, чтобы не менять
+          плотность пикера там, где он стоит один. */}
+      <div className="flex flex-wrap items-center gap-1.5 [&>button]:h-7 [&>button]:py-0">
         {task.assignees.map((a) => (
           <span
             key={a.id}
-            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card py-0.5 pl-0.5 pr-2 text-xs shadow-xs"
+            className={cn(PROP_CHIP, "rounded-full border border-border bg-card pl-0.5 pr-2 shadow-xs")}
           >
             <Avatar user={a} size="xs" />
             {a.name || a.email}
@@ -830,7 +1195,7 @@ export function TaskSheet({
         {task.tags.map((t) => (
           <span
             key={t.id}
-            className="tinted-chip inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+            className={cn(PROP_CHIP, "tinted-chip gap-1 rounded-full px-2 text-[11px] font-medium")}
             style={chipStyle(t.color)}
           >
             {t.name}
@@ -852,7 +1217,10 @@ export function TaskSheet({
             <PopoverTrigger
               render={
                 <button
-                  className="flex h-6 items-center gap-1 rounded-full border border-dashed border-border px-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary"
+                  className={cn(
+                    PROP_CHIP,
+                    "gap-1 rounded-full border border-dashed border-border px-2 text-muted-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary",
+                  )}
                   title="Добавить тег"
                 />
               }
@@ -871,7 +1239,7 @@ export function TaskSheet({
                         : [...task.tags.map((x) => x.id), t.id];
                       void patch({ tag_ids: next });
                     }}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
+                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted"
                   >
                     <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: t.color }} />
                     <span className="flex-1 truncate text-left">{t.name}</span>
@@ -895,7 +1263,7 @@ export function TaskSheet({
         {task.placements.map((pl) => {
           const project = projects.find((p) => p.id === pl.project_id);
           return (
-            <span key={pl.project_id} className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">
+            <span key={pl.project_id} className={cn(PROP_CHIP, "rounded-full bg-muted px-2")}>
               <span className="size-2 rounded-sm" style={{ backgroundColor: project?.color ?? "#6b7280" }} />
               {project?.name ?? "Недоступный проект"}
               <button
@@ -915,7 +1283,7 @@ export function TaskSheet({
             if (v) void setPlacements([...task.placements.map((p) => p.project_id), v]);
           }}
         >
-          <SelectTrigger size="sm" className="h-6 w-fit border-dashed text-xs text-muted-foreground">
+          <SelectTrigger size="sm" className="w-fit border-dashed text-xs text-muted-foreground">
             <Plus className="size-3" /> В проект
           </SelectTrigger>
           <SelectContent>
@@ -1023,7 +1391,7 @@ export function TaskSheet({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="size-9 sm:size-7"
+                className="size-9 max-sm:hidden sm:size-7"
                 onClick={() => void copyLink()}
                 title={linkCopied ? "Ссылка скопирована" : "Скопировать ссылку на задачу"}
                 aria-label="Скопировать ссылку на задачу"
@@ -1033,21 +1401,97 @@ export function TaskSheet({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="size-9 sm:size-7"
+                className="size-9 max-sm:hidden sm:size-7"
                 onClick={() => void toggleFollow()}
                 title={amFollower ? "Не следить" : "Следить"}
               >
                 {amFollower ? <BellOff className="size-4" /> : <Bell className="size-4" />}
               </Button>
+              {canEdit && archiveTarget && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-9 max-sm:hidden sm:size-7"
+                  onClick={toggleArchive}
+                  title={
+                    inArchive
+                      ? `Вернуть из архива — в «${archiveTarget.name}»`
+                      : `В архив — статус «${archiveTarget.name}»`
+                  }
+                  aria-label={inArchive ? "Вернуть из архива" : "В архив"}
+                >
+                  {inArchive ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="size-9 sm:size-7"
+                className="size-9 max-sm:hidden sm:size-7"
                 onClick={() => void removeTask()}
                 title="Удалить"
               >
                 <Trash2 className="size-4" />
               </Button>
+              {/* На телефоне редкие действия собраны в одно меню: шесть иконок
+                  подряд в узкой шапке — это промахи пальцем по соседней. */}
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="size-9 sm:hidden"
+                      aria-label="Ещё действия"
+                    />
+                  }
+                >
+                  <MoreVertical className="size-4" />
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-56 p-1">
+                  <button
+                    onClick={() => void copyLink()}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm hover:bg-muted"
+                  >
+                    {linkCopied ? (
+                      <Check className="size-4 shrink-0 text-emerald-500" />
+                    ) : (
+                      <Link2 className="size-4 shrink-0 text-muted-foreground" />
+                    )}
+                    {linkCopied ? "Ссылка скопирована" : "Скопировать ссылку"}
+                  </button>
+                  <button
+                    onClick={() => void toggleFollow()}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm hover:bg-muted"
+                  >
+                    {amFollower ? (
+                      <BellOff className="size-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <Bell className="size-4 shrink-0 text-muted-foreground" />
+                    )}
+                    {amFollower ? "Не следить" : "Следить"}
+                  </button>
+                  {canEdit && archiveTarget && (
+                    <button
+                      onClick={toggleArchive}
+                      className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm hover:bg-muted"
+                    >
+                      {inArchive ? (
+                        <ArchiveRestore className="size-4 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <Archive className="size-4 shrink-0 text-muted-foreground" />
+                      )}
+                      {inArchive ? "Вернуть из архива" : "В архив"}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => void removeTask()}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 className="size-4 shrink-0" />
+                    Удалить задачу
+                  </button>
+                </PopoverContent>
+              </Popover>
               <Button variant="ghost" size="icon-sm" className="size-9 sm:size-7" onClick={closeSheet}>
                 <X className="size-4" />
               </Button>
@@ -1060,27 +1504,45 @@ export function TaskSheet({
               {error && <p className="text-sm text-destructive">{error}</p>}
 
               {/* Карточку подзадачи открывают и напрямую — из списка, поиска или
-                  пуша: без этой строки непонятно, частью чего она является. */}
-              {parent && (
-                <button
-                  onClick={() => openNested(parent.id)}
-                  className="flex max-w-full items-center gap-1 self-start text-xs text-muted-foreground hover:text-foreground"
-                  title="Открыть родительскую задачу"
-                >
-                  <CornerLeftUp className="size-3.5 shrink-0" />
-                  <span className="truncate">{parent.title}</span>
-                </button>
+                  пуша: без этой строки непонятно, частью чего она является.
+                  Она же — место, где родителя выбирают: подчинить задачу можно
+                  и с этого конца, а не только из карточки будущего родителя. */}
+              {(parent || canEdit) && (
+                <ParentRow
+                  parent={parent}
+                  canEdit={canEdit}
+                  excludeIds={[task.id, ...subtasks.map((s) => s.id)]}
+                  onOpen={openNested}
+                  onPick={setParentTask}
+                  onDetach={() => void detachFromParent()}
+                />
               )}
 
-              <Input
+              {/* Textarea, а не Input: длинное название в поле ввода уезжает за
+                  правый край без единого признака, что текст продолжается.
+                  Высота подгоняется по содержимому, Enter не переносит строку —
+                  название однострочное по смыслу, перенос только визуальный. */}
+              <textarea
                 key={`title-${task.id}`}
+                ref={autoGrow}
+                rows={1}
                 defaultValue={task.title}
-                className="border-none px-0 font-heading text-lg font-semibold tracking-tight shadow-none focus-visible:ring-0 md:text-lg"
+                onInput={(e) => autoGrow(e.currentTarget)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                  }
+                }}
+                className="resize-none border-none bg-transparent p-0 font-heading text-lg font-semibold leading-snug tracking-tight outline-none"
                 onBlur={(e) => {
                   const v = e.target.value.trim();
                   if (v && v !== task.title) void patch({ title: v });
+                  else if (!v) e.target.value = task.title;
                 }}
               />
+
+              {flowRows}
 
               {!twoCol && propsGrid}
 
@@ -1091,12 +1553,15 @@ export function TaskSheet({
                 <RichText
                   key={`desc-${task.id}`}
                   value={task.description}
-                  onSave={(html) => void patch({ description: html })}
+                  onSave={(html) => patch({ description: html }, undefined, true)}
                   orgId={orgId}
                   taskId={task.id}
                   editable={canEdit}
                   onExpand={() => setExpandedTaskId(task.id)}
                   threadCount={docThreads.filter((t) => !t.resolved_at).length}
+                  docx={{ title: task.title, threads: docThreads }}
+                  collapsible
+                  showSaveButton
                 />
               )}
 
@@ -1104,11 +1569,22 @@ export function TaskSheet({
                 subtasks={subtasks}
                 canEdit={canEdit}
                 defaults={subtaskDefaults}
+                chainProjectIds={task.chain_project_ids}
                 onCreate={addSubtask}
+                onLinkExisting={linkExistingSubtask}
+                // Родителя в подсказках нет по той же причине, что и самой
+                // задачи: подчинить её собственному предку — это кольцо.
+                linkExcludeIds={[
+                  task.id,
+                  ...(parent ? [parent.id] : []),
+                  ...subtasks.map((s) => s.id),
+                ]}
                 onToggleDone={(s) => void toggleSubtaskDone(s)}
                 onOpen={openNested}
+                onPatch={(s, body) => void patchSubtask(s, body)}
                 onDelete={(s) => void deleteSubtask(s)}
                 onDetach={(s) => void detachSubtask(s)}
+                onReorder={(ids) => void reorderSubtasks(ids)}
               />
 
               <RelationsList
@@ -1117,6 +1593,7 @@ export function TaskSheet({
                 canEdit={canEdit}
                 initialRelations={relations}
                 initialTypes={relationTypes}
+                onOpenTask={openNested}
               />
 
               <div className="border-t border-border pt-3">
@@ -1140,22 +1617,18 @@ export function TaskSheet({
                   {tab === "comments" ? (
                     <>
                       {comments.map((c) => (
-                        <div key={c.id} className="flex gap-2">
-                          {c.author ? <Avatar user={c.author} size="sm" /> : <span className="size-6" />}
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs text-muted-foreground">
-                              <span className="font-medium text-foreground">
-                                {c.author?.name || c.author?.email || c.author_label || "Неизвестный"}
-                              </span>{" "}
-                              · {new Date(c.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                              {c.edited_at && " · изменён"}
-                            </p>
-                            <div
-                              className="prose prose-sm dark:prose-invert max-w-none text-sm"
-                              dangerouslySetInnerHTML={{ __html: c.body }}
-                            />
-                          </div>
-                        </div>
+                        <CommentItem
+                          key={c.id}
+                          comment={c}
+                          mine={!!me && c.author_id === me.id}
+                          canDelete={(!!me && c.author_id === me.id) || isOrgAdmin}
+                          canReply={orgRole !== null && replyTo !== (c.parent_id ?? c.id)}
+                          orgId={orgId}
+                          taskId={taskId}
+                          onReply={() => setReplyTo(c.parent_id ?? c.id)}
+                          onEdit={(html) => patchComment(c.id, html)}
+                          onDelete={() => void removeComment(c)}
+                        />
                       ))}
                       {comments.length === 0 && (
                         <p className="text-xs text-muted-foreground">Комментариев пока нет</p>
@@ -1168,7 +1641,9 @@ export function TaskSheet({
                           <span className="font-medium text-foreground">
                             {e.actor?.name || e.actor?.email || "Система"}
                           </span>{" "}
-                          {eventLabel(e)} ·{" "}
+                          {eventLabel(e)}
+                          {/* Действие интеграции видно в ленте так же, как в журнале. */}
+                          {actorSourceLabel(e.source) && <> ({actorSourceLabel(e.source)})</>} ·{" "}
                           {new Date(e.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                         </p>
                       ))}
@@ -1192,23 +1667,30 @@ export function TaskSheet({
               сервер — гостю оно доступно по роли в проекте. */}
           {orgRole !== null && (
             <div className="shrink-0 border-t border-border bg-background px-4 py-2.5">
-              <div className="flex items-end gap-2">
+              <div className="flex items-start gap-2">
                 {me && <Avatar user={me} size="sm" />}
-                <Textarea
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  placeholder="Написать комментарий…"
-                  className="min-h-9 flex-1 resize-none text-sm"
-                  rows={1}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void addComment();
-                  }}
-                />
-                <Button size="sm" onClick={() => void addComment()} disabled={!commentText.trim()}>
-                  Отправить
-                </Button>
+                <div className="min-w-0 flex-1">
+                  {replyTo && (
+                    <p className="mb-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      Ответ в обсуждении
+                      <button onClick={() => setReplyTo(null)} className="underline hover:text-foreground">
+                        отменить
+                      </button>
+                    </p>
+                  )}
+                  <CommentComposer
+                    // key переводит композер в чистое состояние при смене задачи
+                    // и при переходе «новый комментарий ↔ ответ».
+                    key={`${taskId}-${replyTo ?? "root"}`}
+                    placeholder={replyTo ? "Ответить…" : "Написать комментарий…"}
+                    // Картинка комментария уезжает во вложения той же задачи —
+                    // как и картинка описания.
+                    orgId={orgId}
+                    taskId={taskId}
+                    onSubmit={(html) => addComment(html, replyTo)}
+                  />
+                </div>
               </div>
-              <p className="mt-1 pl-8 text-[10.5px] text-muted-foreground">Ctrl+Enter — отправить</p>
             </div>
           )}
         </>
@@ -1223,7 +1705,7 @@ export function TaskSheet({
         taskId={task.id}
         taskTitle={task.title}
         value={task.description}
-        onSave={(html) => void patch({ description: html })}
+        onSave={(html) => patch({ description: html }, undefined, true)}
         editable={canEdit}
         // Право комментировать проверяет сервер: у гостя оно зависит от роли в
         // конкретном проекте, а её карточка не знает.
@@ -1234,6 +1716,98 @@ export function TaskSheet({
       />
     )}
     </>
+  );
+}
+
+/**
+ * Строка родителя над названием: хлебная крошка и она же — управление связью.
+ *
+ * Кнопки правки проявляются по наведению: у большинства задач родителя нет, и
+ * два постоянно висящих значка в самом верху карточки читались бы как ошибка
+ * вёрстки. На телефоне наведения не существует — там они видны всегда, ровно
+ * как чипы подзадачи (`CHIP_ON_HOVER` в `SubtaskSection`).
+ */
+function ParentRow({
+  parent,
+  canEdit,
+  excludeIds,
+  onOpen,
+  onPick,
+  onDetach,
+}: {
+  parent: ParentBrief | null;
+  canEdit: boolean;
+  /** Сама задача и её подзадачи: подчинить себя своей же ветке нельзя. */
+  excludeIds: string[];
+  onOpen: (taskId: string) => void;
+  onPick: (hit: TaskHit) => Promise<void>;
+  onDetach: () => void;
+}) {
+  const [pickOpen, setPickOpen] = useState(false);
+
+  const picker = (
+    <PopoverContent align="start" className="w-72 p-2.5">
+      <TaskSearchField
+        excludeIds={excludeIds}
+        placeholder={parent ? "Кому подчинить вместо текущего?" : "Кому подчинить задачу?"}
+        onPick={async (hit) => {
+          await onPick(hit);
+          setPickOpen(false);
+        }}
+      />
+    </PopoverContent>
+  );
+
+  if (!parent) {
+    // Родителя нет — остаётся только предложение его выбрать. Кнопка
+    // приглушена: это редкое действие, а место у неё самое заметное в карточке.
+    return (
+      <Popover open={pickOpen} onOpenChange={setPickOpen}>
+        <PopoverTrigger
+          render={
+            <button
+              className="flex items-center gap-1 self-start text-xs text-muted-foreground/70 transition-colors hover:text-foreground"
+              title="Подчинить эту задачу другой"
+            />
+          }
+        >
+          <CornerLeftUp className="size-3.5 shrink-0" />
+          Сделать подзадачей
+        </PopoverTrigger>
+        {picker}
+      </Popover>
+    );
+  }
+
+  const ACTION =
+    "shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-muted hover:text-foreground " +
+    "focus-visible:opacity-100 data-[popup-open]:opacity-100 group-hover/parent:opacity-100 " +
+    "[[data-mobile-v2]_&]:opacity-100";
+
+  return (
+    <div className="group/parent flex max-w-full items-center gap-1 self-start text-xs text-muted-foreground">
+      <button
+        onClick={() => onOpen(parent.id)}
+        className="flex min-w-0 items-center gap-1 hover:text-foreground"
+        title="Открыть родительскую задачу"
+      >
+        <CornerLeftUp className="size-3.5 shrink-0" />
+        <span className="truncate">{parent.title}</span>
+      </button>
+      {canEdit && (
+        <>
+          <Popover open={pickOpen} onOpenChange={setPickOpen}>
+            <PopoverTrigger render={<button className={ACTION} title="Сменить родителя" />}>
+              <Pencil className="size-3" />
+            </PopoverTrigger>
+            {picker}
+          </Popover>
+          <button onClick={onDetach} className={ACTION} title="Отвязать от родителя">
+            <Unlink className="size-3" />
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -1276,7 +1850,7 @@ function FieldRow({
             type="date"
             value={typeof value === "string" ? value : ""}
             onChange={(e) => onChange(e.target.value || null)}
-            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+            className="h-7 rounded-md border border-border bg-background px-2 text-sm"
           />
         )}
         {field.type === "checkbox" && (
@@ -1321,7 +1895,8 @@ function FieldRow({
                   key={o.id}
                   onClick={() => onChange(active ? arr.filter((x) => x !== o.id) : [...arr, o.id])}
                   className={cn(
-                    "rounded-full border px-2 py-0.5 text-[11px]",
+                    PROP_CHIP,
+                    "rounded-full border px-2 text-[11px]",
                     active ? "border-primary bg-muted font-medium" : "border-border text-muted-foreground",
                   )}
                 >
@@ -1352,5 +1927,147 @@ function FieldRow({
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * Комментарий в ленте задачи. Отдельный компонент, потому что у правки и меню
+ * своё состояние: держать его в карточке значило бы завести две карты состояний
+ * по id комментария.
+ *
+ * Устройство повторяет сообщение в панели обсуждений документа (`CommentPanel`):
+ * действия — под одной ручкой «⋯», правка идёт на месте тем же композером, а не
+ * в отдельном окне.
+ */
+function CommentItem({
+  comment,
+  mine,
+  canDelete,
+  canReply,
+  orgId,
+  taskId,
+  onReply,
+  onEdit,
+  onDelete,
+}: {
+  comment: CoreComment;
+  /** Автор комментария — только он может его править (правило сервера). */
+  mine: boolean;
+  /** Автор или администратор организации. */
+  canDelete: boolean;
+  /** На эту ветку уже отвечают — вторая кнопка «Ответить» ни к чему. */
+  canReply: boolean;
+  orgId: string | null;
+  taskId: string | null;
+  onReply: () => void;
+  /** Признак успеха: по нему решаем, закрывать ли поле правки. */
+  onEdit: (html: string) => Promise<boolean>;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const author = comment.author?.name || comment.author?.email || comment.author_label || "Неизвестный";
+
+  return (
+    // Ответы сдвинуты и отчёркнуты слева: иерархия ровно одноуровневая, ответ на
+    // ответ сервер приводит к тому же корню — дерево в узкой колонке нечитаемо.
+    <div className={cn("flex gap-2", comment.parent_id && "ml-8 border-l border-border pl-3")}>
+      {comment.author ? <Avatar user={comment.author} size="sm" /> : <span className="size-6" />}
+      <div className="min-w-0 flex-1">
+        <p className="flex items-center gap-1 text-xs text-muted-foreground">
+          <span className="truncate font-medium text-foreground">{author}</span>
+          {/* Комментарий, оставленный агентом, подписан: читатель должен видеть,
+              что за автора это написала программа. */}
+          {actorSourceLabel(comment.source) && <span>({actorSourceLabel(comment.source)})</span>}·{" "}
+          {new Date(comment.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+          {comment.edited_at && " · изменён"}
+          <span className="flex-1" />
+          {(mine || canDelete) && !editing && (
+            <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+              <PopoverTrigger
+                render={
+                  // Отступы на телефоне крупнее: 20 px мышью попадаются,
+                  // пальцем — нет (та же правка, что у кнопок шапки).
+                  <button
+                    className="-mr-1 rounded p-1.5 hover:bg-muted hover:text-foreground sm:p-0.5"
+                    aria-label="Действия с комментарием"
+                  />
+                }
+              >
+                <MoreHorizontal className="size-4 sm:size-3.5" />
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-44 p-1">
+                {mine && (
+                  <button
+                    onClick={() => {
+                      // Разметка уходит в редактор как есть: снятие тегов
+                      // регуляркой съедало бы упоминания, превращая @Ивана в
+                      // обычный текст.
+                      setMenuOpen(false);
+                      setEditing(true);
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm hover:bg-muted"
+                  >
+                    <Pencil className="size-4 shrink-0 text-muted-foreground" />
+                    Изменить
+                  </button>
+                )}
+                {canDelete && (
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onDelete();
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-2 py-2 text-sm text-destructive hover:bg-muted"
+                  >
+                    <Trash2 className="size-4 shrink-0" />
+                    Удалить
+                  </button>
+                )}
+              </PopoverContent>
+            </Popover>
+          )}
+        </p>
+
+        {editing ? (
+          <div className="mt-1">
+            <CommentComposer
+              autoFocus
+              value={comment.body}
+              submitLabel="Сохранить"
+              orgId={orgId}
+              taskId={taskId}
+              onCancel={() => setEditing(false)}
+              // Поле закрываем только при успехе и обязательно дожидаемся
+              // ответа: без await правка «сохранялась» бы на экране и при отказе
+              // сервера, а набранный текст исчезал вместе с полем.
+              onSubmit={async (html) => {
+                const ok = await onEdit(html);
+                if (ok) setEditing(false);
+                return ok;
+              }}
+            />
+          </div>
+        ) : (
+          <>
+            <div
+              // comment-body — правила для картинки в готовом тексте: ширину
+              // задал автор, высоту ограничиваем мы (см. globals.css).
+              className="comment-body prose prose-sm dark:prose-invert max-w-none text-sm"
+              onClick={handleRichTextClick}
+              dangerouslySetInnerHTML={{ __html: comment.body }}
+            />
+            {canReply && (
+              <button
+                onClick={onReply}
+                className="mt-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                Ответить
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }

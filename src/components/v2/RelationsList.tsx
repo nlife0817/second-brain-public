@@ -35,6 +35,7 @@ export function RelationsList({
   canEdit,
   initialRelations,
   initialTypes,
+  onOpenTask,
 }: {
   entityType: RelationEntityType;
   entityId: string;
@@ -46,6 +47,12 @@ export function RelationsList({
    */
   initialRelations?: RelationWithTarget[];
   initialTypes?: RelationType[];
+  /**
+   * Переход к связанной задаче. Передаёт карточка задачи — она открывает её у
+   * себя же, поверх стека, как это делают подзадачи. Без обработчика (клиент,
+   * проект, другие места использования) название остаётся обычным текстом.
+   */
+  onOpenTask?: (taskId: string) => void;
 }) {
   const orgId = useV2Store((s) => s.orgId);
   const [relations, setRelations] = useState<RelationWithTarget[]>(initialRelations ?? []);
@@ -145,113 +152,144 @@ export function RelationsList({
     }
   }
 
+  // Гостю пустой блок показывать нечем: без списка и без кнопки от него
+  // остаётся одинокая метка «СВЯЗИ» в отступе родителя.
+  if (relations.length === 0 && !canEdit) return null;
+
   return (
     <div>
-      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Связи</p>
+      {/* Кнопка живёт в заголовке всегда, а не только в пустом состоянии:
+          переезжающий по мере появления связей контрол сбивает прицел. */}
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Связи
+        </span>
+        {canEdit && (
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button variant="ghost" size="xs" className="ml-auto gap-1 text-muted-foreground" />
+              }
+            >
+              <Plus className="size-3" /> Связать
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 gap-2 p-2.5">
+              {types.length > 0 && (
+                <select
+                  value={typeId}
+                  onChange={(e) => setTypeId(e.target.value)}
+                  className="h-7 rounded-lg border border-input bg-background px-1.5 text-xs outline-none focus-visible:border-ring"
+                >
+                  <option value="">Без типа связи</option>
+                  {types.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <div className="relative">
+                <Link2 className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Найти задачу, клиента, проект…"
+                  className="h-8 w-full rounded-lg border border-input bg-transparent pl-7 pr-7 text-sm outline-none focus-visible:border-ring"
+                />
+                {searching && (
+                  <Loader2 className="absolute right-2 top-1/2 size-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
+                )}
+              </div>
+              <div className="flex max-h-56 flex-col overflow-y-auto">
+                {hits.map((hit) => (
+                  <button
+                    key={`${hit.type}:${hit.id}`}
+                    onClick={() => void link(hit)}
+                    className="flex items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-muted"
+                  >
+                    <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                      {ENTITY_LABELS[hit.type]}
+                    </span>
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 truncate",
+                        hit.completed && "text-muted-foreground line-through",
+                      )}
+                    >
+                      {hit.title}
+                    </span>
+                    {hit.subtitle && (
+                      <span className="shrink-0 text-[10px] text-muted-foreground">{hit.subtitle}</span>
+                    )}
+                  </button>
+                ))}
+                {query.trim().length >= 2 && !searching && hits.length === 0 && (
+                  <p className="px-1.5 py-1 text-xs text-muted-foreground">Ничего не нашлось</p>
+                )}
+                {query.trim().length < 2 && (
+                  <p className="px-1.5 py-1 text-xs text-muted-foreground">
+                    Введите минимум два символа
+                  </p>
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
+      </div>
 
       {error && <p className="mb-1.5 text-xs text-destructive">{error}</p>}
 
-      <div className="flex flex-col gap-1">
-        {relations.map((r) => {
-          const type = types.find((t) => t.id === r.relation_type_id);
-          return (
-            <div key={r.id} className="group flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-muted/50">
-              {r.direction === "outgoing" ? (
-                <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <ArrowDownLeft className="size-3.5 shrink-0 text-muted-foreground" />
-              )}
-              <span
-                className={cn("shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium", type && "tinted-chip")}
-                style={type ? chipStyle(type.color) : { backgroundColor: "var(--muted)" }}
+      {relations.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {relations.map((r) => {
+            const type = types.find((t) => t.id === r.relation_type_id);
+            return (
+              <div
+                key={r.id}
+                className="group flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-muted/50"
               >
-                {type?.name ?? ENTITY_LABELS[r.entity_type]}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-sm" title={r.title}>
-                {r.title}
-              </span>
-              {canEdit && (
-                <button
-                  onClick={() => void unlink(r.id)}
-                  className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-                  title="Убрать связь"
-                >
-                  <X className="size-3.5" />
-                </button>
-              )}
-            </div>
-          );
-        })}
-        {relations.length === 0 && <p className="px-1 text-xs text-muted-foreground">Связей пока нет</p>}
-      </div>
-
-      {canEdit && (
-        <Popover>
-          <PopoverTrigger
-            render={
-              <Button variant="ghost" size="xs" className="mt-1 gap-1 text-muted-foreground" />
-            }
-          >
-            <Plus className="size-3" /> Связать
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-72 gap-2 p-2.5">
-            {types.length > 0 && (
-              <select
-                value={typeId}
-                onChange={(e) => setTypeId(e.target.value)}
-                className="h-7 rounded-lg border border-input bg-background px-1.5 text-xs outline-none focus-visible:border-ring"
-              >
-                <option value="">Без типа связи</option>
-                {types.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            )}
-            <div className="relative">
-              <Link2 className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Найти задачу, клиента, проект…"
-                className="h-8 w-full rounded-lg border border-input bg-transparent pl-7 pr-7 text-sm outline-none focus-visible:border-ring"
-              />
-              {searching && (
-                <Loader2 className="absolute right-2 top-1/2 size-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
-              )}
-            </div>
-            <div className="flex max-h-56 flex-col overflow-y-auto">
-              {hits.map((hit) => (
-                <button
-                  key={`${hit.type}:${hit.id}`}
-                  onClick={() => void link(hit)}
-                  className="flex items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-muted"
-                >
-                  <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
-                    {ENTITY_LABELS[hit.type]}
-                  </span>
-                  <span
-                    className={cn("min-w-0 flex-1 truncate", hit.completed && "text-muted-foreground line-through")}
-                  >
-                    {hit.title}
-                  </span>
-                  {hit.subtitle && (
-                    <span className="shrink-0 text-[10px] text-muted-foreground">{hit.subtitle}</span>
+                {r.direction === "outgoing" ? (
+                  <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ArrowDownLeft className="size-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <span
+                  className={cn(
+                    "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium",
+                    type && "tinted-chip",
                   )}
-                </button>
-              ))}
-              {query.trim().length >= 2 && !searching && hits.length === 0 && (
-                <p className="px-1.5 py-1 text-xs text-muted-foreground">Ничего не нашлось</p>
-              )}
-              {query.trim().length < 2 && (
-                <p className={cn("px-1.5 py-1 text-xs text-muted-foreground")}>
-                  Введите минимум два символа
-                </p>
-              )}
-            </div>
-          </PopoverContent>
-        </Popover>
+                  style={type ? chipStyle(type.color) : { backgroundColor: "var(--muted)" }}
+                >
+                  {type?.name ?? ENTITY_LABELS[r.entity_type]}
+                </span>
+                {/* Связанная задача открывается прямо отсюда: раньше её
+                    приходилось искать заново в списке или через поиск. */}
+                {onOpenTask && r.entity_type === "task" ? (
+                  <button
+                    onClick={() => onOpenTask(r.entity_id)}
+                    className="min-w-0 flex-1 truncate text-left text-sm hover:underline"
+                    title={r.title}
+                  >
+                    {r.title}
+                  </button>
+                ) : (
+                  <span className="min-w-0 flex-1 truncate text-sm" title={r.title}>
+                    {r.title}
+                  </span>
+                )}
+                {canEdit && (
+                  <button
+                    onClick={() => void unlink(r.id)}
+                    className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                    title="Убрать связь"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

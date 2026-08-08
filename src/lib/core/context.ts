@@ -6,18 +6,18 @@
 //   3) первый вход незнакомого человека — заводим identity без доступа.
 //      Доступ даёт только членство в организации, то есть приглашение.
 //
-// Почему по email, а не по core.users.auth_user_id: колонка объявлена uuid и
-// хранила идентификатор Supabase Auth, а Google выдаёт числовой `sub` — в uuid
-// он не приводится. Ключом идентичности остаётся email, и он у Google всегда
-// подтверждённый (lib/auth/google.ts отвергает email_verified !== true).
-// Старые значения auth_user_id остаются в базе как след прежней системы входа.
+// Почему по email, а не по id из сессии: cookie, выданные до перехода на пароли,
+// несут в этом поле числовой `sub` от Google, и живут они 30 дней. Пока они не
+// истекли, единственный общий ключ — email; он же уникален в core.users.
+// Колонка auth_user_id (uuid от Supabase Auth) остаётся в базе как след первой
+// системы входа и никем не читается.
 
 import { cache } from "react";
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { prepare } from "@/lib/sql";
-import { dispatchPendingPush } from "./push";
+import { dispatchPendingNotifications } from "./push";
 import { isUuid, jsonError, toHttpError } from "./http";
 import {
   createUser,
@@ -49,11 +49,10 @@ async function resolveCoreUser(): Promise<CoreUser | null> {
   const byEmail = await getUserByEmail(email);
   if (byEmail) return byEmail;
 
-  // Первый вход человека, которого нет в core.users: заводим запись identity.
-  // Доступ она НЕ даёт — его даёт только членство в организации (org_members),
-  // которое появляется при принятии приглашения.
-  //
-  // authUserId не заполняем: колонка — uuid, а `sub` у Google числовой.
+  // Подписанная cookie на адрес, которого нет в core.users. Штатно так не
+  // бывает — учётку заводит установка пароля, — но остаётся возможным с cookie,
+  // выданной до перехода на пароли. Заводим запись identity: доступ она НЕ даёт,
+  // его даёт только членство в организации (org_members).
   return createUser({ email, name: user.fullName });
 }
 
@@ -103,17 +102,18 @@ export async function resolveOrgContext(
 }
 
 /**
- * Мутация могла разложить уведомления (fan-out в той же транзакции) — шлём
- * push сразу после ответа, не дожидаясь 10-минутного cron-тика. Диспетчер
- * идемпотентен и дёшев на пустой очереди, поэтому зовём после любой мутации.
+ * Мутация могла разложить уведомления (fan-out в той же транзакции) — шлём их
+ * сразу после ответа, не дожидаясь 10-минутного cron-тика. Диспетчер
+ * идемпотентен и дёшев на пустой очереди, поэтому зовём после любой мутации;
+ * он же обслуживает оба канала — push и телеграм.
  */
-function schedulePushDispatch(method: string, status: number): void {
+function scheduleNotificationDispatch(method: string, status: number): void {
   if (method === "GET" || method === "HEAD" || status >= 400) return;
   after(async () => {
     try {
-      await dispatchPendingPush();
+      await dispatchPendingNotifications();
     } catch (err) {
-      console.error("[v2/push] мгновенная отправка не удалась:", err);
+      console.error("[v2/notifications] мгновенная отправка не удалась:", err);
     }
   });
 }
@@ -148,7 +148,37 @@ export function withOrg(handler: OrgHandler, opts?: { minOrgRole?: OrgRole }): R
         }
       }
       const response = await handler(request, { params: context.params, auth: resolved.auth });
-      schedulePushDispatch(request.method, response.status);
+      scheduleNotificationDispatch(request.method, response.status);
+      return response;
+    } catch (err) {
+      return toHttpError(err);
+    }
+  };
+}
+
+/**
+ * То же, что `withUser`, но для роутов с параметром пути — например
+ * `/api/v2/calendar/calendars/[calendarId]`. Отдельная обёртка, а не третий
+ * аргумент у `withUser`: у того возвращаемая функция принимает только запрос, и
+ * добавить ей контекст значило бы задеть каждый существующий роут пользователя
+ * ради нового.
+ *
+ * Организации здесь нет вовсе: подключённые календари принадлежат пользователю
+ * (миграция 0046), и владение проверяет доменный слой.
+ */
+export function withUserParams(
+  handler: (
+    request: NextRequest,
+    user: CoreUser,
+    params: Record<string, string>,
+  ) => Promise<NextResponse>,
+): RouteHandler {
+  return async (request, context) => {
+    try {
+      const user = await getCoreUser();
+      if (!user) return jsonError(401, "Unauthorized");
+      const response = await handler(request, user, await context.params);
+      scheduleNotificationDispatch(request.method, response.status);
       return response;
     } catch (err) {
       return toHttpError(err);
@@ -166,7 +196,7 @@ export function withUser(
       if (!user) return jsonError(401, "Unauthorized");
       // Принятие приглашения (withUser) тоже раскладывает уведомления.
       const response = await handler(request, user);
-      schedulePushDispatch(request.method, response.status);
+      scheduleNotificationDispatch(request.method, response.status);
       return response;
     } catch (err) {
       return toHttpError(err);

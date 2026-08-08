@@ -8,6 +8,7 @@
 // расходится и правило react-hooks/set-state-in-effect не нарушается.
 
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { todayIso } from "@/lib/core/views";
 
 // ---- Аппаратная «Назад» ----
 //
@@ -176,6 +177,29 @@ export function useStandalone(): boolean {
 
 function noopSubscribe(): () => void {
   return () => {};
+}
+
+/** Как часто сверяем, не наступил ли следующий день. */
+const DAY_TICK_MS = 60_000;
+
+function subscribeDay(cb: () => void): () => void {
+  const id = window.setInterval(cb, DAY_TICK_MS);
+  return () => window.clearInterval(id);
+}
+
+/**
+ * Сегодняшний день браузера, `null` до гидрации.
+ *
+ * Зона процесса на сервере — UTC контейнера, а не зона читателя: посчитанное там
+ * «сегодня» ночью отличается на сутки, и календарь, отрисованный на сервере,
+ * разошёлся бы с браузерным на целый месяц. Поэтому серверный снимок пустой —
+ * ровно тот случай, ради которого у `useSyncExternalStore` есть третий аргумент.
+ *
+ * Тик раз в минуту переводит день в полночь сам: строка та же — React ничего не
+ * перерисует, сменилась — экран переедет на новый день.
+ */
+export function useToday(): string | null {
+  return useSyncExternalStore(subscribeDay, todayIso, () => null);
 }
 
 function iosSnapshot(): boolean {

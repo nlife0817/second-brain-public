@@ -16,6 +16,7 @@ import {
   PlainDateCell,
   PriorityCell,
   ProjectCell,
+  StartCell,
   StatusCell,
   SubtasksCell,
   TagsCell,
@@ -24,8 +25,17 @@ import {
 } from "./cells";
 import type { TaskRow } from "@/lib/core/types";
 import { BASE_COLUMNS, COLUMN_MAX_WIDTH, COLUMN_MIN_WIDTH, type ColumnDef } from "@/lib/core/view-store";
-import type { GroupByField, MatchContext, SortState, SubtaskMode } from "@/lib/core/views";
-import { arrangeRows, groupKeys } from "@/lib/core/views";
+import type {
+  GroupByField,
+  GroupNaming,
+  GroupNode,
+  MatchContext,
+  SortState,
+  SubtaskMode,
+  TaskForest,
+} from "@/lib/core/views";
+import { arrangeGroupRows, buildForest, buildGroups } from "@/lib/core/views";
+import { compareManual } from "@/lib/core/subtask-view";
 import { cn } from "@/lib/utils";
 
 /**
@@ -37,10 +47,25 @@ const GROUP_PAGE = 100;
 /** Ширина служебной колонки с чекбоксом — строка добавления равняется по ней же. */
 export const SELECT_COLUMN_WIDTH = 34;
 
-export interface GroupLabel {
-  text: string;
-  color?: string;
-}
+/**
+ * Заголовки групп по уровням. Раньше уровни отличались только цветом текста, и
+ * при двухуровневой группировке было не разобрать, где кончается первая группа и
+ * начинается вложенная. Теперь различаются кегль, высота и отступ слева.
+ *
+ * `top-*` обязан совпадать с суммой высот всего, что липнет выше: шапка колонок
+ * `h-8` (32px) + заголовок первого уровня `h-9` (36px) = 68px для второго.
+ */
+const GROUP_HEADER_BOX: Record<number, string> = {
+  0: "top-8 h-9 border-border px-2",
+  1: "top-[68px] h-8 border-border/60 pl-6 pr-2",
+  2: "top-[100px] h-8 border-border/60 pl-10 pr-2",
+};
+
+const GROUP_HEADER_TEXT: Record<number, string> = {
+  0: "text-sm",
+  1: "text-[13px] text-muted-foreground",
+  2: "text-xs text-muted-foreground",
+};
 
 export interface TaskTableProps {
   tasks: TaskRow[];
@@ -49,6 +74,12 @@ export interface TaskTableProps {
   groupBy: [GroupByField, GroupByField];
   matchCtx: MatchContext;
   subtaskMode: SubtaskMode;
+  /**
+   * Показывать вложенные подзадачи в порядке, заданном перетаскиванием в
+   * карточке. Пропом, а не из стора: таблицу рисуют оба экрана и оба уже
+   * приносят сюда остальные настройки представления.
+   */
+  subtaskManualOrder: boolean;
   sort: SortState;
   onToggleSort: (column: string) => void;
   onResize: (columnId: string, width: number) => void;
@@ -57,10 +88,11 @@ export interface TaskTableProps {
   onSelectMany: (taskIds: string[], checked: boolean) => void;
   collapsed: ReadonlySet<string>;
   onToggleCollapsed: (key: string) => void;
+  /** Свёрнутые задачи — по id. Сворачивать умеет только режим «вложенными». */
+  collapsedTasks: ReadonlySet<string>;
   onOpen: (taskId: string) => void;
-  labelForGroup: (field: GroupByField, key: string) => GroupLabel;
-  /** Порядок ключей группы: справочники имеют свой (позиция статуса и т.п.). */
-  groupOrder: (field: GroupByField, keys: string[]) => string[];
+  labelForGroup: GroupNaming["labelForGroup"];
+  groupOrder: GroupNaming["groupOrder"];
   /**
    * Строка создания задачи. Живёт внутри таблицы, а не над ней: только так её
    * поля стоят ровно под своими колонками и едут вместе с ними при
@@ -69,67 +101,6 @@ export interface TaskTableProps {
   composer?: React.ReactNode;
   /** Что показать вместо строк, когда показывать нечего. */
   emptyState?: React.ReactNode;
-}
-
-interface GroupNode {
-  key: string;
-  path: string;
-  label: GroupLabel;
-  tasks: TaskRow[];
-  children: GroupNode[];
-}
-
-function buildGroups(
-  tasks: TaskRow[],
-  fields: [GroupByField, GroupByField],
-  matchCtx: MatchContext,
-  labelForGroup: TaskTableProps["labelForGroup"],
-  groupOrder: TaskTableProps["groupOrder"],
-): GroupNode[] {
-  const [first, second] = fields;
-  if (first === "none") {
-    return [{ key: "__all__", path: "__all__", label: { text: "" }, tasks, children: [] }];
-  }
-
-  const buckets = new Map<string, TaskRow[]>();
-  for (const task of tasks) {
-    // Задача с несколькими проектами/исполнителями/тегами попадает в каждую
-    // группу — иначе список молча теряет часть её принадлежностей.
-    for (const key of groupKeys(task, first, matchCtx)) {
-      const arr = buckets.get(key);
-      if (arr) arr.push(task);
-      else buckets.set(key, [task]);
-    }
-  }
-
-  return groupOrder(first, [...buckets.keys()]).map((key) => {
-    const rows = buckets.get(key) ?? [];
-    const path = `${first}:${key}`;
-    if (second === "none") {
-      return { key, path, label: labelForGroup(first, key), tasks: rows, children: [] };
-    }
-    const sub = new Map<string, TaskRow[]>();
-    for (const task of rows) {
-      for (const subKey of groupKeys(task, second, matchCtx)) {
-        const arr = sub.get(subKey);
-        if (arr) arr.push(task);
-        else sub.set(subKey, [task]);
-      }
-    }
-    return {
-      key,
-      path,
-      label: labelForGroup(first, key),
-      tasks: rows,
-      children: groupOrder(second, [...sub.keys()]).map((subKey) => ({
-        key: subKey,
-        path: `${path}/${second}:${subKey}`,
-        label: labelForGroup(second, subKey),
-        tasks: sub.get(subKey) ?? [],
-        children: [],
-      })),
-    };
-  });
 }
 
 // --- Шапка ------------------------------------------------------------------------
@@ -220,6 +191,8 @@ const Row = memo(function Row({
   widths,
   ctx,
   depth,
+  hasChildren,
+  subtreeCollapsed,
   selected,
   onToggleSelected,
   onOpen,
@@ -229,14 +202,20 @@ const Row = memo(function Row({
   widths: Record<string, number>;
   ctx: CellContext;
   depth: number;
+  hasChildren: boolean;
+  subtreeCollapsed: boolean;
   selected: boolean;
   onToggleSelected: (taskId: string, checked: boolean) => void;
   onOpen: (taskId: string) => void;
 }) {
+  // При переносе названия высота строки перестаёт быть фиксированной: h-8 → min-h-8,
+  // а ячейки центрируются по вертикали, иначе однострочные значения прилипают к верху.
+  const wrap = ctx.wrapTitle;
   return (
     <div
       className={cn(
-        "flex h-8 items-stretch border-b border-border/40 text-sm",
+        "flex items-stretch border-b border-border/40 text-sm",
+        wrap ? "min-h-8" : "h-8",
         selected ? "bg-primary/5" : "hover:bg-muted/40",
       )}
     >
@@ -252,7 +231,15 @@ const Row = memo(function Row({
           className="flex shrink-0 items-center overflow-hidden"
           style={{ width: widths[column.id] ?? column.width }}
         >
-          <Cell column={column} task={task} ctx={ctx} depth={depth} onOpen={onOpen} />
+          <Cell
+            column={column}
+            task={task}
+            ctx={ctx}
+            depth={depth}
+            hasChildren={hasChildren}
+            subtreeCollapsed={subtreeCollapsed}
+            onOpen={onOpen}
+          />
         </div>
       ))}
     </div>
@@ -264,19 +251,32 @@ function Cell({
   task,
   ctx,
   depth,
+  hasChildren,
+  subtreeCollapsed,
   onOpen,
 }: {
   column: ColumnDef;
   task: TaskRow;
   ctx: CellContext;
   depth: number;
+  hasChildren: boolean;
+  subtreeCollapsed: boolean;
   onOpen: (taskId: string) => void;
 }) {
   switch (column.id) {
     case "priority":
       return <PriorityCell task={task} ctx={ctx} />;
     case "title":
-      return <TitleCell task={task} ctx={ctx} depth={depth} onOpen={onOpen} />;
+      return (
+        <TitleCell
+          task={task}
+          ctx={ctx}
+          depth={depth}
+          hasChildren={hasChildren}
+          collapsed={subtreeCollapsed}
+          onOpen={onOpen}
+        />
+      );
     case "status":
       return <StatusCell task={task} ctx={ctx} />;
     case "project":
@@ -285,6 +285,8 @@ function Cell({
       return <AssigneesCell task={task} ctx={ctx} />;
     case "tags":
       return <TagsCell task={task} ctx={ctx} />;
+    case "start_date":
+      return <StartCell task={task} ctx={ctx} />;
     case "due_date":
       return <DueCell task={task} ctx={ctx} />;
     case "estimated_minutes":
@@ -315,9 +317,11 @@ function GroupBody({
   onSelectMany,
   collapsed,
   onToggleCollapsed,
+  collapsedTasks,
   onOpen,
   grouped,
   subtaskMode,
+  forest,
 }: {
   node: GroupNode;
   level: number;
@@ -329,27 +333,30 @@ function GroupBody({
   onSelectMany: (taskIds: string[], checked: boolean) => void;
   collapsed: ReadonlySet<string>;
   onToggleCollapsed: (key: string) => void;
+  collapsedTasks: ReadonlySet<string>;
   onOpen: (taskId: string) => void;
   grouped: boolean;
   subtaskMode: SubtaskMode;
+  /** Дерево всего набора; `null` — режим «отдельными строками». */
+  forest: TaskForest | null;
 }) {
   const [limit, setLimit] = useState(GROUP_PAGE);
   const isCollapsed = collapsed.has(node.path);
-  // Вложенность считается внутри группы: подзадача, попавшая в другую группу,
-  // становится там обычной строкой — иначе она бы просто пропала.
-  const rows = useMemo(
-    () => (node.children.length === 0 ? arrangeRows(node.tasks, subtaskMode) : []),
-    [node.children.length, node.tasks, subtaskMode],
+  // Родство берётся из общего леса, посчитанного до группировки: подзадача
+  // рисуется под своим родителем даже когда её собственный статус (проект,
+  // исполнитель) отнёс бы её в другую группу.
+  const expanded = useMemo(
+    () => arrangeGroupRows(node.tasks, forest, subtaskMode, collapsedTasks),
+    [node.tasks, forest, subtaskMode, collapsedTasks],
   );
+  const rows = node.children.length === 0 ? expanded : [];
   const shown = rows.length > limit ? rows.slice(0, limit) : rows;
   const rest = rows.length - shown.length;
-  // «Выбрать все» относится к тому, что группа реально показывает: в режиме
-  // «скрыть подзадачи» они не на экране, и молча попадать под массовое
-  // действие не должны.
-  const selectable = useMemo(
-    () => (node.children.length === 0 ? rows.map((r) => r.task.id) : node.tasks.map((t) => t.id)),
-    [node.children.length, node.tasks, rows],
-  );
+  // Счётчик и «выбрать все» относятся к тому, что группа реально рисует: в
+  // режиме «скрыть подзадачи» их нет на экране, и молча попадать под массовое
+  // действие они не должны, а во «вложенными» — наоборот, уже свои строки. По
+  // той же причине свёрнутое поддерево не попадает ни в счётчик, ни в выбор.
+  const selectable = useMemo(() => expanded.map((r) => r.task.id), [expanded]);
   const allSelected = selectable.length > 0 && selectable.every((id) => selected.has(id));
 
   return (
@@ -357,8 +364,10 @@ function GroupBody({
       {grouped && (
         <div
           className={cn(
-            "sticky z-10 flex h-8 items-center gap-2 border-b border-border/60 bg-muted/50 px-2 backdrop-blur",
-            level === 0 ? "top-8" : "top-16",
+            // group — чтобы «выбрать все» проявлялась по наведению: раньше класс
+            // group-hover стоял без родителя с `group` и кнопка не показывалась.
+            "group sticky z-10 flex items-center gap-2 border-b bg-muted/50 backdrop-blur",
+            GROUP_HEADER_BOX[level] ?? GROUP_HEADER_BOX[2],
           )}
         >
           <button
@@ -371,13 +380,16 @@ function GroupBody({
               <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
             )}
             {node.label.color && (
-              <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: node.label.color }} />
+              <span
+                className={cn("shrink-0 rounded-full", level === 0 ? "size-2.5" : "size-2")}
+                style={{ backgroundColor: node.label.color }}
+              />
             )}
-            <span className={cn("truncate text-xs font-semibold", level > 0 && "text-muted-foreground")}>
+            <span className={cn("truncate font-semibold", GROUP_HEADER_TEXT[level] ?? GROUP_HEADER_TEXT[2])}>
               {node.label.text}
             </span>
             <span className="shrink-0 rounded bg-background px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground">
-              {node.children.length === 0 ? rows.length : node.tasks.length}
+              {expanded.length}
             </span>
           </button>
           <button
@@ -404,20 +416,24 @@ function GroupBody({
               onSelectMany={onSelectMany}
               collapsed={collapsed}
               onToggleCollapsed={onToggleCollapsed}
+              collapsedTasks={collapsedTasks}
               onOpen={onOpen}
               grouped
               subtaskMode={subtaskMode}
+              forest={forest}
             />
           ))}
-          {shown.map(({ task, depth }) => (
+          {shown.map((row) => (
             <Row
-              key={task.id}
-              task={task}
+              key={row.task.id}
+              task={row.task}
               columns={columns}
               widths={widths}
               ctx={ctx}
-              depth={depth}
-              selected={selected.has(task.id)}
+              depth={row.depth}
+              hasChildren={row.hasChildren}
+              subtreeCollapsed={row.collapsed}
+              selected={selected.has(row.task.id)}
               onToggleSelected={onToggleSelected}
               onOpen={onOpen}
             />
@@ -446,6 +462,7 @@ export function TaskTable(props: TaskTableProps) {
     groupBy,
     matchCtx,
     subtaskMode,
+    subtaskManualOrder,
     sort,
     onToggleSort,
     onResize,
@@ -454,6 +471,7 @@ export function TaskTable(props: TaskTableProps) {
     onSelectMany,
     collapsed,
     onToggleCollapsed,
+    collapsedTasks,
     onOpen,
     labelForGroup,
     groupOrder,
@@ -467,9 +485,19 @@ export function TaskTable(props: TaskTableProps) {
     return map;
   }, [columns]);
 
+  // Лес строится по всему набору и ДО группировки — в этом вся суть починки.
+  // В режиме «отдельными строками» родство не нужно вовсе.
+  // Ручной порядок веток задан руками в карточке — сортировка списка его не
+  // трогает, пока настройка не скажет обратного.
+  const forest = useMemo(
+    () =>
+      subtaskMode === "flat" ? null : buildForest(tasks, subtaskManualOrder ? compareManual : undefined),
+    [tasks, subtaskMode, subtaskManualOrder],
+  );
+
   const nodes = useMemo(
-    () => buildGroups(tasks, groupBy, matchCtx, labelForGroup, groupOrder),
-    [tasks, groupBy, matchCtx, labelForGroup, groupOrder],
+    () => buildGroups(tasks, groupBy, matchCtx, { labelForGroup, groupOrder }, forest),
+    [tasks, groupBy, matchCtx, labelForGroup, groupOrder, forest],
   );
 
   const totalWidth = useMemo(
@@ -519,9 +547,11 @@ export function TaskTable(props: TaskTableProps) {
                 onSelectMany={onSelectMany}
                 collapsed={collapsed}
                 onToggleCollapsed={onToggleCollapsed}
+                collapsedTasks={collapsedTasks}
                 onOpen={onOpen}
                 grouped={grouped}
                 subtaskMode={subtaskMode}
+                forest={forest}
               />
             ))}
       </div>

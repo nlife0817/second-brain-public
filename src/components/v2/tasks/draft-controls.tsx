@@ -9,7 +9,8 @@ import { Check, X } from "lucide-react";
 import { useMemo } from "react";
 import { Avatar, PRIORITY_LABELS } from "@/components/v2/bits";
 import { assigneeChoice } from "@/lib/core/assignable";
-import type { TaskPriority } from "@/lib/core/types";
+import { resolveProjectSetId, statusesOfSet } from "@/lib/core/status-model";
+import type { TaskPriority, TaskStatus } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { formatEstimate } from "./cells";
@@ -24,11 +25,25 @@ export const WIDE_MENU_POPOVER = "max-h-72 w-60 overflow-y-auto p-1";
 export const ESTIMATE_POPOVER = "w-52 gap-2 p-2.5";
 export const FIELD_POPOVER = "w-64 gap-2 p-2.5";
 
-const ROW = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted";
-const CLEAR_ROW =
-  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted";
+const ROW = "flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted";
 const FIELD_INPUT =
   "h-8 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring";
+
+/**
+ * Статусы набора, в котором родится черновик. Набор берём у первого проекта
+ * размещения — новая задача рождается в его процессе; без проекта (личный
+ * черновик) — набор организации по умолчанию. Тот же принцип, что и в карточке
+ * (`resolveProjectSetId`): сырой `null` показал бы статусы всех наборов сразу.
+ */
+export function useDraftSetStatuses(projectIds: string[]): TaskStatus[] {
+  const all = useV2Store((s) => s.statuses);
+  const statusSets = useV2Store((s) => s.statusSets);
+  const projects = useV2Store((s) => s.projects);
+  return useMemo(() => {
+    const projectSetId = projects.find((p) => projectIds.includes(p.id))?.status_set_id ?? null;
+    return statusesOfSet(all, resolveProjectSetId(statusSets, projectSetId));
+  }, [all, statusSets, projects, projectIds]);
+}
 
 /** Проекты, куда участник вправе положить задачу. Архивные не предлагаем. */
 export function useWritableProjects() {
@@ -59,26 +74,32 @@ export function PriorityMenu({
   );
 }
 
+/** «Без статуса» здесь нет намеренно: пустого статуса у задачи не бывает. */
 export function StatusMenu({
   value,
   onChange,
+  statuses,
 }: {
   value: string | null;
-  onChange: (statusId: string | null) => void;
+  onChange: (statusId: string) => void;
+  /**
+   * Чем ограничен выбор. По умолчанию — весь справочник организации; экран со
+   * своим набором статусов (проект в режиме «Разработка») передаёт статусы
+   * набора: новая задача рождается в его процессе, а не в чужом.
+   */
+  statuses?: TaskStatus[];
 }) {
-  const statuses = useV2Store((s) => s.statuses);
+  const all = useV2Store((s) => s.statuses);
+  const options = statuses ?? all;
   return (
     <>
-      {statuses.map((s) => (
+      {options.map((s) => (
         <button key={s.id} onClick={() => onChange(s.id)} className={ROW}>
           <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: s.color }} />
           <span className="flex-1 truncate text-left">{s.name}</span>
           {value === s.id && <Check className="size-3.5 shrink-0" />}
         </button>
       ))}
-      <button onClick={() => onChange(null)} className={CLEAR_ROW}>
-        <X className="size-3.5" /> Без статуса
-      </button>
     </>
   );
 }

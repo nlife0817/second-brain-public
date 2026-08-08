@@ -3,13 +3,14 @@
 // Панель обсуждения документа: треды на фрагментах описания. Ведёт себя как
 // комментарии в Google Docs — ответ, правка, закрытие, переоткрытие.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Check, CornerDownRight, MessageSquare, MoreHorizontal, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import type { DocCommentThread, UserBrief } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
 import { Avatar } from "../bits";
+import { CommentComposer } from "./CommentComposer";
+import { handleRichTextClick } from "./open-link";
 
 function when(iso: string): string {
   return new Date(iso).toLocaleString("ru-RU", {
@@ -23,6 +24,9 @@ function when(iso: string): string {
 export interface CommentPanelProps {
   threads: DocCommentThread[];
   me: UserBrief | null;
+  /** Куда уходят картинки из комментариев — вложения той же задачи. */
+  orgId: string | null;
+  taskId: string | null;
   /** Тред под курсором в документе — он же раскрыт в панели. */
   activeThreadId: string | null;
   /** Есть ли у треда якорь в тексте: без него обсуждение висит «в воздухе». */
@@ -30,18 +34,28 @@ export interface CommentPanelProps {
   canComment: boolean;
   canResolveAll: boolean;
   onSelect: (threadId: string) => void;
-  onReply: (threadId: string, text: string) => Promise<void>;
-  onEdit: (commentId: string, text: string) => Promise<void>;
+  /**
+   * Отправители возвращают признак успеха: композер по нему решает, стирать ли
+   * набранное. Ошибку они не бросают — её ловит `guard` в DocEditor.
+   */
+  onReply: (threadId: string, html: string) => Promise<boolean>;
+  onEdit: (commentId: string, html: string) => Promise<boolean>;
   onDelete: (commentId: string) => Promise<void>;
   onResolve: (threadId: string, resolved: boolean) => Promise<void>;
   /** Черновик нового треда: выделение уже сделано, текста ещё нет. */
   draftQuote: string | null;
-  onSubmitDraft: (text: string) => Promise<void>;
+  onSubmitDraft: (html: string) => Promise<boolean>;
   onCancelDraft: () => void;
+  /**
+   * Переключатель панелей (обсуждение ↔ оглавление) — он и подписывает панель.
+   * Без него, когда в описании нет заголовков и переключать не на что, панель
+   * подписывает себя сама.
+   */
+  tabs?: ReactNode;
 }
 
 export function CommentPanel(props: CommentPanelProps) {
-  const { threads, draftQuote } = props;
+  const { threads, draftQuote, tabs, orgId, taskId } = props;
   const [showResolved, setShowResolved] = useState(false);
 
   const open = threads.filter((t) => !t.resolved_at);
@@ -50,15 +64,23 @@ export function CommentPanel(props: CommentPanelProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <MessageSquare className="size-4 text-muted-foreground" />
-        <span className="text-sm font-medium">Обсуждение</span>
-        <span className="text-xs text-muted-foreground">{open.length}</span>
+      {/* flex-wrap на случай, когда в шапке сходятся всё сразу: переключатель
+          панелей, счётчик открытых и кнопка закрытых. В колонку 320 px они
+          влезают вплотную, и «Закрытые» лучше перенести на вторую строку, чем
+          обрезать подписи вкладок. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-3 py-2">
+        {tabs ?? (
+          <>
+            <MessageSquare className="size-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Обсуждение</span>
+            <span className="text-xs text-muted-foreground">{open.length}</span>
+          </>
+        )}
         <span className="flex-1" />
         {resolved.length > 0 && (
           <button
             onClick={() => setShowResolved((v) => !v)}
-            className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
           >
             {showResolved ? "Скрыть закрытые" : `Закрытые (${resolved.length})`}
           </button>
@@ -67,7 +89,13 @@ export function CommentPanel(props: CommentPanelProps) {
 
       <div className="flex-1 overflow-y-auto p-3">
         {draftQuote !== null && (
-          <DraftCard quote={draftQuote} onSubmit={props.onSubmitDraft} onCancel={props.onCancelDraft} />
+          <DraftCard
+            quote={draftQuote}
+            orgId={orgId}
+            taskId={taskId}
+            onSubmit={props.onSubmitDraft}
+            onCancel={props.onCancelDraft}
+          />
         )}
 
         {visible.length === 0 && draftQuote === null && (
@@ -88,49 +116,41 @@ export function CommentPanel(props: CommentPanelProps) {
 
 function DraftCard({
   quote,
+  orgId,
+  taskId,
   onSubmit,
   onCancel,
 }: {
   quote: string;
-  onSubmit: (text: string) => Promise<void>;
+  orgId: string | null;
+  taskId: string | null;
+  onSubmit: (html: string) => Promise<boolean>;
   onCancel: () => void;
 }) {
-  const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-
-  async function submit() {
-    if (!text.trim() || busy) return;
-    setBusy(true);
-    try {
-      await onSubmit(text.trim());
-      setText("");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <div className="mb-2 rounded-lg border border-primary/40 bg-background p-2.5 shadow-sm">
       {quote && <Quote text={quote} />}
-      <Textarea
+      {/* Escape здесь не перехватываем: он нужен списку @-упоминаний. Черновик
+          закрывает Escape, дошедший до DocEditor, когда список не открыт. */}
+      <CommentComposer
         autoFocus
-        value={text}
-        onChange={(e) => setText(e.target.value)}
         placeholder="Комментарий…"
-        className="min-h-16 text-sm"
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void submit();
-          if (e.key === "Escape") onCancel();
+        submitLabel="Оставить"
+        orgId={orgId}
+        taskId={taskId}
+        busy={busy}
+        onCancel={onCancel}
+        onSubmit={async (html) => {
+          setBusy(true);
+          try {
+            return await onSubmit(html);
+          } finally {
+            setBusy(false);
+          }
         }}
       />
-      <div className="mt-1.5 flex justify-end gap-1.5">
-        <Button size="sm" variant="ghost" onClick={onCancel}>
-          Отмена
-        </Button>
-        <Button size="sm" onClick={() => void submit()} disabled={!text.trim() || busy}>
-          Оставить
-        </Button>
-      </div>
     </div>
   );
 }
@@ -146,6 +166,8 @@ function Quote({ text }: { text: string }) {
 function ThreadCard({
   thread,
   me,
+  orgId,
+  taskId,
   activeThreadId,
   isAnchored,
   canComment,
@@ -157,9 +179,11 @@ function ThreadCard({
   onResolve,
 }: { thread: DocCommentThread } & Omit<
   CommentPanelProps,
-  "threads" | "draftQuote" | "onSubmitDraft" | "onCancelDraft"
+  "threads" | "draftQuote" | "onSubmitDraft" | "onCancelDraft" | "tabs"
 >) {
-  const [replyText, setReplyText] = useState("");
+  // Поле ответа монтируется по клику, а не живёт в каждом треде: редактор
+  // Tiptap на тред — это десятки экземпляров ProseMirror в одной панели.
+  const [replying, setReplying] = useState(false);
   const [busy, setBusy] = useState(false);
   const active = activeThreadId === thread.id;
   const resolved = !!thread.resolved_at;
@@ -167,11 +191,12 @@ function ThreadCard({
   const mine = !!me && root?.author_id === me.id;
   const orphan = !isAnchored(thread.id);
 
-  async function guard(fn: () => Promise<void>) {
-    if (busy) return;
+  /** Признак успеха пробрасывается наружу: по нему композер решает, стирать ли текст. */
+  async function guard(fn: () => Promise<boolean | void>): Promise<boolean> {
+    if (busy) return false;
     setBusy(true);
     try {
-      await fn();
+      return (await fn()) !== false;
     } finally {
       setBusy(false);
     }
@@ -202,6 +227,8 @@ function ThreadCard({
             message={message}
             isRoot={index === 0}
             mine={!!me && message.author_id === me.id}
+            orgId={orgId}
+            taskId={taskId}
             onEdit={(text) => guard(() => onEdit(message.id, text))}
             onDelete={() => guard(() => onDelete(message.id))}
           />
@@ -210,36 +237,35 @@ function ThreadCard({
 
       {!resolved && canComment && (
         <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-          <Textarea
-            value={replyText}
-            onChange={(e) => setReplyText(e.target.value)}
-            placeholder="Ответить…"
-            className="min-h-9 py-1.5 text-sm"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && replyText.trim()) {
-                void guard(async () => {
-                  await onReply(thread.id, replyText.trim());
-                  setReplyText("");
-                });
+          {replying ? (
+            <CommentComposer
+              autoFocus
+              placeholder="Ответить…"
+              submitLabel="Ответить"
+              orgId={orgId}
+              taskId={taskId}
+              busy={busy}
+              onCancel={() => setReplying(false)}
+              onSubmit={(html) =>
+                guard(async () => {
+                  // Поле ответа закрываем только при успехе — иначе набранный
+                  // текст исчезнет вместе с ним.
+                  const ok = await onReply(thread.id, html);
+                  if (ok) setReplying(false);
+                  return ok;
+                })
               }
-            }}
-          />
-          {replyText.trim() && (
-            <div className="mt-1.5 flex justify-end">
-              <Button
-                size="sm"
-                disabled={busy}
-                onClick={() =>
-                  void guard(async () => {
-                    await onReply(thread.id, replyText.trim());
-                    setReplyText("");
-                  })
-                }
-              >
-                <CornerDownRight className="size-3.5" />
-                Ответить
-              </Button>
-            </div>
+            />
+          ) : (
+            // Заглушка того же вида, что и поле: панель не должна дёргаться,
+            // когда в тред заходят отвечать.
+            <button
+              onClick={() => setReplying(true)}
+              className="flex w-full items-center gap-1.5 rounded-lg border border-input bg-background px-3 py-1.5 text-left text-sm text-muted-foreground hover:border-ring"
+            >
+              <CornerDownRight className="size-3.5 shrink-0" />
+              Ответить…
+            </button>
           )}
         </div>
       )}
@@ -274,30 +300,26 @@ function Message({
   message,
   isRoot,
   mine,
+  orgId,
+  taskId,
   onEdit,
   onDelete,
 }: {
   message: DocCommentThread["messages"][number];
   isRoot: boolean;
   mine: boolean;
-  onEdit: (text: string) => void;
+  orgId: string | null;
+  taskId: string | null;
+  /** Признак успеха: по нему решаем, закрывать ли поле правки. */
+  onEdit: (html: string) => Promise<boolean>;
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  // Правится обычный текст, а хранится HTML: разметку в теле комментария
-  // никто не набирает, а тегами в поле ввода тыкать неудобно.
-  const [draft, setDraft] = useState("");
 
   function startEdit() {
-    const plain = message.body
-      .replace(/<\/p>\s*<p>/gi, "\n\n")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<[^>]+>/g, "")
-      .replace(/&amp;/gi, "&")
-      .replace(/&lt;/gi, "<")
-      .replace(/&gt;/gi, ">");
-    setDraft(plain.trim());
+    // Разметка отдаётся редактору как есть: снятие тегов регуляркой съедало бы
+    // упоминания, превращая @Ивана в обычный текст.
     setEditing(true);
     setMenuOpen(false);
   }
@@ -344,39 +366,30 @@ function Message({
         </p>
 
         {editing ? (
-          <div onClick={(e) => e.stopPropagation()}>
-            <Textarea
+          <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+            <CommentComposer
               autoFocus
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              className="mt-1 min-h-14 text-sm"
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setEditing(false);
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && draft.trim()) {
-                  onEdit(draft.trim());
-                  setEditing(false);
-                }
+              value={message.body}
+              submitLabel="Сохранить"
+              orgId={orgId}
+              taskId={taskId}
+              onCancel={() => setEditing(false)}
+              // Поле закрываем только при успехе и обязательно дожидаемся
+              // ответа: без await правка «сохранялась» на экране и при отказе
+              // сервера, а набранный текст исчезал вместе с полем.
+              onSubmit={async (html) => {
+                const ok = await onEdit(html);
+                if (ok) setEditing(false);
+                return ok;
               }}
             />
-            <div className="mt-1.5 flex justify-end gap-1.5">
-              <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-                Отмена
-              </Button>
-              <Button
-                size="sm"
-                disabled={!draft.trim()}
-                onClick={() => {
-                  onEdit(draft.trim());
-                  setEditing(false);
-                }}
-              >
-                Сохранить
-              </Button>
-            </div>
           </div>
         ) : (
           <div
-            className="prose prose-sm dark:prose-invert max-w-none text-sm"
+            // comment-body — правила для картинки в готовом тексте: ширину
+            // задал автор, а высоту ограничиваем мы (см. globals.css).
+            className="comment-body prose prose-sm dark:prose-invert max-w-none text-sm"
+            onClick={handleRichTextClick}
             dangerouslySetInnerHTML={{ __html: message.body }}
           />
         )}

@@ -85,17 +85,19 @@ function legacyTarget(pathname: string): string | null {
 /**
  * Живые API приложения — всё остальное под `/api/` относится к первой версии.
  *
- * Кроме `/api/v2/*` сюда входит `/api/auth/*`: свой вход через Google появился
- * уже после отключения v1 и к наследию отношения не имеет. Без этой оговорки
- * `/api/auth/google` отвечал 410 и войти было невозможно — ни на мобильной
- * версии, ни на десктопе (там ошибка не бросалась в глаза, пока жила cookie
- * сессии).
+ * Кроме `/api/v2/*` сюда входит `/api/auth/*`: свой вход появился уже после
+ * отключения v1 и к наследию отношения не имеет. Без этой оговорки `/api/auth/login`
+ * отвечал бы 410 и войти было невозможно — ни на мобильной версии, ни на
+ * десктопе (там ошибка не бросалась бы в глаза, пока жива cookie сессии).
  */
 function isLiveApi(pathname: string): boolean {
   return (
     pathname.startsWith("/api/v2/") ||
     pathname === "/api/auth" ||
-    pathname.startsWith("/api/auth/")
+    pathname.startsWith("/api/auth/") ||
+    // Адрес достался от интеграции первой версии, но живёт снова: теперь это
+    // MCP-сервер v2 со своей проверкой токена (см. app/api/mcp/route.ts).
+    pathname === "/api/mcp"
   );
 }
 
@@ -106,9 +108,10 @@ function isLiveApi(pathname: string): boolean {
  * запроса, который всё равно будет перенаправлен.
  *
  * Под 410 попадают и внешние точки входа первой версии (`/api/cron/*`,
- * `/api/notifications/dispatch`, `/api/timing/watchdog`, `/api/mcp`): их
- * исключения убраны из `config.matcher` вместе с самими роутами, так что
- * отставшее расписание или забытый клиент получат внятный ответ, а не 404.
+ * `/api/notifications/dispatch`, `/api/timing/watchdog`): их исключения убраны
+ * из `config.matcher` вместе с самими роутами, так что отставшее расписание или
+ * забытый клиент получат внятный ответ, а не 404. Адрес `/api/mcp` из этого
+ * списка вышел — он снова живой, но уже как MCP-сервер v2.
  */
 function legacyResponse(request: NextRequest): NextResponse | null {
   const { pathname } = request.nextUrl;
@@ -144,9 +147,10 @@ function applyDesktopModeCookie(request: NextRequest, response: NextResponse): v
   }
 }
 
-// /invite/* открыт до входа: страница сама показывает кнопку «Войти» с возвратом.
-// /api/auth/* — сам вход: редирект на Google и возврат от него идут без сессии.
-const PUBLIC_PATHS = ["/login", "/auth/callback", "/api/auth", "/invite"];
+// /invite/* открыт до входа: страница либо заводит учётку с паролем, либо ведёт
+// на вход с возвратом. /set-password/* — установка пароля по одноразовой ссылке:
+// сюда приходит именно тот, кто войти пока не может. /api/auth/* — сам вход.
+const PUBLIC_PATHS = ["/login", "/api/auth", "/invite", "/set-password"];
 
 // Local-only dev bypass. Active iff both conditions hold:
 //   1) NODE_ENV !== "production"  (production builds always set this to "production")
@@ -211,6 +215,10 @@ export const config = {
   matcher: [
     // api/v2/invitations исключён: GET показывает приглашение до входа, POST
     // сам требует сессию через withUser.
-    "/((?!_next|api/v2/cron|api/v2/invitations|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
+    // api/mcp — вход внешних агентов по токену: сессии-cookie у них нет, и без
+    // исключения запрос уехал бы редиректом на /login.
+    // api/v2/telegram/webhook — апдейты от Bot API: запрос делает телеграм, а
+    // не браузер. Свою проверку роут делает сам (секрет в заголовке).
+    "/((?!_next|api/v2/cron|api/v2/invitations|api/v2/telegram/webhook|api/mcp|icons|favicon|manifest|sw\\.js|offline\\.html).*)",
   ],
 };
