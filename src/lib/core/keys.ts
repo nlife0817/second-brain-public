@@ -25,3 +25,40 @@ export const SIDEBAR_COLLAPSED_COOKIE = "sb_v2_sidebar";
 
 /** Ширина панели — такая же долгоживущая привычка, как выбор организации. */
 export const SIDEBAR_COLLAPSED_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+
+/**
+ * Ширина развёрнутого сайдбара в пикселях. Отдельная cookie от свёрнутости:
+ * свёрнутая панель обязана помнить, к какой ширине возвращаться, — иначе
+ * каждый разворот сбрасывал бы подобранный размер к умолчанию.
+ */
+export const SIDEBAR_WIDTH_COOKIE = "sb_v2_sidebar_w";
+
+/** Ширина по умолчанию — та же `w-60`, что была у панели до перетаскивания. */
+export const SIDEBAR_DEFAULT_WIDTH = 240;
+
+/** Уже — и название проекта не читается даже в одну строку. */
+export const SIDEBAR_MIN_WIDTH = 180;
+
+/** Шире — панель начинает отбирать место у самого списка задач. */
+export const SIDEBAR_MAX_WIDTH = 420;
+
+/** Ширина свёрнутой панели (`w-14`) — от неё считается жест разворота. */
+export const SIDEBAR_COLLAPSED_WIDTH = 56;
+
+/**
+ * Утащили левее — панель схлопывается. Порог ниже минимума намеренно: между
+ * ними лежит «мёртвая зона», в которой ширина уже не меняется, и случайный
+ * недолёт на пару пикселей не сворачивает панель.
+ */
+export const SIDEBAR_COLLAPSE_AT = 150;
+
+/**
+ * Ширина из cookie — данные из браузера: там может оказаться что угодно,
+ * включая пустую строку и `NaN`. Функция здесь, а не рядом с компонентом,
+ * потому что нужна обеим сторонам: серверный layout чинит cookie до первого
+ * кадра, браузер — на каждом движении мыши.
+ */
+export function clampSidebarWidth(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return SIDEBAR_DEFAULT_WIDTH;
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(value)));
+}

@@ -28,9 +28,20 @@ import { GlobalTimer } from "@/components/v2/GlobalTimer";
 import { PushPrompt, PushToasts } from "@/components/v2/PushDesktop";
 import { SignOutButton } from "@/components/v2/SignOutButton";
 import { ProjectIcon } from "@/components/v2/project-icons";
+import {
+  SIDEBAR_VIEWPORT_CAP,
+  SidebarResizer,
+  useNarrowViewport,
+  type SidebarSize,
+} from "@/components/v2/SidebarResizer";
 import { useRowDrag } from "@/components/v2/tasks/use-row-drag";
 import { api } from "@/lib/core/client";
-import { SIDEBAR_COLLAPSED_COOKIE, SIDEBAR_COLLAPSED_COOKIE_MAX_AGE } from "@/lib/core/keys";
+import {
+  SIDEBAR_COLLAPSED_COOKIE,
+  SIDEBAR_COLLAPSED_COOKIE_MAX_AGE,
+  SIDEBAR_DEFAULT_WIDTH,
+  SIDEBAR_WIDTH_COOKIE,
+} from "@/lib/core/keys";
 import {
   readActiveOrgCookie,
   takeLegacyActiveOrg,
@@ -162,12 +173,15 @@ export function V2Shell({
   state,
   onboardingUser,
   initialCollapsed = false,
+  initialWidth = SIDEBAR_DEFAULT_WIDTH,
   children,
 }: {
   state: V2BootstrapResult["state"];
   onboardingUser: UserBrief | null;
   /** Свёрнут ли сайдбар — считано из cookie серверным layout. */
   initialCollapsed?: boolean;
+  /** Ширина развёрнутого сайдбара — оттуда же и уже приведённая к диапазону. */
+  initialWidth?: number;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -178,22 +192,54 @@ export function V2Shell({
   const [createOpen, setCreateOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(initialCollapsed);
+  const [userCollapsed, setUserCollapsed] = useState(initialCollapsed);
+  const [width, setWidth] = useState(initialWidth);
+  // Пока тянут границу, переход ширины снят: с ним панель едет за курсором с
+  // задержкой в полкадра и выглядит резиновой.
+  const [resizing, setResizing] = useState(false);
+  // Узкое окно сворачивает панель само, но человек вправе это перебить —
+  // тогда до следующего сворачивания решает он, а не размер окна.
+  const [expandedOnNarrow, setExpandedOnNarrow] = useState(false);
   // Перестановка не доехала до сервера — панель уже вернулась к прежнему
   // порядку, но молчать об этом нельзя: человек видел бы, как строка «сама»
   // прыгает назад.
   const [orderError, setOrderError] = useState<string | null>(null);
   const migrated = useRef(false);
 
-  const toggleCollapsed = useCallback(() => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      // Значение читает серверный layout — иначе следующая полная загрузка
-      // вернула бы панель в прежнее состояние.
-      document.cookie = `${SIDEBAR_COLLAPSED_COOKIE}=${next ? "1" : "0"}; path=/; max-age=${SIDEBAR_COLLAPSED_COOKIE_MAX_AGE}; samesite=lax`;
-      return next;
-    });
+  const narrow = useNarrowViewport();
+  // Дальше по разметке фигурирует только итоговое состояние: свернул ли панель
+  // человек или её свернуло узкое окно — на вид строки это не влияет.
+  const collapsed = userCollapsed || (narrow && !expandedOnNarrow);
+
+  // Значения читает серверный layout — иначе следующая полная загрузка вернула
+  // бы панель к прежнему размеру. Авто-сворачивание на узком окне сюда не
+  // попадает намеренно: это подстройка под текущее окно, а не выбор человека.
+  const persist = useCallback((next: SidebarSize) => {
+    const age = `path=/; max-age=${SIDEBAR_COLLAPSED_COOKIE_MAX_AGE}; samesite=lax`;
+    document.cookie = `${SIDEBAR_COLLAPSED_COOKIE}=${next.collapsed ? "1" : "0"}; ${age}`;
+    document.cookie = `${SIDEBAR_WIDTH_COOKIE}=${next.width}; ${age}`;
   }, []);
+
+  // Зеркало размера: клавиатура и двойной клик правят его и тут же требуют
+  // закрепить, а состояние к этому моменту ещё прежнее — из замыкания рендера
+  // в cookie уехало бы значение до правки.
+  const sizeRef = useRef<SidebarSize>({ collapsed: initialCollapsed, width: initialWidth });
+
+  const applySize = useCallback((next: SidebarSize) => {
+    sizeRef.current = next;
+    setWidth(next.width);
+    setUserCollapsed(next.collapsed);
+    setExpandedOnNarrow(!next.collapsed);
+  }, []);
+
+  const commitSize = useCallback(() => {
+    persist(sizeRef.current);
+  }, [persist]);
+
+  const toggleCollapsed = useCallback(() => {
+    applySize({ collapsed: !collapsed, width: sizeRef.current.width });
+    commitSize();
+  }, [applySize, collapsed, commitSize]);
 
   // Оболочка без серверных данных — редкость (гонка сессии), но экран в этом
   // случае должен наполниться сам, а не остаться пустым навсегда.
@@ -322,11 +368,23 @@ export function V2Shell({
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <aside
+        // Верхний предел повторён в CSS, а не только в жесте: окно сужают и без
+        // перетаскивания, и панель обязана подобраться сама, не отдав список
+        // задач под полоску в пару сантиметров.
+        style={collapsed ? undefined : { width: `min(${width}px, ${SIDEBAR_VIEWPORT_CAP})` }}
         className={cn(
-          "flex shrink-0 flex-col border-r border-border bg-sidebar transition-[width] duration-150",
-          collapsed ? "w-14" : "w-60",
+          "relative flex shrink-0 flex-col border-r border-border bg-sidebar",
+          collapsed && "w-14",
+          !resizing && "transition-[width] duration-150",
         )}
       >
+        <SidebarResizer
+          width={width}
+          collapsed={collapsed}
+          onChange={applySize}
+          onCommit={commitSize}
+          onDraggingChange={setResizing}
+        />
         {/* Название организации — просто заголовок. Переключение организаций
             переехало в «Настройки»: шапка панели не должна открывать меню. */}
         <div className={cn("flex items-center pb-2 pt-3", collapsed ? "flex-col gap-1 px-2" : "gap-2 px-3")}>
@@ -527,7 +585,9 @@ export function V2Shell({
           </div>
         </div>
 
-        <PushPrompt />
+        {/* Подсказка про уведомления — абзац текста: в панели шириной со значок
+            он вылезает за её край. */}
+        {!collapsed && <PushPrompt />}
 
         <div className={cn("border-t border-border py-2", collapsed ? "px-1" : "px-3")}>
           <AccountMenu me={me} orgRole={orgRole} compact={collapsed} />

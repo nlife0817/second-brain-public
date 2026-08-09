@@ -9,7 +9,7 @@
 
 import { cookies } from "next/headers";
 import { loadV2Bootstrap } from "@/lib/core/bootstrap";
-import { SIDEBAR_COLLAPSED_COOKIE } from "@/lib/core/keys";
+import { SIDEBAR_COLLAPSED_COOKIE, SIDEBAR_WIDTH_COOKIE, clampSidebarWidth } from "@/lib/core/keys";
 import { V2StoreProvider } from "@/lib/core/ui-store";
 import { V2Shell } from "./V2Shell";
 
@@ -19,12 +19,14 @@ export default async function V2Layout({ children }: { children: React.ReactNode
   // Ширина сайдбара обязана быть верной в первом кадре — иначе панель
   // разворачивается и схлопывается на глазах у пользователя.
   const collapsed = jar.get(SIDEBAR_COLLAPSED_COOKIE)?.value === "1";
+  const width = clampSidebarWidth(Number(jar.get(SIDEBAR_WIDTH_COOKIE)?.value));
   return (
     <V2StoreProvider initial={initial}>
       <V2Shell
         state={boot.state}
         onboardingUser={boot.state === "onboarding" ? boot.me : null}
         initialCollapsed={collapsed}
+        initialWidth={width}
       >
         {children}
       </V2Shell>
