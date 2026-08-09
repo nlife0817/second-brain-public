@@ -137,16 +137,20 @@ export function TaskTableView({
   onDismissError,
   statusSetId = null,
 }: TaskTableViewProps) {
-  const { orgId, statuses: allStatuses, tags, members, projects, fields, me, refreshProjects } = useV2Store();
+  const { orgId, statuses: allStatuses, statusSets, tags, members, projects, fields, me, refreshProjects } =
+    useV2Store();
   /**
-   * Выбор статуса в строке — рабочий процесс проекта, а не весь справочник
-   * организации (наборы, 0052). Но список обязан содержать и статусы, которые у
-   * задач фактически стоят: задача живёт сразу в нескольких проектах, и статус
-   * из чужого набора иначе отрисовался бы как «Без статуса», а вернуть его было
-   * бы нечем. В сводном списке набора нет вовсе — там задачи разных процессов.
+   * Статусы для массовых действий (`BulkBar`) — рабочий процесс проекта, а не
+   * весь справочник организации (наборы, 0052). Но список обязан содержать и
+   * статусы, которые у задач фактически стоят: задача живёт сразу в нескольких
+   * проектах, и статус из чужого набора иначе пропал бы из выбора. В сводном
+   * списке набора нет вовсе (`statusSetId === null`) — там задачи разных
+   * процессов, и выделить можно строки любых наборов.
    *
-   * Отсев и сортировка идут по полному справочнику: скрытые группы и позиции
-   * считаются одинаково во всех видах.
+   * Выбор статуса в самой строке этот список не трогает: `StatusCell` сужает
+   * справочник до набора своей задачи сама (набор у строк сводного списка
+   * разный). Отсев и сортировка идут по полному справочнику: скрытые группы и
+   * позиции считаются одинаково во всех видах.
    */
   const statuses = useMemo(
     () =>
@@ -412,7 +416,12 @@ export function TaskTableView({
 
   const cellCtx = useMemo(
     () => ({
-      statuses,
+      // Ячейка статуса сужает справочник до набора своей строки сама, поэтому ей
+      // нужен полный справочник организации и список наборов, а не таблично
+      // суженный `statuses` (тот идёт в массовые действия — там задачи разных
+      // проектов и набор один на всё выделение).
+      statuses: allStatuses,
+      statusSets,
       tags,
       members,
       projectsById,
@@ -422,7 +431,7 @@ export function TaskTableView({
       onPlacements: setPlacements,
       onToggleSubtree: toggleCollapsedTask,
     }),
-    [statuses, tags, members, projectsById, canEdit, wrapTitle, patchOne, setPlacements, toggleCollapsedTask],
+    [allStatuses, statusSets, tags, members, projectsById, canEdit, wrapTitle, patchOne, setPlacements, toggleCollapsedTask],
   );
 
   const { labelForGroup, groupOrder } = useGroupNaming();
