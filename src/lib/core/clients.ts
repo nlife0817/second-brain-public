@@ -77,7 +77,7 @@ export interface ClientInput {
 // --- Справочники ------------------------------------------------------------------
 
 export async function listClientStatuses(ctx: AuthContext): Promise<ClientStatus[]> {
-  assertOrg(ctx, "clients.view");
+  assertOrg(ctx, "crm.view");
   return prepare<ClientStatus>(
     `SELECT id, org_id, name, color, position FROM core.client_statuses
      WHERE org_id = ? ORDER BY position, name`,
@@ -88,7 +88,7 @@ export async function createClientStatus(
   ctx: AuthContext,
   input: { name: string; color?: string },
 ): Promise<ClientStatus> {
-  assertOrg(ctx, "clients.manage");
+  assertOrg(ctx, "crm.manage");
   const row = await prepare<ClientStatus>(
     `INSERT INTO core.client_statuses (org_id, name, color, position)
      VALUES (?, ?, ?, COALESCE((SELECT max(position) + 1 FROM core.client_statuses WHERE org_id = ?), 1))
@@ -99,7 +99,7 @@ export async function createClientStatus(
 }
 
 export async function deleteClientStatus(ctx: AuthContext, statusId: string): Promise<void> {
-  assertOrg(ctx, "clients.manage");
+  assertOrg(ctx, "crm.manage");
   const changed = await prepare(
     `DELETE FROM core.client_statuses WHERE id = ? AND org_id = ?`,
   ).run(statusId, ctx.orgId);
@@ -107,14 +107,14 @@ export async function deleteClientStatus(ctx: AuthContext, statusId: string): Pr
 }
 
 export async function listCrmSystems(ctx: AuthContext): Promise<CrmSystem[]> {
-  assertOrg(ctx, "clients.view");
+  assertOrg(ctx, "crm.view");
   return prepare<CrmSystem>(
     `SELECT id, org_id, name, position FROM core.crm_systems WHERE org_id = ? ORDER BY position, name`,
   ).all(ctx.orgId);
 }
 
 export async function createCrmSystem(ctx: AuthContext, name: string): Promise<CrmSystem> {
-  assertOrg(ctx, "clients.manage");
+  assertOrg(ctx, "crm.manage");
   const row = await prepare<CrmSystem>(
     `INSERT INTO core.crm_systems (org_id, name, position)
      VALUES (?, ?, COALESCE((SELECT max(position) + 1 FROM core.crm_systems WHERE org_id = ?), 1))
@@ -128,7 +128,7 @@ export async function createCrmSystem(ctx: AuthContext, name: string): Promise<C
 // --- Клиенты ------------------------------------------------------------------------
 
 export async function listClients(ctx: AuthContext): Promise<Client[]> {
-  assertOrg(ctx, "clients.view");
+  assertOrg(ctx, "crm.view");
   return prepare<Client>(
     `SELECT id, org_id, name, status_id, budget, operators_per_shift, operators_total,
             calls_per_month, monthly_revenue, position, created_at, updated_at
@@ -137,7 +137,7 @@ export async function listClients(ctx: AuthContext): Promise<Client[]> {
 }
 
 export async function getClient(ctx: AuthContext, clientId: string): Promise<ClientFull> {
-  assertOrg(ctx, "clients.view");
+  assertOrg(ctx, "crm.view");
   const client = await prepare<Client>(
     `SELECT id, org_id, name, status_id, budget, operators_per_shift, operators_total,
             calls_per_month, monthly_revenue, position, created_at, updated_at
@@ -206,7 +206,7 @@ async function assertOrgCrmSystems(ctx: AuthContext, ids: string[] | undefined):
 }
 
 export async function createClient(ctx: AuthContext, input: ClientInput): Promise<ClientFull> {
-  assertOrg(ctx, "clients.manage");
+  assertOrg(ctx, "crm.manage");
   await assertOrgStatus(ctx, input.status_id);
   await assertOrgCrmSystems(ctx, input.crm_system_ids);
 
@@ -298,7 +298,7 @@ export async function updateClient(
   clientId: string,
   patch: Partial<ClientInput> & { position?: number },
 ): Promise<ClientFull> {
-  assertOrg(ctx, "clients.manage");
+  assertOrg(ctx, "crm.manage");
   const current = await prepare<Client>(
     `SELECT * FROM core.clients WHERE id = ? AND org_id = ?`,
   ).get(clientId, ctx.orgId);
@@ -339,13 +339,13 @@ export async function updateClient(
 }
 
 export async function deleteClient(ctx: AuthContext, clientId: string): Promise<void> {
-  assertOrg(ctx, "clients.manage");
+  assertOrg(ctx, "crm.manage");
   const changed = await prepare(`DELETE FROM core.clients WHERE id = ? AND org_id = ?`).run(clientId, ctx.orgId);
   if (changed.changes === 0) throw new DomainError(404, "Client not found");
 }
 
 export async function addClientNote(ctx: AuthContext, clientId: string, text: string): Promise<void> {
-  assertOrg(ctx, "clients.manage");
+  assertOrg(ctx, "crm.manage");
   const client = await prepare(`SELECT 1 FROM core.clients WHERE id = ? AND org_id = ?`).get(clientId, ctx.orgId);
   if (!client) throw new DomainError(404, "Client not found");
   await prepare(

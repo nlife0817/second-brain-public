@@ -3,42 +3,29 @@
 // CRM: список клиентов слева, карточка справа. Раздел недоступен гостям
 // (сервер вернёт 403; в навигации пункт скрыт).
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/core/client";
+import type { DealRow } from "@/lib/core/crm";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import { useLoad } from "@/lib/core/use-load";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
+import { CrmTabs } from "../crm/CrmTabs";
 
-interface ClientStatus {
-  id: string;
-  name: string;
-  color: string;
-}
-interface CrmSystem {
-  id: string;
-  name: string;
-}
 interface Client {
   id: string;
   name: string;
-  status_id: string | null;
-  budget: string;
-  operators_per_shift: string;
-  operators_total: string;
-  calls_per_month: string;
+  /**
+   * Колл-центровые поля и статус клиента из первой версии CRM больше не
+   * показываются: процесс продажи живёт на сделке. Колонки в БД пока целы —
+   * снос отдельной миграцией, когда выкат уляжется.
+   */
   monthly_revenue: number | null;
 }
 interface ClientFull extends Client {
@@ -51,7 +38,6 @@ interface ClientFull extends Client {
 
 export interface ClientsInitial {
   clients: Client[];
-  meta: { statuses: ClientStatus[]; crm_systems: CrmSystem[] };
 }
 
 export function ClientsClient({ initial }: { initial: ClientsInitial }) {
@@ -59,9 +45,9 @@ export function ClientsClient({ initial }: { initial: ClientsInitial }) {
   const searchParams = useSearchParams();
   const deepLinkId = searchParams.get("client");
   const [clients, setClients] = useState<Client[]>(initial.clients);
-  const [statuses, setStatuses] = useState<ClientStatus[]>(initial.meta.statuses);
-  const [crmSystems, setCrmSystems] = useState<CrmSystem[]>(initial.meta.crm_systems);
   const [selected, setSelected] = useState<ClientFull | null>(null);
+  /** Сделки открытого клиента — история покупок аккаунта. */
+  const [deals, setDeals] = useState<DealRow[]>([]);
   const [newName, setNewName] = useState("");
   const [noteText, setNoteText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -70,32 +56,24 @@ export function ClientsClient({ initial }: { initial: ClientsInitial }) {
   const openId = useRef<string | null>(null);
 
   const listPath = orgId ? `/orgs/${orgId}/clients` : null;
-  const metaPath = orgId ? `/orgs/${orgId}/client-meta` : null;
 
-  // Списки посчитаны на сервере — в кэш вместо пары запросов после гидрации.
+  // Список посчитан на сервере — в кэш вместо запроса после гидрации.
   useEffect(() => {
-    if (!listPath || !metaPath) return;
+    if (!listPath) return;
     seed(listPath, initial.clients);
-    seed(metaPath, initial.meta);
-  }, [listPath, metaPath, initial]);
+  }, [listPath, initial]);
 
   const load = useCallback(
     async (opts: { force?: boolean } = {}) => {
-      if (!listPath || !metaPath) return;
+      if (!listPath) return;
       try {
-        const [list, meta] = await Promise.all([
-          cachedGet<Client[]>(listPath, opts),
-          cachedGet<{ statuses: ClientStatus[]; crm_systems: CrmSystem[] }>(metaPath, opts),
-        ]);
-        setClients(list);
-        setStatuses(meta.statuses);
-        setCrmSystems(meta.crm_systems);
+        setClients(await cachedGet<Client[]>(listPath, opts));
         setError(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Не удалось загрузить клиентов");
       }
     },
-    [listPath, metaPath],
+    [listPath],
   );
 
   const reload = useCallback(async () => {
@@ -110,9 +88,13 @@ export function ClientsClient({ initial }: { initial: ClientsInitial }) {
       if (!orgId) return;
       openId.current = clientId;
       try {
-        const full = await api.get<ClientFull>(`/orgs/${orgId}/clients/${clientId}`);
+        const [full, clientDeals] = await Promise.all([
+          api.get<ClientFull>(`/orgs/${orgId}/clients/${clientId}`),
+          api.get<DealRow[]>(`/orgs/${orgId}/crm/deals?client_id=${clientId}`),
+        ]);
         if (openId.current !== clientId) return;
         setSelected(full);
+        setDeals(clientDeals);
         setError(null);
       } catch (e) {
         if (openId.current !== clientId) return;
@@ -149,10 +131,12 @@ export function ClientsClient({ initial }: { initial: ClientsInitial }) {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col">
+      <CrmTabs active="clients" />
+      <div className="flex min-h-0 flex-1">
       <div className="flex w-80 shrink-0 flex-col border-r border-border">
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-          <h1 className="font-heading text-xl font-semibold tracking-tight">Клиенты</h1>
+          <span className="text-sm font-medium text-muted-foreground">Все клиенты</span>
           <span className="flex-1" />
           <span className="text-xs text-muted-foreground">{clients.length}</span>
         </div>
@@ -186,30 +170,23 @@ export function ClientsClient({ initial }: { initial: ClientsInitial }) {
           </Button>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
-          {clients.map((c) => {
-            const status = statuses.find((s) => s.id === c.status_id);
-            return (
-              <button
-                key={c.id}
-                onClick={() => void open(c.id)}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted/60",
-                  selected?.id === c.id && "bg-muted",
-                )}
-              >
-                <span
-                  className="size-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: status?.color ?? "#d1d5db" }}
-                />
-                <span className="min-w-0 flex-1 truncate">{c.name || "Без названия"}</span>
-                {c.monthly_revenue != null && (
-                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                    {Math.round(c.monthly_revenue).toLocaleString("ru-RU")} ₽
-                  </span>
-                )}
-              </button>
-            );
-          })}
+          {clients.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => void open(c.id)}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted/60",
+                selected?.id === c.id && "bg-muted",
+              )}
+            >
+              <span className="min-w-0 flex-1 truncate">{c.name || "Без названия"}</span>
+              {c.monthly_revenue != null && (
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {Math.round(c.monthly_revenue).toLocaleString("ru-RU")} ₽
+                </span>
+              )}
+            </button>
+          ))}
           {clients.length === 0 && (
             <p className="px-2 py-6 text-center text-xs text-muted-foreground">Пока нет клиентов</p>
           )}
@@ -254,26 +231,6 @@ export function ClientsClient({ initial }: { initial: ClientsInitial }) {
             </div>
 
             <div className="grid grid-cols-[150px_1fr] items-center gap-x-3 gap-y-2.5 text-sm">
-              <span className="text-muted-foreground">Статус</span>
-              <Select
-                value={selected.status_id ?? ""}
-                onValueChange={(v) => void patchSelected({ status_id: v || null })}
-              >
-                <SelectTrigger size="sm" className="w-fit min-w-40">
-                  <SelectValue placeholder="Без статуса">
-                    {statuses.find((s) => s.id === selected.status_id)?.name ?? "Без статуса"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">Без статуса</SelectItem>
-                  {statuses.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
               <span className="text-muted-foreground">Выручка в месяц</span>
               <Input
                 key={`rev-${selected.id}`}
@@ -286,51 +243,34 @@ export function ClientsClient({ initial }: { initial: ClientsInitial }) {
                 className="h-8 w-40"
               />
 
-              {(
-                [
-                  ["budget", "Бюджет"],
-                  ["operators_per_shift", "Операторов в смену"],
-                  ["operators_total", "Операторов в штате"],
-                  ["calls_per_month", "Обращений в месяц"],
-                ] as const
-              ).map(([key, label]) => (
-                <FieldRow
-                  key={key}
-                  label={label}
-                  value={selected[key]}
-                  clientId={selected.id}
-                  onSave={(v) => void patchSelected({ [key]: v })}
-                />
-              ))}
+            </div>
 
-              <span className="text-muted-foreground">CRM-системы</span>
-              <div className="flex flex-wrap gap-1.5">
-                {crmSystems.map((s) => {
-                  const active = selected.crm_system_ids.includes(s.id);
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() =>
-                        void patchSelected({
-                          crm_system_ids: active
-                            ? selected.crm_system_ids.filter((x) => x !== s.id)
-                            : [...selected.crm_system_ids, s.id],
-                        })
-                      }
-                      className={cn(
-                        "rounded-full border px-2 py-0.5 text-[11px]",
-                        active ? "border-primary bg-muted font-medium" : "border-border text-muted-foreground",
-                      )}
-                    >
-                      {s.name}
-                    </button>
-                  );
-                })}
-                {crmSystems.length === 0 && (
-                  <span className="text-xs text-muted-foreground">Справочник пуст</span>
+            {/* Клиент — аккаунт с историей сделок: этапы продажи живут на них,
+                а не на самом клиенте. */}
+            <section>
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Сделки
+              </h2>
+              <div className="flex flex-col gap-1.5">
+                {deals.map((d) => (
+                  <Link
+                    key={d.id}
+                    href="/v2/crm"
+                    className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted/50"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{d.title || "Без названия"}</span>
+                    {d.amount != null && (
+                      <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
+                        {Math.round(d.amount).toLocaleString("ru-RU")} ₽
+                      </span>
+                    )}
+                  </Link>
+                ))}
+                {deals.length === 0 && (
+                  <p className="text-sm text-muted-foreground">Сделок пока нет</p>
                 )}
               </div>
-            </div>
+            </section>
 
             <section>
               <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -397,32 +337,7 @@ export function ClientsClient({ initial }: { initial: ClientsInitial }) {
           </div>
         )}
       </div>
+      </div>
     </div>
-  );
-}
-
-function FieldRow({
-  label,
-  value,
-  clientId,
-  onSave,
-}: {
-  label: string;
-  value: string;
-  clientId: string;
-  onSave: (value: string) => void;
-}) {
-  return (
-    <>
-      <span className="text-muted-foreground">{label}</span>
-      <Input
-        key={`${clientId}-${label}`}
-        defaultValue={value}
-        onBlur={(e) => {
-          if (e.target.value !== value) onSave(e.target.value);
-        }}
-        className="h-8 w-56"
-      />
-    </>
   );
 }

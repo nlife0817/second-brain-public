@@ -400,10 +400,11 @@ export function V2Shell({
           />
           {!isGuest && (
             <NavLink
-              href="/v2/clients"
+              href="/v2/crm"
               icon={<Users className="size-4" />}
-              label="Клиенты"
-              active={pathname.startsWith("/v2/clients")}
+              label="CRM"
+              // Клиенты — вкладка того же раздела, поэтому пункт подсвечен и на них.
+              active={pathname.startsWith("/v2/crm") || pathname.startsWith("/v2/clients")}
               collapsed={collapsed}
             />
           )}

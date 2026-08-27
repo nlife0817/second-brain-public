@@ -38,7 +38,7 @@ export default async function SettingsPage() {
     has("members") && canOrg(auth, "org.invite") ? listInvitations(auth.orgId) : Promise.resolve([]),
     // Команды живут внутри «Участников», но их список — структура организации:
     // подрядчику он не отдаётся даже при открытом разделе.
-    has("members") && canOrg(auth, "clients.view") ? listTeams(auth) : Promise.resolve([]),
+    has("members") && canOrg(auth, "crm.view") ? listTeams(auth) : Promise.resolve([]),
     has("webhooks") ? listWebhooks(auth) : Promise.resolve([]),
     has("audit") ? listOrgAudit(auth, { limit: AUDIT_PREVIEW }) : Promise.resolve([]),
     // Администратору — все токены организации, остальным — только свои: токен

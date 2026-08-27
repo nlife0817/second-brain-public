@@ -347,7 +347,7 @@ export async function exportOrg(ctx: AuthContext): Promise<Record<string, unknow
        JOIN core.tasks t ON t.id = c.entity_id AND c.entity_type = 'task'
        WHERE c.org_id = ? AND c.deleted_at IS NULL AND ${taskScope}`,
     ).all(ctx.orgId, ...taskParams),
-    canOrg(ctx, "clients.view")
+    canOrg(ctx, "crm.view")
       ? prepare(`SELECT id, name, budget, monthly_revenue, created_at FROM core.clients WHERE org_id = ?`).all(ctx.orgId)
       : Promise.resolve([]),
   ]);

@@ -525,3 +525,76 @@ export const recurringPatchSchema = z
     until_date: dateSchema.nullish(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
+// --- CRM: воронки, этапы, сделки ---------------------------------------------------
+
+export const pipelineCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  /** Шаблон этапов: воронка рождается непустой, пустую заводить нечем. */
+  template: z.enum(["sales", "minimal"]).optional(),
+  track_amounts: z.boolean().optional(),
+});
+
+export const pipelinePatchSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    track_amounts: z.boolean().optional(),
+    is_default: z.boolean().optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
+export const stageCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  color: z.string().trim().max(32).optional(),
+  probability: z.number().int().min(0).max(100).optional(),
+});
+
+export const stagePatchSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    color: z.string().trim().max(32).optional(),
+    probability: z.number().int().min(0).max(100).optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
+/** Порядок этапов приходит целиком — как порядок статусов (16в). */
+export const stageOrderSchema = z.object({
+  stage_ids: z.array(z.uuid()).min(1).max(100),
+});
+
+const dealBaseShape = {
+  pipeline_id: z.uuid().optional(),
+  stage_id: z.uuid().optional(),
+  title: z.string().trim().max(300).optional(),
+  amount: z.number().finite().min(0).max(1e12).nullish(),
+  client_id: z.uuid().nullish(),
+  assignee_id: z.uuid().nullish(),
+  contact_name: z.string().trim().max(200).optional(),
+  contact_phone: z.string().trim().max(60).optional(),
+  contact_email: z.string().trim().max(200).optional(),
+  contact_telegram: z.string().trim().max(100).optional(),
+  source_id: z.uuid().nullish(),
+  utm_source: z.string().trim().max(200).optional(),
+  utm_medium: z.string().trim().max(200).optional(),
+  utm_campaign: z.string().trim().max(200).optional(),
+  utm_term: z.string().trim().max(200).optional(),
+  utm_content: z.string().trim().max(200).optional(),
+  referrer: z.string().trim().max(500).optional(),
+  landing_page: z.string().trim().max(500).optional(),
+  lost_reason_id: z.uuid().nullish(),
+};
+
+export const dealCreateSchema = z.object(dealBaseShape);
+
+export const dealPatchSchema = z
+  .object(dealBaseShape)
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
+export const leadSourceCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  color: z.string().trim().max(32).optional(),
+});
+
+export const lostReasonCreateSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+});

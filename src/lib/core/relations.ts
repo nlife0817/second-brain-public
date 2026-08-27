@@ -223,7 +223,7 @@ async function requireEntity(
     return;
   }
   if (type === "client") {
-    assertOrg(ctx, level === "edit" ? "clients.manage" : "clients.view");
+    assertOrg(ctx, level === "edit" ? "crm.manage" : "crm.view");
     const row = await prepare(`SELECT 1 FROM core.clients WHERE id = ? AND org_id = ?`).get(id, ctx.orgId);
     if (!row) throw new DomainError(404, "Client not found");
     return;
@@ -278,7 +278,7 @@ async function keepVisible(
   const visibleProjects = new Set(
     projectRows.filter((p) => effectiveProjectRole(ctx, p) !== null).map((p) => p.id),
   );
-  const clientsVisible = canOrg(ctx, "clients.view");
+  const clientsVisible = canOrg(ctx, "crm.view");
 
   return rows.filter((r) => {
     const { type, id } = far(r);

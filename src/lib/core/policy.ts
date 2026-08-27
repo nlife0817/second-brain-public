@@ -24,8 +24,9 @@ export type OrgAction =
   | "projects.order"      // порядок проектов в панели — общий для организации,
                           // поэтому и право на него org-уровня, а не проектного
   | "task.create.personal" // задача без проекта (личный инбокс) — не для гостей
-  | "clients.view"        // CRM закрыт для гостей
-  | "clients.manage"
+  | "crm.view"           // CRM: воронки, сделки, клиенты — закрыто для гостей
+  | "crm.manage"         // заводить и править сделки и клиентов
+  | "crm.configure"      // воронки, этапы, справочники CRM
   | "statuses.manage"     // справочники org-уровня (статусы задач)
   | "fields.manage"       // кастомные поля org-уровня
   | "tags.manage"
@@ -44,8 +45,11 @@ const MIN_ORG_ROLE: Record<OrgAction, OrgRole> = {
   // организацию, как и справочник статусов.
   "projects.order": "admin",
   "task.create.personal": "member",
-  "clients.view": "member",
-  "clients.manage": "member",
+  "crm.view": "member",
+  "crm.manage": "member",
+  // Воронка — рабочий процесс всей организации, как справочник статусов:
+  // правит её тот, кто за организацию отвечает.
+  "crm.configure": "admin",
   "statuses.manage": "admin",
   "fields.manage": "member",
   "tags.manage": "member",

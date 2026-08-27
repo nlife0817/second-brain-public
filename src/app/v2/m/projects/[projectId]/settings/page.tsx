@@ -31,7 +31,7 @@ export default async function MobileProjectSettingsPage({
 
   const [members, teams] = await Promise.all([
     listProjectMembers(projectId),
-    canOrg(auth, "clients.view") ? listTeams(auth) : Promise.resolve([]),
+    canOrg(auth, "crm.view") ? listTeams(auth) : Promise.resolve([]),
   ]);
 
   return (

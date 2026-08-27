@@ -34,7 +34,7 @@ export default async function ProjectSettingsPage({
   const [members, teams] = await Promise.all([
     listProjectMembers(projectId),
     // Структура организации не для гостей — listTeams бросил бы PolicyError.
-    canOrg(auth, "clients.view") ? listTeams(auth) : Promise.resolve([]),
+    canOrg(auth, "crm.view") ? listTeams(auth) : Promise.resolve([]),
   ]);
 
   return (

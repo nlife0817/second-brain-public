@@ -7,7 +7,7 @@ import { currentActorSource } from "./actor-source-store";
 import { filterByInboxPref, filterByProjectMute } from "./notification-prefs";
 import type { CoreEvent, CoreNotification } from "./types";
 
-export type EntityType = "task" | "project" | "client" | "org";
+export type EntityType = "task" | "project" | "client" | "deal" | "org";
 
 export interface EmitInput {
   orgId: string;

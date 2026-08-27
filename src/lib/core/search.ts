@@ -75,7 +75,7 @@ export async function search(ctx: AuthContext, query: string, limit = 20): Promi
     if (hits.length >= limit) break;
   }
 
-  if (canOrg(ctx, "clients.view") && hits.length < limit) {
+  if (canOrg(ctx, "crm.view") && hits.length < limit) {
     const clients = await prepare<{ id: string; name: string; status_name: string | null }>(
       `SELECT c.id, c.name, s.name AS status_name
        FROM core.clients c LEFT JOIN core.client_statuses s ON s.id = c.status_id
