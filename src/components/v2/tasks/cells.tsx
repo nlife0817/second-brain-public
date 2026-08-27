@@ -4,7 +4,7 @@
 // подходящим редактором; наружу отдаётся только патч (id + изменённые поля),
 // саму мутацию делает страница.
 
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -25,15 +25,24 @@ import type {
   CoreTag,
   OrgMemberWithUser,
   ProjectWithMeta,
+  StatusSet,
   TaskPriority,
   TaskRow,
   TaskStatus,
 } from "@/lib/core/types";
+import { resolveProjectSetId, statusesOfSet, withCurrent } from "@/lib/core/status-model";
 import { cn } from "@/lib/utils";
 import { ProjectsMenu, WIDE_MENU_POPOVER } from "./draft-controls";
 
 export interface CellContext {
+  /**
+   * Полный справочник статусов организации — из него ячейка сама сужает выбор до
+   * набора проекта каждой строки (`statusSets` + `resolveProjectSetId`). В сводном
+   * списке проекты у строк разные, поэтому одного набора на таблицу нет: набор
+   * решает не таблица, а конкретная задача.
+   */
   statuses: TaskStatus[];
+  statusSets: StatusSet[];
   tags: CoreTag[];
   members: OrgMemberWithUser[];
   projectsById: Map<string, ProjectWithMeta>;
@@ -334,6 +343,27 @@ function ParentMenu({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
 
 export const StatusCell = memo(function StatusCell({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
   const status = task.status_id ? ctx.statuses.find((s) => s.id === task.status_id) : undefined;
+
+  /**
+   * Выбор статуса строки — процесс её проекта, а не весь справочник организации
+   * (наборы, 0052). Набор берём у первого проекта задачи (как ряд в карточке),
+   * а текущий статус оставляем видимым: задача из двух проектов с разными
+   * процессами — норма, спрятать её статус значило бы «Без статуса» без пути
+   * назад. Сырой `null` проекта резолвим в набор по умолчанию, иначе показали бы
+   * статусы всех наборов сразу.
+   */
+  const options = useMemo(() => {
+    let projectSetId: string | null = null;
+    for (const project of ctx.projectsById.values()) {
+      if (task.placements.some((pl) => pl.project_id === project.id)) {
+        projectSetId = project.status_set_id;
+        break;
+      }
+    }
+    const scoped = statusesOfSet(ctx.statuses, resolveProjectSetId(ctx.statusSets, projectSetId));
+    return withCurrent(scoped, status);
+  }, [ctx.statuses, ctx.statusSets, ctx.projectsById, task.placements, status]);
+
   const label = status ? (
     <span className={cn(CELL_CHIP, "rounded-full font-medium")} style={chipStyle(status.color)}>
       <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: status.color }} />
@@ -349,7 +379,7 @@ export const StatusCell = memo(function StatusCell({ task, ctx }: { task: TaskRo
     <Popover>
       <PopoverTrigger render={<button className={CELL_BUTTON} />}>{label}</PopoverTrigger>
       <PopoverContent align="start" className="max-h-72 w-56 overflow-y-auto p-1">
-        {ctx.statuses.map((s) => (
+        {options.map((s) => (
           <button
             key={s.id}
             onClick={() => ctx.onPatch(task.id, { status_id: s.id })}
