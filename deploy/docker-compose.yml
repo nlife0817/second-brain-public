@@ -79,8 +79,15 @@ services:
       ACME_EMAIL: ${ACME_EMAIL}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Site-блоки соседних проектов. Их файлы не в этом репозитории: каждый проект
+      # кладёт свой в deploy/conf.d на сервере и сам за него отвечает.
+      - ./conf.d:/etc/caddy/conf.d:ro
       - caddy-data:/data
       - caddy-config:/config
+    networks:
+      - default
+      # Общая сеть с соседними проектами: через неё Caddy ходит к их контейнерам.
+      - edge
     depends_on:
       - app
 
@@ -97,6 +104,11 @@ services:
       TZ: UTC
     depends_on:
       - app
+
+networks:
+  # Создаётся один раз вне compose: docker network create edge
+  edge:
+    external: true
 
 volumes:
   db-data:
