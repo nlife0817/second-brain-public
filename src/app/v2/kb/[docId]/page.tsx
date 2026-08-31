@@ -3,6 +3,7 @@ import { getActiveOrgAuth } from "@/lib/core/bootstrap";
 import { isUuid } from "@/lib/core/http";
 import { getKbDocument } from "@/lib/core/kb";
 import { KbDocumentClient } from "./KbDocumentClient";
+import { KbFolderClient } from "./KbFolderClient";
 
 export default async function KbDocumentPage({
   params,
@@ -19,5 +20,11 @@ export default async function KbDocumentPage({
   const document = await getKbDocument(auth, docId).catch(() => null);
   if (!document) notFound();
 
-  return <KbDocumentClient initial={document} />;
+  // Адрес один на оба вида узла: папка и документ живут в одном дереве, и
+  // отдельный маршрут заставил бы ссылку знать, во что она ведёт.
+  return document.kind === "folder" ? (
+    <KbFolderClient initial={document} />
+  ) : (
+    <KbDocumentClient initial={document} />
+  );
 }

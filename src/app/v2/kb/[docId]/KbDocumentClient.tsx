@@ -8,7 +8,7 @@
 // Своё здесь — хлебные крошки, заголовок отдельным полем, история версий,
 // доступ и связь с задачами.
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { EditorContent } from "@tiptap/react";
@@ -47,10 +47,13 @@ import { useDocThreads } from "@/components/v2/editor/use-doc-threads";
 import { fileDropHint, useFileDrop } from "@/components/v2/editor/useFileDrop";
 import { TaskSearchField } from "@/components/v2/TaskPicker";
 import { api } from "@/lib/core/client";
+import { isDisposableDocument } from "@/lib/core/kb-model";
 import type { KbDocumentDetail, KbLinkedTask } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 import { KbAccessDialog } from "../KbAccessDialog";
+import { useMarkDisposable } from "../KbShell";
+import { KbCrumbs } from "./KbCrumbs";
 import { KbVersions } from "./KbVersions";
 
 type PanelTab = "comments" | "outline" | "history";
@@ -89,6 +92,7 @@ export function KbDocumentClient({ initial }: { initial: KbDocumentDetail }) {
   const orgId = useV2Store((s) => s.orgId);
   const me = useV2Store((s) => s.me);
   const projects = useV2Store((s) => s.projects);
+  const markDisposable = useMarkDisposable();
 
   const [doc, setDoc] = useState(initial);
   // Документ приезжает с сервера при каждом переходе и router.refresh();
@@ -173,6 +177,37 @@ export function KbDocumentClient({ initial }: { initial: KbDocumentDetail }) {
     if (comments.activeThreadId) setPanelTab("comments");
   }
 
+  /**
+   * Уход со страницы брошенного документа.
+   *
+   * Документ заводится одним нажатием «плюса», и передумать — обычное дело.
+   * Спрашиваем сервер, пуст ли он: пустоту решает он, иначе правило разошлось
+   * бы с уборкой в тике cron. Здесь только предварительный отсев, чтобы не
+   * дёргать сервер на каждом переходе — и чтобы не обогнать автосохранение:
+   * пока правка в пути, статус не `saved`, и запрос не уйдёт.
+   */
+  // Убирать документ будет оболочка при уходе с него; страница только говорит,
+  // пуст ли он прямо сейчас. Условие строгое, чтобы не обогнать
+  // автосохранение: набранный текст делает редактор непустым, а пока правка в
+  // пути, статус не `saved`. Окончательное слово всё равно за сервером.
+  useEffect(() => {
+    markDisposable(
+      doc.id,
+      canEdit &&
+        !preview &&
+        editorApi.status === "saved" &&
+        doc.tasks.length === 0 &&
+        doc.attachments.length === 0 &&
+        comments.threads.length === 0 &&
+        isDisposableDocument({
+          kind: doc.kind,
+          title,
+          body: editor?.isEmpty ? "" : doc.body,
+          hasContent: false,
+        }),
+    );
+  });
+
   /** Заголовок — отдельное поле, и сохраняется он по уходу фокуса, а не по букве. */
   const commitTitle = useCallback(async () => {
     const next = title.trim();
@@ -237,23 +272,7 @@ export function KbDocumentClient({ initial }: { initial: KbDocumentDetail }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex items-center gap-2 border-b border-border px-4 py-2">
-        <nav className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
-          <Link href="/v2/kb" className="shrink-0 hover:text-foreground">
-            База знаний
-          </Link>
-          {doc.path.map((step, i) => (
-            <span key={step.id} className="flex min-w-0 items-center gap-1.5">
-              <span className="shrink-0 opacity-50">/</span>
-              {i === doc.path.length - 1 ? (
-                <span className="shrink-0 font-medium text-foreground">{step.title || "Без названия"}</span>
-              ) : (
-                <Link href={`/v2/kb/${step.id}`} className="truncate hover:text-foreground">
-                  {step.title || "Без названия"}
-                </Link>
-              )}
-            </span>
-          ))}
-        </nav>
+        <KbCrumbs path={doc.path} />
 
         {editorApi.uploading > 0 && (
           <span className="flex items-center gap-1 text-xs text-muted-foreground">

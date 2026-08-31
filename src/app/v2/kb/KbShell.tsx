@@ -6,12 +6,28 @@
 // документами оно не перемонтируется — раскрытые ветки и позиция прокрутки
 // остаются на месте.
 
-import { useCallback, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/core/client";
-import type { KbDocumentDetail, KbTreeGroup, ProjectWithMeta } from "@/lib/core/types";
+import type { KbDocumentDetail, KbNodeKind, KbTreeGroup, ProjectWithMeta } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
 import { KbTree, type KbMoveRequest } from "./KbTree";
+
+/**
+ * «Этот документ пока пуст» — снимок, который страница документа обновляет на
+ * каждом рендере, а оболочка читает при уходе с него.
+ *
+ * Уборка живёт здесь, а не в размонтировании самой страницы, по двум причинам.
+ * Переход между документами компонент не размонтирует вовсе — меняется только
+ * параметр маршрута. А в разработке React проверяет эффекты повторным
+ * монтированием, и уборка на размонтировании сносила бы документ сразу после
+ * создания. Смена адреса — настоящий уход, и она бывает ровно один раз.
+ */
+const KbDisposableContext = createContext<(id: string, disposable: boolean) => void>(() => {});
+
+export function useMarkDisposable(): (id: string, disposable: boolean) => void {
+  return useContext(KbDisposableContext);
+}
 
 export function KbShell({
   initialTree,
@@ -59,6 +75,29 @@ export function KbShell({
   const activeDocumentId = pathname.startsWith("/v2/kb/")
     ? (pathname.split("/")[3] ?? null)
     : null;
+
+  // Снимки страниц документов: id → «в него так ничего и не добавили».
+  const disposableRef = useRef(new Map<string, boolean>());
+  const markDisposable = useCallback((id: string, disposable: boolean) => {
+    disposableRef.current.set(id, disposable);
+  }, []);
+
+  const previousDocumentRef = useRef(activeDocumentId);
+  useEffect(() => {
+    const previous = previousDocumentRef.current;
+    previousDocumentRef.current = activeDocumentId;
+    if (!previous || previous === activeDocumentId || !orgId) return;
+    if (!disposableRef.current.get(previous)) return;
+    disposableRef.current.delete(previous);
+    void api
+      .post<{ removed: boolean }>(`/orgs/${orgId}/kb/${previous}/discard-empty`)
+      // Дерево живёт в этом же layout и при переходе не перемонтируется — без
+      // обновления брошенная строка осталась бы в нём.
+      .then((result) => result.removed && router.refresh())
+      // Документ мог быть уже удалён из меню — молчим: уход со страницы не
+      // повод показывать ошибку на следующей.
+      .catch(() => {});
+  }, [activeDocumentId, orgId, router]);
 
   const move = useCallback(
     (request: KbMoveRequest) => {
@@ -114,20 +153,27 @@ export function KbShell({
   );
 
   const create = useCallback(
-    (target: { parentId: string | null; projectId: string | null }) => {
+    (target: { parentId: string | null; projectId: string | null; kind: KbNodeKind }) => {
       if (!orgId) return;
       setError(null);
       void (async () => {
         try {
           const created = await api.post<KbDocumentDetail>(`/orgs/${orgId}/kb`, {
             title: "Без названия",
+            kind: target.kind,
             parent_id: target.parentId,
             project_ids: target.parentId ? undefined : target.projectId ? [target.projectId] : [],
           });
           router.push(`/v2/kb/${created.id}`);
           router.refresh();
         } catch (e) {
-          setError(e instanceof Error ? e.message : "Не удалось создать документ");
+          setError(
+            e instanceof Error
+              ? e.message
+              : target.kind === "folder"
+                ? "Не удалось создать папку"
+                : "Не удалось создать документ",
+          );
         }
       })();
     },
@@ -135,6 +181,7 @@ export function KbShell({
   );
 
   return (
+    <KbDisposableContext.Provider value={markDisposable}>
     <div className="flex h-full min-h-0 flex-1">
       <KbTree
         groups={shownTree}
@@ -158,5 +205,6 @@ export function KbShell({
         {children}
       </div>
     </div>
+    </KbDisposableContext.Provider>
   );
 }

@@ -564,16 +564,24 @@ export async function moveKbDocument(
   }
 
   await transaction(async (tx) => {
+    // Родитель и базовая роль меняются ОДНИМ стейтментом: у вложенного узла
+    // базовой роли быть не может (kb_documents_role_root_ck), и порознь
+    // констрейнт ловит промежуточное состояние — «уже вложен, но роль ещё
+    // своя». Ровно на этом падал перенос корня с открытым доступом.
     await tx
-      .prepare(`UPDATE core.kb_documents SET parent_id = ? WHERE id = ? AND org_id = ?`)
-      .run(parentId, documentId, ctx.orgId);
+      .prepare(
+        `UPDATE core.kb_documents
+         SET parent_id = ?,
+             default_role = CASE WHEN ?::uuid IS NULL THEN default_role ELSE NULL END
+         WHERE id = ? AND org_id = ?`,
+      )
+      .run(parentId, parentId, documentId, ctx.orgId);
 
     if (parentId) {
-      // Вложенный документ не имеет ни собственных проектов, ни списка доступа:
+      // Вложенный узел не имеет ни собственных проектов, ни списка доступа:
       // и то и другое живёт на корне ветки.
       await tx.prepare(`DELETE FROM core.kb_document_projects WHERE document_id = ?`).run(documentId);
       await tx.prepare(`DELETE FROM core.kb_document_members WHERE document_id = ?`).run(documentId);
-      await tx.prepare(`UPDATE core.kb_documents SET default_role = NULL WHERE id = ?`).run(documentId);
     } else if (projectsChanged) {
       await tx.prepare(`DELETE FROM core.kb_document_projects WHERE document_id = ?`).run(documentId);
       for (const projectId of nextProjects) {

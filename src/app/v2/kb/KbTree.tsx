@@ -25,10 +25,50 @@ import {
   type DragMoveEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { ChevronRight, FileText, Globe, GripVertical, Plus, Trash2 } from "lucide-react";
+import {
+  ChevronRight,
+  FileText,
+  Folder,
+  FolderOpen,
+  Globe,
+  GripVertical,
+  Plus,
+  Trash2,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ProjectIcon } from "@/components/v2/project-icons";
-import type { KbTreeGroup, KbTreeNode, ProjectWithMeta } from "@/lib/core/types";
+import type { KbNodeKind, KbTreeGroup, KbTreeNode, ProjectWithMeta } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
+
+/** Что заводим: страницу или раздел. Один и тот же выбор в трёх местах. */
+function CreateMenu({
+  trigger,
+  onCreate,
+}: {
+  trigger: React.ReactElement;
+  onCreate: (kind: KbNodeKind) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={trigger} />
+      <DropdownMenuContent align="start">
+        <DropdownMenuItem onClick={() => onCreate("document")}>
+          <FileText className="size-4" />
+          Документ
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onCreate("folder")}>
+          <Folder className="size-4" />
+          Папка
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 /** Раздел «Общие» — документы без проектов. Ключ отличается от uuid проекта. */
 export const COMMON_GROUP = "common";
@@ -120,22 +160,24 @@ const Row = memo(function Row({
   isActiveDoc: boolean;
   canEdit: boolean;
   onToggle: (id: string) => void;
-  onCreateChild: (id: string) => void;
+  onCreateChild: (id: string, kind: KbNodeKind) => void;
 }) {
   // Один и тот же элемент и берут, и на него бросают: у строки нет отдельной
   // ручки — тащат её целиком, как карточку на доске.
   const draggable = useDraggable({
     id: `${groupKey}:${node.id}`,
-    data: { nodeId: node.id, groupKey, parentId },
+    data: { nodeId: node.id, groupKey, parentId, kind: node.kind },
     disabled: !canEdit,
   });
   const droppable = useDroppable({
     id: `${groupKey}:${node.id}`,
-    data: { nodeId: node.id, groupKey, parentId },
+    data: { nodeId: node.id, groupKey, parentId, kind: node.kind },
   });
 
   const dragging = activeId === node.id;
+  const folder = node.kind === "folder";
   const target = drop?.nodeId === node.id && drop.groupKey === groupKey ? drop.zone : null;
+  const Icon = folder ? (expanded ? FolderOpen : Folder) : FileText;
 
   return (
     <div className="relative">
@@ -175,7 +217,7 @@ const Row = memo(function Row({
         >
           <ChevronRight className={cn("size-3 transition-transform", expanded && "rotate-90")} />
         </button>
-        <FileText className="size-3.5 shrink-0" />
+        <Icon className={cn("size-3.5 shrink-0", folder && "text-primary/70")} />
         {/* Ссылка внутри перетаскиваемой строки: dnd-kit гасит клик только
             после настоящего жеста, поэтому обычный переход работает. */}
         <Link
@@ -186,19 +228,24 @@ const Row = memo(function Row({
         >
           {node.title || "Без названия"}
         </Link>
-        {canEdit && (
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onCreateChild(node.id);
-            }}
-            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground group-hover/kb:block"
-            title="Вложенный документ"
-            aria-label={`Создать документ внутри «${node.title}»`}
-          >
-            <Plus className="size-3.5" />
-          </button>
+        {canEdit && folder && (
+          // Класть внутрь можно только в папку — у документа кнопки нет вовсе.
+          <CreateMenu
+            onCreate={(kind) => onCreateChild(node.id, kind)}
+            trigger={
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground group-hover/kb:block data-[popup-open]:block"
+                title="Создать внутри"
+                aria-label={`Создать внутри «${node.title}»`}
+              >
+                <Plus className="size-3.5" />
+              </button>
+            }
+          />
         )}
       </div>
       {target === "after" && <DropLine visible />}
@@ -219,7 +266,7 @@ function GroupHead({
   project: ProjectWithMeta | null;
   canOrderProjects: boolean;
   canCreate: boolean;
-  onCreate: () => void;
+  onCreate: (kind: KbNodeKind) => void;
   dropping: boolean;
 }) {
   const draggable = useDraggable({
@@ -258,13 +305,18 @@ function GroupHead({
       )}
       <span className="min-w-0 flex-1 truncate">{project ? project.name : "Общие"}</span>
       {canCreate && (
-        <button
-          onClick={onCreate}
-          className="shrink-0 rounded p-0.5 hover:bg-muted hover:text-foreground"
-          title={project ? `Документ в проекте «${project.name}»` : "Общий документ"}
-        >
-          <Plus className="size-3.5" />
-        </button>
+        <CreateMenu
+          onCreate={onCreate}
+          trigger={
+            <button
+              className="shrink-0 rounded p-0.5 hover:bg-muted hover:text-foreground"
+              title={project ? `Создать в проекте «${project.name}»` : "Создать в «Общих»"}
+              aria-label={project ? `Создать в проекте «${project.name}»` : "Создать в «Общих»"}
+            >
+              <Plus className="size-3.5" />
+            </button>
+          }
+        />
       )}
     </div>
   );
@@ -292,8 +344,12 @@ export function KbTree({
   canCreateCommon: boolean;
   onMove: (request: KbMoveRequest) => void;
   onReorderProjects: (order: string[]) => void;
-  /** `parentId` — вложенный документ, иначе корень раздела. */
-  onCreate: (target: { parentId: string | null; projectId: string | null }) => void;
+  /** `parentId` — вложенный узел, иначе корень раздела. */
+  onCreate: (target: {
+    parentId: string | null;
+    projectId: string | null;
+    kind: KbNodeKind;
+  }) => void;
   trashCount: number;
   /**
    * Узкий экран показывает что-то одно: дерево или документ. Мобильных экранов
@@ -398,12 +454,12 @@ export function KbTree({
       return;
     }
     const center = rect.top + rect.height / 2;
-    const zone: DropZone =
-      center < over.rect.top + over.rect.height * 0.25
-        ? "before"
-        : center > over.rect.top + over.rect.height * 0.75
-          ? "after"
-          : "inside";
+    const above = center < over.rect.top + over.rect.height * 0.25;
+    const below = center > over.rect.top + over.rect.height * 0.75;
+    // Внутрь принимает только папка: у документа середина строки — это «после»,
+    // иначе жест обещал бы вложение, которого не будет.
+    const acceptsInside = over.data.current?.kind === "folder";
+    const zone: DropZone = above ? "before" : below || !acceptsInside ? "after" : "inside";
     const next: DropTarget = { nodeId, groupKey, zone };
     dropRef.current = next;
     setDrop(next);
@@ -509,7 +565,7 @@ export function KbTree({
               isActiveDoc={activeDocumentId === entry.node.id}
               canEdit
               onToggle={toggle}
-              onCreateChild={(id) => onCreate({ parentId: id, projectId: null })}
+              onCreateChild={(id, kind) => onCreate({ parentId: id, projectId: null, kind })}
             />
             {children && open && <div>{renderNodes(list, entry.node.id, groupKey)}</div>}
           </div>
@@ -571,7 +627,7 @@ export function KbTree({
                   project={project}
                   canOrderProjects={canOrderProjects}
                   canCreate={project ? project.my_role === "admin" || project.my_role === "editor" : canCreateCommon}
-                  onCreate={() => onCreate({ parentId: null, projectId: project?.id ?? null })}
+                  onCreate={(kind) => onCreate({ parentId: null, projectId: project?.id ?? null, kind })}
                   dropping={drop?.groupKey === groupKey && drop.nodeId === null}
                 />
                 <div className="flex flex-col gap-0.5">{renderNodes(list, null, groupKey)}</div>
