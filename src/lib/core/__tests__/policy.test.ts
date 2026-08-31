@@ -1,14 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
+  canKb,
   canOrg,
   canProject,
   canEditLooseTask,
   canViewLooseTask,
+  effectiveKbRole,
   effectiveProjectRole,
+  type KbAction,
   type OrgAction,
   type ProjectAction,
 } from "../policy";
-import type { AuthContext, OrgRole, PolicyProject, ProjectRole } from "../types";
+import type {
+  AuthContext,
+  OrgRole,
+  PolicyKbDocument,
+  PolicyProject,
+  ProjectRole,
+} from "../types";
 
 const ORG = "00000000-0000-0000-0000-00000000aaaa";
 const OTHER_ORG = "00000000-0000-0000-0000-00000000bbbb";
@@ -48,6 +57,7 @@ describe("canOrg: матрица org-ролей", () => {
     ["crm.view",       { owner: true,  admin: true,  member: true,  guest: false }],
     ["crm.manage",     { owner: true,  admin: true,  member: true,  guest: false }],
     ["crm.configure",  { owner: true,  admin: true,  member: false, guest: false }],
+    ["kb.create.common", { owner: true, admin: true,  member: true,  guest: false }],
     ["statuses.manage",    { owner: true,  admin: true,  member: false, guest: false }],
     ["fields.manage",      { owner: true,  admin: true,  member: true,  guest: false }],
     ["tags.manage",        { owner: true,  admin: true,  member: true,  guest: false }],
@@ -118,6 +128,7 @@ describe("canProject: пороги проектных ролей", () => {
     // Планирование спринта — работа команды, а не настройка проекта: порог тот
     // же, что у правки задач, иначе команда не может передвинуть свою же задачу.
     ["sprint.manage",           { viewer: false, commenter: false, editor: true,  admin: true }],
+    ["doc.create",              { viewer: false, commenter: false, editor: true,  admin: true }],
     ["field.value.edit",        { viewer: false, commenter: false, editor: true,  admin: true }],
     ["project.update",          { viewer: false, commenter: false, editor: false, admin: true }],
     ["project.archive",         { viewer: false, commenter: false, editor: false, admin: true }],
@@ -165,5 +176,110 @@ describe("задачи вне проектов (личный инбокс)", () 
     expect(canEditLooseTask({ isCreator: true, isAssignee: false, isFollower: false })).toBe(true);
     expect(canEditLooseTask({ isCreator: false, isAssignee: true, isFollower: false })).toBe(true);
     expect(canEditLooseTask({ isCreator: false, isAssignee: false, isFollower: true })).toBe(false);
+  });
+});
+
+// --- База знаний ----------------------------------------------------------------
+
+function doc(overrides: Partial<PolicyKbDocument> = {}): PolicyKbDocument {
+  return {
+    id: "d1",
+    org_id: ORG,
+    created_by: "author",
+    default_role: null,
+    projects: [],
+    member_role: null,
+    ...overrides,
+  };
+}
+
+describe("effectiveKbRole: документ в проектах", () => {
+  it("роль берётся из проекта, список участников документа не участвует", () => {
+    const d = doc({ projects: [project()], member_role: "admin" });
+    // member_role игнорируется: иначе запись в документе открывала бы проект.
+    expect(effectiveKbRole(ctx("member"), d)).toBe("editor");
+  });
+
+  it("из нескольких проектов берётся лучшая роль", () => {
+    const d = doc({
+      projects: [project({ id: "p1", default_role: "viewer" }), project({ id: "p2", default_role: "editor" })],
+    });
+    expect(effectiveKbRole(ctx("member"), d)).toBe("editor");
+  });
+
+  it("невидимый проект не даёт доступа", () => {
+    const d = doc({ projects: [project({ default_role: null })] });
+    expect(effectiveKbRole(ctx("member"), d)).toBeNull();
+    expect(effectiveKbRole(ctx("owner"), d)).toBeNull();
+  });
+
+  it("гость входит по явной роли в проекте", () => {
+    const d = doc({ projects: [project({ default_role: null })] });
+    expect(effectiveKbRole(ctx("guest", { p1: "commenter" }), d)).toBe("commenter");
+  });
+
+  it("автор документа в проекте не получает admin сверх роли проекта", () => {
+    const d = doc({ projects: [project({ default_role: "viewer" })], created_by: "u1" });
+    expect(effectiveKbRole(ctx("member"), d)).toBe("viewer");
+  });
+});
+
+describe("effectiveKbRole: общий документ", () => {
+  it("автор — всегда admin", () => {
+    expect(effectiveKbRole(ctx("member"), doc({ created_by: "u1" }))).toBe("admin");
+  });
+
+  it("владелец организации видит и закрытый общий документ — он настраивает доступ", () => {
+    expect(effectiveKbRole(ctx("owner"), doc())).toBe("admin");
+  });
+
+  it("админ организации в закрытый общий документ не входит", () => {
+    expect(effectiveKbRole(ctx("admin"), doc())).toBeNull();
+    expect(effectiveKbRole(ctx("member"), doc())).toBeNull();
+  });
+
+  it("явная запись действует в закрытом документе", () => {
+    expect(effectiveKbRole(ctx("member"), doc({ member_role: "editor" }))).toBe("editor");
+    expect(effectiveKbRole(ctx("guest"), doc({ member_role: "viewer" }))).toBe("viewer");
+  });
+
+  it("базовая роль раздаётся сотрудникам, админ организации получает admin", () => {
+    expect(effectiveKbRole(ctx("member"), doc({ default_role: "viewer" }))).toBe("viewer");
+    expect(effectiveKbRole(ctx("admin"), doc({ default_role: "viewer" }))).toBe("admin");
+  });
+
+  it("гостю базовая роль не достаётся", () => {
+    expect(effectiveKbRole(ctx("guest"), doc({ default_role: "editor" }))).toBeNull();
+  });
+
+  it("явная запись выигрывает у базовой роли в обе стороны", () => {
+    expect(effectiveKbRole(ctx("member"), doc({ default_role: "editor", member_role: "viewer" }))).toBe("viewer");
+    expect(effectiveKbRole(ctx("member"), doc({ default_role: "viewer", member_role: "admin" }))).toBe("admin");
+  });
+
+  it("документ чужой организации — всегда null", () => {
+    expect(effectiveKbRole(ctx("owner"), doc({ org_id: OTHER_ORG, created_by: "u1" }))).toBeNull();
+  });
+});
+
+describe("canKb: пороги ролей документа", () => {
+  const matrix: Array<[KbAction, Record<ProjectRole, boolean>]> = [
+    ["doc.view",    { viewer: true,  commenter: true,  editor: true,  admin: true }],
+    ["doc.comment", { viewer: false, commenter: true,  editor: true,  admin: true }],
+    ["doc.edit",    { viewer: false, commenter: false, editor: true,  admin: true }],
+    ["doc.delete",  { viewer: false, commenter: false, editor: true,  admin: true }],
+    ["doc.manage",  { viewer: false, commenter: false, editor: false, admin: true }],
+  ];
+
+  for (const [action, expected] of matrix) {
+    for (const role of Object.keys(expected) as ProjectRole[]) {
+      it(`${action} при роли ${role} → ${expected[role]}`, () => {
+        expect(canKb(ctx("member"), action, doc({ member_role: role }))).toBe(expected[role]);
+      });
+    }
+  }
+
+  it("без эффективной роли всё запрещено", () => {
+    expect(canKb(ctx("member"), "doc.view", doc())).toBe(false);
   });
 });

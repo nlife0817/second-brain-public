@@ -42,7 +42,8 @@ export function attachmentUrl(orgId: string, attachmentId: string): string {
 type AttachmentRow = {
   id: string;
   org_id: string;
-  task_id: string;
+  task_id: string | null;
+  document_id: string | null;
   filename: string;
   mime_type: string;
   byte_size: number;
@@ -55,7 +56,7 @@ function mapAttachment(r: AttachmentRow): Attachment {
   return { ...r, url: attachmentUrl(r.org_id, r.id) };
 }
 
-const ATTACHMENT_COLUMNS = `id, org_id, task_id, filename, mime_type, byte_size, width, height, created_at`;
+const ATTACHMENT_COLUMNS = `id, org_id, task_id, document_id, filename, mime_type, byte_size, width, height, created_at`;
 
 /** Имя файла как заголовок: без управляющих символов, кавычек и путей. */
 function safeFilename(raw: string): string {

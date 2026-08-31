@@ -5,6 +5,7 @@
 import {
   type AuthContext,
   type OrgRole,
+  type PolicyKbDocument,
   type PolicyProject,
   type ProjectRole,
   ORG_ROLE_RANK,
@@ -27,6 +28,7 @@ export type OrgAction =
   | "crm.view"           // CRM: воронки, сделки, клиенты — закрыто для гостей
   | "crm.manage"         // заводить и править сделки и клиентов
   | "crm.configure"      // воронки, этапы, справочники CRM
+  | "kb.create.common"   // документ базы знаний без проекта («Общие») — не для гостей
   | "statuses.manage"     // справочники org-уровня (статусы задач)
   | "fields.manage"       // кастомные поля org-уровня
   | "tags.manage"
@@ -50,6 +52,9 @@ const MIN_ORG_ROLE: Record<OrgAction, OrgRole> = {
   // Воронка — рабочий процесс всей организации, как справочник статусов:
   // правит её тот, кто за организацию отвечает.
   "crm.configure": "admin",
+  // Общий документ виден всей организации и живёт вне проектов — заводить его
+  // может сотрудник, но не гость: у гостя нет своего контура вне проектов.
+  "kb.create.common": "member",
   "statuses.manage": "admin",
   "fields.manage": "member",
   "tags.manage": "member",
@@ -76,6 +81,8 @@ export type ProjectAction =
   | "task.edit"               // поля, статус, исполнители, порядок в проекте
   | "task.delete"
   | "task.comment"
+  | "doc.create"              // документ базы знаний в проекте, в т.ч. перенос
+                              // чужого документа в этот проект
   | "sprint.manage"           // спринты проекта в режиме «Разработка»: завести,
                               // передвинуть даты, начать и завершить. Планирование
                               // работы — дело команды, а не администратора проекта,
@@ -93,6 +100,7 @@ const MIN_PROJECT_ROLE: Record<ProjectAction, ProjectRole> = {
   "task.edit": "editor",
   "task.delete": "editor",
   "task.comment": "commenter",
+  "doc.create": "editor",
   "sprint.manage": "editor",
   "field.value.edit": "editor",
 };
@@ -145,6 +153,69 @@ export function canEditLooseTask(a: LooseTaskAccess): boolean {
   return a.isCreator || a.isAssignee;
 }
 
+// --- База знаний ----------------------------------------------------------------
+
+export type KbAction =
+  | "doc.view"
+  | "doc.comment"
+  | "doc.edit"       // текст, заголовок, место в дереве
+  | "doc.delete"     // в корзину вместе с поддеревом
+  | "doc.manage";    // доступ и привязка к проектам — только у корня ветки
+
+const MIN_KB_ROLE: Record<KbAction, ProjectRole> = {
+  "doc.view": "viewer",
+  "doc.comment": "commenter",
+  "doc.edit": "editor",
+  "doc.delete": "editor",
+  "doc.manage": "admin",
+};
+
+/**
+ * Эффективная роль пользователя в документе базы знаний.
+ *
+ * У документа два взаимоисключающих источника доступа, и решает наличие
+ * привязок к проектам у КОРНЯ ветки:
+ *  - есть проекты → лучшая из ролей по ним (`effectiveProjectRole`). Список
+ *    участников документа при этом не участвует вовсе: иначе закрытый проект
+ *    открывался бы поимённой записью в документе;
+ *  - проектов нет («общий» документ) → автор корня и владелец организации
+ *    получают `admin`, дальше решает явная запись, а `default_role` раздаёт
+ *    базовую роль сотрудникам. `default_role === null` — закрытый документ.
+ *
+ * Отличие от проектов намеренное: владелец организации видит закрытый общий
+ * документ, хотя закрытый проект не видит. Настраивать доступ к такому
+ * документу может именно он (второй после автора), а настраивать невидимое
+ * нельзя. Кому нужен контур, закрытый и от владельца, — заводит закрытый проект.
+ */
+export function effectiveKbRole(ctx: AuthContext, doc: PolicyKbDocument): ProjectRole | null {
+  if (doc.org_id !== ctx.orgId) return null;
+
+  if (doc.projects.length > 0) {
+    let best: ProjectRole | null = null;
+    for (const project of doc.projects) {
+      const role = effectiveProjectRole(ctx, project);
+      if (role && (!best || PROJECT_ROLE_RANK[role] > PROJECT_ROLE_RANK[best])) best = role;
+    }
+    return best;
+  }
+
+  if (doc.created_by && doc.created_by === ctx.user.id) return "admin";
+  if (ctx.orgRole === "owner") return "admin";
+  if (doc.member_role) return doc.member_role;
+  if (!doc.default_role) return null;
+  // Базовая роль — только для сотрудников: гость внешний участник, его пускает
+  // лишь явная запись (то же правило, что у проектов).
+  if (ctx.orgRole === "guest") return null;
+  if (ctx.orgRole === "admin") return "admin";
+  return doc.default_role;
+}
+
+export function canKb(ctx: AuthContext, action: KbAction, doc: PolicyKbDocument): boolean {
+  const role = effectiveKbRole(ctx, doc);
+  if (!role) return false;
+  return PROJECT_ROLE_RANK[role] >= PROJECT_ROLE_RANK[MIN_KB_ROLE[action]];
+}
+
 // --- Ошибка и assert-хелперы ----------------------------------------------------
 
 export class PolicyError extends Error {
@@ -161,4 +232,8 @@ export function assertOrg(ctx: AuthContext, action: OrgAction): void {
 
 export function assertProject(ctx: AuthContext, action: ProjectAction, project: PolicyProject): void {
   if (!canProject(ctx, action, project)) throw new PolicyError(action);
+}
+
+export function assertKb(ctx: AuthContext, action: KbAction, doc: PolicyKbDocument): void {
+  if (!canKb(ctx, action, doc)) throw new PolicyError(action);
 }

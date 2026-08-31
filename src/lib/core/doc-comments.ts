@@ -15,7 +15,7 @@ import { requireTaskAccess } from "./tasks";
 import type { AuthContext, DocCommentMessage, DocCommentThread } from "./types";
 
 const MESSAGE_SELECT = `
-  SELECT d.id, d.task_id, d.thread_id, d.parent_id, d.author_id, d.body, d.quote,
+  SELECT d.id, d.task_id, d.document_id, d.thread_id, d.parent_id, d.author_id, d.body, d.quote,
          d.resolved_at, d.resolved_by, d.created_at, d.edited_at,
          u.id AS u_id, u.email AS u_email, u.name AS u_name, u.avatar_url AS u_avatar
   FROM core.doc_comments d
@@ -24,6 +24,7 @@ const MESSAGE_SELECT = `
 type MessageRow = {
   id: string;
   task_id: string;
+  document_id: string | null;
   thread_id: string;
   parent_id: string | null;
   author_id: string | null;
@@ -66,6 +67,7 @@ function groupThreads(rows: MessageRow[]): DocCommentThread[] {
     threads.push({
       id: threadId,
       task_id: root.task_id,
+      document_id: root.document_id,
       quote: root.quote,
       resolved_at: root.resolved_at,
       resolved_by: root.resolved_by,

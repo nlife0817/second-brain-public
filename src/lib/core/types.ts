@@ -107,6 +107,24 @@ export interface PolicyProject {
   default_role: ProjectDefaultRole | null;
 }
 
+/**
+ * Мини-срез документа базы знаний для policy-решений. Всё, что нужно, уже
+ * разрешено вызывающим: `projects` — проекты КОРНЯ ветки, `member_role` —
+ * явная роль текущего пользователя в корне.
+ */
+export interface PolicyKbDocument {
+  id: string;
+  org_id: string;
+  /** Автор корня ветки: он всегда администратор своего документа. */
+  created_by: string | null;
+  /** Базовая роль корня у общего документа; `null` — только по списку. */
+  default_role: ProjectDefaultRole | null;
+  /** Проекты корня. Непусто — доступ берётся из них, а список не участвует. */
+  projects: PolicyProject[];
+  /** Явная запись в kb_document_members корня, если она есть. */
+  member_role: ProjectRole | null;
+}
+
 // --- Задачи и проекты -----------------------------------------------------------
 
 export type TaskPriority = "urgent" | "high" | "medium" | "low" | "none";
@@ -448,7 +466,9 @@ export interface CoreComment {
 export interface Attachment {
   id: string;
   org_id: string;
-  task_id: string;
+  /** Владелец файла: задача либо документ базы знаний — заполнен ровно один. */
+  task_id: string | null;
+  document_id: string | null;
   filename: string;
   mime_type: string;
   byte_size: number;
@@ -476,7 +496,9 @@ export interface DocCommentMessage {
  */
 export interface DocCommentThread {
   id: string;
-  task_id: string;
+  /** Владелец обсуждения: задача либо документ базы знаний — заполнен ровно один. */
+  task_id: string | null;
+  document_id: string | null;
   quote: string;
   resolved_at: string | null;
   resolved_by: string | null;
@@ -580,6 +602,109 @@ export interface CalendarEventRow {
   status: string | null;
   organizer: string | null;
   html_link: string | null;
+}
+
+// --- База знаний ------------------------------------------------------------
+
+/**
+ * Документ базы знаний — узел дерева. Отдельной сущности «папка» нет: любой
+ * документ может быть и текстом, и разделом.
+ *
+ * Доступ и привязка к проектам живут только у корня ветки (`parent_id === null`),
+ * вложенные наследуют их — см. комментарий к миграции 0054.
+ */
+export interface KbDocument {
+  id: string;
+  org_id: string;
+  parent_id: string | null;
+  title: string;
+  /** HTML, тот же формат и санитайзер, что у описания задачи. */
+  body: string;
+  position: number;
+  /** Базовая роль организации у общего корня; `null` — только по списку. */
+  default_role: ProjectDefaultRole | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  deleted_by: string | null;
+}
+
+/** Узел дерева в левой колонке раздела. Тело документа сюда не попадает. */
+export interface KbTreeNode {
+  id: string;
+  parent_id: string | null;
+  title: string;
+  position: number;
+  children: KbTreeNode[];
+}
+
+/**
+ * Ветка дерева: корневые документы одного проекта либо раздел «Общие».
+ * Документ, привязанный к нескольким проектам, стоит в каждой их ветке — это
+ * один документ, а не копии.
+ */
+export interface KbTreeGroup {
+  /** `null` — «Общие»: документы без привязки к проектам. */
+  project_id: string | null;
+  nodes: KbTreeNode[];
+}
+
+export interface KbDocumentMemberWithUser {
+  document_id: string;
+  user_id: string;
+  role: ProjectRole;
+  email: string;
+  name: string;
+  avatar_url: string | null;
+}
+
+/**
+ * Строка истории. `updated_at` отличается от `created_at` только у склеенных
+ * версий: правки одного автора подряд не плодят записи (см. kb-model.ts).
+ * Тело отдаётся отдельным запросом — список версий его не несёт.
+ */
+export interface KbDocumentVersion {
+  id: string;
+  document_id: string;
+  title: string;
+  author_id: string | null;
+  author: UserBrief | null;
+  created_at: string;
+  updated_at: string;
+  /** Заполнено только при чтении конкретной версии. */
+  body?: string;
+}
+
+/** Задача, привязанная к документу: строка блока «Связанные задачи». */
+export interface KbLinkedTask {
+  id: string;
+  title: string;
+  status_id: string | null;
+  completed_at: string | null;
+}
+
+/** Документ, привязанный к задаче: строка блока «Документы» в карточке. */
+export interface KbLinkedDocument {
+  id: string;
+  title: string;
+}
+
+/** Документ целиком — то, чем открывается экран. */
+export interface KbDocumentDetail extends KbDocument {
+  /** Корень ветки: у него живут доступ и привязки. У самого корня — он сам. */
+  root_id: string;
+  root_title: string;
+  /** Роль текущего пользователя в документе. */
+  my_role: ProjectRole;
+  /** Проекты корня ветки. Пусто — документ «общий». */
+  project_ids: string[];
+  /** Путь от корня до документа включительно — хлебные крошки. */
+  path: Array<{ id: string; title: string }>;
+  tasks: KbLinkedTask[];
+  attachments: Attachment[];
+  threads: DocCommentThread[];
 }
 
 export const ORG_ROLE_RANK: Record<OrgRole, number> = {
