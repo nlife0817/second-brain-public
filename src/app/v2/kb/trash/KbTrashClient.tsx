@@ -6,7 +6,7 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, Folder, RotateCcw, Trash2 } from "lucide-react";
+import { FileText, Folder, RotateCcw, Table2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/core/client";
 import type { KbTrashItem } from "@/lib/core/kb";
@@ -73,6 +73,8 @@ export function KbTrashClient({ initial }: { initial: KbTrashItem[] }) {
             >
               {item.kind === "folder" ? (
                 <Folder className="size-4 shrink-0 text-primary/70" />
+              ) : item.kind === "sheet" ? (
+                <Table2 className="size-4 shrink-0 text-muted-foreground" />
               ) : (
                 <FileText className="size-4 shrink-0 text-muted-foreground" />
               )}
