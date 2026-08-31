@@ -155,6 +155,8 @@ export async function listNotifications(
                 THEN (SELECT t.title FROM core.tasks t WHERE t.id = coalesce(n.entity_id, e.entity_id))
               WHEN coalesce(n.entity_type, e.entity_type) = 'project'
                 THEN (SELECT p.name FROM core.projects p WHERE p.id = coalesce(n.entity_id, e.entity_id))
+              WHEN coalesce(n.entity_type, e.entity_type) = 'kb_document'
+                THEN (SELECT d.title FROM core.kb_documents d WHERE d.id = coalesce(n.entity_id, e.entity_id))
             END AS entity_title,
             -- Своё/подписка/прочее: инбокс фильтрует и группирует по этому
             -- признаку, а в браузере ни исполнителей, ни подписок нет.

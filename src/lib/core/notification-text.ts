@@ -15,6 +15,7 @@ const ACTION_LABELS: Record<string, string> = {
   added_to_project: "добавил(а) вас в проект",
   doc_comment: "прокомментировал(а) описание",
   doc_comment_resolved: "закрыл(а) обсуждение описания",
+  kb_document_shared: "открыл(а) вам документ",
 };
 
 export interface NotificationLine {

@@ -37,6 +37,7 @@ const KIND_TITLES: Record<string, string> = {
   added_to_project: "Вас добавили в проект",
   doc_comment: "Комментарий к описанию",
   doc_comment_resolved: "Обсуждение закрыто",
+  kb_document_shared: "Вам открыли документ",
 };
 
 type PendingRow = {
@@ -253,6 +254,11 @@ function taskUrl(row: PendingRow, mobile: boolean): string {
   if (row.entity_type === "project" && row.entity_id) {
     return mobile ? `/v2/m/projects/${row.entity_id}` : `/v2/projects/${row.entity_id}`;
   }
+  // Мобильной базы знаний пока нет — телефон уводим в инбокс, а не на экран,
+  // которого не существует.
+  if (row.entity_type === "kb_document" && row.entity_id && !mobile) {
+    return `/v2/kb/${row.entity_id}`;
+  }
   return mobile ? "/v2/m/inbox" : "/v2/inbox";
 }
 
@@ -345,6 +351,8 @@ export async function dispatchPendingNotifications(): Promise<DispatchResult> {
                 THEN (SELECT t.title FROM core.tasks t WHERE t.id = coalesce(n.entity_id, e.entity_id))
               WHEN coalesce(n.entity_type, e.entity_type) = 'project'
                 THEN (SELECT p.name FROM core.projects p WHERE p.id = coalesce(n.entity_id, e.entity_id))
+              WHEN coalesce(n.entity_type, e.entity_type) = 'kb_document'
+                THEN (SELECT d.title FROM core.kb_documents d WHERE d.id = coalesce(n.entity_id, e.entity_id))
             END AS entity_title,
             CASE
               -- Упоминание висит на том же событии, что и комментарий, поэтому

@@ -59,6 +59,11 @@ export const NOTIFICATION_KINDS: NotificationKindMeta[] = [
     hint: "Один раз по каждой просроченной задаче, а не ежечасно",
   },
   {
+    kind: "kb_document_shared",
+    label: "Открыли документ",
+    hint: "Вас добавили в доступ к документу базы знаний",
+  },
+  {
     kind: "digest",
     label: "Утренняя сводка",
     hint: "Что сегодня со сроком и что просрочено — одним сообщением",
