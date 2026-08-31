@@ -479,6 +479,15 @@ export interface Attachment {
   url: string;
 }
 
+/**
+ * Владелец вложения или обсуждения к тексту: задача либо документ базы знаний.
+ * Тип живёт здесь, а поведение — в `doc-owner.ts`: `mentions.ts` нужен только
+ * тип, а импорт поведения замкнул бы его с `tasks.ts` в кольцо.
+ */
+export type DocOwner =
+  | { kind: "task"; taskId: string }
+  | { kind: "document"; documentId: string };
+
 /** Одно сообщение в треде комментариев к описанию (корень или ответ). */
 export interface DocCommentMessage {
   id: string;

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   ATTACHMENT_MAX_BYTES,
-  listTaskAttachments,
+  listOwnerAttachments,
   uploadAttachment,
 } from "@/lib/core/attachments";
 import { withOrg } from "@/lib/core/context";
@@ -10,7 +10,7 @@ import { isUuid, jsonError } from "@/lib/core/http";
 export const GET = withOrg(async (_request, { params, auth }) => {
   const { taskId } = await params;
   if (!isUuid(taskId)) return jsonError(404, "Task not found");
-  return NextResponse.json(await listTaskAttachments(auth, taskId));
+  return NextResponse.json(await listOwnerAttachments(auth, { kind: "task", taskId }));
 });
 
 /**
@@ -43,7 +43,7 @@ export const POST = withOrg(async (request, { params, auth }) => {
     return Number.isFinite(n) && n > 0 && n <= 20000 ? Math.round(n) : null;
   };
 
-  const attachment = await uploadAttachment(auth, taskId, {
+  const attachment = await uploadAttachment(auth, { kind: "task", taskId }, {
     filename: file.name,
     mimeType: file.type,
     bytes: new Uint8Array(await file.arrayBuffer()),

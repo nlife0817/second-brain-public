@@ -886,7 +886,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
       await notifyMentions(tx, {
         orgId: ctx.orgId,
         eventId,
-        taskId: id,
+        owner: { kind: "task", taskId: id },
         actorId: ctx.user.id,
         html: description,
         skipUserIds: notifiedAsAssignee,
@@ -1086,7 +1086,7 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
         await notifyMentions(tx, {
           orgId: ctx.orgId,
           eventId,
-          taskId,
+          owner: { kind: "task", taskId },
           actorId: ctx.user.id,
           html: scalar.description as string,
           prevHtml: task.description,

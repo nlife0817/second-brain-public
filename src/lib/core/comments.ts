@@ -118,7 +118,7 @@ export async function addTaskComment(
     const mentioned = await notifyMentions(tx, {
       orgId: ctx.orgId,
       eventId,
-      taskId,
+      owner: { kind: "task", taskId },
       actorId: ctx.user.id,
       html: clean,
     });

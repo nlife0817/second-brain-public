@@ -42,7 +42,7 @@ export const GET = withOrg(async (_request, { params, auth }) => {
       getTaskRule(taskId, auth.orgId),
       // Комментарии к описанию едут вместе с карточкой: их количество рисуется
       // на кнопке «развернуть», то есть нужно ещё до открытия документа.
-      listDocComments(auth, taskId),
+      listDocComments(auth, { kind: "task", taskId }),
     ]);
 
   return NextResponse.json({

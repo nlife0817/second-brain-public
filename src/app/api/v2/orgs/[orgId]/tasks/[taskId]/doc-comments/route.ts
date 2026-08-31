@@ -7,7 +7,7 @@ import { docThreadCreateSchema } from "@/lib/core/schemas";
 export const GET = withOrg(async (_request, { params, auth }) => {
   const { taskId } = await params;
   if (!isUuid(taskId)) return jsonError(404, "Task not found");
-  return NextResponse.json(await listDocComments(auth, taskId));
+  return NextResponse.json(await listDocComments(auth, { kind: "task", taskId }));
 });
 
 /**
@@ -24,9 +24,9 @@ export const POST = withOrg(async (request, { params, auth }) => {
   const threadId = new URL(request.url).searchParams.get("thread");
   if (threadId) {
     if (!isUuid(threadId)) return jsonError(404, "Обсуждение не найдено");
-    return NextResponse.json(await replyToDocThread(auth, taskId, threadId, body.body), {
+    return NextResponse.json(await replyToDocThread(auth, { kind: "task", taskId }, threadId, body.body), {
       status: 201,
     });
   }
-  return NextResponse.json(await createDocThread(auth, taskId, body), { status: 201 });
+  return NextResponse.json(await createDocThread(auth, { kind: "task", taskId }, body), { status: 201 });
 });

@@ -210,10 +210,18 @@ export function effectiveKbRole(ctx: AuthContext, doc: PolicyKbDocument): Projec
   return doc.default_role;
 }
 
-export function canKb(ctx: AuthContext, action: KbAction, doc: PolicyKbDocument): boolean {
-  const role = effectiveKbRole(ctx, doc);
+/**
+ * Хватает ли уже посчитанной роли для действия. Отдельно от `canKb`, потому что
+ * сервис считает роль один раз (три запроса) и дальше проверяет по ней: вывести
+ * роль второй раз из усечённого среза документа — верный способ получить не ту.
+ */
+export function canKbRole(role: ProjectRole | null, action: KbAction): boolean {
   if (!role) return false;
   return PROJECT_ROLE_RANK[role] >= PROJECT_ROLE_RANK[MIN_KB_ROLE[action]];
+}
+
+export function canKb(ctx: AuthContext, action: KbAction, doc: PolicyKbDocument): boolean {
+  return canKbRole(effectiveKbRole(ctx, doc), action);
 }
 
 // --- Ошибка и assert-хелперы ----------------------------------------------------
@@ -236,4 +244,8 @@ export function assertProject(ctx: AuthContext, action: ProjectAction, project: 
 
 export function assertKb(ctx: AuthContext, action: KbAction, doc: PolicyKbDocument): void {
   if (!canKb(ctx, action, doc)) throw new PolicyError(action);
+}
+
+export function assertKbRole(role: ProjectRole | null, action: KbAction): void {
+  if (!canKbRole(role, action)) throw new PolicyError(action);
 }

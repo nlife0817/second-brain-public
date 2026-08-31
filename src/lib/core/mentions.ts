@@ -9,6 +9,8 @@
 
 import type { TxContext } from "@/lib/sql";
 import { notifyUsers } from "./events";
+import { filterUsersWhoCanViewDocument } from "./kb-access";
+import type { DocOwner } from "./types";
 
 const SPAN_TAG = /<span\b[^>]*>/gi;
 // `\sdata-id=` с обязательным пробелом перед именем: без него совпал бы и хвост
@@ -107,14 +109,16 @@ export async function filterUsersWhoCanViewTask(
  * core.notifications нет.
  *
  * Упомянуть можно любого участника организации, но уведомление несёт с собой
- * название задачи: без фильтра видимости это дверь в закрытый проект.
+ * название задачи или документа: без фильтра видимости это дверь в закрытый
+ * проект.
  */
 export async function notifyMentions(
   tx: TxContext,
   input: {
     orgId: string;
     eventId: number;
-    taskId: string;
+    /** Задача или документ базы знаний, в тексте которого стоит упоминание. */
+    owner: DocOwner;
     actorId: string;
     html: string;
     /** Прошлая версия текста. Передаётся при правке — тогда шлём только новым. */
@@ -134,9 +138,13 @@ export async function notifyMentions(
   if (ids.length === 0) return new Set();
 
   const skip = input.skipUserIds;
-  const allowed = (await filterUsersWhoCanViewTask(tx, input.orgId, input.taskId, ids)).filter(
-    (id) => id !== input.actorId && !skip?.has(id),
-  );
+  // Видимость у задачи и документа считается по-разному, но правило одно:
+  // уведомление несёт название, поэтому упомянутый обязан иметь право его видеть.
+  const visible =
+    input.owner.kind === "task"
+      ? await filterUsersWhoCanViewTask(tx, input.orgId, input.owner.taskId, ids)
+      : await filterUsersWhoCanViewDocument(tx, input.orgId, input.owner.documentId, ids);
+  const allowed = visible.filter((id) => id !== input.actorId && !skip?.has(id));
   if (allowed.length === 0) return new Set();
 
   // Возвращаем тех, кому уведомление РЕАЛЬНО записано, а не тех, кого мы
@@ -151,7 +159,8 @@ export async function notifyMentions(
     kind: "mention",
     userIds: allowed,
     excludeUserId: input.actorId,
-    taskId: input.taskId,
+    // Заглушить можно проект, а не документ: у документа фильтру нечего смотреть.
+    taskId: input.owner.kind === "task" ? input.owner.taskId : undefined,
   });
   return new Set(notified);
 }

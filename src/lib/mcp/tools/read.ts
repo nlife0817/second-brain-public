@@ -1,7 +1,7 @@
 // Инструменты чтения: ориентация в организации, списки, карточка, вложения.
 
 import { z } from "zod";
-import { getAttachmentBytes, isInlineImage, listTaskAttachments } from "@/lib/core/attachments";
+import { getAttachmentBytes, isInlineImage, listOwnerAttachments } from "@/lib/core/attachments";
 import { listTaskComments } from "@/lib/core/comments";
 import { listEntityFeed } from "@/lib/core/events";
 import { listFields } from "@/lib/core/fields";
@@ -156,7 +156,7 @@ export const readTools = [
         listTaskComments(ctx, args.task_id),
         listSubtasks(ctx, args.task_id),
         listRelations(ctx, "task", args.task_id),
-        listTaskAttachments(ctx, args.task_id),
+        listOwnerAttachments(ctx, { kind: "task", taskId: args.task_id }),
         args.include_feed ? listEntityFeed("task", args.task_id, args.feed_limit) : Promise.resolve([]),
       ]);
 
