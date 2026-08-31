@@ -6,7 +6,7 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, RotateCcw, Trash2 } from "lucide-react";
+import { FileText, Folder, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/core/client";
 import type { KbTrashItem } from "@/lib/core/kb";
@@ -71,13 +71,17 @@ export function KbTrashClient({ initial }: { initial: KbTrashItem[] }) {
               key={item.id}
               className="flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-2 text-sm"
             >
-              <FileText className="size-4 shrink-0 text-muted-foreground" />
+              {item.kind === "folder" ? (
+                <Folder className="size-4 shrink-0 text-primary/70" />
+              ) : (
+                <FileText className="size-4 shrink-0 text-muted-foreground" />
+              )}
               <span className="min-w-0 flex-1">
                 <span className="font-medium">{item.title || "Без названия"}</span>
                 {item.descendants > 0 && (
                   <span className="text-xs text-muted-foreground">
                     {" "}
-                    · и {item.descendants} вложенных
+                    · и {item.descendants} внутри
                   </span>
                 )}
               </span>

@@ -771,10 +771,11 @@ export async function restoreKbDocument(ctx: AuthContext, documentId: string): P
 
 export interface KbTrashItem {
   id: string;
+  kind: KbNodeKind;
   title: string;
   deleted_at: string;
   deleted_by: string | null;
-  /** Сколько документов вернётся вместе с этим. */
+  /** Сколько узлов вернётся вместе с этим — ветка целиком, а не только дети. */
   descendants: number;
 }
 
@@ -783,17 +784,23 @@ export interface KbTrashItem {
  * снесли раздел с десятком страниц — в списке одна строка, и вернётся она целиком.
  */
 export async function listKbTrash(ctx: AuthContext): Promise<KbTrashItem[]> {
-  const rows = await prepare<{
-    id: string;
-    title: string;
-    deleted_at: string;
-    deleted_by: string | null;
-    descendants: number;
-  }>(
-    `SELECT d.id, d.title, d.deleted_at, d.deleted_by,
-            (SELECT count(*)::int FROM core.kb_documents c WHERE c.parent_id = d.id AND c.deleted_at IS NOT NULL) AS descendants
+  const rows = await prepare<KbTrashItem>(
+    // Считаем ветку целиком, а не прямых детей: восстановление вернёт именно
+    // её, и «и 6 вложенных» у папки с внуками было бы неправдой.
+    `SELECT d.id, d.kind, d.title, d.deleted_at, d.deleted_by, sub.n AS descendants
      FROM core.kb_documents d
      LEFT JOIN core.kb_documents p ON p.id = d.parent_id
+     CROSS JOIN LATERAL (
+       WITH RECURSIVE branch AS (
+         SELECT c.id FROM core.kb_documents c
+         WHERE c.parent_id = d.id AND c.deleted_at IS NOT NULL
+         UNION ALL
+         SELECT c.id FROM core.kb_documents c
+         JOIN branch b ON c.parent_id = b.id
+         WHERE c.deleted_at IS NOT NULL
+       )
+       SELECT count(*)::int AS n FROM branch
+     ) sub
      WHERE d.org_id = ? AND d.deleted_at IS NOT NULL
        AND (d.parent_id IS NULL OR p.deleted_at IS NULL)
      ORDER BY d.deleted_at DESC`,
