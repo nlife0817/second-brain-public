@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { csvToWorkbook, detectDelimiter, parseCsv, sheetToCsv } from "../sheet/csv";
 import { recalculate } from "../sheet/engine";
-import { FORMATS, formatValue, normalizeNumFmt, parseInput } from "../sheet/format";
+import {
+  FORMATS,
+  formatValue,
+  normalizeNumFmt,
+  parseInput,
+  toExcelNumFmt,
+  withDecimals,
+} from "../sheet/format";
 import {
   cellRef,
   columnIndex,
@@ -207,11 +214,46 @@ describe("ввод и форматы", () => {
     expect(formatValue(parseInput("31.08.2026").value, FORMATS.date)).toBe("31.08.2026");
   });
 
+  it("свой код формата показывает число с припиской", () => {
+    expect(formatValue(1234.5, "# ##0.0 шт.")).toBe("1 234,5 шт.");
+    expect(formatValue(1234.5, "# ##0.000")).toBe("1 234,500");
+    // Кавычки вокруг приписки — способ записи Excel, а не часть текста.
+    expect(formatValue(12, '0" шт."')).toBe("12 шт.");
+  });
+
+  it("свой код даты собирается из тех же букв, что и встроенный", () => {
+    const serial = parseInput("31.08.2026 14:05").value as number;
+    expect(formatValue(serial, "Д МММ ГГГГ")).toBe("31 авг 2026");
+    expect(formatValue(serial, "ДД.ММ.ГГ чч:мм")).toBe("31.08.26 14:05");
+    // Регистр разделяет месяц и минуты: ММ — месяц, мм — минуты.
+    expect(formatValue(serial, "ММ/мм")).toBe("08/05");
+  });
+
+  it("кнопки разрядности считают код, а не подбирают из списка", () => {
+    expect(withDecimals(FORMATS.thousandsDecimal, 1)).toBe("# ##0.000");
+    expect(withDecimals(FORMATS.thousandsDecimal, -1)).toBe("# ##0.0");
+    expect(withDecimals(FORMATS.rub, -2)).toBe("# ##0 ₽");
+    expect(withDecimals(FORMATS.percent, 1)).toBe("0.0%");
+    // От «общего» первый шаг даёт один знак, как в Excel.
+    expect(withDecimals(undefined, 1)).toBe("0.0");
+    // У даты дробной части нет — кнопка не превращает её в число.
+    expect(withDecimals(FORMATS.date, 1)).toBe(FORMATS.date);
+  });
+
+  it("свой код уезжает в xlsx на языке Excel", () => {
+    expect(toExcelNumFmt("# ##0.000")).toBe("#,##0.000");
+    expect(toExcelNumFmt("0.0 шт.")).toBe('0.0" шт."');
+    expect(toExcelNumFmt("Д МММ ГГГГ")).toBe("d mmm yyyy");
+  });
+
   it("приводит чужие коды форматов к своим", () => {
     expect(normalizeNumFmt("#,##0.00")).toBe(FORMATS.thousandsDecimal);
     expect(normalizeNumFmt("0.00%")).toBe(FORMATS.percentDecimal);
     expect(normalizeNumFmt("dd/mm/yyyy")).toBe(FORMATS.date);
     expect(normalizeNumFmt("General")).toBeUndefined();
+    // Разряды чужого кода сохраняем: округлять данные на глазок нельзя.
+    expect(normalizeNumFmt("0.000")).toBe("0.000");
+    expect(normalizeNumFmt("#,##0.0000")).toBe("# ##0.0000");
   });
 });
 

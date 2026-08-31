@@ -74,6 +74,10 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
     null,
   );
   const [liveWidth, setLiveWidth] = useState<{ col: number; width: number } | null>(null);
+  const [resizingRow, setResizingRow] = useState<{ row: number; startY: number; startH: number } | null>(
+    null,
+  );
+  const [liveHeight, setLiveHeight] = useState<{ row: number; height: number } | null>(null);
   // По чему щёлкнули правой кнопкой: от этого зависит набор пунктов меню.
   const [menuTarget, setMenuTarget] = useState<MenuTarget>("cell");
   // Протягивание за уголок: откуда тянут и куда дотянули сейчас.
@@ -107,14 +111,19 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
 
   const rowCount = visibleRows ? visibleRows.length : sheet.rows;
   const rowSizes = useMemo(() => {
-    if (!visibleRows || !sheet.heights) return sheet.heights;
+    // Высоты задаются НАСТОЯЩИМ номером строки, а геометрия считается по
+    // визуальному: под фильтром это разные числа.
+    const source = liveHeight
+      ? { ...(sheet.heights ?? {}), [String(liveHeight.row)]: liveHeight.height }
+      : sheet.heights;
+    if (!visibleRows || !source) return source;
     const out: Record<string, number> = {};
     visibleRows.forEach((row, visual) => {
-      const height = sheet.heights?.[String(row)];
+      const height = source[String(row)];
       if (height) out[String(visual)] = height;
     });
     return out;
-  }, [visibleRows, sheet.heights]);
+  }, [visibleRows, sheet.heights, liveHeight]);
 
   const widths = useMemo(() => {
     const base = liveWidth
@@ -515,6 +524,32 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
     [api, lineFromEvent, range, sheet.cols, sheet.rows],
   );
 
+  useEffect(() => {
+    if (!resizingRow) return;
+    const onMove = (event: PointerEvent) => {
+      const height = Math.max(18, Math.min(400, resizingRow.startH + event.clientY - resizingRow.startY));
+      setLiveHeight({ row: resizingRow.row, height: Math.round(height) });
+    };
+    const onUp = () => {
+      const height = liveHeight?.height;
+      const row = resizingRow.row;
+      setResizingRow(null);
+      setLiveHeight(null);
+      if (height === undefined || !editable) return;
+      api.mutate((next) => {
+        const target = next.sheets[api.sheetIndex];
+        if (!target) return;
+        target.heights = { ...(target.heights ?? {}), [String(row)]: height };
+      });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [resizingRow, liveHeight, api, editable]);
+
   // --- Буфер обмена --------------------------------------------------------
 
   const onCopy = useCallback(
@@ -790,6 +825,19 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
                 )}
               >
                 {row + 1}
+                {/* Полоска захвата у нижнего края: курсор меняется только на
+                    ней, а не на всём номере строки. */}
+                {editable && (
+                  <span
+                    title="Потяните, чтобы изменить высоту строки"
+                    onPointerDown={(event) => {
+                      event.stopPropagation();
+                      event.preventDefault();
+                      setResizingRow({ row, startY: event.clientY, startH: height });
+                    }}
+                    className="absolute inset-x-0 bottom-0 h-1 cursor-row-resize"
+                  />
+                )}
               </div>
             );
           })}

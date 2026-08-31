@@ -16,6 +16,9 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignVerticalJustifyStart,
   ArrowDownAZ,
   ArrowUpAZ,
   Bold,
@@ -46,6 +49,14 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -54,8 +65,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Divider, ToolButton } from "@/components/v2/editor/Toolbar";
-import { FORMAT_LABELS, FORMATS } from "@/lib/core/sheet/format";
-import { columnName, SHEET_LIMITS } from "@/lib/core/sheet/model";
+import {
+  FORMAT_LABELS,
+  FORMATS,
+  formatValue,
+  isDateFormat,
+  withDecimals,
+} from "@/lib/core/sheet/format";
+import { dateToSerial } from "@/lib/core/sheet/functions";
+import { columnName, getCell, SHEET_LIMITS } from "@/lib/core/sheet/model";
 import {
   DEFAULT_BORDER_COLOR,
   deleteColumns,
@@ -96,6 +114,7 @@ const FILLS = [
 
 export function SheetToolbar({ api }: { api: SheetApi }) {
   const { active, range, sheet } = api;
+  const [formatOpen, setFormatOpen] = useState(false);
   const style = api.styleAt(active.row, active.col);
   const rowsInRange = range.r2 - range.r1 + 1;
   const colsInRange = range.c2 - range.c1 + 1;
@@ -179,14 +198,40 @@ export function SheetToolbar({ api }: { api: SheetApi }) {
         <WrapText className="size-4" />
       </ToolButton>
 
+      <ToolButton
+        title="По верхнему краю"
+        active={style.va === "top"}
+        onClick={() => api.setStyle({ va: style.va === "top" ? null : "top" })}
+      >
+        <AlignVerticalJustifyStart className="size-4" />
+      </ToolButton>
+      <ToolButton
+        title="По середине"
+        active={style.va === "middle"}
+        onClick={() => api.setStyle({ va: style.va === "middle" ? null : "middle" })}
+      >
+        <AlignVerticalJustifyCenter className="size-4" />
+      </ToolButton>
+      <ToolButton
+        title="По нижнему краю"
+        active={style.va === "bottom"}
+        onClick={() => api.setStyle({ va: style.va === "bottom" ? null : "bottom" })}
+      >
+        <AlignVerticalJustifyEnd className="size-4" />
+      </ToolButton>
+
       <Divider />
 
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
-            <Button variant="ghost" size="xs" className="gap-1 px-2 text-xs">
+            <Button variant="ghost" size="xs" className="max-w-40 gap-1 px-2 text-xs">
               <Pilcrow className="size-3.5" />
-              {FORMAT_LABELS.find((f) => f.code === (style.fmt ?? FORMATS.general))?.label ?? "Формат"}
+              <span className="truncate">
+                {FORMAT_LABELS.find((f) => f.code === (style.fmt ?? FORMATS.general))?.label ??
+                  style.fmt ??
+                  "Формат"}
+              </span>
             </Button>
           }
         />
@@ -201,8 +246,27 @@ export function SheetToolbar({ api }: { api: SheetApi }) {
               <span className="text-xs text-muted-foreground">{format.sample}</span>
             </DropdownMenuItem>
           ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setFormatOpen(true)}>Свой формат…</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Разрядность считается из кода формата, а не выбирается из списка:
+          иначе «# ##0.000» было бы нечем получить. */}
+      <ToolButton
+        title="Меньше знаков после запятой"
+        onClick={() => api.setStyle({ fmt: withDecimals(style.fmt, -1) ?? null })}
+      >
+        <span className="text-[11px] font-semibold tracking-tight">,0</span>
+      </ToolButton>
+      <ToolButton
+        title="Больше знаков после запятой"
+        onClick={() => api.setStyle({ fmt: withDecimals(style.fmt, 1) ?? null })}
+      >
+        <span className="text-[11px] font-semibold tracking-tight">,00</span>
+      </ToolButton>
+
+      <CustomFormatDialog api={api} open={formatOpen} onOpenChange={setFormatOpen} />
 
       <Divider />
 
@@ -416,6 +480,93 @@ function BorderButton({ api }: { api: SheetApi }) {
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * Свой код формата. Пример считается по значению активной ячейки — так видно,
+ * что получится именно с этими данными, а не с выдуманным «1234,5678».
+ */
+function CustomFormatDialog({
+  api,
+  open,
+  onOpenChange,
+}: {
+  api: SheetApi;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const current = api.styleAt(api.active.row, api.active.col).fmt ?? "";
+  const [code, setCode] = useState(current);
+  const [seen, setSeen] = useState(open);
+  // Диалог открывается поверх уже выделенной ячейки: код берём её, а не тот,
+  // что остался от прошлого раза.
+  if (open !== seen) {
+    setSeen(open);
+    if (open) setCode(current);
+  }
+
+  const raw = getCell(api.sheet, api.active.row, api.active.col)?.v;
+  const sample =
+    typeof raw === "number"
+      ? raw
+      : isDateFormat(code)
+        ? dateToSerial(new Date())
+        : 1234.5678;
+
+  const apply = () => {
+    api.setStyle({ fmt: code.trim() || null });
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Свой формат</DialogTitle>
+        </DialogHeader>
+
+        <Input
+          autoFocus
+          value={code}
+          placeholder="# ##0.00 ₽"
+          onChange={(event) => setCode(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") apply();
+          }}
+        />
+
+        <p className="text-sm">
+          <span className="text-muted-foreground">Пример: </span>
+          <span className="font-medium">{formatValue(sample, code) || "—"}</span>
+        </p>
+
+        <div className="space-y-1 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
+          <p>
+            <code className="font-mono">0</code> и <code className="font-mono">#</code> — места
+            цифр, точка отделяет дробную часть, пробел в целой части включает разделитель
+            разрядов: <code className="font-mono"># ##0.00</code>
+          </p>
+          <p>
+            <code className="font-mono">%</code> умножает на сто, всё остальное вокруг числа
+            показывается как есть: <code className="font-mono">0.0 шт.</code>
+          </p>
+          <p>
+            Дата — <code className="font-mono">ДД</code>, <code className="font-mono">ММ</code>,{" "}
+            <code className="font-mono">МММ</code>, <code className="font-mono">ГГГГ</code>,{" "}
+            <code className="font-mono">чч</code>, <code className="font-mono">мм</code>,{" "}
+            <code className="font-mono">сс</code>. Заглавные «ММ» — месяц, строчные — минуты.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Отмена
+          </Button>
+          <Button onClick={apply}>Применить</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

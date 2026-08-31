@@ -52,7 +52,108 @@ export const FORMAT_LABELS: Array<{ code: string; label: string; sample: string 
 ];
 
 export function isDateFormat(fmt: string | undefined): boolean {
-  return fmt === FORMATS.date || fmt === FORMATS.dateTime || fmt === FORMATS.time;
+  return parseFormat(fmt).kind === "date";
+}
+
+// --- Разбор кода формата ---------------------------------------------------
+//
+// Движок один на встроенные и свои коды: список из четырнадцати — это те же
+// коды, только набранные заранее. Считать «свой формат» вторым способом значило
+// бы, что «# ##0.000» показывается не так, как «# ##0.00», и разошлись бы они на
+// первой же правке.
+//
+// Язык кода: `0` и `#` — знакоместа числа, точка отделяет дробную часть,
+// пробел и запятая внутри целой части включают разделитель разрядов, `%`
+// умножает на сто, `@` — текст, всё прочее вокруг числа показывается как есть.
+// Буквы Д, М, Г, ч, м, с (и латинские D, M, Y, h, m, s) делают код датным.
+
+export interface FormatSpec {
+  kind: "general" | "number" | "date" | "text";
+  decimals: number;
+  grouped: boolean;
+  percent: boolean;
+  prefix: string;
+  suffix: string;
+  /** Исходный код: по нему рисуется дата. */
+  pattern: string;
+}
+
+const BLANK_SPEC: FormatSpec = {
+  kind: "general",
+  decimals: 0,
+  grouped: false,
+  percent: false,
+  prefix: "",
+  suffix: "",
+  pattern: "",
+};
+
+const DATE_LETTERS = /[ДМГЧСдмгчс]|[DMYHSdmyhs]/;
+
+export function parseFormat(code: string | undefined): FormatSpec {
+  const text = (code ?? "").trim();
+  if (!text) return BLANK_SPEC;
+  if (text === FORMATS.text) return { ...BLANK_SPEC, kind: "text", pattern: text };
+
+  const first = text.search(/[0#]/);
+  if (first < 0) {
+    return DATE_LETTERS.test(text)
+      ? { ...BLANK_SPEC, kind: "date", pattern: text }
+      : { ...BLANK_SPEC, pattern: text };
+  }
+
+  let last = first;
+  for (let i = text.length - 1; i >= first; i--) {
+    if (text[i] === "0" || text[i] === "#") {
+      last = i;
+      break;
+    }
+  }
+
+  const body = text.slice(first, last + 1);
+  const tail = text.slice(last + 1);
+  // Дробную часть отделяет только точка: запятая и пробел — разделители
+  // разрядов, иначе «#,##0» читалось бы как три знака после запятой.
+  const dot = body.lastIndexOf(".");
+  const decimals = dot >= 0 ? body.length - dot - 1 : 0;
+  const integer = dot >= 0 ? body.slice(0, dot) : body;
+
+  return {
+    kind: "number",
+    decimals,
+    grouped: /[ , ]/.test(integer),
+    percent: text.includes("%"),
+    // Кавычки вокруг приписки — способ записи Excel, а не часть текста: код,
+    // скопированный оттуда, не должен показывать «1 234" шт."».
+    prefix: unquote(text.slice(0, first)),
+    suffix: unquote(tail),
+    pattern: text,
+  };
+}
+
+function unquote(text: string): string {
+  return text.replace(/"/g, "").replace(/\\(.)/g, "$1");
+}
+
+/** Обратная сборка кода — ею работают кнопки «больше/меньше знаков». */
+export function buildFormat(spec: FormatSpec): string {
+  if (spec.kind !== "number") return spec.pattern;
+  const integer = spec.grouped ? "# ##0" : "0";
+  const fraction = spec.decimals > 0 ? `.${"0".repeat(spec.decimals)}` : "";
+  return `${spec.prefix}${integer}${fraction}${spec.suffix}`;
+}
+
+/**
+ * Код с другим числом знаков после запятой. Дата и текст остаются собой: у них
+ * дробной части нет, и превращать их в число по нажатию кнопки — не то, чего
+ * ждут.
+ */
+export function withDecimals(code: string | undefined, delta: number): string | undefined {
+  const spec = parseFormat(code);
+  if (spec.kind === "date" || spec.kind === "text") return code;
+  const decimals = Math.max(0, Math.min(9, spec.decimals + delta));
+  const next = buildFormat({ ...spec, kind: "number", decimals });
+  return next || undefined;
 }
 
 // --- Показ -----------------------------------------------------------------
@@ -64,33 +165,14 @@ export function formatValue(value: CellValue, fmt?: string): string {
   if (typeof value === "string") return value;
   if (!Number.isFinite(value)) return "#NUM!";
 
-  switch (fmt) {
-    case FORMATS.text:
-      return generalNumber(value);
-    case FORMATS.integer:
-      return fixed(value, 0, false);
-    case FORMATS.decimal:
-      return fixed(value, 2, false);
-    case FORMATS.thousands:
-      return fixed(value, 0, true);
-    case FORMATS.thousandsDecimal:
-      return fixed(value, 2, true);
-    case FORMATS.percent:
-      return `${fixed(value * 100, 0, false)}%`;
-    case FORMATS.percentDecimal:
-      return `${fixed(value * 100, 2, false)}%`;
-    case FORMATS.rub:
-      return `${fixed(value, 2, true)} ₽`;
-    case FORMATS.usd:
-      return `$${fixed(value, 2, true)}`;
-    case FORMATS.eur:
-      return `€${fixed(value, 2, true)}`;
-    case FORMATS.date:
-      return formatDate(value, false, false);
-    case FORMATS.dateTime:
-      return formatDate(value, true, false);
-    case FORMATS.time:
-      return formatDate(value, true, true);
+  const spec = parseFormat(fmt);
+  switch (spec.kind) {
+    case "number": {
+      const scaled = spec.percent ? value * 100 : value;
+      return `${spec.prefix}${fixed(scaled, spec.decimals, spec.grouped)}${spec.suffix}`;
+    }
+    case "date":
+      return formatDate(value, spec.pattern);
     default:
       return generalNumber(value);
   }
@@ -121,16 +203,92 @@ function fixed(value: number, decimals: number, grouped: boolean): string {
   return fraction ? `${sign}${head},${fraction}` : `${sign}${head}`;
 }
 
-function formatDate(serial: number, withTime: boolean, timeOnly: boolean): string {
+const MONTHS_FULL = [
+  "январь",
+  "февраль",
+  "март",
+  "апрель",
+  "май",
+  "июнь",
+  "июль",
+  "август",
+  "сентябрь",
+  "октябрь",
+  "ноябрь",
+  "декабрь",
+];
+
+/**
+ * Дата по коду. Регистр разделяет месяц и минуты — «ММ» это месяц, «мм» минуты,
+ * как в самом привычном коде «ДД.ММ.ГГГГ чч:мм». Текст в кавычках остаётся
+ * текстом: иначе «мая» в шаблоне превратилось бы в минуты.
+ */
+function formatDate(serial: number, pattern: string): string {
   const date = serialToDate(serial);
   if (Number.isNaN(date.getTime())) return "#NUM!";
-  const dd = String(date.getUTCDate()).padStart(2, "0");
-  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = date.getUTCFullYear();
-  const hh = String(date.getUTCHours()).padStart(2, "0");
-  const mi = String(date.getUTCMinutes()).padStart(2, "0");
-  if (timeOnly) return `${hh}:${mi}`;
-  return withTime ? `${dd}.${mm}.${yyyy} ${hh}:${mi}` : `${dd}.${mm}.${yyyy}`;
+
+  const day = date.getUTCDate();
+  const month = date.getUTCMonth();
+  const year = date.getUTCFullYear();
+  const hours = date.getUTCHours();
+  const minutes = date.getUTCMinutes();
+  const seconds = date.getUTCSeconds();
+  const pad = (n: number) => String(n).padStart(2, "0");
+
+  const replace = (part: string) =>
+    part.replace(
+      /ГГГГ|YYYY|ГГ|YY|ММММ|MMMM|МММ|MMM|ММ|MM|М|M|ДД|DD|Д|D|чч|hh|ч|h|мм|mm|м|m|сс|ss|с|s/g,
+      (token) => {
+        switch (token) {
+          case "ГГГГ":
+          case "YYYY":
+            return String(year);
+          case "ГГ":
+          case "YY":
+            return pad(year % 100);
+          case "ММММ":
+          case "MMMM":
+            return MONTHS_FULL[month];
+          case "МММ":
+          case "MMM":
+            return MONTHS_FULL[month].slice(0, 3);
+          case "ММ":
+          case "MM":
+            return pad(month + 1);
+          case "М":
+          case "M":
+            return String(month + 1);
+          case "ДД":
+          case "DD":
+            return pad(day);
+          case "Д":
+          case "D":
+            return String(day);
+          case "чч":
+          case "hh":
+            return pad(hours);
+          case "ч":
+          case "h":
+            return String(hours);
+          case "мм":
+          case "mm":
+            return pad(minutes);
+          case "м":
+          case "m":
+            return String(minutes);
+          case "сс":
+          case "ss":
+            return pad(seconds);
+          default:
+            return String(seconds);
+        }
+      },
+    );
+
+  return pattern
+    .split(/("[^"]*")/)
+    .map((part) => (part.startsWith('"') ? part.slice(1, -1) : replace(part)))
+    .join("");
 }
 
 /** Что показать в строке формул и при входе в ячейку — исходный ввод, а не показ. */
@@ -266,7 +424,10 @@ export function normalizeNumFmt(code: string | undefined): string | undefined {
   const fmt = code.toLowerCase().trim();
   if (!fmt || fmt === "general" || fmt === "общий") return undefined;
   if (fmt === "@") return FORMATS.text;
-  if (fmt.includes("%")) return fmt.includes(".00") ? FORMATS.percentDecimal : FORMATS.percent;
+  if (fmt.includes("%")) {
+    const spec = parseFormat(stripExcel(code));
+    return buildFormat({ ...spec, kind: "number", prefix: "", suffix: "%" });
+  }
   if (/[dmyдмг]/.test(fmt) && /[/.\-]/.test(fmt)) {
     return /[hчs]/.test(fmt) ? FORMATS.dateTime : FORMATS.date;
   }
@@ -276,12 +437,21 @@ export function normalizeNumFmt(code: string | undefined): string | undefined {
   if (fmt.includes("₽") || fmt.includes("руб")) return FORMATS.rub;
   if (fmt.includes("$")) return FORMATS.usd;
   if (fmt.includes("€")) return FORMATS.eur;
-  const grouped = fmt.includes("#,##") || fmt.includes("# ##");
-  const decimals = /\.0+/.test(fmt);
-  if (grouped) return decimals ? FORMATS.thousandsDecimal : FORMATS.thousands;
-  if (decimals) return FORMATS.decimal;
-  if (/^0+$/.test(fmt)) return FORMATS.integer;
-  return undefined;
+  // Число оставляем как есть, с его разрядами и знаками: приводить «0.000» к
+  // двум знакам значило бы округлять чужие данные на глазок.
+  const spec = parseFormat(stripExcel(code));
+  if (spec.kind !== "number") return undefined;
+  return buildFormat({ ...spec, prefix: "", suffix: "" }) || undefined;
+}
+
+/** Убрать из чужого кода то, чего наш язык не знает: escape-и, кавычки, локаль. */
+function stripExcel(code: string): string {
+  return code
+    .replace(/\[[^\]]*\]/g, "")
+    .replace(/"[^"]*"/g, "")
+    .replace(/\\./g, "")
+    .replace(/_./g, "")
+    .replace(/;.*$/, "");
 }
 
 /** Наш код → код для xlsx: файл должен открыться в Excel так же, как у нас. */
@@ -314,6 +484,46 @@ export function toExcelNumFmt(code: string | undefined): string | undefined {
     case FORMATS.text:
       return "@";
     default:
-      return undefined;
+      break;
   }
+
+  // Свой код переводим: у Excel те же места под цифры, но запятая в разрядах и
+  // латинские буквы в дате.
+  const spec = parseFormat(code);
+  if (spec.kind === "date") {
+    return spec.pattern.replace(
+      /ГГГГ|ГГ|ММММ|МММ|ММ|М|ДД|Д|чч|ч|мм|м|сс|с/g,
+      (token) => EXCEL_DATE_TOKENS[token] ?? token,
+    );
+  }
+  if (spec.kind === "number") {
+    const integer = spec.grouped ? "#,##0" : "0";
+    const fraction = spec.decimals > 0 ? `.${"0".repeat(spec.decimals)}` : "";
+    return `${excelLiteral(spec.prefix)}${integer}${fraction}${excelLiteral(spec.suffix)}`;
+  }
+  return undefined;
+}
+
+const EXCEL_DATE_TOKENS: Record<string, string> = {
+  ГГГГ: "yyyy",
+  ГГ: "yy",
+  ММММ: "mmmm",
+  МММ: "mmm",
+  ММ: "mm",
+  М: "m",
+  ДД: "dd",
+  Д: "d",
+  чч: "hh",
+  ч: "h",
+  мм: "mm",
+  м: "m",
+  сс: "ss",
+  с: "s",
+};
+
+/** Приписка вокруг числа: в кавычках, чтобы Excel не принял её за свои коды. */
+function excelLiteral(text: string): string {
+  if (!text) return "";
+  if (text === "%") return text;
+  return `"${text.replace(/"/g, "")}"`;
 }
