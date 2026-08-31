@@ -46,7 +46,7 @@ export function KbVersions({
   documentId: string;
   canRestore: boolean;
   previewId: string | null;
-  onPreview: (preview: { id: string; label: string; body: string } | null) => void;
+  onPreview: (preview: { id: string; label: string; title: string; body: string } | null) => void;
   onRestored: (document: KbDocumentDetail) => void;
 }) {
   const [versions, setVersions] = useState<KbDocumentVersion[]>([]);
@@ -81,6 +81,7 @@ export function KbVersions({
         onPreview({
           id: version.id,
           label: `${dayLabel(version.created_at).toLowerCase()}, ${timeLabel(version.created_at)}`,
+          title: full.title,
           body: full.body ?? "",
         });
       } catch (e) {

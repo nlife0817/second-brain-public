@@ -112,7 +112,12 @@ export function KbDocumentClient({ initial }: { initial: KbDocumentDetail }) {
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Просмотр старой версии: правка на ней запрещена, пока её не восстановят. */
-  const [preview, setPreview] = useState<{ id: string; label: string; body: string } | null>(null);
+  const [preview, setPreview] = useState<{
+    id: string;
+    label: string;
+    title: string;
+    body: string;
+  } | null>(null);
 
   const canEdit = doc.my_role === "editor" || doc.my_role === "admin";
   const canComment = doc.my_role !== "viewer";
@@ -341,7 +346,7 @@ export function KbDocumentClient({ initial }: { initial: KbDocumentDetail }) {
           <div ref={setScrollHost} className="min-h-0 flex-1 overflow-y-auto">
             <div className="mx-auto w-full max-w-3xl px-6 py-8">
               <input
-                value={preview ? preview.label : title}
+                value={preview ? preview.title : title}
                 onChange={(e) => setTitle(e.target.value)}
                 onBlur={() => void commitTitle()}
                 disabled={!canEdit || !!preview}
