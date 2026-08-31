@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import { CheckCircle2, Clock3, MessageSquare, GitBranch } from "lucide-react";
+import { CalendarCheck, CheckCircle2, Clock3, MessageSquare, GitBranch } from "lucide-react";
 import { AvatarStack, PriorityDot, chipStyle, dueTone, formatDue } from "./bits";
 import type { ProjectWithMeta, TaskListItem } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
@@ -96,8 +96,10 @@ export const TaskCard = memo(function TaskCard({
   }
   const showTags = show("tags") && task.tags.length > 0;
   const showAssignees = show("assignees") && task.assignees.length > 0;
+  const planned = formatDue(task.planned_date, null);
   const hasMeta =
     (show("due_date") && !!due) ||
+    (show("planned_date") && !!planned) ||
     (show("estimated_minutes") && task.estimated_minutes != null) ||
     (show("subtasks") && task.subtask_count > 0) ||
     (show("comments") && task.comment_count > 0) ||
@@ -107,6 +109,14 @@ export const TaskCard = memo(function TaskCard({
   const meta = (
     <>
       {show("due_date") && due && <span className={dueTone(task.due_date, completed)}>{due}</span>}
+      {/* Дата работы отличается от срока иконкой: две одинаковые даты рядом
+          читались бы как «с и по». */}
+      {show("planned_date") && planned && (
+        <span className={cn("inline-flex items-center gap-0.5", dueTone(task.planned_date, completed))}>
+          <CalendarCheck className="size-3" />
+          {planned}
+        </span>
+      )}
       {show("estimated_minutes") && task.estimated_minutes != null && (
         <span className="inline-flex items-center gap-0.5">
           <Clock3 className="size-3" />

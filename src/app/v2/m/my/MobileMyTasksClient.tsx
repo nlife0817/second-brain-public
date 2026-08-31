@@ -1,27 +1,47 @@
 "use client";
 
-// «Мои задачи», мобильный экран: те же данные и группировка, что на десктопе
-// (/v2/my), но раскладка под палец. Карточку открывает и push-диплинк ?task=
+// «Мои задачи», мобильный экран: те же данные и та же раскладка по плану дня,
+// что на десктопе (/v2/my) — обе считает `daySections`, — но под палец. Карточку открывает и push-диплинк ?task=
 // (холодный старт), и сообщение service worker (приложение уже открыто).
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowUp, Eye, EyeOff, Plus, Search, SlidersHorizontal } from "lucide-react";
+import {
+  ArrowUp,
+  CalendarCheck,
+  CalendarPlus,
+  Eye,
+  EyeOff,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import { CreateTaskSheet, GlobalSearch, TaskSheet } from "@/components/v2/lazy";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
 import { useAppResume, useBackDismiss, useTaskDeepLink } from "@/components/v2/mobile/hooks";
 import { api } from "@/lib/core/client";
+import { daySections, unplannedStart, type PlanAction } from "@/lib/core/day-plan";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import { applyTaskChange } from "@/lib/core/task-change";
-import type { TaskListItem } from "@/lib/core/types";
+import type { TaskDetail, TaskListItem } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
+import { todayIso } from "@/lib/core/views";
 import { cn } from "@/lib/utils";
 
-function todayIso(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+/** Классы подсветки заголовка раздела — смысл тона задаёт `daySections`. */
+const TONE_CLASS = {
+  danger: "text-red-600 dark:text-red-400",
+  warn: "text-amber-700 dark:text-amber-400",
+  none: "text-muted-foreground",
+} as const;
+
+const ACTION_LABEL: Record<Exclude<PlanAction, null>, string> = {
+  take: "Взять на сегодня",
+  move: "Перенести на сегодня",
+  clear: "Снять с сегодня",
+};
 
 export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
   const { orgId, refreshProjects, refreshUnread } = useV2Store();
@@ -108,28 +128,34 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
 
   const openTask = useCallback((id: string) => setOpenTaskId(id), []);
 
-  const groups = useMemo(() => {
-    const today = todayIso();
-    const overdue: TaskListItem[] = [];
-    const dueToday: TaskListItem[] = [];
-    const upcoming: TaskListItem[] = [];
-    const noDate: TaskListItem[] = [];
-    const done: TaskListItem[] = [];
-    for (const t of tasks) {
-      if (t.completed_at) done.push(t);
-      else if (!t.due_date) noDate.push(t);
-      else if (t.due_date < today) overdue.push(t);
-      else if (t.due_date === today) dueToday.push(t);
-      else upcoming.push(t);
-    }
-    return [
-      { key: "overdue", title: "Просрочено", items: overdue, tone: "text-red-600 dark:text-red-400" },
-      { key: "today", title: "Сегодня", items: dueToday, tone: "text-amber-700 dark:text-amber-400" },
-      { key: "upcoming", title: "Предстоящие", items: upcoming, tone: "" },
-      { key: "nodate", title: "Без срока", items: noDate, tone: "" },
-      ...(showDone ? [{ key: "done", title: "Завершённые", items: done, tone: "text-muted-foreground" }] : []),
-    ].filter((g) => g.items.length > 0);
-  }, [tasks, showDone]);
+  const groups = useMemo(() => daySections(tasks, { today: todayIso(), showDone }), [tasks, showDone]);
+  const unplannedAt = unplannedStart(groups);
+
+  /**
+   * Планирование одним нажатием — то же, что на десктопе: строка правится на
+   * месте, без перечитывания списка, иначе наполнение дня на телефоне стоило бы
+   * запроса на каждый тап.
+   */
+  const plan = useCallback(
+    async (taskId: string, planned_date: string | null) => {
+      if (!orgId) return;
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, planned_date } : t)));
+      try {
+        const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`, { planned_date });
+        setTasks((prev) =>
+          prev.map((t) => (t.id === taskId ? { ...t, planned_date: updated.planned_date } : t)),
+        );
+        // Кэш держит старую строку — следующий заход на экран показал бы
+        // задачу в прежнем разделе. Сбрасываем ветку целиком, как делает
+        // `reload`: списков два (с завершёнными и без), и устареть успевают оба.
+        invalidate(`/orgs/${orgId}/tasks`);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Не удалось изменить план");
+        await load({ force: true });
+      }
+    },
+    [orgId, load],
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -219,16 +245,45 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
             </p>
           )}
 
-          {groups.map((g) => (
+          {groups.map((g, i) => (
             <section key={g.key}>
-              <h2 className={`mb-2 text-xs font-semibold uppercase tracking-wide ${g.tone || "text-muted-foreground"}`}>
+              {/* Граница между взятым в работу и запасом, из которого день и
+                  наполняют. */}
+              {i === unplannedAt && (
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Без плана
+                  </span>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+              )}
+              <h2 className={cn("mb-2 text-xs font-semibold uppercase tracking-wide", TONE_CLASS[g.tone])}>
                 {g.title} · {g.items.length}
               </h2>
               {/* Разделители вместо зазора и рамок: список задач на телефоне
                   читается как список, а не как стопка отдельных карточек. */}
               <div className="flex flex-col divide-y divide-border/50">
                 {g.items.map((t) => (
-                  <TaskCard key={t.id} task={t} variant="compact" onOpen={openTask} />
+                  <div key={t.id} className="flex items-center">
+                    <TaskCard task={t} variant="compact" onOpen={openTask} className="min-w-0 flex-1" />
+                    {g.action && (
+                      // На телефоне кнопка видна всегда: наведения здесь нет, а
+                      // цель нажатия должна быть не меньше 44 пикселей.
+                      <button
+                        onClick={() => void plan(t.id, g.action === "clear" ? null : todayIso())}
+                        aria-label={ACTION_LABEL[g.action]}
+                        className="shrink-0 rounded-lg p-2.5 text-muted-foreground active:bg-muted"
+                      >
+                        {g.action === "clear" ? (
+                          <X className="size-4" />
+                        ) : g.action === "move" ? (
+                          <CalendarCheck className="size-4" />
+                        ) : (
+                          <CalendarPlus className="size-4" />
+                        )}
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             </section>

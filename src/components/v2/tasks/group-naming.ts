@@ -20,6 +20,7 @@ import { useViewStore } from "@/lib/core/view-store";
 import {
   DUE_BUCKETS,
   ESTIMATE_BUCKETS,
+  PLANNED_BUCKETS,
   NONE_VALUE,
   PRIORITY_WEIGHT,
   orderGroupKeys,
@@ -35,6 +36,7 @@ const EMPTY_LABELS: Record<string, string> = {
   assignee: "Без исполнителя",
   tag: "Без тегов",
   due: "Без срока",
+  planned: "Без плана",
   estimate: "Без оценки",
 };
 
@@ -73,6 +75,8 @@ export function useGroupNaming(): GroupNaming {
         }
         case "due":
           return { text: DUE_BUCKETS.find((b) => b.key === key)?.label ?? key };
+        case "planned":
+          return { text: PLANNED_BUCKETS.find((b) => b.key === key)?.label ?? key };
         case "estimate":
           return { text: ESTIMATE_BUCKETS.find((b) => b.key === key)?.label ?? key };
         default:
@@ -100,6 +104,8 @@ export function useGroupNaming(): GroupNaming {
               return tags.find((t) => t.id === key)?.position ?? UNKNOWN_RANK;
             case "due":
               return DUE_BUCKETS.findIndex((b) => b.key === key);
+            case "planned":
+              return PLANNED_BUCKETS.findIndex((b) => b.key === key);
             case "estimate":
               return ESTIMATE_BUCKETS.findIndex((b) => b.key === key);
             default:
@@ -149,6 +155,8 @@ export function useGroupValues(field: GroupByField): GroupValue[] {
           return tags.map((t) => t.id);
         case "due":
           return DUE_BUCKETS.filter((b) => b.key !== NONE_VALUE).map((b) => b.key);
+        case "planned":
+          return PLANNED_BUCKETS.filter((b) => b.key !== NONE_VALUE).map((b) => b.key);
         case "estimate":
           return ESTIMATE_BUCKETS.map((b) => b.key);
         default:

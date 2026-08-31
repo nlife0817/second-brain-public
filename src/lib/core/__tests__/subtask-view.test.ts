@@ -24,6 +24,7 @@ function sub(over: Partial<TaskListItem> & { id: string }): TaskListItem {
     start_time: null,
     due_date: null,
     due_time: null,
+    planned_date: null,
     estimated_minutes: null,
     completed_at: null,
     parent_task_id: "parent",

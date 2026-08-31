@@ -12,6 +12,7 @@ import {
   Bell,
   BellOff,
   Calendar,
+  CalendarCheck,
   CalendarRange,
   Check,
   CheckCircle2,
@@ -76,7 +77,7 @@ import { useLoad } from "@/lib/core/use-load";
 import { useTaskOpenStore } from "@/lib/core/view-store";
 import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, chipStyle, dueTone, formatDue } from "./bits";
-import { DuePicker, StartPicker } from "./DuePicker";
+import { DatePicker, DuePicker, StartPicker } from "./DuePicker";
 import { handleRichTextClick } from "./editor/open-link";
 import { taskOwner } from "./editor/owner";
 import { MemberPicker } from "./MemberPicker";
@@ -387,6 +388,7 @@ export function TaskSheet({
     if ("start_time" in body) next.start_time = body.start_time as string | null;
     if ("due_date" in body) next.due_date = body.due_date as string | null;
     if ("due_time" in body) next.due_time = body.due_time as string | null;
+    if ("planned_date" in body) next.planned_date = body.planned_date as string | null;
     if ("estimated_minutes" in body) {
       next.estimated_minutes = body.estimated_minutes as number | null;
     }
@@ -1017,6 +1019,20 @@ export function TaskSheet({
       )}
     </>
   );
+  const plannedLabelContent = task && (
+    <>
+      {/* Иконка красная у сорванного плана и янтарная у сегодняшнего — тем же
+          правилом, что и подпись. */}
+      <CalendarCheck className={cn("size-4 shrink-0", dueTone(task.planned_date, isDone))} />
+      {task.planned_date ? (
+        <span className={cn("tabular-nums", dueTone(task.planned_date, isDone))}>
+          {formatDue(task.planned_date, null)}
+        </span>
+      ) : (
+        <span className="text-muted-foreground">Взять в работу</span>
+      )}
+    </>
+  );
   const startLabelContent = task && (
     <>
       <CalendarRange className="size-4 shrink-0 text-muted-foreground" />
@@ -1106,6 +1122,22 @@ export function TaskSheet({
         </DuePicker>
       ) : (
         <span className="flex items-center gap-2">{dueLabelContent}</span>
+      )}
+
+      {/* Дата работы стоит после срока, а не в паре с началом: «начало —
+          срок» это план проекта, видимый на ганте, а это личное расписание
+          дня. Времени у неё нет, поэтому календарь без часов. */}
+      <span className={propLabel}>В работу</span>
+      {canEdit ? (
+        <DatePicker
+          date={task.planned_date}
+          triggerClassName="-ml-2 flex h-7 w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 text-sm transition-colors hover:border-input hover:bg-background"
+          onCommit={(planned_date) => void patch({ planned_date })}
+        >
+          {plannedLabelContent}
+        </DatePicker>
+      ) : (
+        <span className="flex items-center gap-2">{plannedLabelContent}</span>
       )}
 
       {/* Оценку правит и таблица, и черновик, и строка подзадачи — а в самой

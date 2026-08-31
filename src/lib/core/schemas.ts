@@ -101,6 +101,8 @@ export const taskCreateSchema = z.object({
   start_time: timeSchema.nullish(),
   due_date: dateSchema.nullish(),
   due_time: timeSchema.nullish(),
+  // День, на который задачу берут в работу; времени у него нет — см. CoreTask.
+  planned_date: dateSchema.nullish(),
   estimated_minutes: z.number().int().min(0).max(60_000).nullish(),
   parent_task_id: z.uuid().nullish(),
   sprint_id: z.uuid().nullish(),
@@ -122,6 +124,8 @@ export const taskPatchSchema = z
     start_time: timeSchema.nullable().optional(),
     due_date: dateSchema.nullable().optional(),
     due_time: timeSchema.nullable().optional(),
+    // null — снять с плана дня; задача остаётся со своими сроками.
+    planned_date: dateSchema.nullable().optional(),
     estimated_minutes: z.number().int().min(0).max(60_000).nullable().optional(),
     // null — «отвязать от родителя»: подзадача становится обычной задачей.
     parent_task_id: z.uuid().nullable().optional(),

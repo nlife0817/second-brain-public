@@ -6,7 +6,7 @@
 // черновик действительно исчезает.
 
 import dynamic from "next/dynamic";
-import { Calendar, CalendarRange, ChevronsRight, Plus, X } from "lucide-react";
+import { Calendar, CalendarCheck, CalendarRange, ChevronsRight, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Avatar, PRIORITY_LABELS, StatusPill, chipStyle, formatDue } from "@/components/v2/bits";
-import { DuePicker } from "@/components/v2/DuePicker";
+import { DatePicker, DuePicker } from "@/components/v2/DuePicker";
 import { MemberPicker } from "@/components/v2/MemberPicker";
 import { SidePanel } from "@/components/v2/SidePanel";
 import { defaultStatus } from "@/lib/core/status-model";
@@ -171,6 +171,22 @@ export function TaskDraftPanel({
                 <span className="text-muted-foreground">Указать срок</span>
               )}
             </DuePicker>
+
+            <span className="text-muted-foreground">В работу</span>
+            {/* Дата работы — план дня, а не срок: времени у неё нет, поэтому
+                календарь без часов. */}
+            <DatePicker
+              date={draft.planned_date}
+              triggerClassName="-ml-2 flex w-fit max-w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors hover:border-input hover:bg-background"
+              onCommit={(planned_date) => onChange({ planned_date })}
+            >
+              <CalendarCheck className="size-4 shrink-0 text-muted-foreground" />
+              {draft.planned_date ? (
+                <span className="tabular-nums">{formatDue(draft.planned_date, null)}</span>
+              ) : (
+                <span className="text-muted-foreground">Указать день работы</span>
+              )}
+            </DatePicker>
 
             <span className="text-muted-foreground">Оценка</span>
             <div className="flex items-center gap-2">

@@ -17,6 +17,7 @@ export interface TaskDraft {
   start_time: string | null;
   due_date: string | null;
   due_time: string | null;
+  planned_date: string | null;
   estimated_minutes: number | null;
   assignee_ids: string[];
   tag_ids: string[];
@@ -43,6 +44,10 @@ export function emptyDraft(defaults?: Partial<TaskDraft>): TaskDraft {
     start_time: null,
     due_date: todayIso(),
     due_time: null,
+    // План дня пустой: «беру сегодня» — это решение, а не свойство только что
+    // заведённой задачи. Подставленное сегодня забивало бы список дня всем, что
+    // за день успели записать.
+    planned_date: null,
     estimated_minutes: null,
     assignee_ids: [],
     tag_ids: [],
@@ -68,6 +73,7 @@ export function draftToCreateBody(draft: TaskDraft): Record<string, unknown> {
     start_time: draft.start_date ? draft.start_time : null,
     due_date: draft.due_date,
     due_time: draft.due_date ? draft.due_time : null,
+    planned_date: draft.planned_date,
     estimated_minutes: draft.estimated_minutes,
     placements: draft.project_ids.map((project_id) => ({ project_id })),
     assignee_ids: draft.assignee_ids,

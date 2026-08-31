@@ -10,6 +10,7 @@ import { useV2Store } from "@/lib/core/ui-store";
 import { useViewStore } from "@/lib/core/view-store";
 import {
   BASE_FILTER_FIELDS,
+  FILTER_PRESETS,
   HIDE_VALUE,
   SHOW_VALUE,
   ME_VALUE,
@@ -18,7 +19,9 @@ import {
   OPERATOR_LABELS,
   VALUELESS_OPERATORS,
   fieldMetaFor,
+  isPresetActive,
   newFilterId,
+  togglePreset,
   type FilterCondition,
   type FilterField,
   type FilterGroup,
@@ -141,6 +144,30 @@ export function FilterBuilder() {
 
   return (
     <div className="flex flex-col gap-2.5">
+      {/* Готовые срезы поверх конструктора: «что я делаю сегодня» собирается
+          руками за четыре клика, и делать это каждое утро незачем. Чип —
+          переключатель своей группы условий, чужие он не трогает. */}
+      <div className="flex flex-wrap gap-1">
+        {FILTER_PRESETS.map((preset) => {
+          const active = isPresetActive(groups, preset);
+          return (
+            <button
+              key={preset.id}
+              onClick={() => setGroups(togglePreset(groups, preset))}
+              title={preset.hint}
+              className={cn(
+                "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+                active
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              {preset.label}
+            </button>
+          );
+        })}
+      </div>
+
       {groups.length === 0 && (
         <p className="px-1 text-xs text-muted-foreground">
           Условий нет — показаны все доступные задачи. Группы объединяются через «И».

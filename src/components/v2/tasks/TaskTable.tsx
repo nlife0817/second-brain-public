@@ -14,6 +14,7 @@ import {
   DueCell,
   EstimateCell,
   PlainDateCell,
+  PlannedCell,
   PriorityCell,
   ProjectCell,
   StartCell,
@@ -289,6 +290,8 @@ function Cell({
       return <StartCell task={task} ctx={ctx} />;
     case "due_date":
       return <DueCell task={task} ctx={ctx} />;
+    case "planned_date":
+      return <PlannedCell task={task} ctx={ctx} />;
     case "estimated_minutes":
       return <EstimateCell task={task} ctx={ctx} />;
     case "subtasks":

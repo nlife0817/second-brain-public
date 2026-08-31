@@ -2,26 +2,43 @@
 
 // «Мои задачи»: назначенные мне + личный инбокс (задачи без проекта).
 //
+// Экран разложен по плану дня, а не по дедлайну: сверху то, что я на сегодня
+// взял, ниже — «Без плана», разложенное по срокам, откуда день и наполняют
+// кнопкой «Сегодня». Раскладку считает чистая `daySections` из lib/core — тем
+// же порядком её показывает мобильный экран.
+//
 // Первый список приходит из серверного рендера (`initial`) — на открытии экрана
 // запроса нет. Дальше данные живут в клиентском кэше: возврат на экран рисуется
 // мгновенно, а переключение «показывать завершённые» тянет свой список один раз.
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
-import { CheckCircle2, Plus } from "lucide-react";
+import { CalendarCheck, CalendarPlus, CheckCircle2, Plus, X } from "lucide-react";
 import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { TaskSheet } from "@/components/v2/lazy";
 import { api } from "@/lib/core/client";
+import { daySections, unplannedStart, type PlanAction } from "@/lib/core/day-plan";
 import { invalidate, useQuery } from "@/lib/core/query";
 import { applyTaskChange } from "@/lib/core/task-change";
-import type { TaskListItem } from "@/lib/core/types";
+import type { TaskDetail, TaskListItem } from "@/lib/core/types";
 import { useV2Store } from "@/lib/core/ui-store";
+import { todayIso } from "@/lib/core/views";
+import { cn } from "@/lib/utils";
 
-function todayIso(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+/** Классы подсветки заголовка раздела — смысл тона задаёт `daySections`. */
+const TONE_CLASS = {
+  danger: "text-red-600 dark:text-red-400",
+  warn: "text-amber-700 dark:text-amber-400",
+  none: "text-muted-foreground",
+} as const;
+
+/** Подпись кнопки раздела: одно нажатие вместо открытия карточки. */
+const ACTION_LABEL: Record<Exclude<PlanAction, null>, string> = {
+  take: "Взять на сегодня",
+  move: "Перенести на сегодня",
+  clear: "Снять с сегодня",
+};
 
 export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
   const orgId = useV2Store((s) => s.orgId);
@@ -72,28 +89,31 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
   // Стабильная ссылка — иначе memo на TaskCard не работает.
   const openTask = useCallback((id: string) => setOpenTaskId(id), []);
 
-  const groups = useMemo(() => {
-    const today = todayIso();
-    const overdue: TaskListItem[] = [];
-    const dueToday: TaskListItem[] = [];
-    const upcoming: TaskListItem[] = [];
-    const noDate: TaskListItem[] = [];
-    const done: TaskListItem[] = [];
-    for (const t of tasks) {
-      if (t.completed_at) done.push(t);
-      else if (!t.due_date) noDate.push(t);
-      else if (t.due_date < today) overdue.push(t);
-      else if (t.due_date === today) dueToday.push(t);
-      else upcoming.push(t);
-    }
-    return [
-      { key: "overdue", title: "Просрочено", items: overdue, tone: "text-red-600 dark:text-red-400" },
-      { key: "today", title: "Сегодня", items: dueToday, tone: "text-amber-700 dark:text-amber-400" },
-      { key: "upcoming", title: "Предстоящие", items: upcoming, tone: "" },
-      { key: "nodate", title: "Без срока", items: noDate, tone: "" },
-      ...(showDone ? [{ key: "done", title: "Завершённые", items: done, tone: "text-muted-foreground" }] : []),
-    ].filter((g) => g.items.length > 0);
-  }, [tasks, showDone]);
+  const groups = useMemo(() => daySections(tasks, { today: todayIso(), showDone }), [tasks, showDone]);
+  /** Перед этим разделом идёт граница «Без плана»; -1 — границы нет. */
+  const unplannedAt = unplannedStart(groups);
+
+  /**
+   * Планирование одним нажатием. Строку правим на месте, не перечитывая список:
+   * задача только переезжает между разделами, а полный перечит на каждое
+   * «взять сегодня» стоил бы запроса на каждый клик при наполнении дня.
+   */
+  const plan = useCallback(
+    async (taskId: string, planned_date: string | null) => {
+      if (!orgId) return;
+      update((prev) => prev.map((t) => (t.id === taskId ? { ...t, planned_date } : t)));
+      try {
+        const updated = await api.patch<TaskDetail>(`/orgs/${orgId}/tasks/${taskId}`, { planned_date });
+        update((prev) =>
+          prev.map((t) => (t.id === taskId ? { ...t, planned_date: updated.planned_date } : t)),
+        );
+      } catch (e) {
+        setCreateError(e instanceof Error ? e.message : "Не удалось изменить план");
+        await reload();
+      }
+    },
+    [orgId, update, reload],
+  );
 
   const message = createError ?? error;
 
@@ -139,9 +159,20 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
             </div>
           )}
 
-          {groups.map((g) => (
+          {groups.map((g, i) => (
             <section key={g.key}>
-              <h2 className={`mb-2 text-xs font-semibold uppercase tracking-wide ${g.tone || "text-muted-foreground"}`}>
+              {/* Граница между «моим днём» и запасом, из которого его наполняют:
+                  разделы ниже — это ещё не взятая работа. Подпись рисуется у
+                  первого такого раздела, какой бы он ни был по счёту. */}
+              {i === unplannedAt && (
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Без плана
+                  </span>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+              )}
+              <h2 className={cn("mb-2 text-xs font-semibold uppercase tracking-wide", TONE_CLASS[g.tone])}>
                 {g.title} · {g.items.length}
               </h2>
               {/* Плотный список: строки без зазора, разделены линией. Отрицательный
@@ -149,7 +180,29 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
                   а подсветку наведения растягивает на всю ширину колонки. */}
               <div className="-mx-2 flex flex-col divide-y divide-border/40">
                 {g.items.map((t) => (
-                  <TaskCard key={t.id} task={t} variant="row" onOpen={openTask} />
+                  <div key={t.id} className="group/row flex items-center">
+                    <TaskCard task={t} variant="row" onOpen={openTask} className="min-w-0 flex-1" />
+                    {g.action && (
+                      // Кнопка снаружи карточки: строка списка сама по себе
+                      // кнопка (открыть задачу), а вложенная кнопка в кнопку —
+                      // невалидная разметка. Видна при наведении и по фокусу с
+                      // клавиатуры, иначе список пестрит иконками.
+                      <button
+                        onClick={() => void plan(t.id, g.action === "clear" ? null : todayIso())}
+                        title={ACTION_LABEL[g.action]}
+                        aria-label={ACTION_LABEL[g.action]}
+                        className="mr-2 shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
+                      >
+                        {g.action === "clear" ? (
+                          <X className="size-3.5" />
+                        ) : g.action === "move" ? (
+                          <CalendarCheck className="size-3.5" />
+                        ) : (
+                          <CalendarPlus className="size-3.5" />
+                        )}
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             </section>

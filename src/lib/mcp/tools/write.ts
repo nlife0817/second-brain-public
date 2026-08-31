@@ -70,6 +70,7 @@ export const writeTools = [
       start_time: time.nullish(),
       due_date: date.nullish(),
       due_time: time.nullish(),
+      planned_date: date.nullish().describe("День, на который задачу берут в работу; отдельно от дедлайна"),
       estimated_minutes: z.number().int().min(0).nullish(),
       parent_task_id: uuid.optional().describe("Сделать задачу подзадачей указанной"),
     }),
@@ -83,6 +84,7 @@ export const writeTools = [
         start_time: args.start_time,
         due_date: args.due_date,
         due_time: args.due_time,
+        planned_date: args.planned_date,
         estimated_minutes: args.estimated_minutes,
         parent_task_id: args.parent_task_id,
         placements: args.project_ids?.map((project_id) => ({ project_id })),
@@ -116,6 +118,9 @@ export const writeTools = [
       start_time: time.nullish(),
       due_date: date.nullish(),
       due_time: time.nullish(),
+      planned_date: date
+        .nullish()
+        .describe("День работы над задачей; null — снять с плана дня, сроки при этом не меняются"),
       estimated_minutes: z.number().int().min(0).nullish(),
       parent_task_id: uuid.nullish().describe("null — отвязать от родителя"),
       field_values: z
