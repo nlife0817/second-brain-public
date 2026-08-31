@@ -518,6 +518,7 @@ export const CARD_FIELDS = [
   { id: "project", label: "Проект" },
   { id: "tags", label: "Теги" },
   { id: "due_date", label: "Дедлайн" },
+  { id: "planned_date", label: "Дата работы" },
   { id: "estimated_minutes", label: "Оценка" },
   { id: "subtasks", label: "Подзадачи" },
   { id: "comments", label: "Комментарии" },
