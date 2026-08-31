@@ -28,8 +28,10 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import {
   buildMetrics,
   offsetOf,
@@ -50,8 +52,10 @@ import {
   type CellRange,
   type CellStyle,
 } from "@/lib/core/sheet/model";
+import { fillDownExtent } from "@/lib/core/sheet/fill";
 import { offsetFormula } from "@/lib/core/sheet/formula";
 import { cn } from "@/lib/utils";
+import { SheetMenu, type MenuTarget } from "./SheetMenu";
 import type { SheetApi } from "./use-sheet";
 
 /** Ширина колонки с номерами строк и высота строки с буквами колонок. */
@@ -70,6 +74,14 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
     null,
   );
   const [liveWidth, setLiveWidth] = useState<{ col: number; width: number } | null>(null);
+  // По чему щёлкнули правой кнопкой: от этого зависит набор пунктов меню.
+  const [menuTarget, setMenuTarget] = useState<MenuTarget>("cell");
+  // Протягивание за уголок: откуда тянут и куда дотянули сейчас.
+  const [fillFrom, setFillFrom] = useState<CellRange | null>(null);
+  const [fillTo, setFillTo] = useState<CellRange | null>(null);
+  // Обработчик отпускания кнопки живёт в окне и видит только то, что было при
+  // подписке, — актуальная цель нужна ему ссылкой.
+  const fillRef = useRef<CellRange | null>(null);
 
   // --- Геометрия -----------------------------------------------------------
 
@@ -105,9 +117,17 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
   }, [visibleRows, sheet.heights]);
 
   const widths = useMemo(() => {
-    if (!liveWidth) return sheet.widths;
-    return { ...(sheet.widths ?? {}), [String(liveWidth.col)]: liveWidth.width };
-  }, [sheet.widths, liveWidth]);
+    const base = liveWidth
+      ? { ...(sheet.widths ?? {}), [String(liveWidth.col)]: liveWidth.width }
+      : sheet.widths;
+    if (!api.hiddenCols.size) return base;
+    // Скрытая колонка — нулевая ширина, а не пропуск в нумерации: буквы обязаны
+    // остаться на своих местах. Строки прячутся иначе (выпадают из нумерации),
+    // потому что там номер и есть номер строки, а не адрес колонки в формуле.
+    const out = { ...(base ?? {}) };
+    for (const col of api.hiddenCols) out[String(col)] = 0;
+    return out;
+  }, [sheet.widths, liveWidth, api.hiddenCols]);
 
   const rows: Metrics = useMemo(
     () => buildMetrics(rowCount, rowSizes, DEFAULT_ROW_HEIGHT),
@@ -147,6 +167,22 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
         ? ROW_HEADER_W + offsetOf(cols, col)
         : ROW_HEADER_W + offsetOf(cols, col) - scroll.left,
     [cols, frozenCols, scroll.left],
+  );
+
+  /** Прямоугольник области на экране. `null` — её строки скрыты фильтром. */
+  const boxOf = useCallback(
+    (area: CellRange) => {
+      const first = visualOf ? visualOf.get(area.r1) : area.r1;
+      const last = visualOf ? visualOf.get(area.r2) : area.r2;
+      if (first === undefined || last === undefined) return null;
+      return {
+        left: colLeft(area.c1),
+        top: rowTop(first),
+        width: offsetOf(cols, area.c2 + 1) - offsetOf(cols, area.c1),
+        height: offsetOf(rows, last + 1) - offsetOf(rows, first),
+      };
+    },
+    [visualOf, colLeft, rowTop, cols, rows],
   );
 
   // --- Размер окна ---------------------------------------------------------
@@ -247,6 +283,17 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
           fillDown();
           return;
         }
+        if (key === "v" && shift) {
+          // Читать буфер синхронно из обработчика клавиши нечем — спрашиваем
+          // браузер, а при отказе вставляем собственную копию.
+          event.preventDefault();
+          if (!editable) return;
+          void navigator.clipboard
+            .readText()
+            .then((text) => api.pasteSpecial("values", text))
+            .catch(() => api.pasteSpecial("values"));
+          return;
+        }
         if (event.key === "Home") {
           event.preventDefault();
           api.select({ row: 0, col: 0 });
@@ -325,28 +372,43 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
 
   // --- Мышь ----------------------------------------------------------------
 
-  const pointFromEvent = useCallback(
+  /**
+   * Строка и колонка под курсором. `-1` означает «курсор в заголовке»: по нему
+   * меню правой кнопки и отличает щелчок по номеру строки от щелчка по ячейке.
+   */
+  const lineFromEvent = useCallback(
     (event: { clientX: number; clientY: number }): { row: number; col: number } | null => {
       const host = hostRef.current;
       if (!host) return null;
       const box = host.getBoundingClientRect();
       const x = event.clientX - box.left;
       const y = event.clientY - box.top;
-      if (x < ROW_HEADER_W || y < COL_HEADER_H) return null;
 
       const bodyX = x - ROW_HEADER_W;
       const bodyY = y - COL_HEADER_H;
       const col =
-        bodyX < frozenWidth
-          ? lineAt(cols, bodyX, sheet.cols)
-          : lineAt(cols, bodyX + scroll.left, sheet.cols);
+        x < ROW_HEADER_W
+          ? -1
+          : bodyX < frozenWidth
+            ? lineAt(cols, bodyX, sheet.cols)
+            : lineAt(cols, bodyX + scroll.left, sheet.cols);
       const visual =
-        bodyY < frozenHeight
-          ? lineAt(rows, bodyY, rowCount)
-          : lineAt(rows, bodyY + scroll.top, rowCount);
-      return { row: rowAt(visual), col };
+        y < COL_HEADER_H
+          ? -1
+          : bodyY < frozenHeight
+            ? lineAt(rows, bodyY, rowCount)
+            : lineAt(rows, bodyY + scroll.top, rowCount);
+      return { row: visual < 0 ? -1 : rowAt(visual), col };
     },
     [cols, rows, frozenWidth, frozenHeight, scroll, sheet.cols, rowCount, rowAt],
+  );
+
+  const pointFromEvent = useCallback(
+    (event: { clientX: number; clientY: number }): { row: number; col: number } | null => {
+      const at = lineFromEvent(event);
+      return at && at.row >= 0 && at.col >= 0 ? at : null;
+    },
+    [lineFromEvent],
   );
 
   useEffect(() => {
@@ -390,6 +452,68 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
       window.removeEventListener("pointerup", onUp);
     };
   }, [resizing, liveWidth, api, editable]);
+
+  useEffect(() => {
+    if (!fillFrom) return;
+    const onMove = (event: PointerEvent) => {
+      const point = pointFromEvent(event);
+      if (!point) return;
+      const target = fillTarget(fillFrom, point);
+      fillRef.current = target;
+      setFillTo(target);
+    };
+    const onUp = () => {
+      const target = fillRef.current;
+      const source = fillFrom;
+      setFillFrom(null);
+      setFillTo(null);
+      fillRef.current = null;
+      if (!target || sameRange(target, source)) return;
+      api.fill(source, target);
+      api.selectRange(target);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [fillFrom, api, pointFromEvent]);
+
+  /**
+   * Правая кнопка. Выделение при этом ведёт себя как в Excel: щелчок по уже
+   * выделенному его сохраняет, щелчок мимо — переносит выделение туда, куда
+   * щёлкнули. Иначе «удалить строку» из меню удаляло бы не ту строку, по
+   * которой щёлкнули.
+   */
+  const onContextMenu = useCallback(
+    (event: ReactMouseEvent) => {
+      const at = lineFromEvent(event);
+      if (!at) return;
+
+      if (at.row < 0 && at.col < 0) {
+        setMenuTarget("corner");
+        return;
+      }
+      if (at.col < 0) {
+        if (at.row < range.r1 || at.row > range.r2) {
+          api.selectRange({ r1: at.row, c1: 0, r2: at.row, c2: sheet.cols - 1 });
+        }
+        setMenuTarget("row");
+        return;
+      }
+      if (at.row < 0) {
+        if (at.col < range.c1 || at.col > range.c2) {
+          api.selectRange({ r1: 0, c1: at.col, r2: sheet.rows - 1, c2: at.col });
+        }
+        setMenuTarget("col");
+        return;
+      }
+      if (!rangeContains(range, at.row, at.col)) api.select(at);
+      setMenuTarget("cell");
+    },
+    [api, lineFromEvent, range, sheet.cols, sheet.rows],
+  );
 
   // --- Буфер обмена --------------------------------------------------------
 
@@ -506,6 +630,9 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
     for (const col of colLines) pushCell(visual, col);
   }
 
+  const selectionBox = boxOf(range);
+  const fillBox = fillTo ? boxOf(fillTo) : null;
+
   const editingBox = editing
     ? (() => {
         const visual = visualOf ? (visualOf.get(editing.row) ?? -1) : editing.row;
@@ -535,12 +662,21 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
       className="relative min-h-0 flex-1 overflow-auto bg-background outline-none"
     >
       {/* Слой в координатах окна. Нулевая высота и `sticky` перед распоркой —
-          то, что удерживает его на месте, не отнимая у контейнера прокрутку. */}
-      <div className="sticky left-0 top-0 z-10 h-0 w-0">
-        <div
-          style={{ width: viewport.width, height: viewport.height }}
-          className="absolute left-0 top-0 overflow-hidden"
-        >
+          то, что удерживает его на месте, не отнимая у контейнера прокрутку.
+
+          Правую кнопку ловим на перехвате: обработчик Base UI висит на самом
+          триггере, и без capture меню открылось бы раньше, чем мы поняли, по
+          чему щёлкнули. */}
+      <div className="sticky left-0 top-0 z-10 h-0 w-0" onContextMenuCapture={onContextMenu}>
+        <ContextMenu>
+          <ContextMenuTrigger
+            render={
+              <div
+                style={{ width: viewport.width, height: viewport.height }}
+                className="absolute left-0 top-0 overflow-hidden"
+              />
+            }
+          >
           {/* Ловец мыши лежит под всем и ловит всё: сами ячейки событий не
               принимают (`pointer-events-none`), поэтому попадание считается
               арифметикой, а не деревом DOM — иначе закреплённая область и
@@ -563,6 +699,38 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
           />
 
           {cells}
+
+          {/* Подсказка протягивания: докуда дотянули прямо сейчас */}
+          {fillTo && fillBox && (
+            <div
+              style={fillBox}
+              className="pointer-events-none absolute z-[3] border-2 border-dashed border-primary/70"
+            />
+          )}
+
+          {/* Уголок выделения: за него тянут ряд */}
+          {editable && !editing && selectionBox && (
+            <div
+              style={{
+                left: selectionBox.left + selectionBox.width - 4,
+                top: selectionBox.top + selectionBox.height - 4,
+              }}
+              title="Потяните, чтобы продолжить ряд. Двойной щелчок — до конца соседней колонки"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                setFillFrom(range);
+                fillRef.current = range;
+              }}
+              onDoubleClick={() => {
+                const last = fillDownExtent(api.workbook, api.sheetIndex, range);
+                if (last <= range.r2) return;
+                const target = { ...range, r2: last };
+                api.fill(range, target);
+                api.selectRange(target);
+              }}
+              className="absolute z-[3] size-2 cursor-crosshair rounded-[1px] border border-background bg-primary"
+            />
+          )}
 
           {/* Заголовки колонок */}
           {colLines.map((col) => {
@@ -663,7 +831,9 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
               className="absolute z-[6] border-2 border-primary bg-background px-1.5 text-[13px] outline-none"
             />
           )}
-        </div>
+          </ContextMenuTrigger>
+          <SheetMenu api={api} target={menuTarget} editable={editable} />
+        </ContextMenu>
       </div>
 
       <div
@@ -675,6 +845,29 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
       />
     </div>
   );
+}
+
+/**
+ * Куда дотянули: ось выбирается по тому, куда протянули дальше. Диагональ в
+ * таблицах не тянут — она означала бы два ряда сразу, и ни Excel, ни Sheets её
+ * не поддерживают.
+ */
+function fillTarget(source: CellRange, point: { row: number; col: number }): CellRange {
+  const down = point.row - source.r2;
+  const up = source.r1 - point.row;
+  const right = point.col - source.c2;
+  const left = source.c1 - point.col;
+
+  if (Math.max(down, up) >= Math.max(right, left)) {
+    if (down <= 0 && up <= 0) return source;
+    return down >= up ? { ...source, r2: point.row } : { ...source, r1: point.row };
+  }
+  if (right <= 0 && left <= 0) return source;
+  return right >= left ? { ...source, c2: point.col } : { ...source, c1: point.col };
+}
+
+function sameRange(a: CellRange, b: CellRange): boolean {
+  return a.r1 === b.r1 && a.r2 === b.r2 && a.c1 === b.c1 && a.c2 === b.c2;
 }
 
 /** Цвета линий, уже разведённые между соседями: пусто — линии нет. */

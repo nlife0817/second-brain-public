@@ -108,6 +108,13 @@ export interface SheetTab {
   frozen?: FrozenPanes;
   sort?: SheetSort | null;
   filters?: ColumnFilter[];
+  /**
+   * Скрытые вручную строки и колонки. Отдельно от фильтра намеренно: фильтр —
+   * это вид, который снимается одной кнопкой, а спрятанная колонка со служебным
+   * расчётом обязана остаться спрятанной и после сброса фильтров.
+   */
+  hiddenR?: number[];
+  hiddenC?: number[];
 }
 
 export interface Workbook {
@@ -386,6 +393,11 @@ function normalizeSheet(
     if (col >= 0) sheet.sort = { col, dir: sort.dir === "desc" ? "desc" : "asc" };
   }
 
+  const hiddenR = normalizeHidden(raw.hiddenR, sheet.rows);
+  if (hiddenR) sheet.hiddenR = hiddenR;
+  const hiddenC = normalizeHidden(raw.hiddenC, sheet.cols);
+  if (hiddenC) sheet.hiddenC = hiddenC;
+
   const filters = Array.isArray(raw.filters) ? raw.filters : [];
   const clean: ColumnFilter[] = [];
   for (const item of filters.slice(0, SHEET_LIMITS.cols)) {
@@ -470,6 +482,18 @@ function normalizeSizes(
     out[String(index)] = Math.round(Math.min(max, Math.max(min, value)));
   }
   return Object.keys(out).length ? out : undefined;
+}
+
+/** Список скрытых линий: без повторов, по возрастанию и внутри листа. */
+function normalizeHidden(input: unknown, count: number): number[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const out = new Set<number>();
+  for (const item of input.slice(0, SHEET_LIMITS.rows)) {
+    if (typeof item !== "number" || !Number.isInteger(item)) continue;
+    if (item < 0 || item >= count) continue;
+    out.add(item);
+  }
+  return out.size ? [...out].sort((a, b) => a - b) : undefined;
 }
 
 /**

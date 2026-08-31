@@ -21,6 +21,7 @@ import {
   countCells,
   emptySheet,
   getCell,
+  isBlankCell,
   normalizeRange,
   parseWorkbook,
   serializeWorkbook,
@@ -29,6 +30,7 @@ import {
   usedBounds,
   type CellRange,
   type CellStyle,
+  type CellValue,
   type SheetCell,
   type SheetTab,
   type Workbook,
@@ -46,6 +48,8 @@ import {
   type BorderPreset,
 } from "@/lib/core/sheet/ops";
 import { parseClipboard, toClipboard } from "@/lib/core/sheet/csv";
+import { fillRange } from "@/lib/core/sheet/fill";
+import { offsetFormula } from "@/lib/core/sheet/formula";
 import { compareValues } from "@/lib/core/sheet/functions";
 import type { DocSaveStatus } from "@/components/v2/editor/useDocEditor";
 
@@ -63,6 +67,34 @@ export interface CellPoint {
 export interface SheetEditing extends CellPoint {
   text: string;
 }
+
+/**
+ * Что кладётся в буфер при копировании внутри таблицы.
+ *
+ * Наружу уходит текст (его и ждут письмо и чужая таблица), а формулы, значения
+ * и оформление остаются здесь. Своя копия узнаётся по совпадению текста: если
+ * человек скопировал что-то ещё, системный буфер уже не наш, и вставлять надо
+ * то, что в нём лежит.
+ *
+ * Стиль хранится объектом, а не индексом: таблица стилей книги между
+ * копированием и вставкой могла быть переиндексирована уборкой неиспользуемых.
+ */
+interface CopiedCell {
+  row: number;
+  col: number;
+  v?: CellValue;
+  f?: string;
+  style?: CellStyle;
+}
+
+interface SheetClipboard {
+  text: string;
+  source: CellRange;
+  cells: CopiedCell[];
+}
+
+/** Что именно вставляем. «Всё» — обычная вставка. */
+export type PasteMode = "all" | "values" | "formats" | "transpose";
 
 export interface UseSheetOptions {
   /** Тело документа: JSON книги. */
@@ -108,6 +140,15 @@ export interface SheetApi {
 
   copy: () => string;
   paste: (text: string) => void;
+  /**
+   * Вставка с оговоркой. `text` — то, что лежит в системном буфере, если оно
+   * доступно вызывающему; без него берётся собственная копия.
+   */
+  pasteSpecial: (mode: PasteMode, text?: string) => void;
+  /** Есть ли своя копия: без неё «вставить только формат» вставлять нечего. */
+  hasCopy: boolean;
+  /** Протянуть образец до области: `target` включает в себя `source`. */
+  fill: (source: CellRange, target: CellRange) => void;
 
   addSheet: () => void;
   renameSheet: (name: string) => void;
@@ -116,7 +157,12 @@ export interface SheetApi {
   sortBy: (col: number, direction: "asc" | "desc") => void;
   setFilter: (col: number, filter: { values?: string[] | null; contains?: string } | null) => void;
   filterValues: (col: number) => string[];
+  /** Строки, которых не видно: спрятанные руками и отсеянные фильтром вместе. */
   hidden: Set<number>;
+  hiddenCols: Set<number>;
+  hideLines: (axis: "row" | "col") => void;
+  showLines: (axis: "row" | "col") => void;
+  showAllLines: () => void;
 
   status: DocSaveStatus;
   /**
@@ -441,23 +487,40 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
     [sheet, workbook],
   );
 
+  const clipboardRef = useRef<SheetClipboard | null>(null);
+  const [hasCopy, setHasCopy] = useState(false);
+
   const copy = useCallback(() => {
     const rows: string[][] = [];
+    const cells: CopiedCell[] = [];
     for (let row = range.r1; row <= range.r2; row++) {
       const line: string[] = [];
       for (let col = range.c1; col <= range.c2; col++) {
         // В буфер уходит показанное: так вставка в письмо или в чужую таблицу
-        // выглядит как на экране. Формулы при этом остаются здесь.
+        // выглядит как на экране. Формулы и оформление остаются здесь.
         line.push(display(row, col));
+        const cell = getCell(sheet, row, col);
+        if (!cell) continue;
+        const copied: CopiedCell = { row, col };
+        if (cell.f) copied.f = cell.f;
+        if (cell.v !== undefined) copied.v = cell.v;
+        const style = styleOf(workbook, cell);
+        if (Object.keys(style).length) copied.style = style;
+        cells.push(copied);
       }
       rows.push(line);
     }
-    return toClipboard(rows);
-  }, [range, display]);
+    const text = toClipboard(rows);
+    clipboardRef.current = { text, source: range, cells };
+    setHasCopy(true);
+    return text;
+  }, [range, display, sheet, workbook]);
 
-  const paste = useCallback(
-    (text: string) => {
-      const rows = parseClipboard(text);
+  /** Вставка чужого текста: всё, что приехало, разбирается как ввод руками. */
+  const pasteText = useCallback(
+    (text: string, transpose: boolean) => {
+      const parsed = parseClipboard(text);
+      const rows = transpose ? transposeRows(parsed) : parsed;
       if (!rows.length) return;
       mutate((next) => {
         const target = next.sheets[index];
@@ -480,6 +543,117 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
       });
     },
     [active, index, mutate, selectRange, sheet.rows, sheet.cols],
+  );
+
+  /**
+   * Вставка собственной копии. Обходим ВСЮ область образца, а не только
+   * заполненные ячейки: пустая клетка внутри копии — тоже её часть, и вставка
+   * обязана стереть то, что лежало под ней.
+   */
+  const pasteCells = useCallback(
+    (clip: SheetClipboard, mode: PasteMode) => {
+      const transpose = mode === "transpose";
+      const height = clip.source.r2 - clip.source.r1 + 1;
+      const width = clip.source.c2 - clip.source.c1 + 1;
+      const at = { row: active.row, col: active.col };
+      const targetOf = (row: number, col: number) =>
+        transpose
+          ? { row: at.row + (col - clip.source.c1), col: at.col + (row - clip.source.r1) }
+          : { row: at.row + (row - clip.source.r1), col: at.col + (col - clip.source.c1) };
+
+      mutate((next) => {
+        const target = next.sheets[index];
+        if (!target) return;
+        ensureSize(
+          target,
+          at.row + (transpose ? width : height),
+          at.col + (transpose ? height : width),
+        );
+        const byRef = new Map(clip.cells.map((cell) => [cellRef(cell.row, cell.col), cell]));
+
+        for (let row = clip.source.r1; row <= clip.source.r2; row++) {
+          for (let col = clip.source.c1; col <= clip.source.c2; col++) {
+            const to = targetOf(row, col);
+            if (to.row >= target.rows || to.col >= target.cols) continue;
+            const copied = byRef.get(cellRef(row, col));
+            const existing = getCell(target, to.row, to.col);
+            // «Только значения» не трогает оформление получателя — колонка
+            // денег обязана остаться колонкой денег.
+            const keepStyle =
+              mode === "values" && existing?.s !== undefined ? existing.s : undefined;
+
+            if (mode === "formats") {
+              const updated: SheetCell = { ...(existing ?? {}) };
+              const style = copied?.style ? styleIndex(next, copied.style) : undefined;
+              if (style === undefined) delete updated.s;
+              else updated.s = style;
+              setCell(target, to.row, to.col, isBlankCell(updated) ? null : updated);
+              continue;
+            }
+
+            if (!copied) {
+              setCell(target, to.row, to.col, keepStyle === undefined ? null : { s: keepStyle });
+              continue;
+            }
+
+            const cell: SheetCell = {};
+            if (copied.f && mode !== "values") {
+              cell.f = offsetFormula(copied.f, to.row - row, to.col - col);
+              cell.v = copied.v ?? null;
+            } else {
+              cell.v = copied.v ?? null;
+            }
+            const style =
+              mode === "values"
+                ? keepStyle
+                : copied.style
+                  ? styleIndex(next, copied.style)
+                  : undefined;
+            if (style !== undefined) cell.s = style;
+            setCell(target, to.row, to.col, cell);
+          }
+        }
+      });
+
+      selectRange({
+        r1: at.row,
+        c1: at.col,
+        r2: Math.min(sheet.rows - 1, at.row + (transpose ? width : height) - 1),
+        c2: Math.min(sheet.cols - 1, at.col + (transpose ? height : width) - 1),
+      });
+    },
+    [active, index, mutate, selectRange, sheet.rows, sheet.cols],
+  );
+
+  const pasteSpecial = useCallback(
+    (mode: PasteMode, text?: string) => {
+      const clip = clipboardRef.current;
+      // Своя копия узнаётся по тексту: если в системном буфере лежит уже не она,
+      // вставлять надо то, что там лежит, а не скопированное когда-то давно.
+      if (clip && (text === undefined || text === clip.text)) {
+        pasteCells(clip, mode);
+        return;
+      }
+      if (!text) {
+        setError("Скопируйте ячейки таблицы — своей копии нет");
+        return;
+      }
+      if (mode === "formats") {
+        setError("В буфере только текст: оформления в нём нет");
+        return;
+      }
+      pasteText(text, mode === "transpose");
+    },
+    [pasteCells, pasteText],
+  );
+
+  const paste = useCallback((text: string) => pasteSpecial("all", text), [pasteSpecial]);
+
+  const fill = useCallback(
+    (source: CellRange, target: CellRange) => {
+      update(fillRange(workbookRef.current, index, source, target));
+    },
+    [index, update],
   );
 
   // --- Листы ---------------------------------------------------------------
@@ -567,15 +741,70 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
     [sheet, workbook],
   );
 
-  const hidden = useMemo(
-    () =>
-      hiddenRows(
-        sheet,
-        (cell) => (cell ? formatValue(cell.v ?? null, styleOf(workbook, cell).fmt) : ""),
-        sheet.frozen?.rows ? sheet.frozen.rows - 1 : -1,
-      ),
-    [sheet, workbook],
+  const hidden = useMemo(() => {
+    const rows = hiddenRows(
+      sheet,
+      (cell) => (cell ? formatValue(cell.v ?? null, styleOf(workbook, cell).fmt) : ""),
+      sheet.frozen?.rows ? sheet.frozen.rows - 1 : -1,
+    );
+    // Скрытые руками и скрытые фильтром рисуются одинаково, а живут раздельно:
+    // сброс фильтра не обязан показывать спрятанную служебную строку.
+    for (const row of sheet.hiddenR ?? []) rows.add(row);
+    return rows;
+  }, [sheet, workbook]);
+
+  const hiddenCols = useMemo(() => new Set(sheet.hiddenC ?? []), [sheet.hiddenC]);
+
+  const hideLines = useCallback(
+    (axis: "row" | "col") => {
+      const list = new Set(axis === "row" ? (sheet.hiddenR ?? []) : (sheet.hiddenC ?? []));
+      const from = axis === "row" ? range.r1 : range.c1;
+      const to = axis === "row" ? range.r2 : range.c2;
+      for (let line = from; line <= to; line++) list.add(line);
+
+      // Лист без единой видимой строки не показать и нечем вернуть обратно.
+      const total = axis === "row" ? sheet.rows : sheet.cols;
+      if (list.size >= total) {
+        setError(axis === "row" ? "Нельзя скрыть все строки" : "Нельзя скрыть все колонки");
+        return;
+      }
+
+      const sorted = [...list].sort((a, b) => a - b);
+      mutate((next) => {
+        const target = next.sheets[index];
+        if (!target) return;
+        if (axis === "row") target.hiddenR = sorted;
+        else target.hiddenC = sorted;
+      });
+    },
+    [sheet, range, index, mutate],
   );
+
+  const showLines = useCallback(
+    (axis: "row" | "col") => {
+      const from = axis === "row" ? range.r1 : range.c1;
+      const to = axis === "row" ? range.r2 : range.c2;
+      mutate((next) => {
+        const target = next.sheets[index];
+        if (!target) return;
+        const list = (axis === "row" ? target.hiddenR : target.hiddenC) ?? [];
+        const rest = list.filter((line) => line < from || line > to);
+        const value = rest.length ? rest : undefined;
+        if (axis === "row") target.hiddenR = value;
+        else target.hiddenC = value;
+      });
+    },
+    [range, index, mutate],
+  );
+
+  const showAllLines = useCallback(() => {
+    mutate((next) => {
+      const target = next.sheets[index];
+      if (!target) return;
+      target.hiddenR = undefined;
+      target.hiddenC = undefined;
+    });
+  }, [index, mutate]);
 
   return {
     workbook,
@@ -611,6 +840,9 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
     sourceAt,
     copy,
     paste,
+    pasteSpecial,
+    hasCopy,
+    fill,
     addSheet,
     renameSheet,
     removeSheet,
@@ -618,11 +850,23 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
     setFilter,
     filterValues,
     hidden,
+    hiddenCols,
+    hideLines,
+    showLines,
+    showAllLines,
     status,
     flush,
     error,
     clearError: () => setError(null),
   };
+}
+
+/** Строки → колонки: вставка чужого текста с транспонированием. */
+function transposeRows(rows: string[][]): string[][] {
+  const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const out: string[][] = [];
+  for (let col = 0; col < width; col++) out.push(rows.map((row) => row[col] ?? ""));
+  return out;
 }
 
 /**

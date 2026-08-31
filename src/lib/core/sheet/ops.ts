@@ -362,6 +362,8 @@ function shiftLines(
 
   sheet.widths = shiftSizes(sheet.widths, axis === "col" ? move : null);
   sheet.heights = shiftSizes(sheet.heights, axis === "row" ? move : null);
+  sheet.hiddenR = shiftHidden(sheet.hiddenR, axis === "row" ? move : null);
+  sheet.hiddenC = shiftHidden(sheet.hiddenC, axis === "col" ? move : null);
 
   if (sheet.merges) {
     const merges: string[] = [];
@@ -400,6 +402,20 @@ function shiftSizes(
     out[String(moved)] = value;
   }
   return Object.keys(out).length ? out : undefined;
+}
+
+function shiftHidden(
+  hidden: number[] | undefined,
+  move: ((value: number) => number | null) | null,
+): number[] | undefined {
+  if (!hidden || !move) return hidden;
+  const out: number[] = [];
+  for (const line of hidden) {
+    const moved = move(line);
+    if (moved === null || moved < 0) continue;
+    out.push(moved);
+  }
+  return out.length ? out : undefined;
 }
 
 /**

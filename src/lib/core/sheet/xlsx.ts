@@ -164,6 +164,11 @@ function readSheet(
       usage.cells++;
     });
 
+    if (row.hidden) {
+      sheet.hiddenR = sheet.hiddenR ?? [];
+      sheet.hiddenR.push(rowNumber - 1);
+    }
+
     if (row.height && Math.abs(row.height * (4 / 3) - DEFAULT_ROW_HEIGHT) > 2) {
       sheet.heights = sheet.heights ?? {};
       sheet.heights[String(rowNumber - 1)] = Math.round(row.height * (4 / 3));
@@ -171,7 +176,12 @@ function readSheet(
   });
 
   ws.columns?.forEach((column, index) => {
-    if (index >= sheet.cols || !column?.width) return;
+    if (index >= sheet.cols) return;
+    if (column?.hidden) {
+      sheet.hiddenC = sheet.hiddenC ?? [];
+      sheet.hiddenC.push(index);
+    }
+    if (!column?.width) return;
     // Ширина в xlsx — в «символах» шрифта по умолчанию; в пикселях это примерно
     // 7 пикселей на символ плюс поля ячейки.
     const px = Math.round(column.width * 7 + 5);
@@ -411,6 +421,8 @@ export async function workbookToXlsx(workbook: Workbook, title: string): Promise
     for (const [index, height] of Object.entries(sheet.heights ?? {})) {
       ws.getRow(Number(index) + 1).height = Math.max(6, height * 0.75);
     }
+    for (const line of sheet.hiddenR ?? []) ws.getRow(line + 1).hidden = true;
+    for (const line of sheet.hiddenC ?? []) ws.getColumn(line + 1).hidden = true;
     for (const merge of sheet.merges ?? []) {
       try {
         ws.mergeCells(merge);
