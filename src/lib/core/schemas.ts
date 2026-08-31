@@ -649,3 +649,11 @@ export const kbMemberSchema = z.object({
 export const kbTaskLinkSchema = z.object({
   task_id: z.uuid(),
 });
+
+export const kbFromTaskSchema = z.object({
+  title: z.string().trim().max(200).optional(),
+  parent_id: z.uuid().nullish(),
+  project_ids: z.array(z.uuid()).max(20).optional(),
+  /** Заменить описание задачи ссылкой на созданный документ. */
+  replace_description: z.boolean().optional(),
+});

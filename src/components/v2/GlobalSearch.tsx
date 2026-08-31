@@ -4,14 +4,14 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, Search, Users } from "lucide-react";
+import { CheckCircle2, FileText, Search, Users } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/lib/core/client";
 import { useV2Store } from "@/lib/core/ui-store";
 import { cn } from "@/lib/utils";
 
 interface SearchHit {
-  type: "task" | "client" | "project";
+  type: "task" | "document" | "client" | "project";
   id: string;
   title: string;
   subtitle: string | null;
@@ -86,8 +86,9 @@ function SearchPalette({
   function pick(hit: SearchHit) {
     onOpenChange(false);
     if (hit.type === "task") onPickTask(hit.id);
-    // Экрана клиентов на мобильном нет — ведём в полную версию.
+    // Экрана клиентов и базы знаний на мобильном нет — ведём в полную версию.
     else if (hit.type === "client") router.push(`/v2/clients?client=${hit.id}`);
+    else if (hit.type === "document") router.push(`/v2/kb/${hit.id}`);
     else router.push(mobile ? `/v2/m/projects/${hit.id}` : `/v2/projects/${hit.id}`);
   }
 
@@ -114,7 +115,7 @@ function SearchPalette({
                 pick(visibleHits[active]);
               }
             }}
-            placeholder="Поиск задач и клиентов…"
+            placeholder="Поиск задач, документов и клиентов…"
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
         </div>
@@ -134,6 +135,8 @@ function SearchPalette({
             >
               {h.type === "client" ? (
                 <Users className="size-4 shrink-0 text-muted-foreground" />
+              ) : h.type === "document" ? (
+                <FileText className="size-4 shrink-0 text-muted-foreground" />
               ) : (
                 <CheckCircle2
                   className={cn("size-4 shrink-0", h.completed ? "text-emerald-500" : "text-muted-foreground")}

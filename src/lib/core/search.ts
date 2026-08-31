@@ -1,12 +1,14 @@
-// Поиск по задачам и клиентам. Видимость фильтруется тем же policy-слоем,
-// что и списки: в выдачу не должно попасть ничего из закрытых проектов.
+// Поиск по задачам, документам базы знаний и клиентам. Видимость фильтруется
+// тем же policy-слоем, что и списки: в выдачу не должно попасть ничего из
+// закрытых проектов.
 
 import { prepare } from "@/lib/sql";
+import { loadKbAccess } from "./kb-access";
 import { canOrg, effectiveProjectRole } from "./policy";
 import type { AuthContext, PolicyProject } from "./types";
 
 export interface SearchHit {
-  type: "task" | "client" | "project";
+  type: "task" | "document" | "client" | "project";
   id: string;
   title: string;
   subtitle: string | null;
@@ -73,6 +75,32 @@ export async function search(ctx: AuthContext, query: string, limit = 20): Promi
       has_parent: !!row.parent_task_id,
     });
     if (hits.length >= limit) break;
+  }
+
+  // Документы базы знаний. Доступ у каждого свой (проекты корня либо список),
+  // поэтому кандидатов берём с запасом и проверяем поштучно — как и задачи.
+  if (hits.length < limit) {
+    const docs = await prepare<{ id: string; title: string }>(
+      `SELECT d.id, d.title
+       FROM core.kb_documents d
+       WHERE d.org_id = ? AND d.deleted_at IS NULL AND d.title ILIKE ?
+       ORDER BY similarity(d.title, ?) DESC, d.updated_at DESC
+       LIMIT ?`,
+    ).all(ctx.orgId, like, q, (limit - hits.length) * 3);
+    for (const doc of docs) {
+      if (hits.length >= limit) break;
+      const access = await loadKbAccess(ctx, doc.id);
+      if (!access) continue;
+      hits.push({
+        type: "document",
+        id: doc.id,
+        title: doc.title || "Без названия",
+        // Ветка объясняет, где документ лежит; у корня это он сам.
+        subtitle: access.root.id === doc.id ? "База знаний" : access.root.title,
+        completed: false,
+        has_parent: false,
+      });
+    }
   }
 
   if (canOrg(ctx, "crm.view") && hits.length < limit) {

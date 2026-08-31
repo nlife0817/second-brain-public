@@ -29,9 +29,9 @@ import {
   type KbNodeRow,
 } from "./kb-model";
 import { notifyMentions } from "./mentions";
-import { assertOrg, effectiveKbRole, effectiveProjectRole } from "./policy";
+import { assertOrg, canProject, effectiveKbRole, effectiveProjectRole } from "./policy";
 import { requireProject } from "./projects";
-import { filterVisibleTaskIds } from "./tasks";
+import { filterVisibleTaskIds, requireTaskAccess, updateTask } from "./tasks";
 import type {
   AuthContext,
   KbDocument,
@@ -1087,3 +1087,110 @@ export async function unlinkKbTask(
 
 /** Кого оповещать о документе — реэкспорт для рассылок вне этого модуля. */
 export { kbAudience };
+
+// --- Описание задачи → документ --------------------------------------------------
+
+export interface KbFromTaskInput {
+  title?: string;
+  parentId?: string | null;
+  /** Куда положить корень. По умолчанию — проекты самой задачи. */
+  projectIds?: string[];
+  /**
+   * Заменить описание задачи ссылкой на документ. Иначе описание остаётся, а
+   * документ становится его копией — дальше они живут независимо.
+   */
+  replaceDescription?: boolean;
+}
+
+/**
+ * Перенести описание задачи в базу знаний.
+ *
+ * Вложения именно **копируются**, а не перепривязываются: у документа и задачи
+ * доступ разный, и картинка, оставшаяся за задачей, не открылась бы у того, кто
+ * видит только документ. Обратная сторона — исходное вложение остаётся за
+ * задачей; если описание заменили ссылкой, ссылок на него не остаётся, и через
+ * сутки его уберёт `purgeOrphanAttachments`.
+ *
+ * Ход действия собран из обычных операций (создание, правка, связь), а не из
+ * своего SQL: иначе правила доступа и события пришлось бы повторять здесь.
+ */
+export async function createKbDocumentFromTask(
+  ctx: AuthContext,
+  taskId: string,
+  input: KbFromTaskInput = {},
+): Promise<KbDocumentDetail> {
+  const replace = input.replaceDescription ?? false;
+  const access = await requireTaskAccess(ctx, taskId, replace ? "edit" : "view");
+  const task = access.task;
+
+  // По умолчанию документ живёт там же, где задача, — но только в тех её
+  // проектах, где человек вправе заводить документы.
+  const projectIds =
+    input.projectIds ??
+    access.placements
+      .filter((p) => canProject(ctx, "doc.create", p.project))
+      .map((p) => p.project_id);
+
+  const created = await createKbDocument(ctx, {
+    title: input.title ?? task.title,
+    parentId: input.parentId ?? null,
+    projectIds: input.parentId ? undefined : projectIds,
+  });
+
+  const body = await copyAttachmentsToDocument(ctx, taskId, created.id, task.description ?? "");
+  const document = body
+    ? await updateKbDocument(ctx, created.id, { body })
+    : await getKbDocument(ctx, created.id);
+
+  await linkKbTask(ctx, created.id, taskId);
+
+  if (replace) {
+    // Ссылка, а не пустое описание: иначе из задачи не видно, куда уехал текст.
+    // Экранировать нечего — подставляется только uuid и уже очищенный заголовок.
+    const title = escapeHtml(document.title || "Документ");
+    await updateTask(ctx, taskId, {
+      description: `<p><a href="/v2/kb/${document.id}">${title}</a></p>`,
+    });
+  }
+
+  return getKbDocument(ctx, created.id);
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Копии вложений описания под новым владельцем и переписанные на них ссылки.
+ * Копируем только то, на что описание действительно ссылается: загруженное и
+ * тут же удалённое из текста тащить в документ незачем.
+ */
+async function copyAttachmentsToDocument(
+  ctx: AuthContext,
+  taskId: string,
+  documentId: string,
+  html: string,
+): Promise<string> {
+  if (!html.trim()) return "";
+  const rows = await prepare<{ id: string }>(
+    `SELECT id FROM core.attachments WHERE task_id = ? AND org_id = ?`,
+  ).all(taskId, ctx.orgId);
+
+  let body = html;
+  for (const row of rows) {
+    if (!body.includes(row.id)) continue;
+    const copy = await prepare<{ id: string }>(
+      `INSERT INTO core.attachments
+         (org_id, document_id, uploaded_by, filename, mime_type, byte_size, width, height, data)
+       SELECT org_id, ?, uploaded_by, filename, mime_type, byte_size, width, height, data
+       FROM core.attachments WHERE id = ?
+       RETURNING id`,
+    ).get(documentId, row.id);
+    if (copy) body = body.split(row.id).join(copy.id);
+  }
+  return body;
+}

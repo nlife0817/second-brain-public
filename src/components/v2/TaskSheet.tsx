@@ -46,6 +46,7 @@ import {
   PRIORITY_ORDER,
 } from "@/components/v2/tasks/draft-controls";
 import { SegmentedPicker } from "@/components/v2/tasks/SegmentedPicker";
+import { TaskDocuments } from "@/components/v2/TaskDocuments";
 import { SubtaskSection } from "@/components/v2/tasks/SubtaskSection";
 import { actorSourceLabel } from "@/lib/core/actor-source";
 import { api } from "@/lib/core/client";
@@ -1586,6 +1587,15 @@ export function TaskSheet({
                 onDelete={(s) => void deleteSubtask(s)}
                 onDetach={(s) => void detachSubtask(s)}
                 onReorder={(ids) => void reorderSubtasks(ids)}
+              />
+
+              <TaskDocuments
+                orgId={orgId}
+                taskId={task.id}
+                taskTitle={task.title}
+                hasDescription={!!task.description?.trim()}
+                canEdit={canEdit}
+                onDescriptionReplaced={() => void load()}
               />
 
               <RelationsList
