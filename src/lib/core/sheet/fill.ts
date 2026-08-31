@@ -280,6 +280,18 @@ function matchCase(value: string, sample: string): string {
 }
 
 /**
+ * Строки и колонки, которых на экране нет: скрытые руками и отсеянные фильтром.
+ * Протягивание обязано их пропускать — писать в невидимую строку значит менять
+ * данные, которых человек не видит, и он об этом не узнает.
+ */
+export interface FillSkip {
+  rows?: Set<number>;
+  cols?: Set<number>;
+}
+
+const NOTHING_HIDDEN: Set<number> = new Set();
+
+/**
  * Протянуть образец `source` до `target`.
  *
  * `target` включает в себя `source` — это прямоугольник, который человек
@@ -291,6 +303,7 @@ export function fillRange(
   sheetIndex: number,
   source: CellRange,
   target: CellRange,
+  skip: FillSkip = {},
 ): Workbook {
   const next = cloneWorkbook(workbook);
   const sheet = next.sheets[sheetIndex];
@@ -302,27 +315,49 @@ export function fillRange(
   const left = source.c1 - target.c1;
 
   const vertical = Math.max(down, up) >= Math.max(right, left);
-  const count = vertical ? Math.max(down, up) : Math.max(right, left);
-  if (count <= 0) return next;
+  if ((vertical ? Math.max(down, up) : Math.max(right, left)) <= 0) return next;
   const forward = vertical ? down >= up : right >= left;
 
-  const lineFrom = vertical ? source.c1 : source.r1;
-  const lineTo = vertical ? source.c2 : source.r2;
-  const length = vertical ? source.r2 - source.r1 + 1 : source.c2 - source.c1 + 1;
+  const hiddenAlong = (vertical ? skip.rows : skip.cols) ?? NOTHING_HIDDEN;
+  const hiddenAcross = (vertical ? skip.cols : skip.rows) ?? NOTHING_HIDDEN;
+
+  const from = vertical ? source.r1 : source.c1;
+  const to = vertical ? source.r2 : source.c2;
+
+  // Линии образца в порядке протягивания: назад он читается с конца.
+  const patternLines: number[] = [];
+  for (let line = from; line <= to; line++) if (!hiddenAlong.has(line)) patternLines.push(line);
+  if (!forward) patternLines.reverse();
+  if (!patternLines.length) return next;
+
+  // Линии назначения — всё, что человек обвёл за пределами образца.
+  const targetLines: number[] = [];
+  if (forward) {
+    const last = vertical ? target.r2 : target.c2;
+    for (let line = to + 1; line <= last; line++) if (!hiddenAlong.has(line)) targetLines.push(line);
+  } else {
+    const first = vertical ? target.r1 : target.c1;
+    for (let line = from - 1; line >= first; line--) {
+      if (!hiddenAlong.has(line)) targetLines.push(line);
+    }
+  }
+  if (!targetLines.length) return next;
+
+  const acrossFrom = vertical ? source.c1 : source.r1;
+  const acrossTo = vertical ? source.c2 : source.r2;
+  const at = (along: number, across: number) =>
+    vertical ? { row: along, col: across } : { row: across, col: along };
 
   let budget = FILL_LIMIT;
 
-  for (let line = lineFrom; line <= lineTo; line++) {
-    // Образец в порядке протягивания: назад он читается с конца.
-    const pattern: Array<{ cell: SheetCell | undefined; row: number; col: number }> = [];
-    for (let i = 0; i < length; i++) {
-      const along = forward
-        ? (vertical ? source.r1 : source.c1) + i
-        : (vertical ? source.r2 : source.c2) - i;
-      const row = vertical ? along : line;
-      const col = vertical ? line : along;
-      pattern.push({ cell: getCell(sheet, row, col), row, col });
-    }
+  for (let across = acrossFrom; across <= acrossTo; across++) {
+    if (hiddenAcross.has(across)) continue;
+
+    const pattern: Array<{ cell: SheetCell | undefined; row: number; col: number }> =
+      patternLines.map((line) => {
+        const { row, col } = at(line, across);
+        return { cell: getCell(sheet, row, col), row, col };
+      });
 
     const values = continueSeries(
       pattern.map(({ cell }) => ({
@@ -330,34 +365,32 @@ export function fillRange(
         fmt: styleOf(next, cell).fmt,
         formula: Boolean(cell?.f),
       })),
-      count,
+      targetLines.length,
     );
 
-    for (let i = 0; i < count; i++) {
-      if (budget <= 0) break;
-      const step = i + 1;
-      const along = forward
-        ? (vertical ? source.r2 : source.c2) + step
-        : (vertical ? source.r1 : source.c1) - step;
-      const row = vertical ? along : line;
-      const col = vertical ? line : along;
-      if (row < 0 || col < 0 || row >= sheet.rows || col >= sheet.cols) continue;
+    targetLines.forEach((line, i) => {
+      if (budget <= 0) return;
+      const { row, col } = at(line, across);
+      if (row < 0 || col < 0 || row >= sheet.rows || col >= sheet.cols) return;
       budget--;
 
-      const from = pattern[i % length];
+      const source = pattern[i % pattern.length];
       // Пустая ячейка образца стирает то, поверх чего протянули: иначе под
       // разреженным образцом оставались бы обрывки прежних данных.
-      if (!from.cell) {
+      if (!source.cell) {
         setCell(sheet, row, col, null);
-        continue;
+        return;
       }
 
       const cell: SheetCell = {};
-      if (from.cell.s !== undefined) cell.s = from.cell.s;
-      if (from.cell.f) cell.f = offsetFormula(from.cell.f, row - from.row, col - from.col);
-      else cell.v = values[i] ?? null;
+      if (source.cell.s !== undefined) cell.s = source.cell.s;
+      if (source.cell.f) {
+        cell.f = offsetFormula(source.cell.f, row - source.row, col - source.col);
+      } else {
+        cell.v = values[i] ?? null;
+      }
       setCell(sheet, row, col, cell);
-    }
+    });
   }
 
   return next;
@@ -374,17 +407,20 @@ export function fillDownExtent(
   workbook: Workbook,
   sheetIndex: number,
   source: CellRange,
+  skip: FillSkip = {},
 ): number {
   const sheet = workbook.sheets[sheetIndex];
   if (!sheet) return source.r2;
 
+  const hidden = skip.rows ?? NOTHING_HIDDEN;
   const neighbours = [source.c1 - 1, source.c2 + 1].filter(
-    (col) => col >= 0 && col < sheet.cols,
+    (col) => col >= 0 && col < sheet.cols && !(skip.cols ?? NOTHING_HIDDEN).has(col),
   );
   let best = source.r2;
   for (const col of neighbours) {
     let last = source.r2;
     for (let row = source.r2 + 1; row < sheet.rows; row++) {
+      if (hidden.has(row)) continue;
       if (!getCell(sheet, row, col)) break;
       last = row;
     }

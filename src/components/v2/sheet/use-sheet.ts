@@ -270,6 +270,15 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
       );
       return;
     }
+    // Третий предел из того же ряда: за ним нормализация отрезает хвост таблицы
+    // стилей, и ячейки с этими стилями остаются БЕЗ ОФОРМЛЕНИЯ — молча.
+    if (workbookRef.current.styles.length > SHEET_LIMITS.styles) {
+      setStatus("error");
+      setError(
+        `В таблице больше ${SHEET_LIMITS.styles.toLocaleString("ru-RU")} разных оформлений — часть из них не сохранить`,
+      );
+      return;
+    }
     setStatus("saving");
     const ok = await onSaveRef.current(body);
     if (!ok) {
@@ -635,7 +644,9 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
         return;
       }
       if (!text) {
-        setError("Скопируйте ячейки таблицы — своей копии нет");
+        // Своей копии нет, а системный буфер браузер читать не дал: единственный
+        // оставшийся путь — обычная вставка с клавиатуры.
+        setError("Буфер прочитать не удалось — вставьте через Ctrl+V");
         return;
       }
       if (mode === "formats") {
@@ -648,13 +659,6 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
   );
 
   const paste = useCallback((text: string) => pasteSpecial("all", text), [pasteSpecial]);
-
-  const fill = useCallback(
-    (source: CellRange, target: CellRange) => {
-      update(fillRange(workbookRef.current, index, source, target));
-    },
-    [index, update],
-  );
 
   // --- Листы ---------------------------------------------------------------
 
@@ -754,6 +758,19 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
   }, [sheet, workbook]);
 
   const hiddenCols = useMemo(() => new Set(sheet.hiddenC ?? []), [sheet.hiddenC]);
+
+  // Протягивание объявлено ПОСЛЕ скрытых линий: оно на них смотрит, а на
+  // объявление ниже по файлу сослаться нельзя.
+  const fill = useCallback(
+    (source: CellRange, target: CellRange) => {
+      // Скрытые строки и колонки протягивание пропускает: писать в невидимую
+      // строку значит менять данные, о которых человек не узнает.
+      update(
+        fillRange(workbookRef.current, index, source, target, { rows: hidden, cols: hiddenCols }),
+      );
+    },
+    [index, update, hidden, hiddenCols],
+  );
 
   const hideLines = useCallback(
     (axis: "row" | "col") => {

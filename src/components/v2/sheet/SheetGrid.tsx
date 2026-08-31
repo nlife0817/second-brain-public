@@ -757,7 +757,10 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
                 fillRef.current = range;
               }}
               onDoubleClick={() => {
-                const last = fillDownExtent(api.workbook, api.sheetIndex, range);
+                const last = fillDownExtent(api.workbook, api.sheetIndex, range, {
+                  rows: api.hidden,
+                  cols: api.hiddenCols,
+                });
                 if (last <= range.r2) return;
                 const target = { ...range, r2: last };
                 api.fill(range, target);

@@ -86,10 +86,6 @@ export function SheetMenu({
   if (target === "corner") {
     return (
       <ContextMenuContent className="w-auto min-w-52">
-        <ContextMenuItem onClick={copy}>
-          <Copy />
-          Копировать лист
-        </ContextMenuItem>
         <ContextMenuItem onClick={() => api.showAllLines()} disabled={!editable || !hasHidden}>
           <Eye />
           Показать все строки и колонки
@@ -128,7 +124,11 @@ export function SheetMenu({
             Только значения
             <ContextMenuShortcut>Ctrl+Shift+V</ContextMenuShortcut>
           </ContextMenuItem>
-          <ContextMenuItem onClick={() => paste("formats")}>Только формат</ContextMenuItem>
+          {/* Оформление живёт только в собственной копии: в системном буфере
+              лежит текст, и «только формат» из него взять нечего. */}
+          <ContextMenuItem disabled={!api.hasCopy} onClick={() => paste("formats")}>
+            Только формат
+          </ContextMenuItem>
           <ContextMenuItem onClick={() => paste("transpose")}>С транспонированием</ContextMenuItem>
         </ContextMenuSubContent>
       </ContextMenuSub>

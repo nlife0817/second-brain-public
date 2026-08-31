@@ -141,6 +141,29 @@ describe("протягивание по листу", () => {
     expect(getCell(filled.sheets[0], 3, 0)).toBeUndefined();
   });
 
+  it("скрытые строки протягивание пропускает, а не переписывает", () => {
+    const workbook = emptyWorkbook();
+    const sheet = workbook.sheets[0];
+    setCell(sheet, 0, 0, { v: 1 });
+    setCell(sheet, 1, 0, { v: 2 });
+    setCell(sheet, 2, 0, { v: "спрятано" });
+
+    // Строка 3 скрыта фильтром: человек её не видит, и запись в неё была бы
+    // молчаливой правкой данных, о которой он не узнает.
+    const filled = fillRange(
+      workbook,
+      0,
+      { r1: 0, c1: 0, r2: 1, c2: 0 },
+      { r1: 0, c1: 0, r2: 4, c2: 0 },
+      { rows: new Set([2]) },
+    );
+    const result = filled.sheets[0];
+    expect(getCell(result, 2, 0)?.v).toBe("спрятано");
+    // Ряд продолжается по видимым строкам подряд, без пропуска значения.
+    expect(getCell(result, 3, 0)?.v).toBe(3);
+    expect(getCell(result, 4, 0)?.v).toBe(4);
+  });
+
   it("двойной щелчок тянет до конца данных в соседней колонке", () => {
     const workbook = emptyWorkbook();
     const sheet = workbook.sheets[0];

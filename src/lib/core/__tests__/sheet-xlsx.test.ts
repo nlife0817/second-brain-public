@@ -30,6 +30,10 @@ async function sample(): Promise<Uint8Array> {
   ws.mergeCells("A8:B8");
   ws.getCell("A8").value = "Примечание";
   ws.views = [{ state: "frozen", ySplit: 1 }];
+  // Прячем строку С СОДЕРЖИМЫМ: пустую скрытую строку exceljs в файл не пишет
+  // вовсе (проверено), и такой фикстурой мы бы проверяли не себя, а библиотеку.
+  ws.getRow(3).hidden = true;
+  ws.getColumn(3).hidden = true;
 
   const second = wb.addWorksheet("Ставки");
   second.getCell("A1").value = { formula: "'Смета'!B4*2", result: 6000 };
@@ -98,6 +102,18 @@ describe("импорт xlsx", () => {
 });
 
 describe("выгрузка xlsx", () => {
+  it("скрытые строки и колонки переносятся в обе стороны", async () => {
+    const { workbook } = await workbookFromXlsx(await sample());
+    expect(workbook.sheets[0].hiddenR).toContain(2);
+    expect(workbook.sheets[0].hiddenC).toContain(2);
+
+    const again = await workbookFromXlsx(
+      new Uint8Array(await workbookToXlsx(workbook, "Смета")),
+    );
+    expect(again.workbook.sheets[0].hiddenR).toContain(2);
+    expect(again.workbook.sheets[0].hiddenC).toContain(2);
+  });
+
   it("границы переживают круг через файл", async () => {
     const { workbook } = await workbookFromXlsx(await sample());
     const again = await workbookFromXlsx(

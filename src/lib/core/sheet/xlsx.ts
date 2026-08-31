@@ -164,15 +164,18 @@ function readSheet(
       usage.cells++;
     });
 
-    if (row.hidden) {
-      sheet.hiddenR = sheet.hiddenR ?? [];
-      sheet.hiddenR.push(rowNumber - 1);
-    }
-
     if (row.height && Math.abs(row.height * (4 / 3) - DEFAULT_ROW_HEIGHT) > 2) {
       sheet.heights = sheet.heights ?? {};
       sheet.heights[String(rowNumber - 1)] = Math.round(row.height * (4 / 3));
     }
+  });
+
+  // Скрытые строки читаем отдельным проходом С ПУСТЫМИ: прячут как раз пустые
+  // служебные строки, а обход по значениям их не видит вовсе.
+  ws.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+    if (rowNumber > sheet.rows || !row.hidden) return;
+    sheet.hiddenR = sheet.hiddenR ?? [];
+    sheet.hiddenR.push(rowNumber - 1);
   });
 
   ws.columns?.forEach((column, index) => {

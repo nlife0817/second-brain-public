@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { csvToWorkbook, detectDelimiter, parseCsv, sheetToCsv } from "../sheet/csv";
 import { recalculate } from "../sheet/engine";
 import {
+  buildFormat,
+  FORMAT_LABELS,
   FORMATS,
   formatValue,
   normalizeNumFmt,
+  parseFormat,
   parseInput,
   toExcelNumFmt,
   withDecimals,
@@ -14,6 +17,7 @@ import {
   columnIndex,
   columnName,
   emptyWorkbook,
+  getCell,
   normalizeWorkbook,
   parseWorkbook,
   serializeWorkbook,
@@ -130,6 +134,28 @@ describe("оформление больших выделений", () => {
   });
 });
 
+describe("скрытые строки и колонки", () => {
+  it("вставка строки двигает список скрытых", () => {
+    const workbook = emptyWorkbook();
+    const sheet = workbook.sheets[0];
+    setCell(sheet, 5, 0, { v: "пятая" });
+    sheet.hiddenR = [5];
+
+    const next = insertRows(workbook, 0, 0, 1);
+    // Скрытой обязана остаться ТА ЖЕ строка, а не её прежний номер: иначе
+    // после вставки прячется соседняя, и данные пропадают из виду.
+    expect(next.sheets[0].hiddenR).toEqual([6]);
+    expect(getCell(next.sheets[0], 6, 0)?.v).toBe("пятая");
+  });
+
+  it("удаление скрытой строки убирает её из списка", () => {
+    const workbook = emptyWorkbook();
+    workbook.sheets[0].hiddenR = [3, 7];
+    const next = deleteRows(workbook, 0, 3, 1);
+    expect(next.sheets[0].hiddenR).toEqual([6]);
+  });
+});
+
 describe("границы", () => {
   const filled = () => {
     const workbook = emptyWorkbook();
@@ -227,6 +253,14 @@ describe("ввод и форматы", () => {
     expect(formatValue(serial, "ДД.ММ.ГГ чч:мм")).toBe("31.08.26 14:05");
     // Регистр разделяет месяц и минуты: ММ — месяц, мм — минуты.
     expect(formatValue(serial, "ММ/мм")).toBe("08/05");
+  });
+
+  it("встроенные коды переживают разбор и обратную сборку", () => {
+    // На этом стоят кнопки разрядности: они пересобирают код из разобранного.
+    // Разойдись разбор со сборкой — «два знака» превратились бы во что-то своё.
+    for (const { code } of FORMAT_LABELS) {
+      expect(buildFormat(parseFormat(code))).toBe(code);
+    }
   });
 
   it("кнопки разрядности считают код, а не подбирают из списка", () => {
