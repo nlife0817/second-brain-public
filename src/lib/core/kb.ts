@@ -108,10 +108,13 @@ async function loadTreeSource(ctx: AuthContext): Promise<TreeSource> {
  *
  * Порядок разделов — порядок проектов в панели (`core.projects.position`): он
  * один на организацию, и второй порядок тех же проектов читался бы как ошибка.
+ *
+ * Пустые разделы остаются в выдаче: раздел — это ещё и место, где заводят
+ * первый документ проекта. Отдавать только непустые значило бы, что в новом
+ * проекте базу знаний нечем начать.
  */
 export async function listKbTree(ctx: AuthContext): Promise<KbTreeGroup[]> {
   const src = await loadTreeSource(ctx);
-  if (src.rows.length === 0) return [];
 
   const projectById = new Map(src.projects.map((p) => [p.id, p]));
   const linksByDocument = new Map<string, Array<{ project_id: string; position: number }>>();
@@ -138,7 +141,6 @@ export async function listKbTree(ctx: AuthContext): Promise<KbTreeGroup[]> {
     });
     if (role) visibleRoots.add(row.id);
   }
-  if (visibleRoots.size === 0) return [];
 
   // Потомки видимого корня видимы; ветка невидимого корня не показывается вовсе.
   const childrenOf = new Map<string, TreeSource["rows"]>();
@@ -173,11 +175,12 @@ export async function listKbTree(ctx: AuthContext): Promise<KbTreeGroup[]> {
       if (node) nodes.push({ ...node, position: link.position });
     }
     nodes.sort((a, b) => a.position - b.position || a.title.localeCompare(b.title));
-    if (nodes.length > 0) groups.push({ project_id: project.id, nodes });
+    groups.push({ project_id: project.id, nodes });
   }
 
+  // «Общие» всегда первыми: это не проект, и в порядке проектов ему места нет.
   const common = [...nodesByRoot.values()].filter((n) => !linksByDocument.has(n.id));
-  if (common.length > 0) groups.unshift({ project_id: null, nodes: common });
+  groups.unshift({ project_id: null, nodes: common });
   return groups;
 }
 

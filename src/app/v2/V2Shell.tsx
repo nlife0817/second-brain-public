@@ -10,6 +10,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
+  BookOpen,
   CheckCircle2,
   Clock,
   GripVertical,
@@ -466,6 +467,16 @@ export function V2Shell({
               collapsed={collapsed}
             />
           )}
+          {/* База знаний открыта всем ролям, включая гостей: документы проектов,
+              куда их позвали, они видят наравне с задачами. Что показать внутри,
+              решает policy — пустое дерево честнее спрятанного пункта. */}
+          <NavLink
+            href="/v2/kb"
+            icon={<BookOpen className="size-4" />}
+            label="База знаний"
+            active={pathname.startsWith("/v2/kb")}
+            collapsed={collapsed}
+          />
           {/* Настройки открыты всем ролям: состав разделов внутри решает
               владелец организации, а «уведомления на устройстве» нужны и гостю. */}
           <NavLink

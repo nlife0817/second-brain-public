@@ -11,12 +11,11 @@
 // местами вкладками: вторая колонка в 320 px отняла бы ширину у самого текста,
 // ради которой этот режим и заведён.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { EditorContent, useEditorState } from "@tiptap/react";
+import { EditorContent } from "@tiptap/react";
 import { List, Loader2, MessageSquare, Minimize2, Search, X, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/core/client";
 import type { DocCommentThread, UserBrief } from "@/lib/core/types";
 import { useBackDismiss } from "@/components/v2/mobile/hooks";
 import { cn } from "@/lib/utils";
@@ -24,14 +23,8 @@ import { CommentPanel } from "./CommentPanel";
 import { DocOutline, useDocOutline } from "./DocOutline";
 import { DocxDownloadButton } from "./DocxButton";
 import { DocSaveButton } from "./SaveButton";
-import {
-  anchoredThreadIds,
-  markSelectionAsThread,
-  removeThreadFromDoc,
-  scrollToThread,
-  setThreadResolvedInDoc,
-} from "./comment-marks";
-import { ownerPath, type DocOwner } from "./owner";
+import type { DocOwner } from "./owner";
+import { useDocThreads } from "./use-doc-threads";
 import { DocSearchBar, EMPTY_SEARCH, type DocSearchValue } from "./SearchBar";
 import { SelectionMenu } from "./SelectionMenu";
 import { EditorToolbar } from "./Toolbar";
@@ -90,8 +83,6 @@ export interface DocEditorProps {
   canResolveAll: boolean;
 }
 
-type Draft = { quote: string; from: number; to: number };
-
 /** Что показывает правая панель. */
 type PanelTab = "comments" | "outline";
 
@@ -109,10 +100,9 @@ export function DocEditor({
   initialThreads,
   canResolveAll,
 }: DocEditorProps) {
-  const [threads, setThreads] = useState<DocCommentThread[]>(initialThreads);
-  const [draft, setDraft] = useState<Draft | null>(null);
   const [railOpen, setRailOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<PanelTab>("comments");
+  /** Ошибка оболочки (выгрузка в .docx); ошибки обсуждений живут в хуке. */
   const [error, setError] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   // Запрос живёт здесь, а не в самой строке: она размонтируется при закрытии, а
@@ -139,11 +129,13 @@ export function DocEditor({
   // ссылки на прокручиваемую колонку оно зависало бы на месте.
   const [scrollHost, setScrollHost] = useState<HTMLElement | null>(null);
 
-  // Свежие треды при повторном открытии карточки: initialThreads — это снимок
-  // на момент загрузки bundle, а обсуждение могло уйти вперёд.
-  useEffect(() => {
-    setThreads(initialThreads);
-  }, [initialThreads]);
+  const comments = useDocThreads({
+    orgId,
+    owner,
+    editor,
+    initialThreads,
+    flush: doc.flush,
+  });
 
   useBackDismiss(open, onClose);
 
@@ -155,9 +147,16 @@ export function DocEditor({
 
   // Слой закрыли — закрывается и поиск. Сам запрос остаётся: тот же документ
   // часто открывают снова, чтобы продолжить с того же места.
-  useEffect(() => {
+  //
+  // Подстройка под изменившийся вход идёт в рендере, а не эффектом: эффект
+  // здесь — лишний проход отрисовки со строкой поиска, которую тут же убирают.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (!open) setSearchOpen(false);
-  }, [open]);
+  }
+
+  const { draft, cancelDraft, startDraft: beginDraft, activeThreadId } = comments;
 
   useEffect(() => {
     if (!open) return;
@@ -175,41 +174,14 @@ export function DocEditor({
         // Esc снимает по одному слою: сначала черновик комментария, потом
         // поиск, и только потом весь документ — иначе случайное нажатие уносит
         // и набранный текст.
-        if (draft) setDraft(null);
+        if (draft) cancelDraft();
         else if (searchOpen) setSearchOpen(false);
         else onClose();
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, draft, searchOpen, openSearch, onClose]);
-
-  /**
-   * Тред под курсором и набор тредов, у которых остался якорь в тексте.
-   *
-   * Подписка даёт только перерисовку — сами значения читаются из редактора
-   * прямо здесь. Через селектор их брать нельзя: на первом рендере редактора
-   * ещё нет (`immediatelyRender: false`), подписка возвращает пустоту, а
-   * следующей транзакции может не случиться вовсе — панель так и осталась бы
-   * уверена, что все обсуждения откреплены от текста.
-   */
-  const signals = useEditorState({
-    editor,
-    selector: ({ editor: e }) => ({
-      // Строка, а не Set/объект: результат селектора сравнивается по значению.
-      threadId: e ? ((e.getAttributes("docComment").threadId as string | null) ?? null) : null,
-      version: e ? e.state.doc.content.size : 0,
-    }),
-  });
-  const activeThreadId = editor
-    ? ((editor.getAttributes("docComment").threadId as string | null) ?? null)
-    : null;
-  // signals здесь — признак того, что документ жив и мог измениться: пока
-  // подписка пуста, редактора ещё нет и считать нечего.
-  const anchors = useMemo(
-    () => (editor && signals ? anchoredThreadIds(editor) : new Set<string>()),
-    [editor, signals],
-  );
+  }, [open, draft, cancelDraft, searchOpen, openSearch, onClose]);
 
   const outline = useDocOutline(editor);
   // Вкладка выводится, а не хранится: последний заголовок могли удалить прямо
@@ -219,120 +191,24 @@ export function DocEditor({
   // Курсор встал на якорь обсуждения — панель обязана показывать обсуждение,
   // иначе клик по подсвеченному фрагменту ни к чему не приводит. Обратно на
   // оглавление уводит только сам пользователь: смена вкладки этот переход не
-  // перезапускает.
-  useEffect(() => {
+  // перезапускает. Сравнение с прошлым значением в рендере — по той же причине,
+  // что и у поиска выше.
+  const [lastThreadId, setLastThreadId] = useState(activeThreadId);
+  if (lastThreadId !== activeThreadId) {
+    setLastThreadId(activeThreadId);
     if (activeThreadId) setPanelTab("comments");
-  }, [activeThreadId]);
+  }
 
+  // Черновик набирают в панели — она должна быть и открыта, и на обсуждении.
   const startDraft = useCallback(() => {
-    if (!editor) return;
-    const { from, to } = editor.state.selection;
-    if (from === to) return;
-    setDraft({ quote: editor.state.doc.textBetween(from, to, " ").slice(0, 2000), from, to });
-    // Черновик набирают в панели — она должна быть и открыта, и на обсуждении.
+    beginDraft();
     setPanelTab("comments");
     setRailOpen(true);
-  }, [editor]);
-
-  async function guard<T>(fn: () => Promise<T>): Promise<T | undefined> {
-    try {
-      const result = await fn();
-      setError(null);
-      return result;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось выполнить действие");
-      return undefined;
-    }
-  }
-
-  function upsertThread(next: DocCommentThread) {
-    setThreads((prev) => {
-      const i = prev.findIndex((t) => t.id === next.id);
-      if (i === -1) return [...prev, next];
-      const copy = [...prev];
-      copy[i] = next;
-      return copy;
-    });
-  }
-
-  // Панель отдаёт готовую разметку: комментарии набирают в редакторе, потому что
-  // в них живут @-упоминания, и заворачивать текст в <p> вручную больше нечего.
-  //
-  // Признак успеха возвращается наружу: `guard` ошибку не бросает, и без него
-  // композер считал бы отказ сервера успехом и стирал набранное.
-  async function submitDraft(html: string): Promise<boolean> {
-    if (!orgId || !owner || !draft || !editor) return false;
-    const created = await guard(() =>
-      api.post<DocCommentThread>(`${ownerPath(orgId, owner)}/doc-comments`, {
-        body: html,
-        quote: draft.quote,
-      }),
-    );
-    if (!created) return false;
-    upsertThread(created);
-    // Якорь ставится только после ответа сервера: id треда придумывает он, и
-    // пометить текст раньше нечем. Правка документа уйдёт автосохранением.
-    markSelectionAsThread(editor, created.id, { from: draft.from, to: draft.to });
-    doc.flush();
-    setDraft(null);
-    return true;
-  }
-
-  async function reply(threadId: string, html: string): Promise<boolean> {
-    if (!orgId || !owner) return false;
-    const updated = await guard(() =>
-      api.post<DocCommentThread>(`${ownerPath(orgId, owner)}/doc-comments?thread=${threadId}`, {
-        body: html,
-        quote: "",
-      }),
-    );
-    if (!updated) return false;
-    upsertThread(updated);
-    return true;
-  }
-
-  async function editMessage(commentId: string, html: string): Promise<boolean> {
-    if (!orgId) return false;
-    const updated = await guard(() =>
-      api.patch<DocCommentThread>(`/orgs/${orgId}/doc-comments/${commentId}`, { body: html }),
-    );
-    if (!updated) return false;
-    upsertThread(updated);
-    return true;
-  }
-
-  async function removeMessage(commentId: string) {
-    if (!orgId || !owner) return;
-    const ok = await guard(() => api.del(`/orgs/${orgId}/doc-comments/${commentId}`));
-    if (ok === undefined) return;
-    // Удаление корня уносит весь тред, ответа — только одно сообщение. Что
-    // именно случилось, знает сервер: перечитываем список вместо угадывания.
-    const fresh = await guard(() =>
-      api.get<DocCommentThread[]>(`${ownerPath(orgId, owner)}/doc-comments`),
-    );
-    if (!fresh) return;
-    const gone = threads.filter((t) => !fresh.some((f) => f.id === t.id));
-    setThreads(fresh);
-    if (editor) for (const thread of gone) removeThreadFromDoc(editor, thread.id);
-    if (gone.length) doc.flush();
-  }
-
-  async function resolve(threadId: string, resolved: boolean) {
-    if (!orgId) return;
-    const updated = await guard(() =>
-      api.post<DocCommentThread>(`/orgs/${orgId}/doc-comments/${threadId}/resolve`, { resolved }),
-    );
-    if (!updated) return;
-    upsertThread(updated);
-    if (editor) {
-      setThreadResolvedInDoc(editor, threadId, resolved);
-      doc.flush();
-    }
-  }
+  }, [beginDraft]);
 
   if (!open || typeof document === "undefined") return null;
 
-  const openThreadCount = threads.filter((t) => !t.resolved_at).length;
+  const openThreadCount = comments.threads.filter((t) => !t.resolved_at).length;
   const hasOutline = outline.length > 0;
 
   /**
@@ -398,7 +274,7 @@ export function DocEditor({
           withLabel
           title={taskTitle}
           getHtml={() => editor?.getHTML() ?? value}
-          threads={threads}
+          threads={comments.threads}
           onError={setError}
         />
         <Button
@@ -450,13 +326,14 @@ export function DocEditor({
         />
       )}
 
-      {(error || doc.error) && (
+      {(error || doc.error || comments.error) && (
         <p className="flex items-center gap-2 border-b border-border bg-destructive/10 px-4 py-1.5 text-xs text-destructive">
-          {error ?? doc.error}
+          {error ?? doc.error ?? comments.error}
           <button
             onClick={() => {
               setError(null);
               doc.clearError();
+              comments.clearError();
             }}
             className="ml-auto"
           >
@@ -514,22 +391,22 @@ export function DocEditor({
             <DocOutline editor={editor} items={outline} scrollHost={scrollHost} tabs={tabs} />
           ) : (
             <CommentPanel
-              threads={threads}
+              threads={comments.threads}
               me={me}
               orgId={orgId}
               owner={owner}
-              activeThreadId={activeThreadId}
-              isAnchored={(id) => anchors.has(id)}
+              activeThreadId={comments.activeThreadId}
+              isAnchored={(id) => comments.anchors.has(id)}
               canComment={canComment}
               canResolveAll={canResolveAll}
-              onSelect={(id) => editor && scrollToThread(editor, id)}
-              onReply={reply}
-              onEdit={editMessage}
-              onDelete={removeMessage}
-              onResolve={resolve}
-              draftQuote={draft?.quote ?? null}
-              onSubmitDraft={submitDraft}
-              onCancelDraft={() => setDraft(null)}
+              onSelect={comments.select}
+              onReply={comments.reply}
+              onEdit={comments.editMessage}
+              onDelete={comments.removeMessage}
+              onResolve={comments.resolve}
+              draftQuote={comments.draft?.quote ?? null}
+              onSubmitDraft={comments.submitDraft}
+              onCancelDraft={comments.cancelDraft}
               tabs={tabs}
             />
           )}
