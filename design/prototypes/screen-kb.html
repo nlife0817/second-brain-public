@@ -1,0 +1,1048 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Экран · База знаний</title>
+<link rel="stylesheet" href="sb.css">
+<script src="sb.js" defer></script>
+<style>
+/* ── Специфика базы знаний — поверх sb.css ── */
+
+/* Три колонки внутри main: дерево · документ · панель */
+.kb-layout { flex: 1; display: flex; min-height: 0; }
+
+/* Дерево документов. Отдельная колонка, а не ветка сайдбара: в сайдбаре она
+   отняла бы место у списка проектов, а вложенность здесь многоуровневая. */
+.kb-tree {
+  width: 262px; flex: none; background: var(--bg);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; padding: 10px 8px 8px;
+}
+.kb-tree__tools { display: flex; gap: 6px; padding: 0 2px 8px; }
+.kb-tree__scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.kb-sec {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 8px 4px; font-size: 10.5px; font-weight: 700;
+  letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted);
+}
+.kb-sec svg { width: 12px; height: 12px; }
+.kb-sec button { margin-left: auto; border: none; background: none; color: var(--text-muted); cursor: pointer; border-radius: 6px; padding: 2px; display: grid; }
+.kb-sec button:hover { color: var(--text-primary); background: rgba(28,25,18,.05); }
+
+/* Узел дерева. Отступ уровня — инлайновым padding-left, чтобы вложенность
+   рисовалась одной разметкой на любую глубину. */
+.kb-node {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  border: none; background: none; cursor: pointer; text-align: left;
+  border-radius: 8px; padding: 5px 8px; font-size: 13px;
+  font-family: var(--font-main); color: var(--text-secondary);
+  line-height: 1.3; transition: .12s;
+}
+.kb-node:hover { background: rgba(28,25,18,.04); color: var(--text-primary); }
+.kb-node.is-active { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.kb-node__caret {
+  width: 14px; height: 14px; flex: none; display: grid; place-items: center;
+  color: var(--text-muted); transition: transform .15s;
+}
+.kb-node__caret svg { width: 11px; height: 11px; }
+.kb-node.is-open > .kb-node__caret { transform: rotate(90deg); }
+.kb-node__caret.is-leaf { opacity: 0; }
+.kb-node__ico { width: 14px; height: 14px; flex: none; color: var(--text-muted); }
+.kb-node.is-active .kb-node__ico { color: var(--accent-text); }
+.kb-node__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-node__add {
+  border: none; background: none; color: var(--text-muted); cursor: pointer;
+  border-radius: 5px; padding: 1px; display: none; place-items: center;
+}
+.kb-node:hover .kb-node__add { display: grid; }
+.kb-node__add:hover { background: rgba(28,25,18,.08); color: var(--text-primary); }
+.kb-node__add svg { width: 12px; height: 12px; }
+/* Документ, привязанный больше чем к одному проекту: в дереве он стоит в каждом. */
+.kb-node__mirror { font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); flex: none; }
+.kb-kids { display: none; flex-direction: column; gap: 1px; }
+.kb-kids.is-open { display: flex; }
+
+/* ── Документ ── */
+.kb-doc { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--surface); }
+.kb-doc__head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 18px; border-bottom: 1px solid var(--border-divider); flex: none;
+}
+/* Крошки жмутся, но не переносятся: во второй строке шапка документа
+   становится вдвое выше и «прыгает» при переходе между документами. */
+.crumbs { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); min-width: 0; flex-wrap: nowrap; overflow: hidden; }
+.crumbs .sep, .crumbs .cur { flex: none; }
+.crumbs a { text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crumbs a:hover { color: var(--accent-text); }
+.crumbs .sep { opacity: .5; }
+.crumbs .cur { color: var(--text-primary); font-weight: 500; }
+
+/* Статус автосохранения — тот же язык, что у описания задачи. */
+.savechip {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px;
+  border-radius: 8px; font-size: 11.5px; font-weight: 600;
+  background: var(--success-soft); color: var(--success-text);
+}
+.savechip svg { width: 12px; height: 12px; }
+.savechip.is-dirty { background: var(--warning-soft); color: var(--warning-text); }
+.savechip.is-saving { background: rgba(28,25,18,.06); color: var(--text-secondary); }
+
+.kb-doc__scroll { flex: 1; overflow-y: auto; }
+.kb-doc__body { max-width: 780px; margin: 0 auto; padding: 26px 32px 90px; }
+.kb-title {
+  width: 100%; border: none; outline: none; background: none;
+  font-family: var(--font-main); font-size: 30px; font-weight: 700;
+  letter-spacing: -0.6px; color: var(--text-primary); line-height: 1.2;
+}
+.kb-title::placeholder { color: var(--text-muted); }
+.kb-meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-top: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--border-divider);
+  font-size: 12px; color: var(--text-muted);
+}
+.kb-meta .who { display: inline-flex; align-items: center; gap: 6px; }
+/* Кнопка-чип: привязка к проекту, доступ, наследование — всё открывает свой слой. */
+.meta-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+  border: 1px solid var(--border-input); border-radius: 7px; background: var(--surface);
+  font-family: var(--font-main); font-size: 11.5px; color: var(--text-secondary); cursor: pointer;
+}
+.meta-chip:hover { border-color: var(--border-active); color: var(--text-primary); }
+.meta-chip svg { width: 12px; height: 12px; }
+.meta-chip .proj-dot { width: 8px; height: 8px; }
+.meta-chip--warn { background: var(--warning-soft); border-color: transparent; color: var(--warning-text); font-weight: 600; }
+
+/* Панель инструментов редактора — липкая, как в полноэкранном описании. */
+.ed-bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+  padding: 7px 32px; background: rgba(255,255,255,.92); backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--border-divider);
+}
+.ed-bar button {
+  height: 27px; min-width: 27px; padding: 0 6px; border: none; background: none;
+  border-radius: 7px; color: var(--text-secondary); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  font-family: var(--font-main); font-size: 12.5px;
+}
+.ed-bar button:hover { background: rgba(28,25,18,.06); color: var(--text-primary); }
+.ed-bar button.is-on { background: var(--accent-soft); color: var(--accent-text); }
+.ed-bar button svg { width: 14px; height: 14px; }
+.ed-bar .sep { width: 1px; height: 17px; background: var(--border-divider); margin: 0 5px; }
+
+/* Тело документа */
+.prose { font-size: 14.5px; line-height: 1.68; color: var(--text-primary); margin-top: 20px; }
+.prose h2 { font-size: 19px; font-weight: 700; letter-spacing: -0.3px; margin: 26px 0 8px; }
+.prose h3 { font-size: 15.5px; font-weight: 700; margin: 20px 0 6px; }
+.prose p { margin: 9px 0; }
+.prose ul, .prose ol { margin: 9px 0 9px 22px; display: flex; flex-direction: column; gap: 3px; }
+.prose code { font-family: var(--font-mono); font-size: 12.5px; background: rgba(28,25,18,.06); padding: 1px 5px; border-radius: 5px; }
+.prose table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
+.prose th, .prose td { border: 1px solid var(--border-input); padding: 7px 10px; text-align: left; }
+.prose th { background: var(--bg); font-weight: 600; }
+.prose blockquote { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; margin: 14px 0; color: var(--text-secondary); }
+/* Фрагмент с открытым обсуждением — подсветка-якорь, как в описании задачи. */
+.cmt-mark { background: rgba(245,158,11,.22); border-bottom: 2px solid var(--warning); cursor: pointer; border-radius: 2px; }
+.cmt-mark.is-focus { background: rgba(245,158,11,.4); }
+.doc-img {
+  margin: 16px 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--border);
+  background: linear-gradient(135deg,#f2efe8,#e7e2d7); height: 190px;
+  display: grid; place-items: center; color: var(--text-muted); font-size: 12px;
+}
+/* Вложение-не-картинка: карточкой файла (pdf, docx, zip — что угодно). */
+.doc-file {
+  display: flex; align-items: center; gap: 10px; margin: 12px 0;
+  border: 1px solid var(--border); border-radius: 11px; padding: 9px 12px;
+  background: var(--surface); box-shadow: var(--shadow-xs); font-size: 13px;
+}
+.doc-file__ico { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); flex: none; }
+.doc-file__ico svg { width: 15px; height: 15px; }
+.doc-file .sz { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+/* Ссылка на задачу внутри текста и в блоке связей */
+.task-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); border-radius: 9px; padding: 5px 10px;
+  background: var(--surface); box-shadow: var(--shadow-xs); font-size: 12.5px; cursor: pointer;
+}
+.task-chip:hover { border-color: var(--border-active); }
+.task-chip svg { width: 13px; height: 13px; color: var(--text-muted); }
+.task-chip .st { margin-left: 4px; }
+
+.kb-rel { margin-top: 34px; padding-top: 16px; border-top: 1px solid var(--border-divider); }
+.kb-rel__head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.kb-rel__head h4 { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.kb-rel__list { display: flex; flex-direction: column; gap: 6px; }
+
+/* ── Правая панель: обсуждение · оглавление · история ── */
+.kb-panel {
+  width: 306px; flex: none; border-left: 1px solid var(--border);
+  background: var(--surface-sheet); display: flex; flex-direction: column;
+}
+.kb-panel__tabs { display: flex; gap: 2px; padding: 8px; border-bottom: 1px solid var(--border-divider); }
+.kb-panel__tabs button {
+  flex: 1; border: none; background: none; border-radius: 8px; padding: 6px 4px;
+  font-family: var(--font-main); font-size: 12px; font-weight: 500; color: var(--text-secondary);
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+}
+.kb-panel__tabs button svg { width: 13px; height: 13px; }
+.kb-panel__tabs button.is-on { background: var(--surface); color: var(--text-primary); font-weight: 600; box-shadow: var(--shadow-xs); }
+.kb-panel__body { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+
+.thread {
+  border: 1px solid var(--border); border-radius: 11px; background: var(--surface);
+  padding: 10px 11px; box-shadow: var(--shadow-xs); font-size: 12.5px;
+}
+.thread.is-focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.thread__quote {
+  font-size: 11.5px; color: var(--text-secondary); border-left: 2px solid var(--warning);
+  padding-left: 8px; margin-bottom: 8px; line-height: 1.4;
+}
+.thread__msg { display: flex; gap: 8px; margin-top: 8px; }
+.thread__msg .body { min-width: 0; }
+.thread__msg .who { font-size: 12px; font-weight: 600; }
+.thread__msg .t { font-size: 10.5px; font-family: var(--font-mono); color: var(--text-muted); margin-left: 5px; }
+.thread__msg p { line-height: 1.45; margin-top: 2px; }
+.thread__foot { display: flex; gap: 6px; margin-top: 9px; }
+.thread--resolved { opacity: .55; }
+
+.toc { display: flex; flex-direction: column; gap: 1px; }
+.toc a {
+  text-decoration: none; font-size: 12.5px; color: var(--text-secondary);
+  padding: 4px 8px; border-radius: 7px; line-height: 1.35;
+}
+.toc a:hover { background: rgba(28,25,18,.05); color: var(--text-primary); }
+.toc a.lvl2 { padding-left: 20px; font-size: 12px; }
+.toc a.is-cur { color: var(--accent-text); font-weight: 600; background: var(--accent-soft); }
+
+/* История версий */
+.vday { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); padding: 10px 6px 4px; }
+.ver {
+  display: flex; gap: 9px; align-items: flex-start; padding: 8px 9px;
+  border-radius: 10px; cursor: pointer; border: 1px solid transparent; font-size: 12.5px;
+}
+.ver:hover { background: rgba(28,25,18,.04); }
+.ver.is-cur { border-color: var(--accent); background: var(--accent-soft); }
+.ver__t { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); width: 40px; flex: none; padding-top: 2px; }
+.ver__body { min-width: 0; flex: 1; }
+.ver__who { font-weight: 600; }
+.ver__note { font-size: 11.5px; color: var(--text-muted); margin-top: 1px; }
+.ver__acts { display: flex; gap: 6px; margin-top: 7px; }
+/* Плашка «вы смотрите старую версию» — поверх документа, чтобы правку старого
+   текста нельзя было принять за правку актуального. */
+.ver-banner {
+  display: none; align-items: center; gap: 10px;
+  padding: 9px 18px; background: var(--warning-soft); color: var(--warning-text);
+  font-size: 12.5px; font-weight: 600; border-bottom: 1px solid rgba(245,158,11,.3);
+}
+.ver-banner.is-on { display: flex; }
+.ver-banner .spacer { flex: 1; }
+
+/* ── Корзина ── */
+.trash { padding: 18px 24px 60px; max-width: 900px; }
+.trash-row {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--border); border-radius: 11px; background: var(--surface);
+  padding: 9px 12px; box-shadow: var(--shadow-xs); font-size: 13px; margin-bottom: 7px;
+}
+.trash-row .where { font-size: 11.5px; color: var(--text-muted); }
+.trash-row .when { margin-left: auto; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); }
+
+/* ── Доступ ── */
+.acc-row {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 4px; border-bottom: 1px solid var(--border-divider); font-size: 13px;
+}
+.acc-row:last-child { border-bottom: none; }
+.acc-row .nm { font-weight: 500; }
+.acc-row .em { font-size: 11.5px; color: var(--text-muted); }
+.acc-row .select--sm { margin-left: auto; width: 128px; }
+.note-box {
+  background: var(--bg); border: 1px solid var(--border-divider); border-radius: 11px;
+  padding: 10px 12px; font-size: 12px; color: var(--text-secondary); line-height: 1.5;
+}
+.note-box b { color: var(--text-primary); }
+
+/* Панель решений (только для ревью) */
+.ux-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 60;
+  display: inline-flex; align-items: center; gap: 8px;
+  border: none; border-radius: 12px; padding: 10px 15px;
+  background: var(--dark); color: #fff; font-family: var(--font-main);
+  font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: var(--shadow-lg);
+}
+.ux-fab svg { width: 15px; height: 15px; color: #fbbf24; }
+.ux-pane {
+  position: fixed; right: 20px; bottom: 66px; width: 330px; z-index: 60;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: var(--shadow-lg); overflow: hidden;
+  max-height: min(600px, calc(100vh - 120px));
+  display: none; flex-direction: column;
+}
+.ux-pane.is-open { display: flex; }
+.ux-pane__head { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border-divider); font-size: 12.5px; font-weight: 700; }
+.ux-pane__body { overflow-y: auto; padding: 6px; }
+.ux-item {
+  display: flex; gap: 9px; padding: 8px 9px; border-radius: 10px; cursor: pointer;
+  font-size: 12px; line-height: 1.45; color: var(--text-secondary); transition: .15s;
+}
+.ux-item:hover { background: var(--accent-soft); color: var(--text-primary); }
+.ux-item b { color: var(--text-primary); display: block; font-size: 12px; }
+.ux-item .n {
+  width: 18px; height: 18px; border-radius: 6px; flex: none;
+  background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700;
+  display: grid; place-items: center; margin-top: 1px;
+}
+.ux-hl { outline: 2px solid var(--accent) !important; outline-offset: 3px; border-radius: 8px; }
+</style>
+</head>
+<body>
+<nav class="proto-nav">
+  <span class="proto-nav__brand"><span class="dot"></span>Second Brain · Оранж</span>
+  <a href="index.html">Обзор</a>
+  <a href="foundations.html">Основы</a>
+  <a href="controls.html">Элементы</a>
+  <a href="overlays.html">Окна и слои</a>
+  <a href="task-card.html">Карточка задачи</a>
+  <a href="screen-tasks.html">Таблица</a>
+  <a href="screen-board.html">Доска</a>
+  <a href="screen-crm.html">CRM</a>
+  <a href="screen-kb.html" class="is-current">База знаний</a>
+  <a href="screen-backlog.html">Бэклог · dev</a>
+  <a href="screen-sprint-board.html">Спринт · dev</a>
+  <a href="screen-my.html">Мои задачи</a>
+  <a href="screen-settings.html">Настройки</a>
+  <a href="screen-login.html">Вход</a>
+</nav>
+
+<div class="shell">
+  <!-- ═══════════ Сайдбар приложения ═══════════ -->
+  <aside class="sidebar">
+    <div class="sidebar__org">
+      <span class="sidebar__org-badge">D</span>
+      <span class="sidebar__org-name">DreamUnion</span>
+    </div>
+    <button class="side-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      Поиск <kbd>⌘K</kbd>
+    </button>
+    <a class="nav-item" href="screen-my.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>Мои задачи</a>
+    <a class="nav-item" href="screen-tasks.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>Все задачи</a>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>Уведомления<span class="count">3</span></button>
+    <button class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Время</button>
+    <a class="nav-item" href="screen-crm.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>CRM</a>
+    <!-- Новый пункт: между CRM и настройками, значок «книга» -->
+    <button class="nav-item is-active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>База знаний</button>
+    <a class="nav-item" href="screen-settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>Настройки</a>
+    <div class="side-label">Проекты <button title="Новый проект"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+    <a class="nav-item" href="screen-board.html"><span class="proj-dot" style="background:#3b82f6"></span>Сторонние проекты<span class="count count--muted">5</span></a>
+    <button class="nav-item"><span class="proj-dot" style="background:#8b5cf6"></span>Заметки<span class="count count--muted">2</span></button>
+    <button class="nav-item"><span class="proj-dot" style="background:#f59e0b"></span>Идеи<span class="count count--muted">9</span></button>
+    <button class="nav-item"><span class="proj-dot" style="background:#14b8a6"></span>Встречи</button>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:9px;padding:10px 10px 4px;border-top:1px solid var(--border-divider)">
+      <span class="avatar avatar--orange">ПБ</span>
+      <span style="font-size:12.5px;font-weight:500;flex:1">Полина Б.</span>
+      <span class="badge badge--neutral" style="font-size:10px;padding:2px 6px">владелец</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="kb-layout">
+      <!-- ═══════════ Дерево документов ═══════════ -->
+      <nav class="kb-tree">
+        <div class="kb-tree__tools">
+          <div class="search-wrap" style="flex:1">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <input class="input input--sm input--search" placeholder="Поиск по базе">
+          </div>
+          <button class="btn btn--primary btn--sm btn--icon" title="Новый документ" data-pop-trigger onclick="togglePop('newPop', this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+          </button>
+        </div>
+
+        <div class="kb-tree__scroll">
+          <!-- Общие документы: живут вне проектов, доступ настраивается поимённо -->
+          <div class="kb-sec" id="secCommon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            Общие
+            <button title="Новый общий документ" onclick="toast('Новый документ без проекта — доступ настраивается поимённо')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+          </div>
+          <button class="kb-node is-open" style="padding-left:8px" onclick="toggleNode(this,'n-hr')">
+            <span class="kb-node__caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            <svg class="kb-node__ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg>
+            <span class="kb-node__name">Регламенты компании</span>
+            <span class="kb-node__add" title="Вложенный документ" onclick="event.stopPropagation();toast('Создан вложенный документ')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span>
+          </button>
+          <div class="kb-kids is-open" id="n-hr">
+            <button class="kb-node" style="padding-left:26px" onclick="toast('Открыт документ «Онбординг нового сотрудника»')">
+              <span class="kb-node__caret is-leaf"></span>
+              <svg class="kb-node__ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg>
+              <span class="kb-node__name">Онбординг нового сотрудника</span>
+            </button>
+            <button class="kb-node" style="padding-left:26px" onclick="toast('Открыт документ «Отпуска и больничные»')">
+              <span class="kb-node__caret is-leaf"></span>
+              <svg class="kb-node__ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg>
+              <span class="kb-node__name">Отпуска и больничные</span>
+              <span class="kb-node__mirror" title="Виден только приглашённым">3 чел.</span>
+            </button>
+          </div>
+
+          <!-- Проектные ветки: доступ наследуется от проекта -->
+          <div class="kb-sec">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+            Проекты
+          </div>
+
+          <button class="kb-node is-open" style="padding-left:8px" onclick="toggleNode(this,'n-p1')">
+            <span class="kb-node__caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            <span class="proj-dot" style="background:#3b82f6;margin:0 1px"></span>
+            <span class="kb-node__name" style="font-weight:600;color:var(--text-primary)">Сторонние проекты</span>
+            <span class="kb-node__add" title="Документ в проекте" onclick="event.stopPropagation();toast('Создан документ в проекте «Сторонние проекты»')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span>
+          </button>
+          <div class="kb-kids is-open" id="n-p1">
+            <button class="kb-node is-open" style="padding-left:26px" onclick="toggleNode(this,'n-arch')">
+              <span class="kb-node__caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg></span>
+              <svg class="kb-node__ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg>
+              <span class="kb-node__name">Архитектура сервиса</span>
+              <span class="kb-node__add" onclick="event.stopPropagation();toast('Создан вложенный документ')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span>
+            </button>
+            <div class="kb-kids is-open" id="n-arch">
+              <button class="kb-node is-active" style="padding-left:44px" id="nodeCur">
+                <span class="kb-node__caret is-leaf"></span>
+                <svg class="kb-node__ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg>
+                <span class="kb-node__name">Схема базы данных</span>
+                <span class="kb-node__mirror" title="Документ привязан к двум проектам">2</span>
+              </button>
+              <button class="kb-node" style="padding-left:44px" onclick="toast('Открыт документ «Правила миграций»')">
+                <span class="kb-node__caret is-leaf"></span>
+                <svg class="kb-node__ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg>
+                <span class="kb-node__name">Правила миграций</span>
+              </button>
+            </div>
+            <button class="kb-node" style="padding-left:26px" onclick="toast('Открыт документ «Релизный процесс»')">
+              <span class="kb-node__caret is-leaf"></span>
+              <svg class="kb-node__ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg>
+              <span class="kb-node__name">Релизный процесс</span>
+            </button>
+          </div>
+
+          <button class="kb-node" style="padding-left:8px" onclick="toggleNode(this,'n-p2')">
+            <span class="kb-node__caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            <span class="proj-dot" style="background:#8b5cf6;margin:0 1px"></span>
+            <span class="kb-node__name" style="font-weight:600;color:var(--text-primary)">Заметки</span>
+          </button>
+          <div class="kb-kids" id="n-p2">
+            <button class="kb-node" style="padding-left:26px" onclick="toast('Открыт документ «Схема базы данных» — тот же, что в «Сторонних проектах»')">
+              <span class="kb-node__caret is-leaf"></span>
+              <svg class="kb-node__ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg>
+              <span class="kb-node__name">Схема базы данных</span>
+              <span class="kb-node__mirror" title="Тот же документ, что в проекте «Сторонние проекты»">2</span>
+            </button>
+          </div>
+
+          <div style="flex:1"></div>
+          <button class="kb-node" style="padding-left:8px;margin-top:8px" onclick="showTrash()">
+            <span class="kb-node__caret is-leaf"></span>
+            <svg class="kb-node__ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            <span class="kb-node__name">Корзина</span>
+            <span class="kb-node__mirror">2</span>
+          </button>
+        </div>
+      </nav>
+
+      <!-- ═══════════ Документ ═══════════ -->
+      <section class="kb-doc" id="paneDoc">
+        <div class="kb-doc__head">
+          <div class="crumbs">
+            <a href="#" onclick="return false">База знаний</a><span class="sep">/</span>
+            <a href="#" onclick="return false">Сторонние проекты</a><span class="sep">/</span>
+            <a href="#" onclick="return false">Архитектура сервиса</a><span class="sep">/</span>
+            <span class="cur">Схема базы данных</span>
+          </div>
+          <div class="spacer" style="flex:1"></div>
+          <span class="savechip" id="saveChip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            Сохранено
+          </span>
+          <button class="btn btn--secondary btn--sm" onclick="openModal('mAccess')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+            Доступ
+          </button>
+          <button class="btn btn--ghost btn--sm btn--icon" data-pop-trigger onclick="togglePop('docPop', this)" title="Ещё">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+          </button>
+        </div>
+
+        <!-- Просмотр старой версии: правка тут невозможна, пока не восстановишь -->
+        <div class="ver-banner" id="verBanner">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+          Версия от 26 августа, 14:02 · Иван К. — только чтение
+          <span class="spacer"></span>
+          <button class="btn btn--sm btn--dark" onclick="restoreVersion()">Восстановить эту версию</button>
+          <button class="btn btn--sm btn--ghost" onclick="exitVersion()">К актуальной</button>
+        </div>
+
+        <div class="ed-bar" id="edBar">
+          <button class="is-on" title="Обычный текст">Абзац
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <span class="sep"></span>
+          <button title="Жирный"><b style="font-size:13px">B</b></button>
+          <button title="Курсив"><i style="font-size:13px;font-family:Georgia,serif">I</i></button>
+          <button title="Зачёркнутый"><s style="font-size:13px">S</s></button>
+          <button title="Код"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg></button>
+          <button title="Ссылка"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.8 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></button>
+          <span class="sep"></span>
+          <button title="Маркированный список"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg></button>
+          <button title="Нумерованный список"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg></button>
+          <button title="Чек-лист"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg></button>
+          <button title="Цитата"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 21c3 0 7-1 7-8V5a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v6c0 1 1 2 2 2h4"/><path d="M15 21c3 0 7-1 7-8V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v6c0 1 1 2 2 2h4"/></svg></button>
+          <span class="sep"></span>
+          <button title="Таблица"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/></svg></button>
+          <button title="Колонки"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/></svg></button>
+          <button title="Картинка"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg></button>
+          <button title="Файл — любого типа" onclick="toast('Загрузка файла: pdf, docx, xlsx, zip — до 10 МБ')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m21.4 11.1-9.2 9.2a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 1 1 4.7 4.7l-9.2 9.2a1.7 1.7 0 0 1-2.4-2.4l8.5-8.5"/></svg></button>
+          <span class="sep"></span>
+          <button title="Ссылка на задачу" onclick="toast('Вставка ссылки на задачу — поиск по названию')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 12H3"/><path d="m15 6 6 6-6 6"/><path d="M21 12H11"/></svg></button>
+          <button title="Комментарий к выделенному" onclick="focusThread('t1')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
+          <span class="spacer" style="flex:1"></span>
+          <button title="Экспорт в .docx" onclick="toast('Документ выгружен в .docx')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg></button>
+        </div>
+
+        <div class="kb-doc__scroll">
+          <div class="kb-doc__body">
+            <input class="kb-title" value="Схема базы данных" oninput="markDirty()">
+            <div class="kb-meta">
+              <span class="who"><span class="avatar" style="width:20px;height:20px;font-size:9px;border-radius:6px;background:linear-gradient(135deg,#6366f1,#818cf8)">ИК</span> Иван К.</span>
+              <span>· обновлён 2 часа назад</span>
+              <span style="flex:1"></span>
+              <button class="meta-chip" id="chipProjects" onclick="openModal('mProjects')">
+                <span class="proj-dot" style="background:#3b82f6"></span>
+                <span class="proj-dot" style="background:#8b5cf6;margin-left:-3px"></span>
+                2 проекта
+              </button>
+              <button class="meta-chip" onclick="openModal('mAccess')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                Доступ из проектов
+              </button>
+              <button class="meta-chip meta-chip--warn" id="chipInherit" onclick="hl('crumbsBox');toast('Доступ задан на верхнем документе ветки — «Архитектура сервиса»')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v20"/><path d="m19 9-7-7-7 7"/></svg>
+                Как у «Архитектура сервиса»
+              </button>
+            </div>
+
+            <div class="prose" id="docProse">
+              <p>Рабочая схема хранения. Всё живёт в схеме <code>core</code>; таблицы <code>public</code> — наследие первой версии и участвуют только в миграциях.</p>
+
+              <h2 id="h-1">Соглашения</h2>
+              <ul>
+                <li>Первичные ключи — <code>uuid</code>, даты — <code>timestamptz</code>.</li>
+                <li><span class="cmt-mark" id="m-t1" onclick="focusThread('t1')">Каждая доменная таблица несёт <code>org_id</code></span>, композитные индексы начинаются с него.</li>
+                <li>Позиции — <code>double precision</code>: вставка между соседями без пересчёта.</li>
+              </ul>
+
+              <h2 id="h-2">Ключевые таблицы</h2>
+              <table>
+                <thead><tr><th style="width:38%">Таблица</th><th>Назначение</th></tr></thead>
+                <tbody>
+                  <tr><td><code>core.projects</code></td><td>Проекты организации, базовая роль доступа</td></tr>
+                  <tr><td><code>core.tasks</code></td><td>Задачи, описание-документ, сроки</td></tr>
+                  <tr><td><code>core.kb_documents</code></td><td>Документы базы знаний, дерево через <code>parent_id</code></td></tr>
+                </tbody>
+              </table>
+
+              <h3 id="h-3">Диаграмма связей</h3>
+              <div class="doc-img">картинка · схема связей.png</div>
+
+              <h2 id="h-4">Приложения</h2>
+              <p>Выгрузка структуры и разбор индексов лежат файлами — <span class="cmt-mark" style="background:rgba(16,185,129,.18);border-color:var(--success)" onclick="focusThread('t2')">их обновляют раз в квартал</span>.</p>
+              <div class="doc-file">
+                <span class="doc-file__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg></span>
+                <span><b style="font-weight:600">schema-dump.pdf</b><br><span style="font-size:11.5px;color:var(--text-muted)">PDF · загрузил Иван К.</span></span>
+                <span class="sz">1,4 МБ</span>
+              </div>
+              <div class="doc-file">
+                <span class="doc-file__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg></span>
+                <span><b style="font-weight:600">indexes.xlsx</b><br><span style="font-size:11.5px;color:var(--text-muted)">Таблица · загрузила Полина Б.</span></span>
+                <span class="sz">210 КБ</span>
+              </div>
+
+              <blockquote>Схему правит тот, кто пишет миграцию: расхождение документа с базой дороже пропущенного абзаца.</blockquote>
+            </div>
+
+            <!-- Связи с задачами — в обе стороны -->
+            <div class="kb-rel">
+              <div class="kb-rel__head">
+                <h4>Связанные задачи</h4>
+                <button class="btn btn--ghost btn--sm" onclick="toast('Поиск задачи для привязки')">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                  Привязать
+                </button>
+              </div>
+              <div class="kb-rel__list">
+                <div class="task-chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></svg>
+                  Перевести вложения на отдельное хранилище
+                  <span class="tinted-chip st" style="--chip-color:#3b82f6"><span class="dot"></span>В работе</span>
+                </div>
+                <div class="task-chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></svg>
+                  Индексы под отчёт по времени
+                  <span class="tinted-chip st" style="--chip-color:#10b981"><span class="dot"></span>Готово</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════ Корзина (второй режим правой части) ═══════════ -->
+      <section class="kb-doc" id="paneTrash" style="display:none">
+        <div class="kb-doc__head">
+          <div class="crumbs"><a href="#" onclick="return false">База знаний</a><span class="sep">/</span><span class="cur">Корзина</span></div>
+          <div style="flex:1"></div>
+          <span style="font-size:12px;color:var(--text-muted)">Удалённое хранится 30 дней</span>
+          <button class="btn btn--danger btn--sm" onclick="toast('Корзина очищена')">Очистить</button>
+        </div>
+        <div class="kb-doc__scroll">
+          <div class="trash">
+            <div class="trash-row">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg>
+              <span>
+                <b style="font-weight:500">Старый релизный чек-лист</b>
+                <span class="where"> · Сторонние проекты / Релизный процесс · 3 вложенных документа</span>
+              </span>
+              <span class="when">удалил Иван К., 4 дня назад</span>
+              <button class="btn btn--secondary btn--sm" onclick="toast('Документ восстановлен вместе с вложенными')">Восстановить</button>
+            </div>
+            <div class="trash-row">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h6"/></svg>
+              <span><b style="font-weight:500">Черновик регламента отпусков</b><span class="where"> · Общие</span></span>
+              <span class="when">удалила Полина Б., вчера</span>
+              <button class="btn btn--secondary btn--sm" onclick="toast('Документ восстановлен')">Восстановить</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════ Правая панель ═══════════ -->
+      <aside class="kb-panel">
+        <div class="kb-panel__tabs">
+          <button class="is-on" data-ptab="comments" onclick="switchPanel('comments')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Обсуждение <span style="color:var(--text-muted)">2</span>
+          </button>
+          <button data-ptab="toc" onclick="switchPanel('toc')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+            Оглавление
+          </button>
+          <button data-ptab="history" onclick="switchPanel('history')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+            История
+          </button>
+        </div>
+
+        <!-- Обсуждение -->
+        <div class="kb-panel__body" data-ppane="comments">
+          <div class="thread" id="t1" onclick="focusThread('t1')">
+            <div class="thread__quote">Каждая доменная таблица несёт org_id</div>
+            <div class="thread__msg">
+              <span class="avatar" style="width:24px;height:24px;font-size:10px;border-radius:7px;background:linear-gradient(135deg,#db2777,#f472b6)">МС</span>
+              <div class="body">
+                <span class="who">Мария С.</span><span class="t">вчера</span>
+                <p>А <code>core.events</code> тоже? Там строки от системных задач без организации.</p>
+              </div>
+            </div>
+            <div class="thread__msg">
+              <span class="avatar" style="width:24px;height:24px;font-size:10px;border-radius:7px;background:linear-gradient(135deg,#6366f1,#818cf8)">ИК</span>
+              <div class="body">
+                <span class="who">Иван К.</span><span class="t">вчера</span>
+                <p>Тоже. Системные пишем от лица организации-владельца.</p>
+              </div>
+            </div>
+            <div class="thread__foot">
+              <button class="btn btn--secondary btn--sm" style="flex:1" onclick="event.stopPropagation();toast('Ответ отправлен, автору ушло уведомление')">Ответить</button>
+              <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();resolveThread('t1')">Закрыть</button>
+            </div>
+          </div>
+
+          <div class="thread thread--resolved" id="t2">
+            <div class="thread__quote" style="border-color:var(--success)">их обновляют раз в квартал</div>
+            <div class="thread__msg">
+              <span class="avatar" style="width:24px;height:24px;font-size:10px;border-radius:7px;background:linear-gradient(135deg,#e8734a,#f59e6c)">ПБ</span>
+              <div class="body">
+                <span class="who">Полина Б.</span><span class="t">26 авг</span>
+                <p>Поставила напоминание задачей. Закрываю.</p>
+              </div>
+            </div>
+            <div class="thread__foot">
+              <span class="badge badge--success" style="font-size:10.5px">закрыто</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Оглавление -->
+        <div class="kb-panel__body" data-ppane="toc" style="display:none">
+          <div class="toc">
+            <a href="#h-1" class="is-cur">Соглашения</a>
+            <a href="#h-2">Ключевые таблицы</a>
+            <a href="#h-3" class="lvl2">Диаграмма связей</a>
+            <a href="#h-4">Приложения</a>
+          </div>
+        </div>
+
+        <!-- История версий -->
+        <div class="kb-panel__body" data-ppane="history" style="display:none">
+          <div class="note-box">
+            Версия пишется при сохранении. Правки одного автора подряд <b>склеиваются в одну</b> версию — иначе автосохранение оставляло бы по записи каждые несколько секунд.
+          </div>
+          <div class="vday">Сегодня</div>
+          <div class="ver is-cur">
+            <span class="ver__t">16:41</span>
+            <div class="ver__body">
+              <span class="ver__who">Иван К.</span>
+              <div class="ver__note">Текущая версия · +2 абзаца, таблица</div>
+            </div>
+          </div>
+          <div class="ver" onclick="viewVersion(this)">
+            <span class="ver__t">11:05</span>
+            <div class="ver__body">
+              <span class="ver__who">Полина Б.</span>
+              <div class="ver__note">Добавила indexes.xlsx</div>
+              <div class="ver__acts">
+                <button class="btn btn--secondary btn--sm" onclick="event.stopPropagation();viewVersion(this.closest('.ver'))">Посмотреть</button>
+                <button class="btn btn--ghost btn--sm" onclick="event.stopPropagation();restoreVersion()">Восстановить</button>
+              </div>
+            </div>
+          </div>
+          <div class="vday">26 августа</div>
+          <div class="ver" onclick="viewVersion(this)">
+            <span class="ver__t">14:02</span>
+            <div class="ver__body">
+              <span class="ver__who">Иван К.</span>
+              <div class="ver__note">Переписал раздел «Соглашения»</div>
+            </div>
+          </div>
+          <div class="ver" onclick="viewVersion(this)">
+            <span class="ver__t">09:30</span>
+            <div class="ver__body">
+              <span class="ver__who">Иван К.</span>
+              <div class="ver__note">Создан из описания задачи «Схема БД»</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<!-- ═══════════ Поповеры ═══════════ -->
+<div class="pop" id="newPop" style="width:250px">
+  <div class="pop__label">Новый документ</div>
+  <button class="pop__item" onclick="togglePop('newPop');toast('Документ создан в проекте «Сторонние проекты»')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+    В проекте…
+  </button>
+  <button class="pop__item" onclick="togglePop('newPop');openModal('mAccess')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>
+    Общий — доступ по списку
+  </button>
+  <div class="pop__sep"></div>
+  <button class="pop__item" onclick="togglePop('newPop');openModal('mConvert')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 12H3"/><path d="m15 6 6 6-6 6"/><path d="M21 12H11"/></svg>
+    Из описания задачи…
+  </button>
+</div>
+
+<div class="pop" id="docPop" style="width:238px">
+  <button class="pop__item" onclick="togglePop('docPop');toast('Переименование прямо в заголовке')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>Переименовать</button>
+  <button class="pop__item" onclick="togglePop('docPop');openModal('mProjects')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>Проекты документа…</button>
+  <button class="pop__item" onclick="togglePop('docPop');toast('Выбор нового родителя в дереве')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 9v6"/><path d="M9 5h6"/><path d="m15 19-3 3-3-3"/><path d="m19 9 3 3-3 3"/></svg>Переместить в дереве…</button>
+  <button class="pop__item" onclick="togglePop('docPop');toast('Копия создана рядом')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>Дублировать</button>
+  <div class="pop__sep"></div>
+  <button class="pop__item" onclick="togglePop('docPop');toast('Документ выгружен в .docx')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>Скачать .docx</button>
+  <div class="pop__sep"></div>
+  <button class="pop__item is-danger" onclick="togglePop('docPop');openModal('mDelete')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>В корзину</button>
+</div>
+
+<!-- ═══════════ Доступ ═══════════ -->
+<div class="modal modal--wide" id="mAccess">
+  <div class="modal__head">
+    <h2>Доступ к документу</h2>
+    <button class="x-btn" onclick="closeLayers()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  </div>
+  <div class="modal__body">
+    <div class="note-box">
+      Документ привязан к проектам — доступ берётся <b>из них</b>: смотреть может каждый, кто видит хотя бы один проект; править — редакторы этих проектов. Персональный список нужен только документам <b>без проекта</b>.
+    </div>
+
+    <div class="field">
+      <span class="field__label">Откуда берётся доступ</span>
+      <label class="radio" style="display:flex;gap:9px;align-items:flex-start;padding:8px 0">
+        <input type="radio" name="accsrc" checked onchange="accMode('proj')"><span class="dot" style="margin-top:2px"></span>
+        <span style="font-size:13px">Из проектов<br><span style="font-size:11.5px;color:var(--text-muted)">Сторонние проекты, Заметки — 9 человек</span></span>
+      </label>
+      <label class="radio" style="display:flex;gap:9px;align-items:flex-start;padding:8px 0">
+        <input type="radio" name="accsrc" onchange="accMode('list')"><span class="dot" style="margin-top:2px"></span>
+        <span style="font-size:13px">По списку — документ уйдёт из проектов в «Общие»<br><span style="font-size:11.5px;color:var(--text-muted)">Настраивает автор документа и владелец организации</span></span>
+      </label>
+    </div>
+
+    <div id="accList" style="display:none;flex-direction:column;gap:10px">
+      <div class="field">
+        <span class="field__label">Вся организация</span>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="toggle" onclick="toggleSwitch(this)"></span>
+          <span style="font-size:12.5px;color:var(--text-secondary)">Сотрудники видят документ (гости — нет)</span>
+        </div>
+      </div>
+      <div>
+        <div class="field__label" style="margin-bottom:4px">Персонально</div>
+        <div class="acc-row">
+          <span class="avatar" style="width:26px;height:26px;font-size:10px;border-radius:8px;background:linear-gradient(135deg,#6366f1,#818cf8)">ИК</span>
+          <span><span class="nm">Иван К.</span><br><span class="em">ivan@dreamunion.example</span></span>
+          <span class="badge badge--accent" style="margin-left:auto">автор</span>
+        </div>
+        <div class="acc-row">
+          <span class="avatar" style="width:26px;height:26px;font-size:10px;border-radius:8px;background:linear-gradient(135deg,#db2777,#f472b6)">МС</span>
+          <span><span class="nm">Мария С.</span><br><span class="em">maria@dreamunion.example</span></span>
+          <select class="select select--sm"><option>Может править</option><option>Только смотреть</option><option>Комментировать</option></select>
+        </div>
+        <div class="acc-row">
+          <span class="avatar" style="width:26px;height:26px;font-size:10px;border-radius:8px;background:linear-gradient(135deg,#64748b,#94a3b8)">АГ</span>
+          <span><span class="nm">Антон Г.</span><br><span class="em">anton@partner.example</span> <span class="badge badge--neutral" style="font-size:10px">гость</span></span>
+          <select class="select select--sm"><option>Только смотреть</option><option>Комментировать</option><option>Может править</option></select>
+        </div>
+      </div>
+      <button class="btn btn--secondary btn--sm" style="align-self:flex-start" onclick="toast('Выбор участника из состава организации')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        Добавить человека
+      </button>
+    </div>
+  </div>
+  <div class="modal__foot">
+    <button class="btn btn--ghost" onclick="closeLayers()">Отмена</button>
+    <button class="btn btn--primary" onclick="closeLayers();toast('Доступ сохранён')">Сохранить</button>
+  </div>
+</div>
+
+<!-- ═══════════ Проекты документа ═══════════ -->
+<div class="modal" id="mProjects">
+  <div class="modal__head">
+    <h2>Проекты документа</h2>
+    <button class="x-btn" onclick="closeLayers()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  </div>
+  <div class="modal__body">
+    <div class="note-box">Документ появится в базе знаний <b>каждого</b> выбранного проекта — это один и тот же документ, а не копии.</div>
+    <label class="check" style="display:flex;gap:9px;align-items:center;padding:5px 0">
+      <input type="checkbox" checked><span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+      <span class="proj-dot" style="background:#3b82f6"></span><span style="font-size:13px">Сторонние проекты</span>
+    </label>
+    <label class="check" style="display:flex;gap:9px;align-items:center;padding:5px 0">
+      <input type="checkbox" checked><span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+      <span class="proj-dot" style="background:#8b5cf6"></span><span style="font-size:13px">Заметки</span>
+    </label>
+    <label class="check" style="display:flex;gap:9px;align-items:center;padding:5px 0">
+      <input type="checkbox"><span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+      <span class="proj-dot" style="background:#f59e0b"></span><span style="font-size:13px">Идеи</span>
+    </label>
+  </div>
+  <div class="modal__foot">
+    <button class="btn btn--ghost" onclick="closeLayers()">Отмена</button>
+    <button class="btn btn--primary" onclick="closeLayers();toast('Привязка обновлена')">Сохранить</button>
+  </div>
+</div>
+
+<!-- ═══════════ Описание задачи → документ ═══════════ -->
+<div class="modal" id="mConvert">
+  <div class="modal__head">
+    <h2>Описание задачи в базу знаний</h2>
+    <button class="x-btn" onclick="closeLayers()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  </div>
+  <div class="modal__body">
+    <div class="note-box">
+      Кнопка живёт в описании задачи. Документ получает <b>название задачи</b> заголовком, текст и вложения переезжают целиком, привязка — <b>проекты задачи</b>.
+    </div>
+    <div class="field">
+      <span class="field__label">Заголовок документа</span>
+      <input class="input" value="Схема базы данных">
+    </div>
+    <div class="field">
+      <span class="field__label">Куда положить</span>
+      <select class="select">
+        <option>Сторонние проекты / Архитектура сервиса</option>
+        <option>Сторонние проекты — в корень</option>
+        <option>Общие</option>
+      </select>
+    </div>
+    <div class="field">
+      <span class="field__label">Что сделать с описанием задачи</span>
+      <label class="radio" style="display:flex;gap:9px;align-items:flex-start;padding:5px 0">
+        <input type="radio" name="conv" checked><span class="dot" style="margin-top:2px"></span>
+        <span style="font-size:13px">Заменить ссылкой на документ<br><span style="font-size:11.5px;color:var(--text-muted)">В задаче останется карточка документа — текст не задвоится</span></span>
+      </label>
+      <label class="radio" style="display:flex;gap:9px;align-items:flex-start;padding:5px 0">
+        <input type="radio" name="conv"><span class="dot" style="margin-top:2px"></span>
+        <span style="font-size:13px">Оставить описание как есть<br><span style="font-size:11.5px;color:var(--text-muted)">Документ станет копией, дальше живут независимо</span></span>
+      </label>
+    </div>
+  </div>
+  <div class="modal__foot">
+    <button class="btn btn--ghost" onclick="closeLayers()">Отмена</button>
+    <button class="btn btn--primary" onclick="closeLayers();toast('Документ создан, в задаче появилась ссылка')">Создать документ</button>
+  </div>
+</div>
+
+<!-- ═══════════ Удаление ═══════════ -->
+<div class="modal" id="mDelete">
+  <div class="modal__head">
+    <h2>В корзину?</h2>
+    <button class="x-btn" onclick="closeLayers()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+  </div>
+  <div class="modal__body">
+    <p style="font-size:13.5px;line-height:1.55">«Схема базы данных» уедет в корзину <b>вместе с вложенными документами</b>. Оттуда её можно вернуть 30 дней.</p>
+  </div>
+  <div class="modal__foot">
+    <button class="btn btn--ghost" onclick="closeLayers()">Отмена</button>
+    <button class="btn btn--danger-solid" onclick="closeLayers();showTrash();toast('Документ в корзине')">В корзину</button>
+  </div>
+</div>
+
+<!-- ═══════════ Панель решений (только для ревью) ═══════════ -->
+<div class="ux-pane" id="uxPane">
+  <div class="ux-pane__head"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>Решения концепции — кликни</div>
+  <div class="ux-pane__body">
+    <div class="ux-item" onclick="uxGo(1)"><span class="n">1</span><div><b>Дерево — отдельная колонка</b>Многоуровневая вложенность не помещается в сайдбар: он остаётся про задачи и проекты.</div></div>
+    <div class="ux-item" onclick="uxGo(2)"><span class="n">2</span><div><b>Папок нет</b>Любой документ может быть и текстом, и разделом — вложенность даёт `parent_id`.</div></div>
+    <div class="ux-item" onclick="uxGo(3)"><span class="n">3</span><div><b>Два источника доступа</b>«Общие» — по списку людей; проектные — правами проекта. Третьего не заводим.</div></div>
+    <div class="ux-item" onclick="uxGo(4)"><span class="n">4</span><div><b>Документ в нескольких проектах</b>Один документ, а не копии: в дереве он стоит в каждом привязанном проекте.</div></div>
+    <div class="ux-item" onclick="uxGo(5)"><span class="n">5</span><div><b>Доступ наследуется по ветке</b>Настраивается на верхнем документе; у вложенного — плашка со ссылкой на корень.</div></div>
+    <div class="ux-item" onclick="uxGo(6)"><span class="n">6</span><div><b>Автосохранение и статус</b>Тот же чип «Сохранено / Сохраняем…», что в описании задачи.</div></div>
+    <div class="ux-item" onclick="uxGo(7)"><span class="n">7</span><div><b>Версии склеиваются</b>Правки одного автора подряд — одна версия, иначе автосейв завалит историю.</div></div>
+    <div class="ux-item" onclick="uxGo(8)"><span class="n">8</span><div><b>Старая версия — только чтение</b>Жёлтая плашка поверх документа: правку прошлого нельзя принять за правку текущего.</div></div>
+    <div class="ux-item" onclick="uxGo(9)"><span class="n">9</span><div><b>Комментарии к фрагменту</b>Те же треды, что в описании задачи: якорь в тексте, панель справа, закрытие.</div></div>
+    <div class="ux-item" onclick="uxGo(10)"><span class="n">10</span><div><b>Вложения любых типов</b>Картинки — узлом, остальное — карточкой файла. Тот же загрузчик, что у задач.</div></div>
+    <div class="ux-item" onclick="uxGo(11)"><span class="n">11</span><div><b>Связь с задачами в обе стороны</b>Блок «Связанные задачи» в документе, блок «Документы» — в карточке задачи.</div></div>
+    <div class="ux-item" onclick="uxGo(12)"><span class="n">12</span><div><b>Описание задачи → документ</b>Кнопка в описании: текст и вложения переезжают, в задаче остаётся ссылка.</div></div>
+    <div class="ux-item" onclick="uxGo(13)"><span class="n">13</span><div><b>Удаление — в корзину</b>Вместе с поддеревом, 30 дней на возврат.</div></div>
+  </div>
+</div>
+<button class="ux-fab" onclick="document.getElementById('uxPane').classList.toggle('is-open')">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
+  Решения
+</button>
+
+<div class="overlay" id="ovl" onclick="closeLayers()"></div>
+<div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Готово</span></div>
+
+<script>
+// Раскрытие ветки дерева
+function toggleNode(btn, kidsId) {
+  const kids = document.getElementById(kidsId);
+  if (!kids) return;
+  const open = kids.classList.toggle('is-open');
+  btn.classList.toggle('is-open', open);
+}
+
+// Вкладки правой панели
+function switchPanel(t) {
+  document.querySelectorAll('[data-ptab]').forEach(b => b.classList.toggle('is-on', b.dataset.ptab === t));
+  document.querySelectorAll('[data-ppane]').forEach(p => { p.style.display = p.dataset.ppane === t ? '' : 'none'; });
+}
+
+// Статус автосохранения: dirty → saving → saved
+let saveTimer = null;
+function markDirty() {
+  const chip = document.getElementById('saveChip');
+  chip.className = 'savechip is-dirty';
+  chip.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>Есть правки';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    chip.className = 'savechip is-saving';
+    chip.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>Сохраняем…';
+    setTimeout(() => {
+      chip.className = 'savechip';
+      chip.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Сохранено';
+    }, 700);
+  }, 1200);
+}
+
+// Тред ↔ якорь в тексте
+function focusThread(id) {
+  switchPanel('comments');
+  document.querySelectorAll('.thread').forEach(t => t.classList.remove('is-focus'));
+  document.querySelectorAll('.cmt-mark').forEach(m => m.classList.remove('is-focus'));
+  const th = document.getElementById(id);
+  th?.classList.add('is-focus');
+  th?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById('m-' + id)?.classList.add('is-focus');
+}
+function resolveThread(id) {
+  document.getElementById(id)?.classList.add('thread--resolved');
+  toast('Обсуждение закрыто');
+}
+
+// Версии
+function viewVersion(row) {
+  document.querySelectorAll('.ver').forEach(v => v.classList.remove('is-cur'));
+  row.classList.add('is-cur');
+  document.getElementById('verBanner').classList.add('is-on');
+  document.getElementById('edBar').style.opacity = '.4';
+  document.getElementById('edBar').style.pointerEvents = 'none';
+  switchPanel('history');
+}
+function exitVersion() {
+  document.getElementById('verBanner').classList.remove('is-on');
+  document.getElementById('edBar').style.opacity = '';
+  document.getElementById('edBar').style.pointerEvents = '';
+  document.querySelectorAll('.ver').forEach((v, i) => v.classList.toggle('is-cur', i === 0));
+}
+function restoreVersion() {
+  exitVersion();
+  toast('Версия восстановлена — поверх текущей, история сохранена');
+}
+
+// Корзина
+function showTrash() {
+  document.getElementById('paneDoc').style.display = 'none';
+  document.getElementById('paneTrash').style.display = '';
+}
+function showDoc() {
+  document.getElementById('paneTrash').style.display = 'none';
+  document.getElementById('paneDoc').style.display = '';
+}
+
+function hl(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('ux-hl');
+  setTimeout(() => el.classList.remove('ux-hl'), 2200);
+}
+
+function accMode(m) {
+  document.getElementById('accList').style.display = m === 'list' ? 'flex' : 'none';
+}
+
+function uxGo(n) {
+  showDoc();
+  switch (n) {
+    case 1: hl('nodeCur'); break;
+    case 2: hl('n-arch'); break;
+    case 3: hl('secCommon'); break;
+    case 4: hl('chipProjects'); break;
+    case 5: hl('chipInherit'); break;
+    case 6: markDirty(); hl('saveChip'); break;
+    case 7: switchPanel('history'); break;
+    case 8: viewVersion(document.querySelectorAll('.ver')[1]); hl('verBanner'); break;
+    case 9: focusThread('t1'); hl('m-t1'); break;
+    case 10: hl('docProse'); break;
+    case 11: hl('docProse'); document.querySelector('.kb-rel')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); break;
+    case 12: openModal('mConvert'); break;
+    case 13: showTrash(); break;
+  }
+}
+</script>
+</body>
+</html>
