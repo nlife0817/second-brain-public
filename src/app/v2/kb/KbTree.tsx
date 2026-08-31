@@ -33,40 +33,72 @@ import {
   Globe,
   GripVertical,
   Plus,
+  Table2,
   Trash2,
+  Upload,
 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ProjectIcon } from "@/components/v2/project-icons";
 import type { KbNodeKind, KbTreeGroup, KbTreeNode, ProjectWithMeta } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
 
-/** Что заводим: страницу или раздел. Один и тот же выбор в трёх местах. */
+/** Что заводим: страницу, таблицу, раздел — или переносим готовый файл. */
 function CreateMenu({
   trigger,
   onCreate,
+  onUpload,
 }: {
   trigger: React.ReactElement;
   onCreate: (kind: KbNodeKind) => void;
+  onUpload: (file: File) => void;
 }) {
+  // Поле выбора файла спрятано, но живёт рядом с меню: одно на каждую точку
+  // создания, поэтому загруженное попадает ровно туда, где нажали «плюс».
+  const input = useRef<HTMLInputElement | null>(null);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={trigger} />
-      <DropdownMenuContent align="start">
-        <DropdownMenuItem onClick={() => onCreate("document")}>
-          <FileText className="size-4" />
-          Документ
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => onCreate("folder")}>
-          <Folder className="size-4" />
-          Папка
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger render={trigger} />
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem onClick={() => onCreate("document")}>
+            <FileText className="size-4" />
+            Документ
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onCreate("sheet")}>
+            <Table2 className="size-4" />
+            Таблица
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onCreate("folder")}>
+            <Folder className="size-4" />
+            Папка
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => input.current?.click()}>
+            <Upload className="size-4" />
+            Загрузить файл…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <input
+        ref={input}
+        type="file"
+        accept=".docx,.xlsx,.xlsm,.csv,.tsv"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          // Значение сбрасываем сразу: без этого повторный выбор того же файла
+          // не вызовет `change`, и кнопка будет выглядеть сломанной.
+          event.target.value = "";
+          if (file) onUpload(file);
+        }}
+      />
+    </>
   );
 }
 
@@ -148,6 +180,7 @@ const Row = memo(function Row({
   canEdit,
   onToggle,
   onCreateChild,
+  onUploadInto,
 }: {
   node: KbTreeNode;
   depth: number;
@@ -161,6 +194,7 @@ const Row = memo(function Row({
   canEdit: boolean;
   onToggle: (id: string) => void;
   onCreateChild: (id: string, kind: KbNodeKind) => void;
+  onUploadInto: (id: string, file: File) => void;
 }) {
   // Один и тот же элемент и берут, и на него бросают: у строки нет отдельной
   // ручки — тащат её целиком, как карточку на доске.
@@ -177,7 +211,7 @@ const Row = memo(function Row({
   const dragging = activeId === node.id;
   const folder = node.kind === "folder";
   const target = drop?.nodeId === node.id && drop.groupKey === groupKey ? drop.zone : null;
-  const Icon = folder ? (expanded ? FolderOpen : Folder) : FileText;
+  const Icon = folder ? (expanded ? FolderOpen : Folder) : node.kind === "sheet" ? Table2 : FileText;
 
   return (
     <div className="relative">
@@ -232,6 +266,7 @@ const Row = memo(function Row({
           // Класть внутрь можно только в папку — у документа кнопки нет вовсе.
           <CreateMenu
             onCreate={(kind) => onCreateChild(node.id, kind)}
+            onUpload={(file) => onUploadInto(node.id, file)}
             trigger={
               <button
                 onClick={(e) => {
@@ -260,6 +295,7 @@ function GroupHead({
   canOrderProjects,
   canCreate,
   onCreate,
+  onUpload,
   dropping,
 }: {
   groupKey: GroupKey;
@@ -267,6 +303,7 @@ function GroupHead({
   canOrderProjects: boolean;
   canCreate: boolean;
   onCreate: (kind: KbNodeKind) => void;
+  onUpload: (file: File) => void;
   dropping: boolean;
 }) {
   const draggable = useDraggable({
@@ -307,6 +344,7 @@ function GroupHead({
       {canCreate && (
         <CreateMenu
           onCreate={onCreate}
+          onUpload={onUpload}
           trigger={
             <button
               className="shrink-0 rounded p-0.5 hover:bg-muted hover:text-foreground"
@@ -332,6 +370,7 @@ export function KbTree({
   onMove,
   onReorderProjects,
   onCreate,
+  onUpload,
   trashCount,
   hideOnNarrow,
 }: {
@@ -350,6 +389,8 @@ export function KbTree({
     projectId: string | null;
     kind: KbNodeKind;
   }) => void;
+  /** Загрузка готового файла в то же место, где заводят узел. */
+  onUpload: (target: { parentId: string | null; projectId: string | null }, file: File) => void;
   trashCount: number;
   /**
    * Узкий экран показывает что-то одно: дерево или документ. Мобильных экранов
@@ -566,6 +607,7 @@ export function KbTree({
               canEdit
               onToggle={toggle}
               onCreateChild={(id, kind) => onCreate({ parentId: id, projectId: null, kind })}
+              onUploadInto={(id, file) => onUpload({ parentId: id, projectId: null }, file)}
             />
             {children && open && <div>{renderNodes(list, entry.node.id, groupKey)}</div>}
           </div>
@@ -628,6 +670,7 @@ export function KbTree({
                   canOrderProjects={canOrderProjects}
                   canCreate={project ? project.my_role === "admin" || project.my_role === "editor" : canCreateCommon}
                   onCreate={(kind) => onCreate({ parentId: null, projectId: project?.id ?? null, kind })}
+                  onUpload={(file) => onUpload({ parentId: null, projectId: project?.id ?? null }, file)}
                   dropping={drop?.groupKey === groupKey && drop.nodeId === null}
                 />
                 <div className="flex flex-col gap-0.5">{renderNodes(list, null, groupKey)}</div>

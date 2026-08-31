@@ -4,6 +4,7 @@ import { isUuid } from "@/lib/core/http";
 import { getKbDocument } from "@/lib/core/kb";
 import { KbDocumentClient } from "./KbDocumentClient";
 import { KbFolderClient } from "./KbFolderClient";
+import { KbSheetClient } from "./KbSheetClient";
 
 export default async function KbDocumentPage({
   params,
@@ -20,11 +21,9 @@ export default async function KbDocumentPage({
   const document = await getKbDocument(auth, docId).catch(() => null);
   if (!document) notFound();
 
-  // Адрес один на оба вида узла: папка и документ живут в одном дереве, и
-  // отдельный маршрут заставил бы ссылку знать, во что она ведёт.
-  return document.kind === "folder" ? (
-    <KbFolderClient initial={document} />
-  ) : (
-    <KbDocumentClient initial={document} />
-  );
+  // Адрес один на все виды узла: папка, документ и таблица живут в одном
+  // дереве, и отдельный маршрут заставил бы ссылку знать, во что она ведёт.
+  if (document.kind === "folder") return <KbFolderClient initial={document} />;
+  if (document.kind === "sheet") return <KbSheetClient initial={document} />;
+  return <KbDocumentClient initial={document} />;
 }

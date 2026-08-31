@@ -8,10 +8,20 @@
 // внутри» приходилось бы читать по отступам. Список отвечает на это прямо и
 // заодно показывает, кто и когда правил.
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FileText, Folder, FolderOpen, MoreHorizontal, Trash2, Users } from "lucide-react";
+import {
+  FileText,
+  Folder,
+  FolderOpen,
+  Loader2,
+  MoreHorizontal,
+  Table2,
+  Trash2,
+  Upload,
+  Users,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -43,6 +53,9 @@ export function KbFolderClient({ initial }: { initial: KbDocumentDetail }) {
   const projects = useV2Store((s) => s.projects);
 
   const [folder, setFolder] = useState(initial);
+  /** Имя файла, который сейчас разбирает сервер. */
+  const [importing, setImporting] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
   // Папка приезжает с сервера при каждом переходе и router.refresh(); сравнение
   // по ссылке в рендере, а не эффектом.
   const [seed, setSeed] = useState(initial);
@@ -94,6 +107,36 @@ export function KbFolderClient({ initial }: { initial: KbDocumentDetail }) {
         router.refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Не удалось создать");
+      }
+    },
+    [orgId, folder.id, router],
+  );
+
+  /**
+   * Готовый файл кладётся туда же, где заводят узел: разбирает его сервер и
+   * возвращает уже созданный документ или таблицу.
+   */
+  const upload = useCallback(
+    async (file: File) => {
+      if (!orgId) return;
+      setError(null);
+      setImporting(file.name);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("parent_id", folder.id);
+        const result = await api.upload<{ document: KbDocumentDetail; notes: string[] }>(
+          `/orgs/${orgId}/kb/import`,
+          form,
+        );
+        // Замечания импорта — предупреждение, а не отказ: узел уже создан.
+        if (result.notes.length) setError(result.notes.join(" · "));
+        router.push(`/v2/kb/${result.document.id}`);
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Не удалось загрузить файл");
+      } finally {
+        setImporting(null);
       }
     },
     [orgId, folder.id, router],
@@ -190,10 +233,39 @@ export function KbFolderClient({ initial }: { initial: KbDocumentDetail }) {
                   <FileText className="size-3.5" />
                   Документ
                 </Button>
+                <Button size="sm" variant="secondary" onClick={() => void create("sheet")}>
+                  <Table2 className="size-3.5" />
+                  Таблица
+                </Button>
                 <Button size="sm" variant="secondary" onClick={() => void create("folder")}>
                   <Folder className="size-3.5" />
                   Папка
                 </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!!importing}
+                  onClick={() => fileInput.current?.click()}
+                  title="Загрузить .docx, .xlsx или .csv"
+                >
+                  {importing ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Upload className="size-3.5" />
+                  )}
+                  Загрузить
+                </Button>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept=".docx,.xlsx,.xlsm,.csv,.tsv"
+                  hidden
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (file) void upload(file);
+                  }}
+                />
               </>
             )}
           </div>
@@ -207,6 +279,8 @@ export function KbFolderClient({ initial }: { initial: KbDocumentDetail }) {
               >
                 {child.kind === "folder" ? (
                   <Folder className="size-4 shrink-0 text-primary/70" />
+                ) : child.kind === "sheet" ? (
+                  <Table2 className="size-4 shrink-0 text-muted-foreground" />
                 ) : (
                   <FileText className="size-4 shrink-0 text-muted-foreground" />
                 )}
