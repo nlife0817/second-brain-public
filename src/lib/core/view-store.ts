@@ -46,6 +46,7 @@ export const BASE_COLUMNS: ColumnDef[] = [
   { id: "tags", label: "Теги", width: 150, sortable: false, editable: true },
   { id: "start_date", label: "Начало", width: 96, sortable: true, editable: true },
   { id: "due_date", label: "Дедлайн", width: 116, sortable: true, editable: true },
+  { id: "planned_date", label: "Дата работы", headerLabel: "В работу", width: 104, sortable: true, editable: true },
   { id: "estimated_minutes", label: "Оценка", width: 88, sortable: true, editable: true },
   { id: "subtasks", label: "Подзадачи", headerLabel: "Подз.", width: 76, sortable: true, editable: false },
   { id: "comments", label: "Комментарии", headerLabel: "Комм.", width: 68, sortable: false, editable: false },
@@ -62,6 +63,7 @@ export const DEFAULT_COLUMNS = [
   "tags",
   "start_date",
   "due_date",
+  "planned_date",
   "estimated_minutes",
   "subtasks",
 ];
@@ -262,6 +264,17 @@ function withStartDate(columns: string[] | undefined): string[] | undefined {
   return [...columns.slice(0, at), "start_date", ...columns.slice(at)];
 }
 
+/**
+ * «Дата работы» встаёт сразу после «Дедлайна»: три даты читаются подряд —
+ * когда начинаем, когда сдаём, когда этим занимаемся.
+ */
+function withPlannedDate(columns: string[] | undefined): string[] | undefined {
+  if (!columns || columns.includes("planned_date")) return columns;
+  const at = columns.indexOf("due_date");
+  if (at < 0) return [...columns, "planned_date"];
+  return [...columns.slice(0, at + 1), "planned_date", ...columns.slice(at + 1)];
+}
+
 function newId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -376,12 +389,13 @@ function createViewStore(scope: ViewScope) {
           ganttScale: s.ganttScale,
           calendarScale: s.calendarScale,
         }),
-        version: 5,
+        version: 6,
         // Migrate обязателен: без него zustand не смог бы поднять срез старой
         // версии и молча выбросил бы его вместе со всеми именованными
         // представлениями и порядком колонок.
         //
-        // Версия 2 добавила wrapTitle, версия 3 — колонку «Начало». Второе
+        // Версия 2 добавила wrapTitle, версия 3 — колонку «Начало», версия 6 —
+        // колонку «Дата работы» (дописывается тем же приёмом). Второе
         // приходится дописывать в уже сохранённый набор: у всех, кто хоть раз
         // трогал колонки, в localStorage лежит список без неё, и умолчание её
         // не покажет никогда. Именованные представления при этом не трогаем —
@@ -419,6 +433,12 @@ function createViewStore(scope: ViewScope) {
               savedViews: (next.savedViews ?? []).map((v) => ({ ...v, groupOrder: {} })),
             };
           }
+          // Версия 6 — «Дата работы». Как и «Начало», её дописываем в уже
+          // сохранённый набор колонок: у всех, кто хоть раз их трогал, в
+          // localStorage лежит список без неё, и умолчание её не покажет
+          // никогда. Именованные представления не трогаем — их состав собирали
+          // руками под конкретный срез.
+          if (from < 6) next = { ...next, columns: withPlannedDate(next.columns) };
           return next as ViewState;
         },
       },

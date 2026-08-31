@@ -36,6 +36,7 @@ const GROUP_CHOICES: GroupByField[] = [
   "assignee",
   "tag",
   "due",
+  "planned",
   "estimate",
 ];
 

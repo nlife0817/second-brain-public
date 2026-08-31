@@ -6,6 +6,7 @@
 // Форма фильтров — `FilterGroup[]`: группы соединяются через И, условия
 // внутри группы через И/ИЛИ.
 
+import { addDays } from "./days";
 import type { CustomField, StatusCategory, TaskListItem, TaskPriority, TaskRow } from "./types";
 
 // --- Фильтры ------------------------------------------------------------------
@@ -20,6 +21,8 @@ export type FilterOperator =
   | "is_today"
   | "is_this_week"
   | "is_overdue"
+  | "is_future"
+  | "is_today_or_before"
   | "is_empty"
   | "is_not_empty";
 
@@ -33,6 +36,7 @@ export type FilterField =
   | "title"
   | "start_date"
   | "due_date"
+  | "planned_date"
   | "completed"
   | "has_parent"
   | "archive"
@@ -95,6 +99,7 @@ export const BASE_FILTER_FIELDS: FieldMeta[] = [
   { field: "title", label: "Название", kind: "text" },
   { field: "start_date", label: "Начало", kind: "date" },
   { field: "due_date", label: "Дедлайн", kind: "date" },
+  { field: "planned_date", label: "Дата работы", kind: "date" },
   { field: "completed", label: "Завершена", kind: "boolean" },
   { field: "has_parent", label: "Подзадача", kind: "boolean" },
   ...VISIBILITY_FIELDS.map((f) => ({ field: f.field, label: f.label, kind: "visibility" as const })),
@@ -103,7 +108,18 @@ export const BASE_FILTER_FIELDS: FieldMeta[] = [
 export const OPERATORS_BY_KIND: Record<FieldMeta["kind"], FilterOperator[]> = {
   select: ["is", "is_not", "is_empty", "is_not_empty"],
   text: ["contains", "not_contains", "is_empty", "is_not_empty"],
-  date: ["is", "before", "after", "is_today", "is_this_week", "is_overdue", "is_empty", "is_not_empty"],
+  date: [
+    "is",
+    "before",
+    "after",
+    "is_today",
+    "is_today_or_before",
+    "is_this_week",
+    "is_future",
+    "is_overdue",
+    "is_empty",
+    "is_not_empty",
+  ],
   boolean: ["is"],
   visibility: ["is"],
 };
@@ -118,6 +134,11 @@ export const OPERATOR_LABELS: Record<FilterOperator, string> = {
   is_today: "сегодня",
   is_this_week: "на этой неделе",
   is_overdue: "просрочено",
+  // Относительные операторы: «позже 31 августа» замерло бы на дате, в которую
+  // условие набрали, и сохранённое представление начало бы врать на следующий
+  // день. Именно они и делают срез «дедлайн ещё не наступил» переживающим ночь.
+  is_future: "в будущем",
+  is_today_or_before: "сегодня или раньше",
   is_empty: "пусто",
   is_not_empty: "не пусто",
 };
@@ -125,11 +146,88 @@ export const OPERATOR_LABELS: Record<FilterOperator, string> = {
 /** Операторы, которым не нужно значение — редактор значения для них скрыт. */
 export const VALUELESS_OPERATORS: ReadonlySet<FilterOperator> = new Set([
   "is_today",
+  "is_today_or_before",
   "is_this_week",
+  "is_future",
   "is_overdue",
   "is_empty",
   "is_not_empty",
 ]);
+
+/**
+ * Готовые срезы — то, ради чего заводилась дата работы: собрать «что я делаю
+ * сегодня» вручную можно и в конструкторе, но каждое утро это четыре клика.
+ *
+ * Все условия относительные (`is_today_or_before`, `is_future`), поэтому срез
+ * переживает ночь: абсолютная дата в сохранённом представлении назавтра врёт.
+ *
+ * Пресет — переключатель, а не «применить»: он добавляет свою группу к тем, что
+ * уже стоят, и снимает ровно её. Затирать чужие условия срез не вправе — их
+ * набирали руками и не показывают в чипе.
+ */
+export interface FilterPreset {
+  id: string;
+  label: string;
+  hint: string;
+  field: FilterField;
+  operator: FilterOperator;
+}
+
+export const FILTER_PRESETS: readonly FilterPreset[] = [
+  {
+    id: "today",
+    label: "В работе сегодня",
+    hint: "План на сегодня плюс то, что не успели с прошлых дней",
+    field: "planned_date",
+    operator: "is_today_or_before",
+  },
+  {
+    id: "plan_overdue",
+    label: "Просрочен план",
+    hint: "Взяли в работу раньше, а задача жива",
+    field: "planned_date",
+    operator: "is_overdue",
+  },
+  {
+    id: "due_ahead",
+    label: "Дедлайн впереди",
+    hint: "Срок ещё не наступил — отсюда и берут задачи в работу",
+    field: "due_date",
+    operator: "is_future",
+  },
+  {
+    id: "unplanned",
+    label: "Без плана",
+    hint: "Дата работы не проставлена",
+    field: "planned_date",
+    operator: "is_empty",
+  },
+];
+
+/** Группа, состоящая ровно из условия пресета, — по ней он себя и узнаёт. */
+function isPresetGroup(group: FilterGroup, preset: FilterPreset): boolean {
+  return (
+    group.conditions.length === 1 &&
+    group.conditions[0].field === preset.field &&
+    group.conditions[0].operator === preset.operator
+  );
+}
+
+export function isPresetActive(groups: readonly FilterGroup[], preset: FilterPreset): boolean {
+  return groups.some((g) => isPresetGroup(g, preset));
+}
+
+export function togglePreset(groups: readonly FilterGroup[], preset: FilterPreset): FilterGroup[] {
+  if (isPresetActive(groups, preset)) return groups.filter((g) => !isPresetGroup(g, preset));
+  return [
+    ...groups,
+    {
+      id: newFilterId(),
+      logic: "and",
+      conditions: [{ id: newFilterId(), field: preset.field, operator: preset.operator, value: "" }],
+    },
+  ];
+}
 
 /** Идентификатор условия или группы фильтра. */
 export function newFilterId(): string {
@@ -243,12 +341,15 @@ export function weekBounds(now: Date = new Date()): { from: string; to: string }
 
 export interface MatchContext {
   today: string;
+  /** Завтрашний день: у плана работ это своя корзина, а не «позже». */
+  tomorrow: string;
   week: { from: string; to: string };
   meId: string | null;
 }
 
 export function makeMatchContext(meId: string | null, now: Date = new Date()): MatchContext {
-  return { today: todayIso(now), week: weekBounds(now), meId };
+  const today = todayIso(now);
+  return { today, tomorrow: addDays(today, 1), week: weekBounds(now), meId };
 }
 
 /** Значения задачи по полю фильтра — в виде списка строк для сравнения. */
@@ -270,6 +371,8 @@ function valuesOf(task: TaskRow, field: FilterField): string[] {
       return task.start_date ? [task.start_date] : [];
     case "due_date":
       return task.due_date ? [task.due_date] : [];
+    case "planned_date":
+      return task.planned_date ? [task.planned_date] : [];
     case "completed":
       return [task.completed_at ? "yes" : "no"];
     case "has_parent":
@@ -319,6 +422,13 @@ function matchesCondition(task: TaskRow, cond: FilterCondition, ctx: MatchContex
       return values.some((v) => v >= ctx.week.from && v <= ctx.week.to);
     case "is_overdue":
       return !task.completed_at && values.some((v) => v < ctx.today);
+    case "is_future":
+      return values.some((v) => v > ctx.today);
+    // Завершённость здесь не проверяется — в отличие от «просрочено»: этим
+    // оператором собирают срез «что делаю сегодня», а готовые задачи из него
+    // убирает переключатель «Готово», общий для всего списка.
+    case "is_today_or_before":
+      return values.some((v) => v <= ctx.today);
     default:
       return true;
   }
@@ -419,6 +529,7 @@ export type SortColumn =
   | "project"
   | "start_date"
   | "due_date"
+  | "planned_date"
   | "estimated_minutes"
   | "subtasks"
   | "created_at"
@@ -490,6 +601,9 @@ export function compareTasks(
     case "due_date":
       base = compareNullableString(a.due_date, b.due_date);
       break;
+    case "planned_date":
+      base = compareNullableString(a.planned_date, b.planned_date);
+      break;
     case "estimated_minutes": {
       const ea = a.estimated_minutes;
       const eb = b.estimated_minutes;
@@ -514,6 +628,7 @@ export function compareTasks(
   const nullPinned =
     (sort.column === "start_date" && (!a.start_date || !b.start_date)) ||
     (sort.column === "due_date" && (!a.due_date || !b.due_date)) ||
+    (sort.column === "planned_date" && (!a.planned_date || !b.planned_date)) ||
     (sort.column === "estimated_minutes" && (a.estimated_minutes == null || b.estimated_minutes == null));
   return nullPinned ? base : base * dir;
 }
@@ -528,6 +643,7 @@ export type GroupByField =
   | "assignee"
   | "tag"
   | "due"
+  | "planned"
   | "estimate";
 
 export type GroupByConfig = [GroupByField, GroupByField];
@@ -548,6 +664,7 @@ export const GROUP_BY_LABELS: Record<GroupByField, string> = {
   assignee: "Исполнитель",
   tag: "Тег",
   due: "Срок",
+  planned: "Дата работы",
   estimate: "Оценка",
 };
 
@@ -557,6 +674,24 @@ export const DUE_BUCKETS = [
   { key: "week", label: "На этой неделе" },
   { key: "later", label: "Позже" },
   { key: NONE_VALUE, label: "Без срока" },
+] as const;
+
+/**
+ * Корзины плана работ. «Просрочен план» первым и отдельно от «Сегодня»: день,
+ * на который задачу брали, прошёл, а задача жива — это и есть главное, что
+ * список обязан показать утром. Автопереноса на сегодня нет намеренно: он
+ * стирал бы разницу между «запланировал и сделал» и «переносил пятый день».
+ *
+ * «Завтра» — своя корзина, а не часть «Позже»: план на завтра составляют
+ * сегодня, и он должен быть виден рядом.
+ */
+export const PLANNED_BUCKETS = [
+  { key: "overdue", label: "Просрочен план" },
+  { key: "today", label: "Сегодня" },
+  { key: "tomorrow", label: "Завтра" },
+  { key: "week", label: "На этой неделе" },
+  { key: "later", label: "Позже" },
+  { key: NONE_VALUE, label: "Без плана" },
 ] as const;
 
 export const ESTIMATE_BUCKETS = [
@@ -576,6 +711,21 @@ export function dueBucket(due: string | null, ctx: MatchContext): string {
   if (due < ctx.today) return "overdue";
   if (due === ctx.today) return "today";
   if (due <= ctx.week.to) return "week";
+  return "later";
+}
+
+/**
+ * Корзина плана — чистая арифметика дней, как и `dueBucket`: завершённость
+ * здесь не смотрится. Готовые задачи список и так прячет переключателем
+ * «Готово», а корзина, которая для них меняется, означала бы, что задача
+ * переезжает между группами в момент закрытия.
+ */
+export function plannedBucket(planned: string | null, ctx: MatchContext): string {
+  if (!planned) return NONE_VALUE;
+  if (planned < ctx.today) return "overdue";
+  if (planned === ctx.today) return "today";
+  if (planned === ctx.tomorrow) return "tomorrow";
+  if (planned <= ctx.week.to) return "week";
   return "later";
 }
 
@@ -879,6 +1029,8 @@ export function groupKeys(task: TaskRow, field: GroupByField, ctx: MatchContext)
       return task.tags.length ? task.tags.map((t) => t.id) : [NONE_VALUE];
     case "due":
       return [dueBucket(task.due_date, ctx)];
+    case "planned":
+      return [plannedBucket(task.planned_date, ctx)];
     case "estimate":
       return [estimateBucket(task.estimated_minutes)];
     default:

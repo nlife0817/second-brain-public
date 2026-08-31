@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarStack, PRIORITY_LABELS, PriorityDot, chipStyle, dueTone, formatDue } from "@/components/v2/bits";
-import { DuePicker, StartPicker } from "@/components/v2/DuePicker";
+import { DatePicker, DuePicker, StartPicker } from "@/components/v2/DuePicker";
 import { TaskSearchField } from "@/components/v2/TaskPicker";
 import { assigneeChoice } from "@/lib/core/assignable";
 import type {
@@ -587,6 +587,34 @@ export const DueCell = memo(function DueCell({ task, ctx }: { task: TaskRow; ctx
     >
       {label}
     </DuePicker>
+  );
+});
+
+// --- Дата работы ----------------------------------------------------------------------
+
+export const PlannedCell = memo(function PlannedCell({ task, ctx }: { task: TaskRow; ctx: CellContext }) {
+  // Времени у даты работы нет — отсюда `DatePicker`, а не пара «день + время»:
+  // план дня отвечает на «сегодня занимаюсь», а не «в 14:30».
+  const text = formatDue(task.planned_date, null);
+  // Тон тот же, что у срока, и по тем же правилам: день в прошлом — красным
+  // (план сорван), сегодня — янтарным. Функция считает по переданной дате, поле
+  // ей безразлично.
+  const label = text ? (
+    <span className={cn("truncate text-xs tabular-nums", dueTone(task.planned_date, !!task.completed_at))}>
+      {text}
+    </span>
+  ) : null;
+
+  if (!ctx.canEdit) return <ReadOnly>{label}</ReadOnly>;
+
+  return (
+    <DatePicker
+      date={task.planned_date}
+      triggerClassName={CELL_BUTTON}
+      onCommit={(planned_date) => ctx.onPatch(task.id, { planned_date })}
+    >
+      {label}
+    </DatePicker>
   );
 });
 

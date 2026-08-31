@@ -20,7 +20,7 @@ import {
   dueTone,
   formatDue,
 } from "@/components/v2/bits";
-import { DuePicker, StartPicker } from "@/components/v2/DuePicker";
+import { DatePicker, DuePicker, StartPicker } from "@/components/v2/DuePicker";
 import { defaultStatus } from "@/lib/core/status-model";
 import { emptyDraft, isDraftFilled, type TaskDraft } from "@/lib/core/task-draft";
 import type { CustomField } from "@/lib/core/types";
@@ -235,6 +235,8 @@ function DraftCell({
       return <StartDraftCell draft={draft} patch={patch} />;
     case "due_date":
       return <DueDraftCell draft={draft} patch={patch} />;
+    case "planned_date":
+      return <PlannedDraftCell draft={draft} patch={patch} />;
     case "estimated_minutes":
       return <EstimateDraftCell draft={draft} patch={patch} />;
     default: {
@@ -430,6 +432,23 @@ function DueDraftCell({ draft, patch }: CellProps) {
         <span className={PLACEHOLDER}>Срок</span>
       )}
     </DuePicker>
+  );
+}
+
+function PlannedDraftCell({ draft, patch }: CellProps) {
+  const text = formatDue(draft.planned_date, null);
+  return (
+    <DatePicker
+      date={draft.planned_date}
+      triggerClassName={CELL}
+      onCommit={(planned_date) => patch({ planned_date })}
+    >
+      {text ? (
+        <span className={cn("truncate text-xs", dueTone(draft.planned_date, false))}>{text}</span>
+      ) : (
+        <span className={PLACEHOLDER}>В работу</span>
+      )}
+    </DatePicker>
   );
 }
 
