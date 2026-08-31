@@ -89,6 +89,17 @@ describe("ссылки", () => {
     expect(sheet.cells.A3000?.v).toBe(3000);
   });
 
+  it("ссылка на весь столбец Excel обрезается по размеру листа", () => {
+    // Реальные файлы полны формул вида SUM(A1:A1048576) — так Excel записывает
+    // «весь столбец». Разворачивать миллион пустых клеток на каждый пересчёт
+    // значит полсекунды на одну такую ячейку.
+    const workbook = book({ A1: 1, A2: 2, B1: "=SUM(A1:A1048576)" });
+    const started = Date.now();
+    recalculate(workbook);
+    expect(workbook.sheets[0].cells.B1?.v).toBe(3);
+    expect(Date.now() - started).toBeLessThan(100);
+  });
+
   it("при копировании относительная ссылка едет, а $-ссылка стоит", () => {
     expect(offsetFormula("A1*$B$1", 2, 0)).toBe("A3*$B$1");
     expect(offsetFormula("A1", -5, 0)).toBe("#REF!");

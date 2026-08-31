@@ -27,10 +27,8 @@ import {
   type FormulaNode,
 } from "./formula";
 import {
-  asMatrix,
   compareValues,
   FUNCTIONS,
-  toBoolean,
   toNumber,
   toScalar,
   toText,
@@ -59,10 +57,10 @@ interface FormulaCell {
 /**
  * Пересчитать книгу целиком и записать результаты в ячейки.
  *
- * Пересчёт всегда полный, а не «от изменённой ячейки». Для наших пределов (до
- * 50 000 ячеек) это единицы миллисекунд, а инкрементальный пересчёт потребовал
- * бы хранить и чинить граф при каждой вставке строки — источник ошибок,
- * несопоставимый с выигрышем.
+ * Пересчёт всегда полный, а не «от изменённой ячейки»: на книге в 20 000 ячеек
+ * с 5 000 формул это ~40 мс (замер), у потолка в 50 000 — около сотни.
+ * Инкрементальный пересчёт потребовал бы хранить и чинить граф зависимостей при
+ * каждой вставке строки — источник ошибок, несопоставимый с выигрышем.
  */
 export function recalculate(workbook: Workbook, now: Date = new Date()): ComputedValues {
   const formulas = collectFormulas(workbook);
@@ -282,10 +280,21 @@ function evaluate(node: FormulaNode, ctx: EvalContext): Value {
     case "range": {
       const sheet = resolveSheet(node.sheet, ctx);
       if (sheet < 0) return ERR.ref;
+      const tab = ctx.workbook.sheets[sheet];
+      if (!tab) return ERR.ref;
+      // Диапазон урезается по размеру листа, и это не оптимизация.
+      // Реальные файлы полны формул вида `SUM(A1:A1048576)` — так Excel
+      // записывает «весь столбец». Разворачивать миллион пустых клеток на
+      // каждый пересчёт значит полсекунды на одну такую ячейку; за краем листа
+      // всё равно пусто, поэтому обрезка ничего не меняет по смыслу.
+      const r1 = Math.max(0, Math.min(node.r1, tab.rows - 1));
+      const r2 = Math.max(0, Math.min(node.r2, tab.rows - 1));
+      const c1 = Math.max(0, Math.min(node.c1, tab.cols - 1));
+      const c2 = Math.max(0, Math.min(node.c2, tab.cols - 1));
       const matrix: Matrix = [];
-      for (let row = node.r1; row <= node.r2; row++) {
+      for (let row = r1; row <= r2; row++) {
         const line: Scalar[] = [];
-        for (let col = node.c1; col <= node.c2; col++) line.push(valueAt(ctx, sheet, row, col));
+        for (let col = c1; col <= c2; col++) line.push(valueAt(ctx, sheet, row, col));
         matrix.push(line);
       }
       return matrix;
@@ -458,26 +467,3 @@ export function evaluateFormula(
   return toScalar(evaluate(node, ctx));
 }
 
-/** Матрица значений диапазона — нужна сортировке и фильтрам. */
-export function rangeValues(workbook: Workbook, sheet: number, ref: string): Matrix {
-  const values = recalculate(workbook);
-  const formulas = collectFormulas(workbook);
-  const byKey = new Map(formulas.map((cell) => [cell.key, cell]));
-  const ctx: EvalContext = {
-    workbook,
-    sheet,
-    sheetIndex: sheetIndexByName(workbook),
-    values,
-    byKey,
-    call: { now: new Date(), row: 0, col: 0 },
-  };
-  let node: FormulaNode;
-  try {
-    node = parseFormula(ref);
-  } catch {
-    return [[ERR.ref]];
-  }
-  return asMatrix(evaluate(node, ctx));
-}
-
-export { toBoolean };

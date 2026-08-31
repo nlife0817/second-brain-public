@@ -7,7 +7,15 @@
 // первое и не помогает с остальным.
 
 import { parseInput } from "./format";
-import { emptySheet, setCell, SHEET_LIMITS, type SheetCell, type SheetTab, type Workbook } from "./model";
+import {
+  emptySheet,
+  setCell,
+  SHEET_LIMITS,
+  usedBounds,
+  type SheetCell,
+  type SheetTab,
+  type Workbook,
+} from "./model";
 import { styleIndex } from "./ops";
 
 /** Разделители-кандидаты в порядке проверки. */
@@ -159,6 +167,27 @@ export function csvToWorkbook(text: string, sheetName = "Лист 1"): Workbook 
 }
 
 /**
+ * Что из файла не поместилось в лист. Считается по тем же правилам, что и
+ * раскладка в `rowsToWorkbook`, — молча обрезать csv нельзя ровно так же, как
+ * xlsx.
+ */
+export function csvOverflow(rows: string[][]): string[] {
+  const notes: string[] = [];
+  const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  if (rows.length > SHEET_LIMITS.rows) {
+    notes.push(
+      `Перенесены первые ${SHEET_LIMITS.rows} строк, ещё ${rows.length - SHEET_LIMITS.rows} осталось в файле`,
+    );
+  }
+  if (width > SHEET_LIMITS.cols) {
+    notes.push(
+      `Перенесены первые ${SHEET_LIMITS.cols} колонок, ещё ${width - SHEET_LIMITS.cols} осталось в файле`,
+    );
+  }
+  return notes;
+}
+
+/**
  * Лист → CSV. Разделитель — точка с запятой, кодировка — UTF-8 с BOM: так файл
  * открывается двойным щелчком в русском Excel, а не превращается в одну колонку
  * с «Ð¿Ñ€Ð¸Ð²ÐµÑ‚» вместо текста.
@@ -183,21 +212,6 @@ function escapeCsv(value: string, delimiter: string): string {
   if (value === "") return "";
   const needsQuotes = value.includes(delimiter) || /["\n\r]/.test(value);
   return needsQuotes ? `"${value.replace(/"/g, '""')}"` : value;
-}
-
-/** Правый нижний угол заполненной области — по нему режется выгрузка. */
-export function usedBounds(sheet: SheetTab): { row: number; col: number } | null {
-  let maxRow = -1;
-  let maxCol = -1;
-  for (const ref of Object.keys(sheet.cells)) {
-    const m = /^([A-Z]+)(\d+)$/.exec(ref);
-    if (!m) continue;
-    let col = 0;
-    for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) - 64);
-    maxCol = Math.max(maxCol, col - 1);
-    maxRow = Math.max(maxRow, Number(m[2]) - 1);
-  }
-  return maxRow < 0 ? null : { row: maxRow, col: maxCol };
 }
 
 /**

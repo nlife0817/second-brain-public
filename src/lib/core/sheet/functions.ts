@@ -361,10 +361,9 @@ export const FUNCTIONS: Record<string, SheetFunction> = {
     });
     return sum;
   },
-  COUNT: (args) => {
-    const numbers = numbersIn(args);
-    return isError(numbers) ? numbers : numbers.length;
-  },
+  // COUNT и COUNTA считают ячейки, а не значения: ошибка в диапазоне для них
+  // такая же ячейка, как любая другая (так же ведёт себя Excel).
+  COUNT: (args) => flatten(args).filter((v) => typeof v === "number").length,
   COUNTA: (args) => flatten(args).filter((v) => v !== null && v !== "").length,
   COUNTBLANK: (args) => flatten(args).filter((v) => v === null || v === "").length,
   COUNTIF: (args) => {
@@ -509,6 +508,10 @@ export const FUNCTIONS: Record<string, SheetFunction> = {
     return isError(scalar) && scalar.code === "#N/A" ? (args[1] ?? "") : args[0];
   },
   ISERROR: (args) => isError(toScalar(args[0] ?? null)),
+  ISNA: (args) => {
+    const scalar = toScalar(args[0] ?? null);
+    return isError(scalar) && scalar.code === "#N/A";
+  },
   ISBLANK: (args) => toScalar(args[0] ?? null) === null,
   ISNUMBER: (args) => typeof toScalar(args[0] ?? null) === "number",
   ISTEXT: (args) => typeof toScalar(args[0] ?? null) === "string",

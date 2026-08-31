@@ -227,11 +227,19 @@ export function SheetToolbar({ api }: { api: SheetApi }) {
           api.mutate((next) => {
             const target = next.sheets[api.sheetIndex];
             if (!target) return;
+            if (target.frozen) {
+              target.frozen = undefined;
+              return;
+            }
             // Закрепляем ВСЁ до активной ячейки: так это и понимают в Excel —
-            // «зафиксировать шапку» это встать в A2 и нажать кнопку.
-            target.frozen = target.frozen
-              ? undefined
-              : { rows: active.row, cols: active.col };
+            // «зафиксировать шапку» это встать в A2 и нажать кнопку. Из самой
+            // A1 закреплять нечего, а кнопка, которая помечается нажатой и
+            // ничего не делает, читается как поломка — поэтому там закрепляем
+            // первую строку, чего от неё и ждут.
+            target.frozen =
+              active.row === 0 && active.col === 0
+                ? { rows: 1, cols: 0 }
+                : { rows: active.row, cols: active.col };
           })
         }
       >

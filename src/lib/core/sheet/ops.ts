@@ -25,9 +25,11 @@ import {
   parseRange,
   parseRef,
   rangeCells,
+  rangeContains,
   rangeRef,
   SHEET_LIMITS,
   setCell,
+  usedBounds,
   type CellRange,
   type CellStyle,
   type SheetCell,
@@ -50,13 +52,64 @@ function styleKey(style: CellStyle): string {
   return JSON.stringify(entries);
 }
 
-/** Индекс стиля в книге; одинаковые стили не дублируются. */
-export function styleIndex(workbook: Workbook, style: CellStyle): number | undefined {
-  if (styleKey(style) === "[]") return undefined;
+/**
+ * Индекс стиля в книге; одинаковые стили не дублируются.
+ *
+ * `cache` обязателен там, где стиль ставится сотням ячеек подряд: без него
+ * каждая ячейка перебирает всю таблицу стилей, пересобирая ключ строкой, и
+ * оформление колонки превращается в квадратичную работу.
+ */
+export function styleIndex(
+  workbook: Workbook,
+  style: CellStyle,
+  cache?: Map<string, number>,
+): number | undefined {
   const key = styleKey(style);
-  const existing = workbook.styles.findIndex((item) => styleKey(item) === key);
-  if (existing >= 0) return existing;
-  return workbook.styles.push(style) - 1;
+  if (key === "[]") return undefined;
+
+  const known = cache ? cache.get(key) : undefined;
+  if (known !== undefined) return known;
+  if (!cache) {
+    const existing = workbook.styles.findIndex((item) => styleKey(item) === key);
+    if (existing >= 0) return existing;
+  }
+  const index = workbook.styles.push(style) - 1;
+  cache?.set(key, index);
+  return index;
+}
+
+/** Карта «стиль → индекс» по уже заведённым стилям книги. */
+function styleCacheOf(workbook: Workbook): Map<string, number> {
+  const cache = new Map<string, number>();
+  workbook.styles.forEach((style, index) => {
+    const key = styleKey(style);
+    if (!cache.has(key)) cache.set(key, index);
+  });
+  return cache;
+}
+
+/**
+ * Докуда оформление имеет смысл: заполненная область плюс запас на дописывание.
+ *
+ * Ниже и правее лежит пустота до края листа, и заливать её стилем — значит
+ * завести сотни тысяч ячеек ради того, чего не видно. На выделении «весь лист»
+ * (Ctrl+A) это не просто расход памяти: книга перешагнула бы предел в 50 000
+ * ячеек, и при следующем сохранении нормализация отрезала бы хвост — вместе с
+ * настоящими данными.
+ */
+const STYLE_MARGIN_ROWS = 200;
+const STYLE_MARGIN_COLS = 10;
+/** Сколько пустых ячеек за раз можно завести ради одного лишь оформления. */
+const STYLE_NEW_CELLS = 5000;
+
+function styleableArea(sheet: SheetTab): CellRange {
+  const used = usedBounds(sheet);
+  return {
+    r1: 0,
+    c1: 0,
+    r2: Math.min(sheet.rows - 1, (used?.row ?? 0) + STYLE_MARGIN_ROWS),
+    c2: Math.min(sheet.cols - 1, (used?.col ?? 0) + STYLE_MARGIN_COLS),
+  };
 }
 
 export function styleOf(workbook: Workbook, cell: SheetCell | undefined): CellStyle {
@@ -78,10 +131,20 @@ export function applyStyle(
   const sheet = next.sheets[sheetIndex];
   if (!sheet) return next;
 
+  const cache = styleCacheOf(next);
+  const area = styleableArea(sheet);
+  let budget = STYLE_NEW_CELLS;
+
   for (const range of ranges) {
     for (const { row, col } of rangeCells(range)) {
       if (row >= sheet.rows || col >= sheet.cols) continue;
-      const cell = getCell(sheet, row, col) ?? {};
+      const cell = getCell(sheet, row, col);
+      // Заполненная ячейка перекрашивается всегда: новых записей от этого не
+      // прибавляется. Пустая — только рядом с данными и пока хватает запаса.
+      if (!cell) {
+        if (!rangeContains(area, row, col) || budget <= 0) continue;
+        budget--;
+      }
       const style: CellStyle = { ...styleOf(next, cell) };
       for (const [key, value] of Object.entries(patch)) {
         if (value === null || value === undefined || value === false) {
@@ -90,8 +153,8 @@ export function applyStyle(
           (style as Record<string, unknown>)[key] = value;
         }
       }
-      const index = styleIndex(next, style);
-      const updated: SheetCell = { ...cell };
+      const index = styleIndex(next, style, cache);
+      const updated: SheetCell = { ...(cell ?? {}) };
       if (index === undefined) delete updated.s;
       else updated.s = index;
       setCell(sheet, row, col, isBlankCell(updated) ? null : updated);

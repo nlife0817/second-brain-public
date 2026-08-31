@@ -18,6 +18,7 @@ import { recalculate } from "@/lib/core/sheet/engine";
 import { editText, FORMATS, formatValue, parseInput } from "@/lib/core/sheet/format";
 import {
   cellRef,
+  countCells,
   emptySheet,
   getCell,
   normalizeRange,
@@ -25,6 +26,7 @@ import {
   serializeWorkbook,
   setCell,
   SHEET_LIMITS,
+  usedBounds,
   type CellRange,
   type CellStyle,
   type SheetCell,
@@ -41,7 +43,7 @@ import {
   styleIndex,
   styleOf,
 } from "@/lib/core/sheet/ops";
-import { parseClipboard, toClipboard, usedBounds } from "@/lib/core/sheet/csv";
+import { parseClipboard, toClipboard } from "@/lib/core/sheet/csv";
 import { compareValues } from "@/lib/core/sheet/functions";
 import type { DocSaveStatus } from "@/components/v2/editor/useDocEditor";
 
@@ -149,18 +151,32 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
 
-  // Документ приезжает с сервера при переходах и router.refresh(). Принимаем
-  // его, только пока нет несохранённой правки: иначе ответ на чужое обновление
-  // затёр бы то, что человек набирает прямо сейчас.
+  // Документ приезжает с сервера при переходах, при router.refresh() и ответом
+  // на собственное сохранение. Принимаем его, только если это ДРУГАЯ книга и
+  // своей несохранённой правки нет.
+  //
+  // Сравнение идёт по каноническому виду (`serializeWorkbook` приводит к нему
+  // обе стороны). Иначе ответ на своё же сохранение считался бы чужой правкой,
+  // и книга подменялась бы вместе с обнулением стопки отмены — после каждого
+  // автосохранения Ctrl+Z переставал бы отменять набранное.
   const [seed, setSeed] = useState(value);
   if (seed !== value) {
     setSeed(value);
-    if (!dirtyRef.current) {
-      const next = computed(parseWorkbook(value));
-      savedRef.current = serializeWorkbook(next);
-      setWorkbook(next);
-      setPast([]);
-      setFuture([]);
+    // Обычный случай — ответ на собственное сохранение: байты те же, что мы
+    // отправили, и сравнение стоит одну строковую операцию. Разбор и повторную
+    // сериализацию (десятки миллисекунд на большой книге) делаем только когда
+    // байты разошлись — например, документ пришёл с router.refresh().
+    if (value !== savedRef.current) {
+      const incoming = serializeWorkbook(parseWorkbook(value));
+      if (incoming === savedRef.current) {
+        savedRef.current = incoming;
+      } else if (!dirtyRef.current) {
+        const next = computed(parseWorkbook(value));
+        savedRef.current = serializeWorkbook(next);
+        setWorkbook(next);
+        setPast([]);
+        setFuture([]);
+      }
     }
   }
 
@@ -190,9 +206,19 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
       setStatus("saved");
       return;
     }
+    // Два предела, и оба — про потерю данных, а не про аккуратность: и вес, и
+    // число ячеек нормализация на сервере обрежет молча, вместе с содержимым.
+    // Лучше честно отказаться сохранять и сказать об этом.
     if (body.length > SHEET_LIMITS.bytes) {
       setStatus("error");
       setError("Таблица стала слишком большой — часть данных не сохранить");
+      return;
+    }
+    if (countCells(workbookRef.current) > SHEET_LIMITS.cells) {
+      setStatus("error");
+      setError(
+        `В таблице больше ${SHEET_LIMITS.cells.toLocaleString("ru-RU")} заполненных ячеек — часть данных не сохранить`,
+      );
       return;
     }
     setStatus("saving");

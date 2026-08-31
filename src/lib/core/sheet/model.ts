@@ -321,9 +321,14 @@ function normalizeSheet(
 
   const cells = asRecord(raw.cells) ?? {};
   let budget = Math.max(0, cellBudget);
-  // Порядок обхода задаём адресом: при упоре в лимит должно отрезаться
-  // предсказуемое «всё, что ниже и правее», а не случайные ячейки.
-  for (const ref of Object.keys(cells).sort(compareRefs)) {
+  const refs = Object.keys(cells);
+  // Порядок обхода задаём адресом, но только когда лимит действительно жмёт:
+  // при упоре в него отрезаться должно предсказуемое «всё, что ниже и правее»,
+  // а не случайные ячейки. Сортировка полусотни тысяч адресов стоит десятки
+  // миллисекунд, и платить их на каждом сохранении не за что — нормализация
+  // идёт в том числе из `serializeWorkbook`.
+  if (refs.length > budget) refs.sort(compareRefs);
+  for (const ref of refs) {
     if (budget <= 0) break;
     const at = parseRef(ref);
     if (!at) continue;
@@ -499,9 +504,24 @@ function asRecord(input: unknown): Record<string, unknown> | null {
 
 // --- Сериализация ----------------------------------------------------------
 
-/** Книга → строка для колонки `body`. */
+/**
+ * Книга → строка для колонки `body`.
+ *
+ * Через `normalizeWorkbook`, а не голым `JSON.stringify`, ради КАНОНИЧНОСТИ:
+ * одинаковая книга обязана давать одинаковые байты у клиента и у сервера.
+ * Порядок ключей в JSON — это порядок их присвоения, а собираются ячейки в двух
+ * местах по-разному: редактор пишет формулу, потом стиль, а значение дописывает
+ * пересчёт (`{f,s,v}`), нормализация же всегда выдаёт `{f,v,s}`.
+ *
+ * Разница невидимая, а последствие большое: страница сравнивает пришедшее с
+ * сервера тело со своим и на любом расхождении считает его ЧУЖОЙ правкой —
+ * то есть ответ на собственное сохранение выглядел бы как чужой, и стопка
+ * отмены обнулялась бы после каждого автосохранения. Ровно та же ловушка, что
+ * у описания задачи (`sameAsDocument` в useDocEditor), только там сравнение
+ * структурное, а здесь дешевле привести обе стороны к одному виду.
+ */
 export function serializeWorkbook(workbook: Workbook): string {
-  return JSON.stringify(workbook);
+  return JSON.stringify(normalizeWorkbook(workbook));
 }
 
 /**
@@ -527,4 +547,21 @@ export function isEmptyWorkbook(workbook: Workbook): boolean {
 /** Непустых ячеек во всей книге — для проверки пределов на импорте. */
 export function countCells(workbook: Workbook): number {
   return workbook.sheets.reduce((sum, sheet) => sum + Object.keys(sheet.cells).length, 0);
+}
+
+/**
+ * Правый нижний угол заполненной области. По нему режется выгрузка и
+ * ограничивается оформление: заливать стилем пустоту до края листа — значит
+ * завести сотни тысяч ячеек ради того, чего не видно.
+ */
+export function usedBounds(sheet: SheetTab): { row: number; col: number } | null {
+  let maxRow = -1;
+  let maxCol = -1;
+  for (const ref of Object.keys(sheet.cells)) {
+    const at = parseRef(ref);
+    if (!at) continue;
+    if (at.row > maxRow) maxRow = at.row;
+    if (at.col > maxCol) maxCol = at.col;
+  }
+  return maxRow < 0 ? null : { row: maxRow, col: maxCol };
 }

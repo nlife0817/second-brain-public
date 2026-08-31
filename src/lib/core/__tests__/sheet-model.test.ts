@@ -13,7 +13,7 @@ import {
   setCell,
   SHEET_LIMITS,
 } from "../sheet/model";
-import { deleteRows, insertRows, mergeRange, sortRange } from "../sheet/ops";
+import { applyStyle, deleteRows, insertRows, mergeRange, sortRange, styleIndex } from "../sheet/ops";
 
 describe("адресация", () => {
   it("считает имена колонок за границей алфавита", () => {
@@ -66,12 +66,51 @@ describe("нормализация книги", () => {
     expect(workbook.sheets[0].cells.A1.s).toBe(0);
   });
 
+  it("байты клиента и сервера совпадают", () => {
+    // На этом держится история отмен: страница сравнивает пришедшее с сервера
+    // тело со своим, и любое расхождение читается как ЧУЖАЯ правка — книга
+    // подменяется, стопка отмены обнуляется. Порядок ключей в JSON разный по
+    // построению (редактор дописывает значение формулы после стиля), поэтому
+    // сериализация обязана приводить обе стороны к одному виду.
+    const workbook = emptyWorkbook("Смета");
+    const style = styleIndex(workbook, { fmt: FORMATS.thousandsDecimal })!;
+    setCell(workbook.sheets[0], 0, 0, { v: 2 });
+    setCell(workbook.sheets[0], 1, 0, { f: "A1*2", s: style });
+    recalculate(workbook);
+
+    const client = serializeWorkbook(workbook);
+    // Ровно то, что делает с телом сервер (`cleanBody` в kb.ts).
+    const server = serializeWorkbook(normalizeWorkbook(JSON.parse(client)));
+    expect(server).toBe(client);
+  });
+
   it("книга переживает круг сериализации", () => {
     const workbook = emptyWorkbook("Смета");
     setCell(workbook.sheets[0], 0, 0, { v: 42, s: undefined });
     const restored = parseWorkbook(serializeWorkbook(workbook));
     expect(restored.sheets[0].name).toBe("Смета");
     expect(restored.sheets[0].cells.A1.v).toBe(42);
+  });
+});
+
+describe("оформление больших выделений", () => {
+  it("«выделить всё» не заводит сотни тысяч ячеек ради стиля", () => {
+    const workbook = emptyWorkbook("Л");
+    const sheet = workbook.sheets[0];
+    sheet.rows = SHEET_LIMITS.rows;
+    sheet.cols = SHEET_LIMITS.cols;
+    for (let row = 0; row < 300; row++) setCell(sheet, row, 0, { v: row });
+
+    const next = applyStyle(workbook, 0, [
+      { r1: 0, c1: 0, r2: sheet.rows - 1, c2: sheet.cols - 1 },
+    ], { b: 1 });
+
+    const cells = Object.keys(next.sheets[0].cells).length;
+    // Заполненные перекрашены все, пустота вокруг — в разумных пределах.
+    expect(cells).toBeLessThan(SHEET_LIMITS.cells);
+    for (let row = 0; row < 300; row++) {
+      expect(next.styles[next.sheets[0].cells[cellRef(row, 0)].s!]).toEqual({ b: 1 });
+    }
   });
 });
 
