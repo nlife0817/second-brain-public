@@ -606,13 +606,18 @@ export const lostReasonCreateSchema = z.object({
 // --- База знаний -----------------------------------------------------------------
 
 /** Тело документа — HTML; санитайзер на сервере всё равно перепишет его сам. */
-const kbBodySchema = z.string().max(2_000_000);
+/**
+ * Потолок тела узла. Держится по самому тяжёлому виду — книге таблицы
+ * (`SHEET_LIMITS.bytes`); её же содержательные пределы (листы, ячейки) проверяет
+ * `normalizeWorkbook` в сервисе, потому что zod не должен знать формат книги.
+ */
+const kbBodySchema = z.string().max(4_000_000);
 
 export const kbCreateSchema = z.object({
   title: z.string().trim().max(200).optional(),
   body: kbBodySchema.optional(),
   /** Папка или документ; по умолчанию документ. */
-  kind: z.enum(["document", "folder"]).optional(),
+  kind: z.enum(["document", "folder", "sheet"]).optional(),
   parent_id: z.uuid().nullish(),
   project_ids: z.array(z.uuid()).max(20).optional(),
 });

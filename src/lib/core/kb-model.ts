@@ -2,6 +2,7 @@
 // Без БД и без AuthContext — всё, что нужно решению, приходит аргументами.
 // Права живут в policy.ts, работа с данными — в kb.ts.
 
+import { isEmptyWorkbook, parseWorkbook } from "./sheet/model";
 import type { KbNodeKind, KbTreeNode } from "./types";
 
 /** Строка дерева в том виде, в каком её отдаёт выборка. */
@@ -137,10 +138,13 @@ export function isDisposableDocument(input: {
 }): boolean {
   // Папку не трогаем никогда: она пуста ровно до того, как в неё что-то
   // положат, и убрать её значит отменить осознанное действие.
-  if (input.kind !== "document") return false;
+  if (input.kind === "folder") return false;
   if (input.hasContent) return false;
   const title = input.title.trim();
   if (title !== "" && title !== UNTITLED) return false;
+  // Пустая книга — та, где нет ни одной заполненной ячейки и один лист:
+  // заведённый второй лист это уже осознанная работа.
+  if (input.kind === "sheet") return isEmptyWorkbook(parseWorkbook(input.body));
   return input.body.replace(/<[^>]*>/g, "").replace(/&nbsp;|\s/g, "") === "";
 }
 

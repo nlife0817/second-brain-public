@@ -32,6 +32,7 @@ import {
   type KbNodeRow,
 } from "./kb-model";
 import { notifyMentions } from "./mentions";
+import { normalizeWorkbook, serializeWorkbook, SHEET_LIMITS } from "./sheet/model";
 import { assertOrg, canProject, effectiveKbRole, effectiveProjectRole } from "./policy";
 import { requireProject } from "./projects";
 import { filterVisibleTaskIds, requireTaskAccess, updateTask } from "./tasks";
@@ -57,6 +58,32 @@ const TITLE_MAX = 200;
 
 function cleanTitle(raw: string | null | undefined): string {
   return (raw ?? "").replace(/\s+/g, " ").trim().slice(0, TITLE_MAX);
+}
+
+/**
+ * Тело узла в том виде, в каком оно ложится в базу.
+ *
+ * Развилка ровно одна и она здесь: у документа тело — HTML и проходит
+ * санитайзер, у таблицы — JSON книги и проходит `normalizeWorkbook` (он же
+ * держит пределы по листам и ячейкам), у папки тела нет вовсе. Размазать эту
+ * развилку по вызывающим значит однажды записать книгу через санитайзер и
+ * потерять её целиком.
+ */
+function cleanBody(kind: KbNodeKind, raw: string | null | undefined): string {
+  if (kind === "folder") return "";
+  if (kind !== "sheet") return sanitizeRichText(raw ?? "");
+  const source = (raw ?? "").trim();
+  if (!source) return serializeWorkbook(normalizeWorkbook(null));
+  if (source.length > SHEET_LIMITS.bytes) {
+    throw new DomainError(422, "Таблица слишком велика");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    throw new DomainError(422, "Не удалось разобрать таблицу");
+  }
+  return serializeWorkbook(normalizeWorkbook(parsed));
 }
 
 /** Класть внутрь можно только в папку — второго способа вложения нет. */
@@ -258,13 +285,16 @@ async function folderChildren(folderId: string): Promise<KbFolderChild[]> {
 }
 
 async function documentDetail(ctx: AuthContext, access: KbAccess): Promise<KbDocumentDetail> {
-  const folder = access.document.kind === "folder";
+  const kind = access.document.kind;
+  const folder = kind === "folder";
   const owner = { kind: "document" as const, documentId: access.document.id };
   // У папки нет ни текста, ни вложений, ни обсуждений — и запросов за ними тоже.
+  // У таблицы нет обсуждений к фрагментам: якорь комментария живёт в разметке,
+  // а ячейка — не разметка. Вложения у неё есть: там лежит исходный файл.
   const [tasks, attachments, threads, children] = await Promise.all([
     folder ? Promise.resolve([]) : listDocumentTasks(ctx, access.document.id),
     folder ? Promise.resolve([]) : listOwnerAttachments(ctx, owner),
-    folder ? Promise.resolve([]) : listDocComments(ctx, owner),
+    kind === "document" ? listDocComments(ctx, owner) : Promise.resolve([]),
     folder ? folderChildren(access.document.id) : Promise.resolve([]),
   ]);
   return {
@@ -311,7 +341,7 @@ export async function createKbDocument(
   const kind: KbNodeKind = input.kind ?? "document";
   const projectIds = [...new Set(input.projectIds ?? [])];
   const title = cleanTitle(input.title) || UNTITLED;
-  const body = kind === "folder" ? "" : sanitizeRichText(input.body ?? "");
+  const body = cleanBody(kind, input.body);
 
   let parent: KbAccess | null = null;
   if (parentId) {
@@ -409,12 +439,13 @@ export async function updateKbDocument(
   patch: { title?: string; body?: string },
 ): Promise<KbDocumentDetail> {
   const access = await requireKbAccess(ctx, documentId, "doc.edit");
-  const folder = access.document.kind === "folder";
+  const kind = access.document.kind;
+  const folder = kind === "folder";
   if (folder && patch.body !== undefined) throw new DomainError(422, "У папки нет текста");
   const previous = { title: access.document.title, body: access.document.body };
   const next = {
     title: patch.title === undefined ? previous.title : cleanTitle(patch.title) || UNTITLED,
-    body: patch.body === undefined ? previous.body : sanitizeRichText(patch.body),
+    body: patch.body === undefined ? previous.body : cleanBody(kind, patch.body),
   };
   if (!isMeaningfulRevision(previous, next)) return documentDetail(ctx, access);
 
@@ -436,7 +467,9 @@ export async function updateKbDocument(
       verb: "kb_document.updated",
       payload: { title: next.title },
     });
-    if (!folder) {
+    // Упоминания живут в разметке описания; в JSON книги их нет и искать
+    // их там нечего.
+    if (kind === "document") {
       await notifyMentions(tx, {
         orgId: ctx.orgId,
         eventId,
@@ -1351,11 +1384,18 @@ export async function discardEmptyKbDocument(
 export async function purgeEmptyKbDocuments(): Promise<{ removed: number }> {
   const result = await prepare(
     `DELETE FROM core.kb_documents d
-     WHERE d.kind = 'document'
+     WHERE d.kind IN ('document', 'sheet')
        AND d.deleted_at IS NULL
        AND d.created_at < now() - interval '1 day'
        AND btrim(coalesce(d.title, '')) IN ('', 'Без названия')
-       AND btrim(regexp_replace(coalesce(d.body, ''), '<[^>]*>|&nbsp;', '', 'g')) = ''
+       AND (
+         -- Документ: текста нет вовсе (пустой редактор отдаёт «<p></p>»).
+         (d.kind = 'document'
+          AND btrim(regexp_replace(coalesce(d.body, ''), '<[^>]*>|&nbsp;', '', 'g')) = '')
+         -- Книга: ни одной заполненной ячейки. Пустые ячейки в JSON не попадают
+         -- (см. setCell), поэтому отсутствие ключей в «cells» и есть пустота.
+         OR (d.kind = 'sheet' AND coalesce(d.body, '') !~ '"cells":\s*\{\s*"')
+       )
        AND NOT EXISTS (SELECT 1 FROM core.attachments a WHERE a.document_id = d.id)
        AND NOT EXISTS (SELECT 1 FROM core.doc_comments c WHERE c.document_id = d.id AND c.deleted_at IS NULL)
        AND NOT EXISTS (SELECT 1 FROM core.kb_document_tasks t WHERE t.document_id = d.id)
