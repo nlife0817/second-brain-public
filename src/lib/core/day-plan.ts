@@ -31,6 +31,8 @@ export interface DaySection {
   title: string;
   tone: SectionTone;
   action: PlanAction;
+  /** Раздел плана (задачу уже взяли в работу) — в отличие от «Без плана». */
+  planned: boolean;
   items: TaskListItem[];
 }
 
@@ -87,24 +89,32 @@ export function daySections(tasks: readonly TaskListItem[], opts: DayPlanOptions
   }
 
   const sections: DaySection[] = [
-    { key: "plan_overdue", title: "Просрочен план", tone: "danger", action: "move", items: planOverdue },
-    { key: "plan_today", title: "Сегодня", tone: "warn", action: "clear", items: planToday },
-    { key: "plan_tomorrow", title: "Завтра", tone: "none", action: "take", items: planTomorrow },
-    { key: "plan_later", title: "Дальше в плане", tone: "none", action: "take", items: planLater },
+    { key: "plan_overdue", title: "Просрочен план", tone: "danger", action: "move", planned: true, items: planOverdue },
+    { key: "plan_today", title: "Сегодня", tone: "warn", action: "clear", planned: true, items: planToday },
+    { key: "plan_tomorrow", title: "Завтра", tone: "none", action: "take", planned: true, items: planTomorrow },
+    { key: "plan_later", title: "Дальше в плане", tone: "none", action: "take", planned: true, items: planLater },
     // Ниже — то, что ещё не взято в работу: отсюда и наполняют день.
-    { key: "due_overdue", title: "Просрочено", tone: "danger", action: "take", items: dueOverdue },
-    { key: "due_today", title: "Срок сегодня", tone: "warn", action: "take", items: dueToday },
-    { key: "due_ahead", title: "Дедлайн впереди", tone: "none", action: "take", items: dueAhead },
-    { key: "no_date", title: "Без срока", tone: "none", action: "take", items: noDate },
+    { key: "due_overdue", title: "Просрочено", tone: "danger", action: "take", planned: false, items: dueOverdue },
+    { key: "due_today", title: "Срок сегодня", tone: "warn", action: "take", planned: false, items: dueToday },
+    { key: "due_ahead", title: "Дедлайн впереди", tone: "none", action: "take", planned: false, items: dueAhead },
+    { key: "no_date", title: "Без срока", tone: "none", action: "take", planned: false, items: noDate },
   ];
   if (showDone) {
-    sections.push({ key: "done", title: "Завершённые", tone: "none", action: null, items: done });
+    sections.push({ key: "done", title: "Завершённые", tone: "none", action: null, planned: false, items: done });
   }
   return sections.filter((s) => s.items.length > 0);
 }
 
-/** Первый раздел «без плана» — перед ним экран рисует разделитель. */
-export const UNPLANNED_FIRST_SECTION = "due_overdue";
+/**
+ * Перед каким разделом экран рисует границу «Без плана». Считается по флагу, а
+ * не по имени раздела: пустые разделы в выдачу не попадают, и привязка к
+ * «Просрочено» теряла бы границу в тот день, когда просроченных нет.
+ * `-1` — границу рисовать негде: либо весь список в плане, либо весь без него.
+ */
+export function unplannedStart(sections: readonly DaySection[]): number {
+  const at = sections.findIndex((s) => !s.planned);
+  return at > 0 ? at : -1;
+}
 
 /** Разделы плана — по ним считается «на сегодня взято N задач». */
 const PLAN_SECTIONS = new Set(["plan_overdue", "plan_today"]);

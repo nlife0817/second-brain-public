@@ -22,7 +22,7 @@ import { TaskCard } from "@/components/v2/TaskCard";
 import { PullToRefresh } from "@/components/v2/mobile/PullToRefresh";
 import { useAppResume, useBackDismiss, useTaskDeepLink } from "@/components/v2/mobile/hooks";
 import { api } from "@/lib/core/client";
-import { daySections, UNPLANNED_FIRST_SECTION, type PlanAction } from "@/lib/core/day-plan";
+import { daySections, unplannedStart, type PlanAction } from "@/lib/core/day-plan";
 import { cachedGet, invalidate, seed } from "@/lib/core/query";
 import { applyTaskChange } from "@/lib/core/task-change";
 import type { TaskDetail, TaskListItem } from "@/lib/core/types";
@@ -129,6 +129,7 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
   const openTask = useCallback((id: string) => setOpenTaskId(id), []);
 
   const groups = useMemo(() => daySections(tasks, { today: todayIso(), showDone }), [tasks, showDone]);
+  const unplannedAt = unplannedStart(groups);
 
   /**
    * Планирование одним нажатием — то же, что на десктопе: строка правится на
@@ -248,7 +249,7 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
             <section key={g.key}>
               {/* Граница между взятым в работу и запасом, из которого день и
                   наполняют. */}
-              {g.key === UNPLANNED_FIRST_SECTION && i > 0 && (
+              {i === unplannedAt && (
                 <div className="mb-3 flex items-center gap-2">
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">
                     Без плана

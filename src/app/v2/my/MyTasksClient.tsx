@@ -18,7 +18,7 @@ import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { TaskCard } from "@/components/v2/TaskCard";
 import { TaskSheet } from "@/components/v2/lazy";
 import { api } from "@/lib/core/client";
-import { daySections, UNPLANNED_FIRST_SECTION, type PlanAction } from "@/lib/core/day-plan";
+import { daySections, unplannedStart, type PlanAction } from "@/lib/core/day-plan";
 import { invalidate, useQuery } from "@/lib/core/query";
 import { applyTaskChange } from "@/lib/core/task-change";
 import type { TaskDetail, TaskListItem } from "@/lib/core/types";
@@ -90,6 +90,8 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
   const openTask = useCallback((id: string) => setOpenTaskId(id), []);
 
   const groups = useMemo(() => daySections(tasks, { today: todayIso(), showDone }), [tasks, showDone]);
+  /** Перед этим разделом идёт граница «Без плана»; -1 — границы нет. */
+  const unplannedAt = unplannedStart(groups);
 
   /**
    * Планирование одним нажатием. Строку правим на месте, не перечитывая список:
@@ -162,7 +164,7 @@ export function MyTasksClient({ initial }: { initial: TaskListItem[] }) {
               {/* Граница между «моим днём» и запасом, из которого его наполняют:
                   разделы ниже — это ещё не взятая работа. Подпись рисуется у
                   первого такого раздела, какой бы он ни был по счёту. */}
-              {g.key === UNPLANNED_FIRST_SECTION && i > 0 && (
+              {i === unplannedAt && (
                 <div className="mb-3 flex items-center gap-2">
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">
                     Без плана

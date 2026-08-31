@@ -3,7 +3,7 @@
 // и именно её тесты и стерегут.
 
 import { describe, expect, it } from "vitest";
-import { daySections, todayLoad } from "../day-plan";
+import { daySections, todayLoad, unplannedStart } from "../day-plan";
 import type { TaskListItem, TaskRow } from "../types";
 import {
   FILTER_PRESETS,
@@ -103,6 +103,21 @@ describe("daySections", () => {
 
   it("пустые разделы не показываются", () => {
     expect(daySections([], { today: TODAY, showDone: true })).toEqual([]);
+  });
+
+  it("граница «Без плана» находится по флагу, а не по имени раздела", () => {
+    // Просроченных по сроку нет — граница обязана встать перед «Срок сегодня».
+    const sections = daySections(
+      [task({ id: "a", planned_date: TODAY }), task({ id: "b", due_date: TODAY })],
+      { today: TODAY, showDone: false },
+    );
+    expect(sections.map((s) => s.key)).toEqual(["plan_today", "due_today"]);
+    expect(unplannedStart(sections)).toBe(1);
+  });
+
+  it("границы нет, когда план пуст целиком", () => {
+    const sections = daySections([task({ id: "b", due_date: TODAY })], { today: TODAY, showDone: false });
+    expect(unplannedStart(sections)).toBe(-1);
   });
 
   it("нагрузка на день считает сегодняшний план вместе с сорванным", () => {
