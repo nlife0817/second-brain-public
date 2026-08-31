@@ -598,3 +598,54 @@ export const leadSourceCreateSchema = z.object({
 export const lostReasonCreateSchema = z.object({
   name: z.string().trim().min(1).max(200),
 });
+
+// --- База знаний -----------------------------------------------------------------
+
+/** Тело документа — HTML; санитайзер на сервере всё равно перепишет его сам. */
+const kbBodySchema = z.string().max(2_000_000);
+
+export const kbCreateSchema = z.object({
+  title: z.string().trim().max(200).optional(),
+  body: kbBodySchema.optional(),
+  parent_id: z.uuid().nullish(),
+  project_ids: z.array(z.uuid()).max(20).optional(),
+});
+
+export const kbPatchSchema = z
+  .object({
+    title: z.string().trim().max(200).optional(),
+    body: kbBodySchema.optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: "Empty patch" });
+
+export const kbMoveSchema = z.object({
+  parent_id: z.uuid().nullable(),
+  project_id: z.uuid().nullish(),
+  from_project_id: z.uuid().nullish(),
+  order: z.array(z.uuid()).max(500).optional(),
+});
+
+export const kbReorderSchema = z.object({
+  parent_id: z.uuid().nullish(),
+  project_id: z.uuid().nullish(),
+  order: z.array(z.uuid()).min(1).max(500),
+});
+
+export const kbProjectsSchema = z.object({
+  project_ids: z.array(z.uuid()).max(20),
+});
+
+/** `null` — закрытый документ: доступ только по списку участников. */
+export const kbAccessSchema = z.object({
+  default_role: z.enum(["viewer", "commenter", "editor"]).nullable(),
+});
+
+/** `null` в роли убирает участника из списка. */
+export const kbMemberSchema = z.object({
+  user_id: z.uuid(),
+  role: z.enum(["viewer", "commenter", "editor", "admin"]).nullable(),
+});
+
+export const kbTaskLinkSchema = z.object({
+  task_id: z.uuid(),
+});
