@@ -147,12 +147,12 @@ export async function getAttachmentBytes(
   return { filename: row.filename, mimeType: row.mime_type, bytes: Buffer.from(row.data) };
 }
 
-/** Метаданные вложений владельца — для списка «вложено в задачу/документ». */
-export async function listOwnerAttachments(
-  ctx: AuthContext,
-  owner: DocOwner,
-): Promise<Attachment[]> {
-  await requireDocOwner(ctx, owner, "view");
+/**
+ * Вложения владельца БЕЗ проверки доступа — для вызывающего, который её уже
+ * сделал. Отдельная функция, а не флаг: пропустить проверку должно быть видно
+ * в месте вызова, а не спрятано в аргументе.
+ */
+export async function ownerAttachments(owner: DocOwner): Promise<Attachment[]> {
   const cols = ownerColumns(owner);
   const rows = await prepare<AttachmentRow>(
     owner.kind === "task"
@@ -160,6 +160,15 @@ export async function listOwnerAttachments(
       : `SELECT ${ATTACHMENT_COLUMNS} FROM core.attachments WHERE document_id = ? ORDER BY created_at`,
   ).all(owner.kind === "task" ? cols.taskId : cols.documentId);
   return rows.map(mapAttachment);
+}
+
+/** Метаданные вложений владельца — для списка «вложено в задачу/документ». */
+export async function listOwnerAttachments(
+  ctx: AuthContext,
+  owner: DocOwner,
+): Promise<Attachment[]> {
+  await requireDocOwner(ctx, owner, "view");
+  return ownerAttachments(owner);
 }
 
 /**

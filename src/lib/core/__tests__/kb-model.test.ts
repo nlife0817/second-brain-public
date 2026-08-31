@@ -20,7 +20,7 @@ function row(
   created = "2026-01-01",
   kind: KbNodeKind = "document",
 ): KbNodeRow {
-  return { id, kind, parent_id: parent, title: id.toUpperCase(), position, created_at: created };
+  return { id, kind, parent_id: parent, title: id.toUpperCase(), position, created_at: created, can_edit: true };
 }
 
 describe("buildKbTree", () => {

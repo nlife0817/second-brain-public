@@ -17,6 +17,7 @@ import type {
   KbNodeKind,
   PolicyKbDocument,
   PolicyProject,
+  ProjectDefaultRole,
   ProjectRole,
 } from "./types";
 
@@ -225,4 +226,89 @@ export async function kbAudience(tx: TxContext, documentId: string): Promise<str
     )
     .all(documentId, documentId, documentId);
   return rows.map((r) => r.user_id);
+}
+
+/**
+ * Видимость пачки узлов одним проходом — три запроса на любое их количество.
+ *
+ * `loadKbAccess` на каждый узел стоит трёх запросов, и там, где узлов десятки
+ * (поиск, корзина, документы задачи), это десятки походов в базу на одно
+ * действие. Правило то же самое, что в `effectiveKbRole`, — здесь только
+ * пакетная загрузка того, что ему нужно.
+ */
+export async function filterVisibleKbIds(
+  ctx: AuthContext,
+  ids: string[],
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const unique = [...new Set(ids)];
+  const ph = unique.map(() => "?").join(",");
+
+  // Корень ветки для каждого узла вместе с полями, от которых зависит доступ.
+  const roots = await prepare<{
+    node_id: string;
+    root_id: string;
+    created_by: string | null;
+    default_role: ProjectDefaultRole | null;
+  }>(
+    `WITH RECURSIVE chain AS (
+       SELECT d.id AS node_id, d.id AS cur, d.parent_id, 0 AS depth
+       FROM core.kb_documents d
+       WHERE d.id IN (${ph}) AND d.org_id = ?
+       UNION ALL
+       SELECT c.node_id, p.id, p.parent_id, c.depth + 1
+       FROM core.kb_documents p
+       JOIN chain c ON p.id = c.parent_id
+       WHERE c.depth < ${CHAIN_LIMIT}
+     )
+     SELECT DISTINCT ON (c.node_id)
+            c.node_id, r.id AS root_id, r.created_by, r.default_role::text AS default_role
+     FROM chain c
+     JOIN core.kb_documents r ON r.id = c.cur
+     ORDER BY c.node_id, c.depth DESC`,
+  ).all(unique, ctx.orgId);
+  if (roots.length === 0) return new Set();
+
+  const rootIds = [...new Set(roots.map((r) => r.root_id))];
+  const rootPh = rootIds.map(() => "?").join(",");
+  const [links, members] = await Promise.all([
+    prepare<PolicyProject & { document_id: string }>(
+      `SELECT dp.document_id, p.id, p.org_id, p.default_role::text AS default_role
+       FROM core.kb_document_projects dp
+       JOIN core.projects p ON p.id = dp.project_id
+       WHERE dp.document_id IN (${rootPh})`,
+    ).all(rootIds),
+    prepare<{ document_id: string; role: ProjectRole }>(
+      `SELECT document_id, role::text AS role
+       FROM core.kb_document_members
+       WHERE document_id IN (${rootPh}) AND user_id = ?`,
+    ).all(rootIds, ctx.user.id),
+  ]);
+
+  const projectsByRoot = new Map<string, PolicyProject[]>();
+  for (const link of links) {
+    const list = projectsByRoot.get(link.document_id);
+    const project: PolicyProject = {
+      id: link.id,
+      org_id: link.org_id,
+      default_role: link.default_role,
+    };
+    if (list) list.push(project);
+    else projectsByRoot.set(link.document_id, [project]);
+  }
+  const memberRoles = new Map(members.map((m) => [m.document_id, m.role]));
+
+  const visible = new Set<string>();
+  for (const row of roots) {
+    const role = effectiveKbRole(ctx, {
+      id: row.root_id,
+      org_id: ctx.orgId,
+      created_by: row.created_by,
+      default_role: row.default_role,
+      projects: projectsByRoot.get(row.root_id) ?? [],
+      member_role: memberRoles.get(row.root_id) ?? null,
+    });
+    if (role) visible.add(row.node_id);
+  }
+  return visible;
 }

@@ -10,14 +10,14 @@
 
 import { prepare, transaction, type TxContext } from "@/lib/sql";
 import { sanitizeRichText } from "@/lib/sanitize";
-import { listOwnerAttachments } from "./attachments";
-import { listDocComments } from "./doc-comments";
+import { ownerAttachments } from "./attachments";
+import { ownerThreads } from "./doc-comments";
 import { emitEvent, notifyUsers } from "./events";
 import { DomainError } from "./http";
 import {
+  filterVisibleKbIds,
   KB_MAX_DEPTH,
   kbAudience,
-  loadKbAccess,
   requireKbAccess,
   type KbAccess,
 } from "./kb-access";
@@ -32,7 +32,7 @@ import {
   type KbNodeRow,
 } from "./kb-model";
 import { notifyMentions } from "./mentions";
-import { assertOrg, canProject, effectiveKbRole, effectiveProjectRole } from "./policy";
+import { assertOrg, canKbRole, canProject, effectiveKbRole, effectiveProjectRole } from "./policy";
 import { requireProject } from "./projects";
 import { filterVisibleTaskIds, requireTaskAccess, updateTask } from "./tasks";
 import type {
@@ -69,11 +69,27 @@ function assertFolder(access: KbAccess): void {
 // --- Дерево ---------------------------------------------------------------------
 
 interface TreeSource {
-  rows: Array<KbNodeRow & { default_role: ProjectDefaultRole | null; created_by: string | null }>;
+  /**
+   * Строки как они лежат в базе. `can_edit` здесь нет намеренно: право живёт на
+   * корне ветки и приписывается узлам уже при сборке дерева — колонки под него
+   * не существует, и объявлять её значило бы соврать типом.
+   */
+  rows: Array<
+    Omit<KbNodeRow, "can_edit"> & {
+      default_role: ProjectDefaultRole | null;
+      created_by: string | null;
+    }
+  >;
   /** Привязки корней к проектам, с позицией в дереве каждого проекта. */
   links: Array<{ document_id: string; project_id: string; position: number }>;
   memberRoles: Map<string, ProjectRole>;
-  projects: Array<PolicyProject & { position: number }>;
+  /**
+   * Проекты организации ЦЕЛИКОМ, включая архивные. Архив убирает проект из
+   * панели, но не меняет прав: отбросив его здесь, дерево сочло бы привязанный
+   * документ «общим» и показало бы его одному автору — то есть ответило бы про
+   * доступ иначе, чем `loadKbAccess` по прямой ссылке.
+   */
+  projects: Array<PolicyProject & { position: number; archived: boolean }>;
 }
 
 async function loadTreeSource(ctx: AuthContext): Promise<TreeSource> {
@@ -96,10 +112,11 @@ async function loadTreeSource(ctx: AuthContext): Promise<TreeSource> {
        JOIN core.kb_documents d ON d.id = dm.document_id
        WHERE d.org_id = ? AND dm.user_id = ?`,
     ).all(ctx.orgId, ctx.user.id),
-    prepare<PolicyProject & { position: number }>(
-      `SELECT id, org_id, default_role::text AS default_role, position
+    prepare<PolicyProject & { position: number; archived: boolean }>(
+      `SELECT id, org_id, default_role::text AS default_role, position,
+              archived_at IS NOT NULL AS archived
        FROM core.projects
-       WHERE org_id = ? AND archived_at IS NULL
+       WHERE org_id = ?
        ORDER BY position, created_at`,
     ).all(ctx.orgId),
   ]);
@@ -136,13 +153,14 @@ export async function listKbTree(ctx: AuthContext): Promise<KbTreeGroup[]> {
     else linksByDocument.set(link.document_id, [link]);
   }
 
-  // Видимость решается на корне; потомки её наследуют.
+  // Видимость и право правки решаются на корне; потомки их наследуют.
   const visibleRoots = new Set<string>();
+  const editableRoots = new Set<string>();
   for (const row of src.rows) {
     if (row.parent_id) continue;
     const linked = (linksByDocument.get(row.id) ?? [])
       .map((l) => projectById.get(l.project_id))
-      .filter((p): p is PolicyProject & { position: number } => !!p);
+      .filter((p): p is (typeof src.projects)[number] => !!p);
     const role = effectiveKbRole(ctx, {
       id: row.id,
       org_id: ctx.orgId,
@@ -151,7 +169,9 @@ export async function listKbTree(ctx: AuthContext): Promise<KbTreeGroup[]> {
       projects: linked,
       member_role: src.memberRoles.get(row.id) ?? null,
     });
-    if (role) visibleRoots.add(row.id);
+    if (!role) continue;
+    visibleRoots.add(row.id);
+    if (canKbRole(role, "doc.edit")) editableRoots.add(row.id);
   }
 
   // Потомки видимого корня видимы; ветка невидимого корня не показывается вовсе.
@@ -162,21 +182,27 @@ export async function listKbTree(ctx: AuthContext): Promise<KbTreeGroup[]> {
     if (list) list.push(row);
     else childrenOf.set(row.parent_id, [row]);
   }
-  const visibleRows: TreeSource["rows"] = [];
-  const stack = src.rows.filter((r) => !r.parent_id && visibleRoots.has(r.id));
+  const visibleRows: KbNodeRow[] = [];
+  const stack = src.rows
+    .filter((r) => !r.parent_id && visibleRoots.has(r.id))
+    .map((row) => ({ row, canEdit: editableRoots.has(row.id) }));
   const seen = new Set<string>();
   while (stack.length) {
-    const row = stack.pop()!;
+    const { row, canEdit } = stack.pop()!;
     if (seen.has(row.id)) continue;
     seen.add(row.id);
-    visibleRows.push(row);
-    for (const child of childrenOf.get(row.id) ?? []) stack.push(child);
+    visibleRows.push({ ...row, can_edit: canEdit });
+    for (const child of childrenOf.get(row.id) ?? []) stack.push({ row: child, canEdit });
   }
 
   const nodesByRoot = new Map(buildKbTree(visibleRows).map((n) => [n.id, n]));
 
   const groups: KbTreeGroup[] = [];
   for (const project of src.projects) {
+    // Архивный проект в дереве не рисуется — его нет и в панели. Документ,
+    // привязанный только к архивным, из дерева уходит вместе с ними, но
+    // остаётся доступен по ссылке и в поиске: права у него прежние.
+    if (project.archived) continue;
     if (!effectiveProjectRole(ctx, project)) continue;
     const nodes: KbTreeNode[] = [];
     for (const link of src.links) {
@@ -260,11 +286,15 @@ async function folderChildren(folderId: string): Promise<KbFolderChild[]> {
 async function documentDetail(ctx: AuthContext, access: KbAccess): Promise<KbDocumentDetail> {
   const folder = access.document.kind === "folder";
   const owner = { kind: "document" as const, documentId: access.document.id };
+  // Доступ уже проверен вызывающим, поэтому берём версии без проверки: иначе
+  // открытие документа стоило бы трёх её повторов — по одному на вложения,
+  // обсуждения и связи (правило про фиксированное число запросов).
+  //
   // У папки нет ни текста, ни вложений, ни обсуждений — и запросов за ними тоже.
   const [tasks, attachments, threads, children] = await Promise.all([
-    folder ? Promise.resolve([]) : listDocumentTasks(ctx, access.document.id),
-    folder ? Promise.resolve([]) : listOwnerAttachments(ctx, owner),
-    folder ? Promise.resolve([]) : listDocComments(ctx, owner),
+    folder ? Promise.resolve([]) : documentTasks(ctx, access.document.id),
+    folder ? Promise.resolve([]) : ownerAttachments(owner),
+    folder ? Promise.resolve([]) : ownerThreads(owner),
     folder ? folderChildren(access.document.id) : Promise.resolve([]),
   ]);
   return {
@@ -582,18 +612,25 @@ export async function moveKbDocument(
       // и то и другое живёт на корне ветки.
       await tx.prepare(`DELETE FROM core.kb_document_projects WHERE document_id = ?`).run(documentId);
       await tx.prepare(`DELETE FROM core.kb_document_members WHERE document_id = ?`).run(documentId);
-    } else if (projectsChanged) {
-      await tx.prepare(`DELETE FROM core.kb_document_projects WHERE document_id = ?`).run(documentId);
-      for (const projectId of nextProjects) {
-        await tx
-          .prepare(
-            `INSERT INTO core.kb_document_projects (document_id, project_id, position) VALUES (?, ?, ?)`,
-          )
-          .run(documentId, projectId, await nextPosition(tx, ctx.orgId, null, projectId));
+    } else {
+      if (projectsChanged) {
+        await tx.prepare(`DELETE FROM core.kb_document_projects WHERE document_id = ?`).run(documentId);
+        for (const projectId of nextProjects) {
+          await tx
+            .prepare(
+              `INSERT INTO core.kb_document_projects (document_id, project_id, position) VALUES (?, ?, ?)`,
+            )
+            .run(documentId, projectId, await nextPosition(tx, ctx.orgId, null, projectId));
+        }
       }
       if (nextProjects.length === 0) {
-        // Документ стал общим — доступ теперь по списку. Переносящего добавляем
-        // явно: иначе он в тот же миг теряет документ из виду, если он не автор.
+        // Узел стал общим — доступ теперь по списку, а список пуст. Переносящего
+        // добавляем явно, иначе он в тот же миг теряет документ из виду: у
+        // вложенного узла ни автора-владельца, ни базовой роли не было.
+        //
+        // Условие намеренно шире `projectsChanged`: вложенный узел, вытащенный в
+        // «Общие», проектов не терял (их у него и не было), и признак смены
+        // привязок не срабатывает.
         await tx
           .prepare(
             `INSERT INTO core.kb_document_members (document_id, user_id, role) VALUES (?, ?, 'admin')
@@ -660,12 +697,21 @@ export async function reorderKbDocuments(
   // персональный, и одной проверки на список не хватит.
   for (const id of order) await requireKbAccess(ctx, id, "doc.edit");
 
+  // И все они обязаны быть соседями по указанной ветке: иначе перестановка в
+  // одном разделе переписала бы позиции в другом.
+  const parentId = input.parentId ?? null;
+  const ph = order.map(() => "?").join(",");
+  const strangers = await prepare<{ id: string }>(
+    parentId
+      ? `SELECT id FROM core.kb_documents WHERE id IN (${ph}) AND parent_id IS DISTINCT FROM ?`
+      : `SELECT id FROM core.kb_documents WHERE id IN (${ph}) AND parent_id IS NOT NULL`,
+    // Второй аргумент нужен только ветке с родителем — иначе плейсхолдеров
+    // ровно столько, сколько id.
+  ).all(...(parentId ? [order, parentId] : [order]));
+  if (strangers.length > 0) throw new DomainError(422, "Порядок перечисляет не соседей");
+
   await transaction(async (tx) => {
-    await writeOrder(tx, ctx, {
-      parentId: input.parentId ?? null,
-      projectId: input.projectId ?? null,
-      order,
-    });
+    await writeOrder(tx, ctx, { parentId, projectId: input.projectId ?? null, order });
   });
   return listKbTree(ctx);
 }
@@ -806,14 +852,11 @@ export async function listKbTrash(ctx: AuthContext): Promise<KbTrashItem[]> {
      ORDER BY d.deleted_at DESC`,
   ).all(ctx.orgId);
 
-  const out: KbTrashItem[] = [];
-  for (const row of rows) {
-    // Видимость проверяем поштучно: у корней «Общих» она персональная, а
-    // корзина — такая же выдача наружу, как поиск (правило 8).
-    const access = await loadKbAccess(ctx, row.id, { includeDeleted: true });
-    if (access) out.push(row);
-  }
-  return out;
+  // Корзина — такая же выдача наружу, как поиск (правило 8): у корней «Общих»
+  // видимость персональная, и её приходится считать по-настоящему. Пакетно —
+  // три запроса на весь список вместо трёх на строку.
+  const visible = await filterVisibleKbIds(ctx, rows.map((r) => r.id));
+  return rows.filter((r) => visible.has(r.id));
 }
 
 /** Окончательное удаление: байты вложений и история версий уходят каскадом. */
@@ -1076,11 +1119,12 @@ export async function restoreKbVersion(
 
 // --- Связь с задачами ----------------------------------------------------------------
 
-/** Задачи документа. Фильтруются видимостью задач: связь ничего не открывает. */
-export async function listDocumentTasks(
-  ctx: AuthContext,
-  documentId: string,
-): Promise<KbLinkedTask[]> {
+/**
+ * Задачи документа БЕЗ проверки доступа к самому документу — для вызывающего,
+ * который её уже сделал. Видимость задач при этом фильтруется всегда: связь
+ * ничего не открывает.
+ */
+async function documentTasks(ctx: AuthContext, documentId: string): Promise<KbLinkedTask[]> {
   const rows = await prepare<KbLinkedTask>(
     `SELECT t.id, t.title, t.status_id, t.completed_at
      FROM core.kb_document_tasks dt
@@ -1093,11 +1137,27 @@ export async function listDocumentTasks(
   return rows.filter((r) => visible.has(r.id));
 }
 
+/**
+ * То же для внешнего вызова. Доступ к документу проверяется обязательно: без
+ * этого список отвечал бы на вопрос «какие из моих задач привязаны к чужому
+ * документу» (правило 8 — каждый канал выдачи фильтрует сам).
+ */
+export async function listDocumentTasks(
+  ctx: AuthContext,
+  documentId: string,
+): Promise<KbLinkedTask[]> {
+  await requireKbAccess(ctx, documentId, "doc.view");
+  return documentTasks(ctx, documentId);
+}
+
 /** Документы задачи — блок «Документы» в карточке. Фильтруются видимостью документов. */
 export async function listTaskDocuments(
   ctx: AuthContext,
   taskId: string,
 ): Promise<KbLinkedDocument[]> {
+  // Симметрично документам: без проверки задачи список отвечал бы на вопрос
+  // «какие документы привязаны к чужой задаче».
+  await requireTaskAccess(ctx, taskId, "view");
   const rows = await prepare<KbLinkedDocument>(
     `SELECT d.id, d.title
      FROM core.kb_document_tasks dt
@@ -1105,11 +1165,9 @@ export async function listTaskDocuments(
      WHERE dt.task_id = ? AND d.org_id = ? AND d.deleted_at IS NULL
      ORDER BY dt.created_at`,
   ).all(taskId, ctx.orgId);
-  const out: KbLinkedDocument[] = [];
-  for (const row of rows) {
-    if (await loadKbAccess(ctx, row.id)) out.push(row);
-  }
-  return out;
+  if (rows.length === 0) return [];
+  const visible = await filterVisibleKbIds(ctx, rows.map((r) => r.id));
+  return rows.filter((r) => visible.has(r.id));
 }
 
 /**

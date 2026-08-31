@@ -12,6 +12,8 @@ export interface KbNodeRow {
   title: string;
   position: number;
   created_at: string;
+  /** Право правки: у ветки оно общее и считается на её корне. */
+  can_edit: boolean;
 }
 
 /**
@@ -33,6 +35,7 @@ export function buildKbTree(rows: KbNodeRow[]): KbTreeNode[] {
       parent_id: row.parent_id,
       title: row.title,
       position: row.position,
+      can_edit: row.can_edit,
       children: [],
     });
   }

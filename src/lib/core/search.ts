@@ -3,9 +3,9 @@
 // закрытых проектов.
 
 import { prepare } from "@/lib/sql";
-import { loadKbAccess } from "./kb-access";
+import { filterVisibleKbIds } from "./kb-access";
 import { canOrg, effectiveProjectRole } from "./policy";
-import type { AuthContext, PolicyProject } from "./types";
+import type { AuthContext, KbNodeKind, PolicyProject } from "./types";
 
 export interface SearchHit {
   type: "task" | "document" | "client" | "project";
@@ -77,26 +77,35 @@ export async function search(ctx: AuthContext, query: string, limit = 20): Promi
     if (hits.length >= limit) break;
   }
 
-  // Документы базы знаний. Доступ у каждого свой (проекты корня либо список),
-  // поэтому кандидатов берём с запасом и проверяем поштучно — как и задачи.
+  // Документы и папки базы знаний. Кандидатов берём с запасом — часть отсечёт
+  // видимость, — но решаем её пакетно: поиск набирают по букве, и три запроса
+  // на каждого кандидата превратили бы подсказку в десятки походов в базу.
   if (hits.length < limit) {
-    const docs = await prepare<{ id: string; title: string }>(
-      `SELECT d.id, d.title
+    const docs = await prepare<{
+      id: string;
+      kind: KbNodeKind;
+      title: string;
+      parent_title: string | null;
+    }>(
+      `SELECT d.id, d.kind, d.title, p.title AS parent_title
        FROM core.kb_documents d
+       LEFT JOIN core.kb_documents p ON p.id = d.parent_id
        WHERE d.org_id = ? AND d.deleted_at IS NULL AND d.title ILIKE ?
        ORDER BY similarity(d.title, ?) DESC, d.updated_at DESC
        LIMIT ?`,
     ).all(ctx.orgId, like, q, (limit - hits.length) * 3);
+
+    const visible = await filterVisibleKbIds(ctx, docs.map((d) => d.id));
     for (const doc of docs) {
       if (hits.length >= limit) break;
-      const access = await loadKbAccess(ctx, doc.id);
-      if (!access) continue;
+      if (!visible.has(doc.id)) continue;
       hits.push({
         type: "document",
         id: doc.id,
         title: doc.title || "Без названия",
-        // Ветка объясняет, где документ лежит; у корня это он сам.
-        subtitle: access.root.id === doc.id ? "База знаний" : access.root.title,
+        // Где лежит — понятнее, чем «база знаний»: у папки это и есть ответ на
+        // вопрос «какая из них», а у документа — его раздел.
+        subtitle: doc.kind === "folder" ? "Папка" : (doc.parent_title ?? "База знаний"),
         completed: false,
         has_parent: false,
       });

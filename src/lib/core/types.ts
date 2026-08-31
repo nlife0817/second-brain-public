@@ -667,6 +667,12 @@ export interface KbTreeNode {
   parent_id: string | null;
   title: string;
   position: number;
+  /**
+   * Может ли текущий пользователь править эту ветку. Дерево обязано знать это
+   * само: без признака оно предлагало бы перетаскивание и «плюс» тому, кому
+   * сервер ответит отказом.
+   */
+  can_edit: boolean;
   children: KbTreeNode[];
 }
 

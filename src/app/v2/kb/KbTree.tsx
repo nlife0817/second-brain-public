@@ -563,7 +563,7 @@ export function KbTree({
               expanded={open}
               hasChildren={children}
               isActiveDoc={activeDocumentId === entry.node.id}
-              canEdit
+              canEdit={entry.node.can_edit}
               onToggle={toggle}
               onCreateChild={(id, kind) => onCreate({ parentId: id, projectId: null, kind })}
             />

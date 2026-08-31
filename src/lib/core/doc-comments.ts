@@ -96,11 +96,12 @@ function groupThreads(rows: MessageRow[]): DocCommentThread[] {
   return threads.sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
-export async function listDocComments(
-  ctx: AuthContext,
-  owner: DocOwner,
-): Promise<DocCommentThread[]> {
-  await requireDocOwner(ctx, owner, "view");
+/**
+ * Треды владельца БЕЗ проверки доступа — для вызывающего, который её уже
+ * сделал (карточка документа собирается после `requireKbAccess`). Отдельная
+ * функция, а не флаг: пропуск проверки должен быть виден в месте вызова.
+ */
+export async function ownerThreads(owner: DocOwner): Promise<DocCommentThread[]> {
   const where = ownerWhere(owner);
   const rows = await prepare<MessageRow>(
     `${MESSAGE_SELECT}
@@ -108,6 +109,14 @@ export async function listDocComments(
      ORDER BY d.created_at`,
   ).all(where.value);
   return groupThreads(rows);
+}
+
+export async function listDocComments(
+  ctx: AuthContext,
+  owner: DocOwner,
+): Promise<DocCommentThread[]> {
+  await requireDocOwner(ctx, owner, "view");
+  return ownerThreads(owner);
 }
 
 async function loadThread(owner: DocOwner, threadId: string): Promise<DocCommentThread> {
