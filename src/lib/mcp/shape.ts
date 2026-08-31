@@ -58,6 +58,7 @@ export function shapeTaskListItem(task: TaskListItem, dict: Dictionaries) {
     priority: task.priority,
     start_date: task.start_date,
     due_date: task.due_date,
+    planned_date: task.planned_date,
     completed_at: task.completed_at,
     assignees: task.assignees.map((a) => ({ id: a.id, name: a.name || a.email })),
     tags: task.tags.map((t) => t.name),

@@ -73,7 +73,7 @@ export async function loadTaskAccess(ctx: AuthContext, taskId: string): Promise<
        WHERE c.depth < 8
      )
      SELECT id, org_id, title, description, status_id, priority, start_date, start_time,
-            due_date, due_time,
+            due_date, due_time, planned_date,
             estimated_minutes, completed_at, parent_task_id, sprint_id, sprint_carry_count,
             source, created_by,
             created_at, updated_at
@@ -192,7 +192,7 @@ export async function requireTaskAccess(
  * 700 задач HTML описаний — четверть веса ответа.
  */
 const TASK_LIST_COLUMNS = `t.id, t.org_id, t.title, t.status_id, t.priority,
-   t.start_date, t.start_time, t.due_date, t.due_time,
+   t.start_date, t.start_time, t.due_date, t.due_time, t.planned_date,
    t.estimated_minutes, t.completed_at, t.parent_task_id, t.subtask_position,
    t.sprint_id, t.sprint_carry_count,
    t.source, t.created_by, t.created_at, t.updated_at`;
@@ -744,6 +744,7 @@ export interface CreateTaskInput {
   start_time?: string | null;
   due_date?: string | null;
   due_time?: string | null;
+  planned_date?: string | null;
   estimated_minutes?: number | null;
   parent_task_id?: string | null;
   /** Спринт проекта в режиме «Разработка»; без него задача попадает в бэклог. */
@@ -807,9 +808,9 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
       .prepare<{ id: string }>(
         `INSERT INTO core.tasks
            (org_id, title, description, status_id, priority, start_date, start_time,
-            due_date, due_time,
+            due_date, due_time, planned_date,
             estimated_minutes, parent_task_id, subtask_position, sprint_id, source, created_by, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING id`,
       )
       .get(
@@ -822,6 +823,7 @@ export async function createTask(ctx: AuthContext, input: CreateTaskInput): Prom
         input.start_time ?? null,
         input.due_date ?? null,
         input.due_time ?? null,
+        input.planned_date ?? null,
         input.estimated_minutes ?? null,
         input.parent_task_id ?? null,
         await nextSubtaskPosition(tx, input.parent_task_id ?? null),
@@ -909,6 +911,7 @@ export interface UpdateTaskInput {
   start_time?: string | null;
   due_date?: string | null;
   due_time?: string | null;
+  planned_date?: string | null;
   estimated_minutes?: number | null;
   /** `null` — отвязать от родителя; uuid — переподчинить другой задаче. */
   parent_task_id?: string | null;
@@ -1026,6 +1029,12 @@ export async function updateTask(ctx: AuthContext, taskId: string, patch: Update
     if (patch.due_time !== undefined && normalizeTime(patch.due_time) !== normalizeTime(task.due_time)) {
       scalar.due_time = patch.due_time;
       changedFields.push("due_time");
+    }
+    // Уведомления дата работы не шлёт: это личное расписание исполнителя, а не
+    // обязательство перед командой, — о нём некого предупреждать.
+    if (patch.planned_date !== undefined && patch.planned_date !== task.planned_date) {
+      scalar.planned_date = patch.planned_date;
+      changedFields.push("planned_date");
     }
     if (patch.estimated_minutes !== undefined && patch.estimated_minutes !== task.estimated_minutes) {
       scalar.estimated_minutes = patch.estimated_minutes;
