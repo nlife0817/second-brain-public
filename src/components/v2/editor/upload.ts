@@ -5,6 +5,7 @@
 // экрана на 4000 px там оказаться не должен.
 
 import type { Attachment } from "@/lib/core/types";
+import { ownerPath, type DocOwner } from "./owner";
 
 /** Дальше этой ширины изображение в описании ничего не выигрывает. */
 const MAX_IMAGE_WIDTH = 1600;
@@ -76,10 +77,10 @@ async function prepareImage(file: File): Promise<Prepared> {
 
 export class UploadError extends Error {}
 
-/** Загружает файл в задачу и возвращает метаданные вместе с готовым URL. */
+/** Загружает файл владельцу и возвращает метаданные вместе с готовым URL. */
 export async function uploadAttachment(
   orgId: string,
-  taskId: string,
+  owner: DocOwner,
   input: File,
 ): Promise<Attachment> {
   const prepared = isImageFile(input)
@@ -99,7 +100,7 @@ export async function uploadAttachment(
 
   // Не через lib/core/client: тот всегда шлёт JSON, а base64 раздул бы файл на
   // треть и заставил держать его в памяти дважды.
-  const res = await fetch(`/api/v2/orgs/${orgId}/tasks/${taskId}/attachments`, {
+  const res = await fetch(`/api/v2${ownerPath(orgId, owner)}/attachments`, {
     method: "POST",
     body: form,
   });

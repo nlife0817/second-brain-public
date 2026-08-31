@@ -10,6 +10,7 @@ import type { DocCommentThread, UserBrief } from "@/lib/core/types";
 import { cn } from "@/lib/utils";
 import { Avatar } from "../bits";
 import { CommentComposer } from "./CommentComposer";
+import type { DocOwner } from "./owner";
 import { handleRichTextClick } from "./open-link";
 
 function when(iso: string): string {
@@ -24,9 +25,9 @@ function when(iso: string): string {
 export interface CommentPanelProps {
   threads: DocCommentThread[];
   me: UserBrief | null;
-  /** Куда уходят картинки из комментариев — вложения той же задачи. */
+  /** Куда уходят картинки из комментариев — вложения того же владельца. */
   orgId: string | null;
-  taskId: string | null;
+  owner: DocOwner | null;
   /** Тред под курсором в документе — он же раскрыт в панели. */
   activeThreadId: string | null;
   /** Есть ли у треда якорь в тексте: без него обсуждение висит «в воздухе». */
@@ -55,7 +56,7 @@ export interface CommentPanelProps {
 }
 
 export function CommentPanel(props: CommentPanelProps) {
-  const { threads, draftQuote, tabs, orgId, taskId } = props;
+  const { threads, draftQuote, tabs, orgId, owner } = props;
   const [showResolved, setShowResolved] = useState(false);
 
   const open = threads.filter((t) => !t.resolved_at);
@@ -92,7 +93,7 @@ export function CommentPanel(props: CommentPanelProps) {
           <DraftCard
             quote={draftQuote}
             orgId={orgId}
-            taskId={taskId}
+            owner={owner}
             onSubmit={props.onSubmitDraft}
             onCancel={props.onCancelDraft}
           />
@@ -117,13 +118,13 @@ export function CommentPanel(props: CommentPanelProps) {
 function DraftCard({
   quote,
   orgId,
-  taskId,
+  owner,
   onSubmit,
   onCancel,
 }: {
   quote: string;
   orgId: string | null;
-  taskId: string | null;
+  owner: DocOwner | null;
   onSubmit: (html: string) => Promise<boolean>;
   onCancel: () => void;
 }) {
@@ -139,7 +140,7 @@ function DraftCard({
         placeholder="Комментарий…"
         submitLabel="Оставить"
         orgId={orgId}
-        taskId={taskId}
+        owner={owner}
         busy={busy}
         onCancel={onCancel}
         onSubmit={async (html) => {
@@ -167,7 +168,7 @@ function ThreadCard({
   thread,
   me,
   orgId,
-  taskId,
+  owner,
   activeThreadId,
   isAnchored,
   canComment,
@@ -228,7 +229,7 @@ function ThreadCard({
             isRoot={index === 0}
             mine={!!me && message.author_id === me.id}
             orgId={orgId}
-            taskId={taskId}
+            owner={owner}
             onEdit={(text) => guard(() => onEdit(message.id, text))}
             onDelete={() => guard(() => onDelete(message.id))}
           />
@@ -243,7 +244,7 @@ function ThreadCard({
               placeholder="Ответить…"
               submitLabel="Ответить"
               orgId={orgId}
-              taskId={taskId}
+              owner={owner}
               busy={busy}
               onCancel={() => setReplying(false)}
               onSubmit={(html) =>
@@ -301,7 +302,7 @@ function Message({
   isRoot,
   mine,
   orgId,
-  taskId,
+  owner,
   onEdit,
   onDelete,
 }: {
@@ -309,7 +310,7 @@ function Message({
   isRoot: boolean;
   mine: boolean;
   orgId: string | null;
-  taskId: string | null;
+  owner: DocOwner | null;
   /** Признак успеха: по нему решаем, закрывать ли поле правки. */
   onEdit: (html: string) => Promise<boolean>;
   onDelete: () => void;
@@ -372,7 +373,7 @@ function Message({
               value={message.body}
               submitLabel="Сохранить"
               orgId={orgId}
-              taskId={taskId}
+              owner={owner}
               onCancel={() => setEditing(false)}
               // Поле закрываем только при успехе и обязательно дожидаемся
               // ответа: без await правка «сохранялась» на экране и при отказе

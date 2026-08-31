@@ -31,6 +31,7 @@ import {
   scrollToThread,
   setThreadResolvedInDoc,
 } from "./comment-marks";
+import { ownerPath, type DocOwner } from "./owner";
 import { DocSearchBar, EMPTY_SEARCH, type DocSearchValue } from "./SearchBar";
 import { SelectionMenu } from "./SelectionMenu";
 import { EditorToolbar } from "./Toolbar";
@@ -73,7 +74,9 @@ export interface DocEditorProps {
   open: boolean;
   onClose: () => void;
   orgId: string | null;
-  taskId: string | null;
+  /** Владелец текста: задача или документ базы знаний. */
+  owner: DocOwner | null;
+  /** Заголовок над документом — название задачи или документа. */
   taskTitle: string;
   value: string;
   /** `false` — сохранить не удалось; см. `UseDocEditorOptions.onSave`. */
@@ -96,7 +99,7 @@ export function DocEditor({
   open,
   onClose,
   orgId,
-  taskId,
+  owner,
   taskTitle,
   value,
   onSave,
@@ -121,13 +124,13 @@ export function DocEditor({
     value,
     onSave,
     orgId,
-    taskId,
+    owner,
     editable,
     placeholder: "Описание задачи…",
   });
   const editor = doc.editor;
 
-  const canUpload = editable && !!orgId && !!taskId;
+  const canUpload = editable && !!orgId && !!owner;
   const drop = useFileDrop({
     enabled: canUpload,
     onFiles: (files) => void doc.uploadFiles(files),
@@ -258,9 +261,9 @@ export function DocEditor({
   // Признак успеха возвращается наружу: `guard` ошибку не бросает, и без него
   // композер считал бы отказ сервера успехом и стирал набранное.
   async function submitDraft(html: string): Promise<boolean> {
-    if (!orgId || !taskId || !draft || !editor) return false;
+    if (!orgId || !owner || !draft || !editor) return false;
     const created = await guard(() =>
-      api.post<DocCommentThread>(`/orgs/${orgId}/tasks/${taskId}/doc-comments`, {
+      api.post<DocCommentThread>(`${ownerPath(orgId, owner)}/doc-comments`, {
         body: html,
         quote: draft.quote,
       }),
@@ -276,12 +279,12 @@ export function DocEditor({
   }
 
   async function reply(threadId: string, html: string): Promise<boolean> {
-    if (!orgId || !taskId) return false;
+    if (!orgId || !owner) return false;
     const updated = await guard(() =>
-      api.post<DocCommentThread>(
-        `/orgs/${orgId}/tasks/${taskId}/doc-comments?thread=${threadId}`,
-        { body: html, quote: "" },
-      ),
+      api.post<DocCommentThread>(`${ownerPath(orgId, owner)}/doc-comments?thread=${threadId}`, {
+        body: html,
+        quote: "",
+      }),
     );
     if (!updated) return false;
     upsertThread(updated);
@@ -299,13 +302,13 @@ export function DocEditor({
   }
 
   async function removeMessage(commentId: string) {
-    if (!orgId || !taskId) return;
+    if (!orgId || !owner) return;
     const ok = await guard(() => api.del(`/orgs/${orgId}/doc-comments/${commentId}`));
     if (ok === undefined) return;
     // Удаление корня уносит весь тред, ответа — только одно сообщение. Что
     // именно случилось, знает сервер: перечитываем список вместо угадывания.
     const fresh = await guard(() =>
-      api.get<DocCommentThread[]>(`/orgs/${orgId}/tasks/${taskId}/doc-comments`),
+      api.get<DocCommentThread[]>(`${ownerPath(orgId, owner)}/doc-comments`),
     );
     if (!fresh) return;
     const gone = threads.filter((t) => !fresh.some((f) => f.id === t.id));
@@ -514,7 +517,7 @@ export function DocEditor({
               threads={threads}
               me={me}
               orgId={orgId}
-              taskId={taskId}
+              owner={owner}
               activeThreadId={activeThreadId}
               isAnchored={(id) => anchors.has(id)}
               canComment={canComment}

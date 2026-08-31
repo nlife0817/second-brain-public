@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { commentExtensions } from "./extensions";
 import { isImageFile } from "./upload";
+import type { DocOwner } from "./owner";
 import { useEditorUploads } from "./use-uploads";
 import { useFileDrop } from "./useFileDrop";
 import { useMentionItems } from "./use-mention-items";
@@ -27,7 +28,7 @@ export function CommentComposer({
   submitLabel = "Отправить",
   busy = false,
   orgId = null,
-  taskId = null,
+  owner = null,
   onSubmit,
   onCancel,
   className,
@@ -39,12 +40,12 @@ export function CommentComposer({
   submitLabel?: string;
   busy?: boolean;
   /**
-   * Задача, к которой уходят картинки комментария (вложения там же, где
-   * картинки описания). Без пары orgId+taskId загрузка не предлагается вовсе —
-   * так же, как в описании черновика.
+   * Кому уходят картинки комментария — задаче или документу базы знаний
+   * (вложения там же, где картинки самого текста). Без пары orgId+owner
+   * загрузка не предлагается вовсе — так же, как в описании черновика.
    */
   orgId?: string | null;
-  taskId?: string | null;
+  owner?: DocOwner | null;
   /**
    * Вернуть `false`, если отправка не удалась — тогда набранное останется в
    * поле. Экраны ловят ошибки своими обёртками (`run`, `guard`) и наружу их не
@@ -58,13 +59,13 @@ export function CommentComposer({
   const [empty, setEmpty] = useState(!value.trim());
   const [sending, setSending] = useState(false);
   const mentionItems = useMentionItems();
-  const canUpload = !!orgId && !!taskId;
+  const canUpload = !!orgId && !!owner;
 
   // Картинка — единственное вложение комментария: карточки файла в облегчённом
   // наборе расширений нет, и показать её было бы нечем.
   const uploads = useEditorUploads({
     orgId,
-    taskId,
+    owner,
     enabled: canUpload,
     insert: (target, attachment) =>
       target.chain().focus().insertDocImage({ src: attachment.url, alt: attachment.filename }).run(),

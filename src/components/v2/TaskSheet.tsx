@@ -77,6 +77,7 @@ import { cn } from "@/lib/utils";
 import { Avatar, PRIORITY_LABELS, chipStyle, dueTone, formatDue } from "./bits";
 import { DuePicker, StartPicker } from "./DuePicker";
 import { handleRichTextClick } from "./editor/open-link";
+import { taskOwner } from "./editor/owner";
 import { MemberPicker } from "./MemberPicker";
 import { RelationsList } from "./RelationsList";
 import { SidePanel, useWideViewport } from "./SidePanel";
@@ -1555,7 +1556,7 @@ export function TaskSheet({
                   value={task.description}
                   onSave={(html) => patch({ description: html }, undefined, true)}
                   orgId={orgId}
-                  taskId={task.id}
+                  owner={taskOwner(task.id)}
                   editable={canEdit}
                   onExpand={() => setExpandedTaskId(task.id)}
                   threadCount={docThreads.filter((t) => !t.resolved_at).length}
@@ -1686,7 +1687,7 @@ export function TaskSheet({
                     // Картинка комментария уезжает во вложения той же задачи —
                     // как и картинка описания.
                     orgId={orgId}
-                    taskId={taskId}
+                    owner={taskOwner(taskId)}
                     onSubmit={(html) => addComment(html, replyTo)}
                   />
                 </div>
@@ -1702,7 +1703,7 @@ export function TaskSheet({
         open
         onClose={() => setExpandedTaskId(null)}
         orgId={orgId}
-        taskId={task.id}
+        owner={taskOwner(task.id)}
         taskTitle={task.title}
         value={task.description}
         onSave={(html) => patch({ description: html }, undefined, true)}
@@ -2036,7 +2037,7 @@ function CommentItem({
               value={comment.body}
               submitLabel="Сохранить"
               orgId={orgId}
-              taskId={taskId}
+              owner={taskOwner(taskId)}
               onCancel={() => setEditing(false)}
               // Поле закрываем только при успехе и обязательно дожидаемся
               // ответа: без await правка «сохранялась» бы на экране и при отказе

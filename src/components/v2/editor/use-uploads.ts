@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
 import type { EditorProps } from "@tiptap/pm/view";
 import type { Attachment } from "@/lib/core/types";
+import type { DocOwner } from "./owner";
 import {
   extractPastedImages,
   fileFromImageSrc,
@@ -48,8 +49,8 @@ function hasTextPayload(data: DataTransfer | null | undefined): boolean {
 
 export interface UseEditorUploadsOptions {
   orgId: string | null;
-  /** Задача, к которой крепятся файлы. У черновика её ещё нет. */
-  taskId: string | null;
+  /** Кому крепятся файлы: задача или документ. У черновика владельца ещё нет. */
+  owner: DocOwner | null;
   /** Принимать ли файлы прямо сейчас: нередактируемое поле их не берёт. */
   enabled: boolean;
   /** Куда положить загруженное. */
@@ -100,9 +101,9 @@ export function useEditorUploads(options: UseEditorUploadsOptions): EditorUpload
    * случайном порядке, а выбирают их осмысленной последовательностью.
    */
   const uploadFiles = useCallback(async (files: File[]) => {
-    const { orgId, taskId, enabled, reject } = optionsRef.current;
+    const { orgId, owner, enabled, reject } = optionsRef.current;
     const editor = editorRef.current;
-    if (!orgId || !taskId || !editor || !enabled) return;
+    if (!orgId || !owner || !editor || !enabled) return;
 
     // Отсев до отправки: незачем гонять на сервер то, что оболочка всё равно не
     // умеет показать.
@@ -117,7 +118,7 @@ export function useEditorUploads(options: UseEditorUploadsOptions): EditorUpload
     setUploading((n) => n + accepted.length);
     for (const file of accepted) {
       try {
-        const attachment = await uploadAttachment(orgId, taskId, file);
+        const attachment = await uploadAttachment(orgId, owner, file);
         if (!editor.isDestroyed) optionsRef.current.insert(editor, attachment);
       } catch (e) {
         setError(
@@ -138,12 +139,12 @@ export function useEditorUploads(options: UseEditorUploadsOptions): EditorUpload
    * ждать человеку нечего.
    */
   const uploadPastedImages = useCallback(async (images: PendingImage[]) => {
-    const { orgId, taskId, enabled } = optionsRef.current;
+    const { orgId, owner, enabled } = optionsRef.current;
     const editor = editorRef.current;
     if (!editor || editor.isDestroyed) return;
     // Прикрепить некуда (черновик задачи) — возвращаем как было: внешние
     // ссылки останутся ссылками, base64 уйдёт вместе с местом картинки.
-    if (!orgId || !taskId || !enabled) {
+    if (!orgId || !owner || !enabled) {
       for (const image of images) revertPastedImage(editor, image);
       return;
     }
@@ -153,7 +154,7 @@ export function useEditorUploads(options: UseEditorUploadsOptions): EditorUpload
       try {
         const attachment = await uploadAttachment(
           orgId,
-          taskId,
+          owner,
           await fileFromImageSrc(image.src, index + 1),
         );
         if (editor.isDestroyed) return;

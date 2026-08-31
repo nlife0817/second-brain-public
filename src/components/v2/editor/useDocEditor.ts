@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useEditor, type Editor } from "@tiptap/react";
 import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
 import { docExtensions } from "./extensions";
+import type { DocOwner } from "./owner";
 import { isInlineImageMime } from "./upload";
 import { useEditorUploads } from "./use-uploads";
 import { useMentionItems } from "./use-mention-items";
@@ -62,7 +63,8 @@ export interface UseDocEditorOptions {
    */
   onSave: (html: string) => boolean | void | Promise<boolean | void>;
   orgId: string | null;
-  taskId: string | null;
+  /** Владелец текста: задача или документ базы знаний. */
+  owner: DocOwner | null;
   editable?: boolean;
   placeholder?: string;
   autofocus?: boolean;
@@ -83,7 +85,7 @@ export function useDocEditor({
   value,
   onSave,
   orgId,
-  taskId,
+  owner,
   editable = true,
   placeholder,
   autofocus = false,
@@ -93,7 +95,7 @@ export function useDocEditor({
   // только картинкой.
   const uploads = useEditorUploads({
     orgId,
-    taskId,
+    owner,
     enabled: editable,
     insert: (target, attachment) => {
       if (isInlineImageMime(attachment.mime_type)) {

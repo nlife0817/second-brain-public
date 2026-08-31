@@ -10,6 +10,7 @@ import { DocxDownloadButton } from "./editor/DocxButton";
 import { DocSaveButton } from "./editor/SaveButton";
 import { SelectionMenu } from "./editor/SelectionMenu";
 import { EditorToolbar } from "./editor/Toolbar";
+import type { DocOwner } from "./editor/owner";
 import { useDocEditor, type UseDocEditorOptions } from "./editor/useDocEditor";
 import { fileDropHint, useFileDrop } from "./editor/useFileDrop";
 
@@ -47,7 +48,7 @@ export function RichText({
   value,
   onSave,
   orgId = null,
-  taskId = null,
+  owner = null,
   placeholder = "Добавьте описание…",
   editable = true,
   onExpand,
@@ -60,11 +61,12 @@ export function RichText({
   /** `false` — сохранить не удалось; см. `UseDocEditorOptions.onSave`. */
   onSave: UseDocEditorOptions["onSave"];
   /**
-   * Задача, к которой крепятся вложения. У черновика (`TaskDraftPanel`) её ещё
-   * нет — прикрепить файл не к чему, поэтому кнопки загрузки не рисуются.
+   * Владелец текста, к которому крепятся вложения: задача или документ базы
+   * знаний. У черновика (`TaskDraftPanel`) его ещё нет — прикрепить файл не к
+   * чему, поэтому кнопки загрузки не рисуются.
    */
   orgId?: string | null;
-  taskId?: string | null;
+  owner?: DocOwner | null;
   placeholder?: string;
   editable?: boolean;
   /** Открыть полноэкранный режим. Без обработчика кнопка не рисуется. */
@@ -91,13 +93,13 @@ export function RichText({
    */
   showSaveButton?: boolean;
 }) {
-  const doc = useDocEditor({ value, onSave, orgId, taskId, editable, placeholder });
+  const doc = useDocEditor({ value, onSave, orgId, owner, editable, placeholder });
   const [expanded, setExpanded] = useState(false);
 
   const canCollapse = collapsible && isLongDescription(value);
   const collapsed = canCollapse && !expanded;
 
-  const canUpload = editable && !!orgId && !!taskId;
+  const canUpload = editable && !!orgId && !!owner;
   const drop = useFileDrop({
     enabled: canUpload,
     onFiles: (files) => void doc.uploadFiles(files),
