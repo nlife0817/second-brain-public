@@ -45,7 +45,26 @@ export interface CellStyle {
   /** Код числового формата — см. format.ts. */
   fmt?: string;
   wrap?: 1;
+  /**
+   * Границы: цвет линии по сторонам (`t`op, `r`ight, `b`ottom, `l`eft),
+   * `#rrggbb`. Пусто — линии нет.
+   *
+   * Только цвет, без толщины и пунктира. Толщина в таблице встречается там же,
+   * где условное форматирование и диаграммы, — в файлах, которые мы всё равно
+   * храним вложением целиком, а в модели каждая новая ось множит таблицу стилей
+   * на число сочетаний. Тонкая линия нужного цвета покрывает то, ради чего
+   * границы рисуют: рамку сметы и разделители шапки.
+   */
+  bt?: string;
+  br?: string;
+  bb?: string;
+  bl?: string;
 }
+
+/** Стороны границы — порядок фиксирован ради канонической сериализации. */
+export const BORDER_SIDES = ["bt", "br", "bb", "bl"] as const;
+
+export type BorderSide = (typeof BORDER_SIDES)[number];
 
 /** Замороженная область: сколько строк сверху и колонок слева не уезжают. */
 export interface FrozenPanes {
@@ -116,6 +135,13 @@ export const SHEET_LIMITS = {
   cells: 50_000,
   /** Длина текста в одной ячейке. */
   text: 4000,
+  /**
+   * Разных стилей в книге. Сочетаний тем больше, чем больше осей оформления, а
+   * границы добавили сразу четыре: у чужой сметы с рамками и заливками их легко
+   * набирается больше тысячи, и обрезка таблицы стилей выглядит как «половина
+   * таблицы потеряла оформление».
+   */
+  styles: 4000,
   /** Размер книги в сериализованном виде. */
   bytes: 4 * 1024 * 1024,
 } as const;
@@ -405,7 +431,7 @@ function normalizeCell(
 
 function normalizeStyles(input: unknown): CellStyle[] {
   if (!Array.isArray(input)) return [];
-  return input.slice(0, 2000).map((item) => {
+  return input.slice(0, SHEET_LIMITS.styles).map((item) => {
     const raw = asRecord(item) ?? {};
     const style: CellStyle = {};
     if (raw.b) style.b = 1;
@@ -420,6 +446,10 @@ function normalizeStyles(input: unknown): CellStyle[] {
     if (raw.va === "top" || raw.va === "middle" || raw.va === "bottom") style.va = raw.va;
     if (typeof raw.fmt === "string" && raw.fmt.trim()) style.fmt = raw.fmt.trim().slice(0, 64);
     if (raw.wrap) style.wrap = 1;
+    for (const side of BORDER_SIDES) {
+      const color = hexColor(raw[side]);
+      if (color) style[side] = color;
+    }
     return style;
   });
 }

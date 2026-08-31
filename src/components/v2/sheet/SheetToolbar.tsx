@@ -20,15 +20,24 @@ import {
   ArrowUpAZ,
   Bold,
   Filter,
+  Grid2x2,
+  Grid2x2X,
   Italic,
   Merge,
   PaintBucket,
+  PanelBottom,
+  PanelLeft,
+  PanelRight,
+  PanelTop,
   Pilcrow,
   Redo2,
   Rows3,
   Columns3,
   Snowflake,
+  Square,
+  SquareSplitHorizontal,
   Strikethrough,
+  TableProperties,
   Trash2,
   Type,
   Underline as UnderlineIcon,
@@ -48,12 +57,14 @@ import { Divider, ToolButton } from "@/components/v2/editor/Toolbar";
 import { FORMAT_LABELS, FORMATS } from "@/lib/core/sheet/format";
 import { columnName, SHEET_LIMITS } from "@/lib/core/sheet/model";
 import {
+  DEFAULT_BORDER_COLOR,
   deleteColumns,
   deleteRows,
   insertColumns,
   insertRows,
   mergeRange,
   unmergeRange,
+  type BorderPreset,
 } from "@/lib/core/sheet/ops";
 import { cn } from "@/lib/utils";
 import type { SheetApi } from "./use-sheet";
@@ -135,6 +146,7 @@ export function SheetToolbar({ api }: { api: SheetApi }) {
         current={style.bg}
         onPick={(hex) => api.setStyle({ bg: hex })}
       />
+      <BorderButton api={api} />
 
       <Divider />
 
@@ -330,6 +342,80 @@ export function SheetToolbar({ api }: { api: SheetApi }) {
       </ToolButton>
       <FilterButton api={api} />
     </div>
+  );
+}
+
+/**
+ * Границы выделения. Восемь пресетов — те же, что в Excel: их и ищут глазами,
+ * а составлять рамку по одной стороне никто не будет.
+ */
+const BORDER_PRESETS: Array<{ preset: BorderPreset; label: string; icon: React.ReactNode }> = [
+  { preset: "all", label: "Все границы", icon: <Grid2x2 className="size-4" /> },
+  { preset: "outer", label: "Внешние", icon: <Square className="size-4" /> },
+  { preset: "inner", label: "Внутренние", icon: <SquareSplitHorizontal className="size-4" /> },
+  { preset: "none", label: "Без границ", icon: <Grid2x2X className="size-4" /> },
+  { preset: "top", label: "Сверху", icon: <PanelTop className="size-4" /> },
+  { preset: "bottom", label: "Снизу", icon: <PanelBottom className="size-4" /> },
+  { preset: "left", label: "Слева", icon: <PanelLeft className="size-4" /> },
+  { preset: "right", label: "Справа", icon: <PanelRight className="size-4" /> },
+];
+
+function BorderButton({ api }: { api: SheetApi }) {
+  const [open, setOpen] = useState(false);
+  // Цвет живёт до конца сеанса: рамку почти всегда рисуют одним цветом, и
+  // выбирать его заново на каждую сторону — работа впустую.
+  const [color, setColor] = useState<string>(DEFAULT_BORDER_COLOR);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            title="Границы"
+            aria-label="Границы"
+            onMouseDown={(event) => event.preventDefault()}
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <TableProperties className="size-4" />
+          </button>
+        }
+      />
+      <PopoverContent align="start" className="w-auto p-2">
+        <div className="grid grid-cols-4 gap-1">
+          {BORDER_PRESETS.map((item) => (
+            <button
+              key={item.preset}
+              type="button"
+              title={item.label}
+              aria-label={item.label}
+              onClick={() => {
+                api.setBorders(item.preset, color);
+                setOpen(false);
+              }}
+              className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {item.icon}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 flex gap-1 border-t border-border pt-2">
+          {PALETTE.map((item) => (
+            <button
+              key={item.hex}
+              type="button"
+              title={`Цвет линии: ${item.label.toLowerCase()}`}
+              onClick={() => setColor(item.hex)}
+              className={cn(
+                "size-5 rounded border border-border",
+                color === item.hex && "ring-2 ring-primary ring-offset-1",
+              )}
+              style={{ backgroundColor: item.hex }}
+            />
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

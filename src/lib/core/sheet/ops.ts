@@ -19,6 +19,7 @@ import {
   type FormulaNode,
 } from "./formula";
 import {
+  BORDER_SIDES,
   cellRef,
   getCell,
   isBlankCell,
@@ -30,6 +31,7 @@ import {
   SHEET_LIMITS,
   setCell,
   usedBounds,
+  type BorderSide,
   type CellRange,
   type CellStyle,
   type SheetCell,
@@ -131,34 +133,151 @@ export function applyStyle(
   const sheet = next.sheets[sheetIndex];
   if (!sheet) return next;
 
-  const cache = styleCacheOf(next);
+  const brush = brushOf(next, sheet);
+  for (const range of ranges) {
+    for (const { row, col } of rangeCells(range)) brush.paint(row, col, patch);
+  }
+
+  return dropUnusedStyles(next);
+}
+
+/**
+ * Кисть по ячейкам одного листа: держит кэш стилей, границы разумной области и
+ * запас на создание пустых ячеек.
+ *
+ * Отдельно от `applyStyle`, потому что границам нужен СВОЙ набор свойств для
+ * каждой ячейки области (у верхней строки — верхняя линия, у нижней — нижняя), и
+ * без общей кисти это была бы вторая копия тех же трёх правил про бюджет, кэш и
+ * пустые ячейки.
+ */
+interface StyleBrush {
+  /** `null`/`undefined` в поле снимает свойство; отсутствие поля — не трогает. */
+  paint: (row: number, col: number, patch: Partial<Record<keyof CellStyle, unknown>>) => void;
+  /** То же, но только для уже существующих ячеек: пустые не заводятся. */
+  paintExisting: (row: number, col: number, patch: Partial<Record<keyof CellStyle, unknown>>) => void;
+}
+
+function brushOf(workbook: Workbook, sheet: SheetTab): StyleBrush {
+  const cache = styleCacheOf(workbook);
   const area = styleableArea(sheet);
   let budget = STYLE_NEW_CELLS;
 
-  for (const range of ranges) {
-    for (const { row, col } of rangeCells(range)) {
-      if (row >= sheet.rows || col >= sheet.cols) continue;
-      const cell = getCell(sheet, row, col);
-      // Заполненная ячейка перекрашивается всегда: новых записей от этого не
-      // прибавляется. Пустая — только рядом с данными и пока хватает запаса.
-      if (!cell) {
-        if (!rangeContains(area, row, col) || budget <= 0) continue;
-        budget--;
-      }
-      const style: CellStyle = { ...styleOf(next, cell) };
-      for (const [key, value] of Object.entries(patch)) {
-        if (value === null || value === undefined || value === false) {
-          delete style[key as keyof CellStyle];
-        } else {
-          (style as Record<string, unknown>)[key] = value;
-        }
-      }
-      const index = styleIndex(next, style, cache);
-      const updated: SheetCell = { ...(cell ?? {}) };
-      if (index === undefined) delete updated.s;
-      else updated.s = index;
-      setCell(sheet, row, col, isBlankCell(updated) ? null : updated);
+  const paint = (
+    row: number,
+    col: number,
+    patch: Partial<Record<keyof CellStyle, unknown>>,
+    onlyExisting = false,
+  ) => {
+    if (row < 0 || col < 0 || row >= sheet.rows || col >= sheet.cols) return;
+    const cell = getCell(sheet, row, col);
+    // Заполненная ячейка перекрашивается всегда: новых записей от этого не
+    // прибавляется. Пустая — только рядом с данными и пока хватает запаса.
+    if (!cell) {
+      if (onlyExisting) return;
+      if (!rangeContains(area, row, col) || budget <= 0) return;
+      budget--;
     }
+    const style: CellStyle = { ...styleOf(workbook, cell) };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null || value === undefined || value === false) {
+        delete style[key as keyof CellStyle];
+      } else {
+        (style as Record<string, unknown>)[key] = value;
+      }
+    }
+    const index = styleIndex(workbook, style, cache);
+    const updated: SheetCell = { ...(cell ?? {}) };
+    if (index === undefined) delete updated.s;
+    else updated.s = index;
+    setCell(sheet, row, col, isBlankCell(updated) ? null : updated);
+  };
+
+  return {
+    paint: (row, col, patch) => paint(row, col, patch),
+    paintExisting: (row, col, patch) => paint(row, col, patch, true),
+  };
+}
+
+// --- Границы ---------------------------------------------------------------
+
+export type BorderPreset =
+  | "all"
+  | "outer"
+  | "inner"
+  | "top"
+  | "bottom"
+  | "left"
+  | "right"
+  | "none";
+
+/** Цвет линии по умолчанию — тот же чёрный, что первым стоит в палитре текста. */
+export const DEFAULT_BORDER_COLOR = "#111827";
+
+/**
+ * Границы области.
+ *
+ * Линия между двумя ячейками принадлежит ВЕРХНЕЙ и ЛЕВОЙ из них: отрисовка
+ * читает `bb` ячейки, а если его нет — `bt` соседа снизу. Поэтому «внутренние»
+ * ставят только `bb` и `br`, и одна и та же линия никогда не рисуется дважды —
+ * иначе рамка внутри выделения выходила бы вдвое толще внешней.
+ *
+ * «Без границ» снимает и примыкающие стороны у соседей: линия под выделением
+ * может быть записана в ячейке выше, и оставить её значит не убрать рамку.
+ */
+export function applyBorders(
+  workbook: Workbook,
+  sheetIndex: number,
+  range: CellRange,
+  preset: BorderPreset,
+  color: string = DEFAULT_BORDER_COLOR,
+): Workbook {
+  const next = cloneWorkbook(workbook);
+  const sheet = next.sheets[sheetIndex];
+  if (!sheet) return next;
+  const brush = brushOf(next, sheet);
+
+  if (preset === "none") {
+    const clear: Record<string, null> = {};
+    for (const side of BORDER_SIDES) clear[side] = null;
+    for (const { row, col } of rangeCells(range)) brush.paint(row, col, clear);
+    for (let col = range.c1; col <= range.c2; col++) {
+      brush.paintExisting(range.r1 - 1, col, { bb: null });
+      brush.paintExisting(range.r2 + 1, col, { bt: null });
+    }
+    for (let row = range.r1; row <= range.r2; row++) {
+      brush.paintExisting(row, range.c1 - 1, { br: null });
+      brush.paintExisting(row, range.c2 + 1, { bl: null });
+    }
+    return dropUnusedStyles(next);
+  }
+
+  for (const { row, col } of rangeCells(range)) {
+    const patch: Partial<Record<BorderSide, string>> = {};
+    const first = { row: row === range.r1, col: col === range.c1 };
+    const last = { row: row === range.r2, col: col === range.c2 };
+
+    if (preset === "all") {
+      patch.bt = color;
+      patch.bb = color;
+      patch.bl = color;
+      patch.br = color;
+    }
+    if (preset === "outer") {
+      if (first.row) patch.bt = color;
+      if (last.row) patch.bb = color;
+      if (first.col) patch.bl = color;
+      if (last.col) patch.br = color;
+    }
+    if (preset === "inner") {
+      if (!last.row) patch.bb = color;
+      if (!last.col) patch.br = color;
+    }
+    if (preset === "top" && first.row) patch.bt = color;
+    if (preset === "bottom" && last.row) patch.bb = color;
+    if (preset === "left" && first.col) patch.bl = color;
+    if (preset === "right" && last.col) patch.br = color;
+
+    if (Object.keys(patch).length) brush.paint(row, col, patch);
   }
 
   return dropUnusedStyles(next);

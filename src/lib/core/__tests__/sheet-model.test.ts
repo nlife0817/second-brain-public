@@ -13,7 +13,16 @@ import {
   setCell,
   SHEET_LIMITS,
 } from "../sheet/model";
-import { applyStyle, deleteRows, insertRows, mergeRange, sortRange, styleIndex } from "../sheet/ops";
+import {
+  applyBorders,
+  applyStyle,
+  DEFAULT_BORDER_COLOR,
+  deleteRows,
+  insertRows,
+  mergeRange,
+  sortRange,
+  styleIndex,
+} from "../sheet/ops";
 
 describe("адресация", () => {
   it("считает имена колонок за границей алфавита", () => {
@@ -111,6 +120,62 @@ describe("оформление больших выделений", () => {
     for (let row = 0; row < 300; row++) {
       expect(next.styles[next.sheets[0].cells[cellRef(row, 0)].s!]).toEqual({ b: 1 });
     }
+  });
+});
+
+describe("границы", () => {
+  const filled = () => {
+    const workbook = emptyWorkbook();
+    const sheet = workbook.sheets[0];
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 3; col++) setCell(sheet, row, col, { v: row * 3 + col });
+    }
+    return workbook;
+  };
+  const styleAt = (workbook: ReturnType<typeof filled>, row: number, col: number) => {
+    const cell = workbook.sheets[0].cells[cellRef(row, col)];
+    return cell?.s === undefined ? {} : workbook.styles[cell.s];
+  };
+
+  it("внутренние линии принадлежат верхней и левой ячейке", () => {
+    const workbook = applyBorders(filled(), 0, { r1: 0, c1: 0, r2: 2, c2: 2 }, "inner");
+    // Иначе одна и та же линия оказалась бы записана в двух ячейках сразу и
+    // нарисовалась бы вдвое толще внешней рамки.
+    expect(styleAt(workbook, 0, 0)).toEqual({
+      bb: DEFAULT_BORDER_COLOR,
+      br: DEFAULT_BORDER_COLOR,
+    });
+    expect(styleAt(workbook, 1, 1)).toEqual({
+      bb: DEFAULT_BORDER_COLOR,
+      br: DEFAULT_BORDER_COLOR,
+    });
+    // У последней строки и последней колонки внутренних линий нет.
+    expect(styleAt(workbook, 2, 2)).toEqual({});
+  });
+
+  it("внешние обводят область по периметру", () => {
+    const workbook = applyBorders(filled(), 0, { r1: 0, c1: 0, r2: 2, c2: 2 }, "outer", "#dc2626");
+    expect(styleAt(workbook, 0, 0)).toEqual({ bt: "#dc2626", bl: "#dc2626" });
+    expect(styleAt(workbook, 2, 2)).toEqual({ bb: "#dc2626", br: "#dc2626" });
+    expect(styleAt(workbook, 1, 1)).toEqual({});
+  });
+
+  it("«без границ» снимает и линию, записанную в соседе", () => {
+    let workbook = applyBorders(filled(), 0, { r1: 0, c1: 0, r2: 0, c2: 2 }, "all");
+    expect(styleAt(workbook, 0, 0).bb).toBe(DEFAULT_BORDER_COLOR);
+
+    // Линия под первой строкой лежит В ПЕРВОЙ строке. Снятие рамки со второй
+    // обязано убрать её, иначе «без границ» оставляет границу на экране.
+    workbook = applyBorders(workbook, 0, { r1: 1, c1: 0, r2: 1, c2: 2 }, "none");
+    expect(styleAt(workbook, 0, 0).bb).toBeUndefined();
+    expect(styleAt(workbook, 0, 0).bt).toBe(DEFAULT_BORDER_COLOR);
+  });
+
+  it("границы не заводят ячейки в пустоте", () => {
+    const workbook = emptyWorkbook();
+    setCell(workbook.sheets[0], 0, 0, { v: 1 });
+    const bordered = applyBorders(workbook, 0, { r1: 0, c1: 0, r2: 4999, c2: 99 }, "all");
+    expect(Object.keys(bordered.sheets[0].cells).length).toBeLessThanOrEqual(5001);
   });
 });
 

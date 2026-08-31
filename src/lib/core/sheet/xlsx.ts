@@ -5,11 +5,15 @@
 // браузерный бандл ему нельзя. Разбор идёт в роуте импорта, сборка — в роуте
 // выгрузки, а страница получает и отдаёт уже нашу книгу.
 //
-// Переносим смысл, а не начертание. Шрифты, границы, условное форматирование,
-// картинки, сводные таблицы и диаграммы остаются в исходном файле — он и
-// хранится вложением рядом с таблицей. Переносится то, без чего таблица
-// перестаёт быть собой: значения, формулы, числовые форматы, начертание и цвет,
-// выключка, ширины, объединения и закреплённые области.
+// Переносим смысл, а не начертание. Шрифты, условное форматирование, картинки,
+// сводные таблицы и диаграммы остаются в исходном файле — он и хранится
+// вложением рядом с таблицей. Переносится то, без чего таблица перестаёт быть
+// собой: значения, формулы, числовые форматы, начертание и цвет, выключка,
+// границы, ширины, объединения и закреплённые области.
+//
+// Границы едут цветом, без толщины и пунктира: в модели их четыре стороны, а
+// толстая линия от тонкой отличается ровно в той смете, которую всё равно можно
+// открыть исходником.
 
 import ExcelJS from "exceljs";
 import { FORMATS, isDateFormat, normalizeNumFmt, toExcelNumFmt } from "./format";
@@ -29,7 +33,7 @@ import {
   type SheetTab,
   type Workbook,
 } from "./model";
-import { styleIndex } from "./ops";
+import { DEFAULT_BORDER_COLOR, styleIndex } from "./ops";
 
 /** Что не поместилось при импорте — показываем человеку списком. */
 export interface ImportNotes {
@@ -307,6 +311,21 @@ function readStyle(cell: ExcelJS.Cell, dateLike: boolean): CellStyle {
   }
   if (alignment?.wrapText) style.wrap = 1;
 
+  const border = cell.border;
+  if (border) {
+    const sides = [
+      ["bt", border.top],
+      ["br", border.right],
+      ["bb", border.bottom],
+      ["bl", border.left],
+    ] as const;
+    for (const [side, edge] of sides) {
+      if (!edge?.style) continue;
+      // Цвет границы в файле часто не задан — Excel рисует такую чёрной.
+      style[side] = argbToHex(edge.color?.argb) ?? DEFAULT_BORDER_COLOR;
+    }
+  }
+
   const fmt = normalizeNumFmt(cell.numFmt);
   if (fmt) style.fmt = fmt;
   // Дата без формата показалась бы числом в сорок пять тысяч.
@@ -368,6 +387,14 @@ export async function workbookToXlsx(workbook: Workbook, title: string): Promise
           fgColor: { argb: `FF${style.bg.slice(1)}`.toUpperCase() },
         };
       }
+      if (style.bt || style.br || style.bb || style.bl) {
+        target.border = {
+          top: excelBorder(style.bt),
+          right: excelBorder(style.br),
+          bottom: excelBorder(style.bb),
+          left: excelBorder(style.bl),
+        };
+      }
       if (style.ha || style.va || style.wrap) {
         target.alignment = {
           horizontal: style.ha,
@@ -406,6 +433,11 @@ export async function workbookToXlsx(workbook: Workbook, title: string): Promise
   if (!out.worksheets.length) out.addWorksheet(title.slice(0, 31) || "Лист");
   const buffer = await out.xlsx.writeBuffer();
   return Buffer.from(buffer);
+}
+
+function excelBorder(color: string | undefined): Partial<ExcelJS.Border> | undefined {
+  if (!color) return undefined;
+  return { style: "thin", color: { argb: `FF${color.slice(1)}`.toUpperCase() } };
 }
 
 function asResult(value: SheetCell["v"]): number | string | boolean | undefined {

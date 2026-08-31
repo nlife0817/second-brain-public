@@ -34,6 +34,7 @@ import {
   type Workbook,
 } from "@/lib/core/sheet/model";
 import {
+  applyBorders,
   applyStyle,
   cloneWorkbook,
   columnValues,
@@ -42,6 +43,7 @@ import {
   sortRange,
   styleIndex,
   styleOf,
+  type BorderPreset,
 } from "@/lib/core/sheet/ops";
 import { parseClipboard, toClipboard } from "@/lib/core/sheet/csv";
 import { compareValues } from "@/lib/core/sheet/functions";
@@ -98,6 +100,7 @@ export interface SheetApi {
 
   clear: () => void;
   setStyle: (patch: Partial<Record<keyof CellStyle, unknown>>) => void;
+  setBorders: (preset: BorderPreset, color?: string) => void;
   styleAt: (row: number, col: number) => CellStyle;
   display: (row: number, col: number) => string;
   /** Текст для строки формул и для входа в ячейку — исходный ввод, а не показ. */
@@ -417,6 +420,13 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
     [index, range, update],
   );
 
+  const setBorders = useCallback(
+    (preset: BorderPreset, color?: string) => {
+      update(applyBorders(workbookRef.current, index, range, preset, color));
+    },
+    [index, range, update],
+  );
+
   const styleAt = useCallback(
     (row: number, col: number) => styleOf(workbook, getCell(sheet, row, col)),
     [workbook, sheet],
@@ -595,6 +605,7 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
     canRedo: future.length > 0,
     clear,
     setStyle,
+    setBorders,
     styleAt,
     display,
     sourceAt,

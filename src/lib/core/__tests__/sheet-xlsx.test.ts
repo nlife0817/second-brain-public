@@ -18,6 +18,10 @@ async function sample(): Promise<Uint8Array> {
   ws.getCell("A2").value = "Работы";
   ws.getCell("B2").value = 1000;
   ws.getCell("B2").numFmt = "#,##0.00";
+  ws.getCell("A2").border = {
+    bottom: { style: "thin", color: { argb: "FF111827" } },
+    left: { style: "medium" },
+  };
   ws.getCell("A3").value = "Материалы";
   ws.getCell("B3").value = 2000;
   ws.getCell("B4").value = { formula: "SUM(B2:B3)", result: 3000 };
@@ -66,6 +70,17 @@ describe("импорт xlsx", () => {
     expect(sheet.cells.B8).toBeUndefined();
   });
 
+  it("границы приезжают цветом, а линия без цвета считается чёрной", async () => {
+    const { workbook } = await workbookFromXlsx(await sample());
+    const sheet = workbook.sheets[0];
+    const style = workbook.styles[sheet.cells.A2.s!];
+    expect(style.bb).toBe("#111827");
+    // Толщину не храним, но саму линию терять нельзя — иначе смета приезжает
+    // без рамки, а это первое, что человек замечает.
+    expect(style.bl).toBe("#111827");
+    expect(style.bt).toBeUndefined();
+  });
+
   it("закрепление и ширины колонок переносятся", async () => {
     const { workbook } = await workbookFromXlsx(await sample());
     const sheet = workbook.sheets[0];
@@ -83,6 +98,16 @@ describe("импорт xlsx", () => {
 });
 
 describe("выгрузка xlsx", () => {
+  it("границы переживают круг через файл", async () => {
+    const { workbook } = await workbookFromXlsx(await sample());
+    const again = await workbookFromXlsx(
+      new Uint8Array(await workbookToXlsx(workbook, "Смета")),
+    );
+    const style = again.workbook.styles[again.workbook.sheets[0].cells.A2.s!];
+    expect(style.bb).toBe("#111827");
+    expect(style.bl).toBe("#111827");
+  });
+
   it("книга переживает круг: наш файл читается как исходный", async () => {
     const { workbook } = await workbookFromXlsx(await sample());
     recalculate(workbook);

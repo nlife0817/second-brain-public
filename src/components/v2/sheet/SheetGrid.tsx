@@ -450,6 +450,18 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
     const cell = getCell(sheet, row, col);
     const style = api.styleAt(row, col);
     const text = api.display(row, col);
+    // Линия между двумя ячейками рисуется РОВНО ОДИН РАЗ — нижней стороной
+    // верхней ячейки (правой стороной левой). Если у соседа снизу задана
+    // верхняя граница, а у нас нижней нет, рисуем её мы: иначе «линия сверху»,
+    // поставленная на середину листа, не появилась бы вовсе.
+    const edges = {
+      bottom: style.bb ?? api.styleAt((merge ? merge.r2 : row) + 1, col).bt,
+      right: style.br ?? api.styleAt(row, (merge ? merge.c2 : col) + 1).bl,
+      // Верх и лево — только у самого края листа: дальше ту же линию уже
+      // нарисовал сосед, и вторая поверх неё выглядела бы двойной.
+      top: row === 0 ? style.bt : undefined,
+      left: col === 0 ? style.bl : undefined,
+    };
     const selected = rangeContains(range, row, col);
     const isActive = active.row === row && active.col === col;
     // Закреплённая ячейка рисуется поверх уезжающих и обязана быть непрозрачной:
@@ -464,7 +476,7 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
           top,
           width,
           height,
-          ...cellStyle(style, cell?.v ?? null),
+          ...cellStyle(style, cell?.v ?? null, edges),
         }}
         className={cn(
           "pointer-events-none absolute flex items-center overflow-hidden border-b border-r border-border/70 px-1.5 text-[13px] leading-none",
@@ -665,6 +677,14 @@ export function SheetGrid({ api, editable }: { api: SheetApi; editable: boolean 
   );
 }
 
+/** Цвета линий, уже разведённые между соседями: пусто — линии нет. */
+interface CellEdges {
+  top?: string;
+  right?: string;
+  bottom?: string;
+  left?: string;
+}
+
 /** Индекс линии по координате внутри тела таблицы. */
 function lineAt(metrics: Metrics, position: number, count: number): number {
   let low = 0;
@@ -691,11 +711,22 @@ function range0(from: number, to: number): number[] {
  * логическое по центру. Это не украшательство — по краю столбца чисел человек
  * читает порядок величин, и выровненный влево столбец выглядит как текст.
  */
-function cellStyle(style: CellStyle, value: unknown): CSSProperties {
+function cellStyle(style: CellStyle, value: unknown, edges: CellEdges): CSSProperties {
   const align =
     style.ha ??
     (typeof value === "number" ? "right" : typeof value === "boolean" ? "center" : "left");
+  // Верх и лево — тенью внутрь, а не рамкой: рамка съела бы пиксель ширины и
+  // сдвинула содержимое соседних ячеек друг относительно друга.
+  const shadow = [
+    edges.top && `inset 0 1px 0 0 ${edges.top}`,
+    edges.left && `inset 1px 0 0 0 ${edges.left}`,
+  ]
+    .filter(Boolean)
+    .join(", ");
   return {
+    borderBottomColor: edges.bottom,
+    borderRightColor: edges.right,
+    boxShadow: shadow || undefined,
     fontWeight: style.b ? 600 : undefined,
     fontStyle: style.i ? "italic" : undefined,
     textDecoration:
