@@ -447,12 +447,15 @@ export function KbSheetClient({ initial }: { initial: KbDocumentDetail }) {
                     )}
                   </div>
 
-                  {doc.attachments.length > 0 && (
+                  {/* Исходник импорта помечен `pinned`: ссылок на него в теле
+                      быть не может, и по этой же отметке его не трогает уборка
+                      осиротевших вложений. */}
+                  {doc.attachments.some((file) => file.pinned) && (
                     <section className="mt-4 border-t border-border pt-3">
                       <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
                         Исходный файл
                       </h3>
-                      {doc.attachments.map((file) => (
+                      {doc.attachments.filter((file) => file.pinned).map((file) => (
                         <a
                           key={file.id}
                           href={file.url}

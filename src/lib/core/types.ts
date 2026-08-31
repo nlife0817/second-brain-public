@@ -488,6 +488,11 @@ export interface Attachment {
   width: number | null;
   height: number | null;
   created_at: string;
+  /**
+   * Файл приложен нарочно и не убирается как осиротевший. Так помечен исходник
+   * импорта: ссылок на него в тексте нет и быть не может.
+   */
+  pinned: boolean;
   /** Готовый путь для `<img src>` / скачивания. */
   url: string;
 }

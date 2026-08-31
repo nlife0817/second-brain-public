@@ -129,6 +129,9 @@ export async function importKbFile(
           filename: input.filename,
           mimeType: input.mimeType || "application/octet-stream",
           bytes: input.bytes,
+          // Ссылок на исходник в теле нет и не будет — без отметки уборка
+          // осиротевших снесла бы его через сутки (миграция 0058).
+          pinned: true,
         },
       );
     } catch {
