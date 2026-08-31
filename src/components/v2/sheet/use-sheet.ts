@@ -80,8 +80,12 @@ export interface SheetEditing extends CellPoint {
  * копированием и вставкой могла быть переиндексирована уборкой неиспользуемых.
  */
 interface CopiedCell {
+  /** Место в копии. Строки и колонки уплотнены: скрытых в копии нет. */
   row: number;
   col: number;
+  /** Откуда взята — по ней считается сдвиг ссылок в формуле. */
+  fromRow: number;
+  fromCol: number;
   v?: CellValue;
   f?: string;
   style?: CellStyle;
@@ -89,7 +93,9 @@ interface CopiedCell {
 
 interface SheetClipboard {
   text: string;
-  source: CellRange;
+  /** Размер копии в уплотнённых координатах. */
+  height: number;
+  width: number;
   cells: CopiedCell[];
 }
 
@@ -496,34 +502,64 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
     [sheet, workbook],
   );
 
+  // Скрытые строки и колонки объявлены ЗДЕСЬ, до буфера и протягивания: оба на
+  // них смотрят, а сослаться на объявление ниже по файлу нельзя.
+  const hidden = useMemo(() => {
+    const rows = hiddenRows(
+      sheet,
+      (cell) => (cell ? formatValue(cell.v ?? null, styleOf(workbook, cell).fmt) : ""),
+      sheet.frozen?.rows ? sheet.frozen.rows - 1 : -1,
+    );
+    // Скрытые руками и скрытые фильтром рисуются одинаково, а живут раздельно:
+    // сброс фильтра не обязан показывать спрятанную служебную строку.
+    for (const row of sheet.hiddenR ?? []) rows.add(row);
+    return rows;
+  }, [sheet, workbook]);
+
+  const hiddenCols = useMemo(() => new Set(sheet.hiddenC ?? []), [sheet.hiddenC]);
+
   const clipboardRef = useRef<SheetClipboard | null>(null);
   const [hasCopy, setHasCopy] = useState(false);
 
   const copy = useCallback(() => {
+    // Копируется ТО, ЧТО ВИДНО: скрытые строки и колонки в копию не попадают.
+    // Иначе вставка отфильтрованного списка в письмо принесёт с собой ровно то,
+    // что человек только что отсеял, — и он об этом не узнает.
+    const sourceRows: number[] = [];
+    for (let row = range.r1; row <= range.r2; row++) if (!hidden.has(row)) sourceRows.push(row);
+    const sourceCols: number[] = [];
+    for (let col = range.c1; col <= range.c2; col++) if (!hiddenCols.has(col)) sourceCols.push(col);
+
     const rows: string[][] = [];
     const cells: CopiedCell[] = [];
-    for (let row = range.r1; row <= range.r2; row++) {
+    sourceRows.forEach((row, dRow) => {
       const line: string[] = [];
-      for (let col = range.c1; col <= range.c2; col++) {
-        // В буфер уходит показанное: так вставка в письмо или в чужую таблицу
-        // выглядит как на экране. Формулы и оформление остаются здесь.
+      sourceCols.forEach((col, dCol) => {
+        // В системный буфер уходит показанное: так вставка в письмо или в чужую
+        // таблицу выглядит как на экране. Формулы и оформление остаются здесь.
         line.push(display(row, col));
         const cell = getCell(sheet, row, col);
-        if (!cell) continue;
-        const copied: CopiedCell = { row, col };
+        if (!cell) return;
+        const copied: CopiedCell = { row: dRow, col: dCol, fromRow: row, fromCol: col };
         if (cell.f) copied.f = cell.f;
         if (cell.v !== undefined) copied.v = cell.v;
         const style = styleOf(workbook, cell);
         if (Object.keys(style).length) copied.style = style;
         cells.push(copied);
-      }
+      });
       rows.push(line);
-    }
+    });
+
     const text = toClipboard(rows);
-    clipboardRef.current = { text, source: range, cells };
+    clipboardRef.current = {
+      text,
+      height: sourceRows.length,
+      width: sourceCols.length,
+      cells,
+    };
     setHasCopy(true);
     return text;
-  }, [range, display, sheet, workbook]);
+  }, [range, display, sheet, workbook, hidden, hiddenCols]);
 
   /** Вставка чужого текста: всё, что приехало, разбирается как ввод руками. */
   const pasteText = useCallback(
@@ -562,13 +598,10 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
   const pasteCells = useCallback(
     (clip: SheetClipboard, mode: PasteMode) => {
       const transpose = mode === "transpose";
-      const height = clip.source.r2 - clip.source.r1 + 1;
-      const width = clip.source.c2 - clip.source.c1 + 1;
+      const { height, width } = clip;
       const at = { row: active.row, col: active.col };
       const targetOf = (row: number, col: number) =>
-        transpose
-          ? { row: at.row + (col - clip.source.c1), col: at.col + (row - clip.source.r1) }
-          : { row: at.row + (row - clip.source.r1), col: at.col + (col - clip.source.c1) };
+        transpose ? { row: at.row + col, col: at.col + row } : { row: at.row + row, col: at.col + col };
 
       mutate((next) => {
         const target = next.sheets[index];
@@ -580,8 +613,8 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
         );
         const byRef = new Map(clip.cells.map((cell) => [cellRef(cell.row, cell.col), cell]));
 
-        for (let row = clip.source.r1; row <= clip.source.r2; row++) {
-          for (let col = clip.source.c1; col <= clip.source.c2; col++) {
+        for (let row = 0; row < height; row++) {
+          for (let col = 0; col < width; col++) {
             const to = targetOf(row, col);
             if (to.row >= target.rows || to.col >= target.cols) continue;
             const copied = byRef.get(cellRef(row, col));
@@ -607,7 +640,9 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
 
             const cell: SheetCell = {};
             if (copied.f && mode !== "values") {
-              cell.f = offsetFormula(copied.f, to.row - row, to.col - col);
+              // Сдвиг считается от НАСТОЯЩЕГО места ячейки, а не от её места в
+              // копии: под фильтром это разные координаты.
+              cell.f = offsetFormula(copied.f, to.row - copied.fromRow, to.col - copied.fromCol);
               cell.v = copied.v ?? null;
             } else {
               cell.v = copied.v ?? null;
@@ -744,20 +779,6 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
       }, sheet.frozen?.rows ? sheet.frozen.rows - 1 : -1),
     [sheet, workbook],
   );
-
-  const hidden = useMemo(() => {
-    const rows = hiddenRows(
-      sheet,
-      (cell) => (cell ? formatValue(cell.v ?? null, styleOf(workbook, cell).fmt) : ""),
-      sheet.frozen?.rows ? sheet.frozen.rows - 1 : -1,
-    );
-    // Скрытые руками и скрытые фильтром рисуются одинаково, а живут раздельно:
-    // сброс фильтра не обязан показывать спрятанную служебную строку.
-    for (const row of sheet.hiddenR ?? []) rows.add(row);
-    return rows;
-  }, [sheet, workbook]);
-
-  const hiddenCols = useMemo(() => new Set(sheet.hiddenC ?? []), [sheet.hiddenC]);
 
   // Протягивание объявлено ПОСЛЕ скрытых линий: оно на них смотрит, а на
   // объявление ниже по файлу сослаться нельзя.
