@@ -7,7 +7,7 @@
 // остаются на месте.
 
 import { useCallback, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/core/client";
 import type { KbDocumentDetail, KbTreeGroup, ProjectWithMeta } from "@/lib/core/types";
 import { useV2Store, useV2StoreApi } from "@/lib/core/ui-store";
@@ -28,6 +28,7 @@ export function KbShell({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const storeApi = useV2StoreApi();
   const orgId = useV2Store((s) => s.orgId);
   const projects = useV2Store((s) => s.projects);
@@ -41,6 +42,19 @@ export function KbShell({
     setSeed(initialTree);
     setTree(initialTree);
   }
+
+  /**
+   * Ссылка из шапки проекта: раздел открывается сузенным до его документов.
+   * Отдельного экрана «база знаний проекта» нет намеренно — это тот же раздел,
+   * и второй его копии со своим деревом быть не должно.
+   */
+  const projectFilter = searchParams.get("project");
+  const filteredProject = projectFilter
+    ? (projects.find((p) => p.id === projectFilter) ?? null)
+    : null;
+  const shownTree = filteredProject
+    ? tree.filter((group) => group.project_id === filteredProject.id)
+    : tree;
 
   const activeDocumentId = pathname.startsWith("/v2/kb/")
     ? (pathname.split("/")[3] ?? null)
@@ -123,7 +137,8 @@ export function KbShell({
   return (
     <div className="flex h-full min-h-0 flex-1">
       <KbTree
-        groups={tree}
+        groups={shownTree}
+        filterLabel={filteredProject?.name ?? null}
         projects={projects}
         activeDocumentId={activeDocumentId}
         canOrderProjects={canOrderProjects}

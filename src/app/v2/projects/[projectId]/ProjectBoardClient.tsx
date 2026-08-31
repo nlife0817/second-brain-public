@@ -12,7 +12,10 @@
 // пары запросов после гидрации. Дальше список живёт в клиентском кэше.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { BookOpen } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { CardSettingsPopover } from "@/components/v2/CardSettings";
 import { CreateTaskDialog, TaskSheet } from "@/components/v2/lazy";
 import { accessLabel } from "@/components/v2/ProjectAccessPicker";
@@ -63,8 +66,31 @@ export function ProjectBoardClient(props: {
  * появляется только в режиме «Разработка»: без спринтов он был бы вторым, менее
  * удобным списком задач.
  */
-function ViewSwitch({ dev }: { dev: boolean }) {
-  return <ViewModeSwitch modes={dev ? ["backlog", "table", "board", "gantt", "calendar"] : ["table", "board", "gantt", "calendar"]} />;
+/**
+ * Переключатель вида и ссылка на базу знаний проекта. Вместе, потому что стоят
+ * они в одном слоте у всех четырёх видов, а порознь ссылку пришлось бы
+ * добавлять пятью правками и однажды забыть в одной из них.
+ *
+ * База знаний проекта — тот же общий раздел, сужённый до него: своего дерева у
+ * проекта нет, иначе их стало бы два на одни и те же документы.
+ */
+function ViewSwitch({ dev, projectId }: { dev: boolean; projectId: string }) {
+  return (
+    <>
+      {/* nativeButton={false}: внутри ссылка, а не <button> — иначе Base UI
+          ругается на потерю нативной семантики кнопки. */}
+      <Button
+        variant="ghost"
+        size="sm"
+        nativeButton={false}
+        render={<Link href={`/v2/kb?project=${projectId}`} />}
+      >
+        <BookOpen className="size-4" />
+        <span className="hidden lg:inline">База знаний</span>
+      </Button>
+      <ViewModeSwitch modes={dev ? ["backlog", "table", "board", "gantt", "calendar"] : ["table", "board", "gantt", "calendar"]} />
+    </>
+  );
 }
 
 function ProjectScreen({
@@ -279,7 +305,7 @@ function ProjectScreen({
           statusSetId={statusSetId}
           reload={reload}
           titleSlot={title}
-          actionsSlot={<ViewSwitch dev={isDev} />}
+          actionsSlot={<ViewSwitch dev={isDev} projectId={projectId} />}
         />
         {layers}
       </>
@@ -301,7 +327,7 @@ function ProjectScreen({
           onDismissError={() => setNotice(null)}
           emptyText="В проекте пока нет задач с датами."
           titleSlot={title}
-          actionsSlot={<ViewSwitch dev={isDev} />}
+          actionsSlot={<ViewSwitch dev={isDev} projectId={projectId} />}
         />
         {layers}
       </>
@@ -321,7 +347,7 @@ function ProjectScreen({
           onDismissError={() => setNotice(null)}
           emptyText="В проекте пока нет задач."
           titleSlot={title}
-          actionsSlot={<ViewSwitch dev={isDev} />}
+          actionsSlot={<ViewSwitch dev={isDev} projectId={projectId} />}
         />
         {layers}
       </>
@@ -345,7 +371,7 @@ function ProjectScreen({
           quickAddPlaceholder={`Быстро добавить задачу в «${project.name}»…`}
           emptyText="В проекте пока нет задач."
           titleSlot={title}
-          actionsSlot={<ViewSwitch dev={isDev} />}
+          actionsSlot={<ViewSwitch dev={isDev} projectId={projectId} />}
         />
         {layers}
       </>
@@ -363,7 +389,7 @@ function ProjectScreen({
         <TaskSearch />
         <FilterButton />
         <span className="flex-1" />
-        <ViewSwitch dev={isDev} />
+        <ViewSwitch dev={isDev} projectId={projectId} />
         <CardSettingsPopover />
         {/* Участники, настройки проекта и «+ Задача» отсюда убраны: настройки
             открываются карандашом из сайдбара, участники видны на вкладке

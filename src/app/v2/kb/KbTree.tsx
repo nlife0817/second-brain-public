@@ -272,6 +272,7 @@ function GroupHead({
 
 export function KbTree({
   groups,
+  filterLabel,
   projects,
   activeDocumentId,
   canOrderProjects,
@@ -282,6 +283,8 @@ export function KbTree({
   trashCount,
 }: {
   groups: KbTreeGroup[];
+  /** Раздел сужен до одного проекта — его имя и способ вернуться ко всем. */
+  filterLabel: string | null;
   projects: ProjectWithMeta[];
   activeDocumentId: string | null;
   canOrderProjects: boolean;
@@ -508,6 +511,14 @@ export function KbTree({
 
   return (
     <nav className="flex h-full w-[264px] shrink-0 flex-col border-r border-border bg-sidebar">
+      {filterLabel && (
+        <div className="flex items-center gap-1.5 px-3 pt-3 text-xs">
+          <span className="min-w-0 flex-1 truncate font-medium">{filterLabel}</span>
+          <Link href="/v2/kb" className="shrink-0 text-muted-foreground hover:text-foreground">
+            все проекты
+          </Link>
+        </div>
+      )}
       <div className="flex items-center gap-1.5 px-2 pb-2 pt-3">
         <input
           value={query}
@@ -518,7 +529,12 @@ export function KbTree({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        {/* id обязателен: без него dnd-kit нумерует свои aria-describedby
+            счётчиком модуля, а он у серверного рендера и у браузера свой —
+            React ловит это как расхождение гидрации. Дерево ещё и живёт в
+            layout, то есть рендерится на сервере при каждом переходе. */}
         <DndContext
+          id="kb-tree"
           sensors={sensors}
           collisionDetection={pointerWithin}
           onDragStart={onDragStart}
