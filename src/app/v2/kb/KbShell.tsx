@@ -147,6 +147,7 @@ export function KbShell({
         onReorderProjects={reorderProjects}
         onCreate={create}
         trashCount={trashCount}
+        hideOnNarrow={!!activeDocumentId || pathname === "/v2/kb/trash"}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         {error && (

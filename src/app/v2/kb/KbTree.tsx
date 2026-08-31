@@ -281,6 +281,7 @@ export function KbTree({
   onReorderProjects,
   onCreate,
   trashCount,
+  hideOnNarrow,
 }: {
   groups: KbTreeGroup[];
   /** Раздел сужен до одного проекта — его имя и способ вернуться ко всем. */
@@ -294,6 +295,12 @@ export function KbTree({
   /** `parentId` — вложенный документ, иначе корень раздела. */
   onCreate: (target: { parentId: string | null; projectId: string | null }) => void;
   trashCount: number;
+  /**
+   * Узкий экран показывает что-то одно: дерево или документ. Мобильных экранов
+   * у раздела пока нет, и без этого на телефоне колонка в 264 px не оставляла
+   * бы документу ничего.
+   */
+  hideOnNarrow: boolean;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [query, setQuery] = useState("");
@@ -510,7 +517,13 @@ export function KbTree({
       });
 
   return (
-    <nav className="flex h-full w-[264px] shrink-0 flex-col border-r border-border bg-sidebar">
+    <nav
+      className={cn(
+        "flex h-full shrink-0 flex-col border-r border-border bg-sidebar",
+        "max-md:w-full md:w-[264px]",
+        hideOnNarrow && "max-md:hidden",
+      )}
+    >
       {filterLabel && (
         <div className="flex items-center gap-1.5 px-3 pt-3 text-xs">
           <span className="min-w-0 flex-1 truncate font-medium">{filterLabel}</span>
