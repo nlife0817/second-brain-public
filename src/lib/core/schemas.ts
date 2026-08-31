@@ -611,6 +611,8 @@ const kbBodySchema = z.string().max(2_000_000);
 export const kbCreateSchema = z.object({
   title: z.string().trim().max(200).optional(),
   body: kbBodySchema.optional(),
+  /** Папка или документ; по умолчанию документ. */
+  kind: z.enum(["document", "folder"]).optional(),
   parent_id: z.uuid().nullish(),
   project_ids: z.array(z.uuid()).max(20).optional(),
 });

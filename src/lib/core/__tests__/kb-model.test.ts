@@ -2,16 +2,25 @@ import { describe, expect, it } from "vitest";
 import {
   buildKbTree,
   collectSubtree,
+  isDisposableDocument,
   isMeaningfulRevision,
   normalizeOrder,
   pathToRoot,
   shouldSquashVersion,
+  UNTITLED,
   VERSION_SQUASH_MS,
   type KbNodeRow,
 } from "../kb-model";
+import type { KbNodeKind } from "../types";
 
-function row(id: string, parent: string | null, position: number, created = "2026-01-01"): KbNodeRow {
-  return { id, parent_id: parent, title: id.toUpperCase(), position, created_at: created };
+function row(
+  id: string,
+  parent: string | null,
+  position: number,
+  created = "2026-01-01",
+  kind: KbNodeKind = "document",
+): KbNodeRow {
+  return { id, kind, parent_id: parent, title: id.toUpperCase(), position, created_at: created };
 }
 
 describe("buildKbTree", () => {
@@ -25,6 +34,14 @@ describe("buildKbTree", () => {
     expect(tree.map((n) => n.id)).toEqual(["a", "d"]);
     expect(tree[0].children.map((n) => n.id)).toEqual(["b"]);
     expect(tree[0].children[0].children.map((n) => n.id)).toEqual(["c"]);
+  });
+
+  it("папки идут перед документами независимо от позиции", () => {
+    const tree = buildKbTree([
+      row("doc", null, 1),
+      row("folder", null, 9, "2026-01-01", "folder"),
+    ]);
+    expect(tree.map((n) => n.id)).toEqual(["folder", "doc"]);
   });
 
   it("сортирует соседей по позиции, равные — по времени создания", () => {
@@ -72,9 +89,9 @@ describe("collectSubtree", () => {
 
 describe("pathToRoot", () => {
   const rows = [
-    { id: "a", parent_id: null, title: "Корень" },
-    { id: "b", parent_id: "a", title: "Раздел" },
-    { id: "c", parent_id: "b", title: "Лист" },
+    { id: "a", parent_id: null, title: "Корень", kind: "folder" as const },
+    { id: "b", parent_id: "a", title: "Раздел", kind: "folder" as const },
+    { id: "c", parent_id: "b", title: "Лист", kind: "document" as const },
   ];
 
   it("идёт от корня к документу", () => {
@@ -87,8 +104,8 @@ describe("pathToRoot", () => {
 
   it("завершается на цикле", () => {
     const cyclic = [
-      { id: "a", parent_id: "b", title: "A" },
-      { id: "b", parent_id: "a", title: "B" },
+      { id: "a", parent_id: "b", title: "A", kind: "folder" as const },
+      { id: "b", parent_id: "a", title: "B", kind: "folder" as const },
     ];
     expect(pathToRoot(cyclic, "a")).toHaveLength(2);
   });
@@ -145,5 +162,30 @@ describe("isMeaningfulRevision", () => {
 
   it("повторное сохранение того же — не версия", () => {
     expect(isMeaningfulRevision({ title: "A", body: "<p>1</p>" }, { title: "A", body: "<p>1</p>" })).toBe(false);
+  });
+});
+
+describe("isDisposableDocument", () => {
+  const base = { kind: "document" as const, title: UNTITLED, body: "", hasContent: false };
+
+  it("нетронутый документ можно убрать", () => {
+    expect(isDisposableDocument(base)).toBe(true);
+    expect(isDisposableDocument({ ...base, title: "" })).toBe(true);
+    // Пустой редактор отдаёт не пустую строку, а пустой абзац.
+    expect(isDisposableDocument({ ...base, body: "<p></p>" })).toBe(true);
+    expect(isDisposableDocument({ ...base, body: "<p>&nbsp;</p>" })).toBe(true);
+  });
+
+  it("названный документ остаётся, даже пустой", () => {
+    expect(isDisposableDocument({ ...base, title: "Регламент" })).toBe(false);
+  });
+
+  it("текст или привязки удерживают документ", () => {
+    expect(isDisposableDocument({ ...base, body: "<p>а</p>" })).toBe(false);
+    expect(isDisposableDocument({ ...base, hasContent: true })).toBe(false);
+  });
+
+  it("папку не убираем никогда", () => {
+    expect(isDisposableDocument({ ...base, kind: "folder" })).toBe(false);
   });
 });

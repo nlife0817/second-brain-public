@@ -629,8 +629,14 @@ export interface CalendarEventRow {
 // --- База знаний ------------------------------------------------------------
 
 /**
- * Документ базы знаний — узел дерева. Отдельной сущности «папка» нет: любой
- * документ может быть и текстом, и разделом.
+ * Вид узла дерева. Папка группирует и только: текста, версий, вложений и
+ * обсуждений у неё нет. Детей может иметь ТОЛЬКО папка — иначе в дереве
+ * оказалось бы два разных способа вложить одно в другое.
+ */
+export type KbNodeKind = "document" | "folder";
+
+/**
+ * Узел базы знаний — документ или папка.
  *
  * Доступ и привязка к проектам живут только у корня ветки (`parent_id === null`),
  * вложенные наследуют их — см. комментарий к миграции 0055.
@@ -638,6 +644,7 @@ export interface CalendarEventRow {
 export interface KbDocument {
   id: string;
   org_id: string;
+  kind: KbNodeKind;
   parent_id: string | null;
   title: string;
   /** HTML, тот же формат и санитайзер, что у описания задачи. */
@@ -656,6 +663,7 @@ export interface KbDocument {
 /** Узел дерева в левой колонке раздела. Тело документа сюда не попадает. */
 export interface KbTreeNode {
   id: string;
+  kind: KbNodeKind;
   parent_id: string | null;
   title: string;
   position: number;
@@ -699,6 +707,17 @@ export interface KbDocumentVersion {
   body?: string;
 }
 
+/** Строка списка на странице папки. */
+export interface KbFolderChild {
+  id: string;
+  kind: KbNodeKind;
+  title: string;
+  position: number;
+  updated_at: string;
+  /** Кто правил последним; `null` — участника уже нет в системе. */
+  updated_by: UserBrief | null;
+}
+
 /** Задача, привязанная к документу: строка блока «Связанные задачи». */
 export interface KbLinkedTask {
   id: string;
@@ -723,7 +742,9 @@ export interface KbDocumentDetail extends KbDocument {
   /** Проекты корня ветки. Пусто — документ «общий». */
   project_ids: string[];
   /** Путь от корня до документа включительно — хлебные крошки. */
-  path: Array<{ id: string; title: string }>;
+  path: Array<{ id: string; title: string; kind: KbNodeKind }>;
+  /** Содержимое папки. У документа всегда пусто: детей он иметь не может. */
+  children: KbFolderChild[];
   tasks: KbLinkedTask[];
   attachments: Attachment[];
   threads: DocCommentThread[];

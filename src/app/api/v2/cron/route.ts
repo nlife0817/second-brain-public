@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { purgeOrphanAttachments } from "@/lib/core/attachments";
 import { syncDueCalendars } from "@/lib/core/calendars";
+import { purgeEmptyKbDocuments } from "@/lib/core/kb";
 import { dispatchPendingNotifications } from "@/lib/core/push";
 import { materializeDueRules } from "@/lib/core/recurring";
 import { purgeOldReminderMarks, runDueReminders } from "@/lib/core/reminders";
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
   // тиком, а не будут ждать следующего.
   const reminders = await runDueReminders().catch((e) => ({ error: String(e) }));
 
-  const [push, recurring, timers, webhooks, attachments, calendars] = await Promise.all([
+  const [push, recurring, timers, webhooks, attachments, emptyDocs, calendars] = await Promise.all([
     dispatchPendingNotifications().catch((e) => ({ error: String(e) })),
     materializeDueRules(today).catch((e) => ({ error: String(e) })),
     closeStaleTimers().catch((e) => ({ error: String(e) })),
@@ -48,6 +49,11 @@ export async function POST(request: NextRequest) {
     // Байты вложений лежат в самой БД и попадают в каждый бэкап, поэтому файл,
     // выброшенный из описания, нельзя оставлять в таблице навсегда.
     purgeOrphanAttachments().catch((e) => ({ error: String(e) })),
+    // Документ заводится одним нажатием, и передумать — обычное дело. Вкладку с
+    // такой пустышкой обычно закрывают, не дождавшись уборки при уходе, поэтому
+    // фон подбирает их сам — через сутки, чтобы не унести открытый в соседней
+    // вкладке и ещё не заполненный.
+    purgeEmptyKbDocuments().catch((e) => ({ error: String(e) })),
     // Внешние календари: сбой одного подключения садится в его sync_error и
     // остальных не задевает (см. syncAccount), поэтому здесь ловится только
     // отказ самого шага.
@@ -66,6 +72,7 @@ export async function POST(request: NextRequest) {
     purged,
     telegramCodes,
     attachments,
+    emptyDocs,
     calendars,
   });
 }

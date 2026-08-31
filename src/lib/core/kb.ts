@@ -23,9 +23,12 @@ import {
 } from "./kb-access";
 import {
   buildKbTree,
+  isDisposableDocument,
   isMeaningfulRevision,
+  kindRank,
   normalizeOrder,
   shouldSquashVersion,
+  UNTITLED,
   type KbNodeRow,
 } from "./kb-model";
 import { notifyMentions } from "./mentions";
@@ -38,6 +41,8 @@ import type {
   KbDocumentDetail,
   KbDocumentMemberWithUser,
   KbDocumentVersion,
+  KbFolderChild,
+  KbNodeKind,
   KbLinkedDocument,
   KbLinkedTask,
   KbTreeGroup,
@@ -54,6 +59,13 @@ function cleanTitle(raw: string | null | undefined): string {
   return (raw ?? "").replace(/\s+/g, " ").trim().slice(0, TITLE_MAX);
 }
 
+/** Класть внутрь можно только в папку — второго способа вложения нет. */
+function assertFolder(access: KbAccess): void {
+  if (access.document.kind !== "folder") {
+    throw new DomainError(422, "Вкладывать можно только в папку");
+  }
+}
+
 // --- Дерево ---------------------------------------------------------------------
 
 interface TreeSource {
@@ -67,7 +79,7 @@ interface TreeSource {
 async function loadTreeSource(ctx: AuthContext): Promise<TreeSource> {
   const [rows, links, members, projects] = await Promise.all([
     prepare<TreeSource["rows"][number]>(
-      `SELECT id, parent_id, title, position, created_at,
+      `SELECT id, kind, parent_id, title, position, created_at,
               default_role::text AS default_role, created_by
        FROM core.kb_documents
        WHERE org_id = ? AND deleted_at IS NULL`,
@@ -174,7 +186,12 @@ export async function listKbTree(ctx: AuthContext): Promise<KbTreeGroup[]> {
       // правкой на месте: тот же документ стоит и в других разделах.
       if (node) nodes.push({ ...node, position: link.position });
     }
-    nodes.sort((a, b) => a.position - b.position || a.title.localeCompare(b.title));
+    nodes.sort(
+      (a, b) =>
+        kindRank(a.kind) - kindRank(b.kind) ||
+        a.position - b.position ||
+        a.title.localeCompare(b.title),
+    );
     groups.push({ project_id: project.id, nodes });
   }
 
@@ -190,6 +207,7 @@ function mapDocument(row: KbAccess["document"]): KbDocument {
   return {
     id: row.id,
     org_id: row.org_id,
+    kind: row.kind,
     parent_id: row.parent_id,
     title: row.title,
     body: row.body,
@@ -204,12 +222,50 @@ function mapDocument(row: KbAccess["document"]): KbDocument {
   };
 }
 
+/**
+ * Содержимое папки. Доступ у детей общий с ней — он живёт на корне ветки,
+ * поэтому поштучно его проверять не нужно.
+ */
+async function folderChildren(folderId: string): Promise<KbFolderChild[]> {
+  const rows = await prepare<{
+    id: string;
+    kind: KbNodeKind;
+    title: string;
+    position: number;
+    updated_at: string;
+    u_id: string | null;
+    u_email: string | null;
+    u_name: string | null;
+    u_avatar: string | null;
+  }>(
+    `SELECT d.id, d.kind, d.title, d.position, d.updated_at,
+            u.id AS u_id, u.email AS u_email, u.name AS u_name, u.avatar_url AS u_avatar
+     FROM core.kb_documents d
+     LEFT JOIN core.users u ON u.id = d.updated_by
+     WHERE d.parent_id = ? AND d.deleted_at IS NULL
+     ORDER BY d.kind DESC, d.position, d.created_at`,
+  ).all(folderId);
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    title: r.title,
+    position: r.position,
+    updated_at: r.updated_at,
+    updated_by: r.u_id
+      ? { id: r.u_id, email: r.u_email ?? "", name: r.u_name ?? "", avatar_url: r.u_avatar }
+      : null,
+  }));
+}
+
 async function documentDetail(ctx: AuthContext, access: KbAccess): Promise<KbDocumentDetail> {
+  const folder = access.document.kind === "folder";
   const owner = { kind: "document" as const, documentId: access.document.id };
-  const [tasks, attachments, threads] = await Promise.all([
-    listDocumentTasks(ctx, access.document.id),
-    listOwnerAttachments(ctx, owner),
-    listDocComments(ctx, owner),
+  // У папки нет ни текста, ни вложений, ни обсуждений — и запросов за ними тоже.
+  const [tasks, attachments, threads, children] = await Promise.all([
+    folder ? Promise.resolve([]) : listDocumentTasks(ctx, access.document.id),
+    folder ? Promise.resolve([]) : listOwnerAttachments(ctx, owner),
+    folder ? Promise.resolve([]) : listDocComments(ctx, owner),
+    folder ? folderChildren(access.document.id) : Promise.resolve([]),
   ]);
   return {
     ...mapDocument(access.document),
@@ -221,6 +277,7 @@ async function documentDetail(ctx: AuthContext, access: KbAccess): Promise<KbDoc
     tasks,
     attachments,
     threads,
+    children,
   };
 }
 
@@ -232,9 +289,11 @@ export async function getKbDocument(ctx: AuthContext, documentId: string): Promi
 export interface KbCreateInput {
   title?: string;
   body?: string;
-  /** Родитель в дереве. Есть — документ вложенный, доступ наследуется. */
+  /** Папка или документ. По умолчанию документ. */
+  kind?: KbNodeKind;
+  /** Родитель в дереве — только папка. Есть — доступ наследуется от корня. */
   parentId?: string | null;
-  /** Проекты корня. Пусто и без родителя — «общий» документ. */
+  /** Проекты корня. Пусто и без родителя — «общий» узел. */
   projectIds?: string[];
 }
 
@@ -249,16 +308,18 @@ export async function createKbDocument(
   input: KbCreateInput,
 ): Promise<KbDocumentDetail> {
   const parentId = input.parentId ?? null;
+  const kind: KbNodeKind = input.kind ?? "document";
   const projectIds = [...new Set(input.projectIds ?? [])];
-  const title = cleanTitle(input.title) || "Без названия";
-  const body = sanitizeRichText(input.body ?? "");
+  const title = cleanTitle(input.title) || UNTITLED;
+  const body = kind === "folder" ? "" : sanitizeRichText(input.body ?? "");
 
   let parent: KbAccess | null = null;
   if (parentId) {
     if (projectIds.length > 0) {
-      throw new DomainError(422, "Вложенный документ наследует доступ от корня ветки");
+      throw new DomainError(422, "Вложенный узел наследует доступ от корня ветки");
     }
     parent = await requireKbAccess(ctx, parentId, "doc.edit");
+    assertFolder(parent);
     if (parent.path.length >= KB_MAX_DEPTH) {
       throw new DomainError(422, `Глубже ${KB_MAX_DEPTH} уровней вложенности не поддерживается`);
     }
@@ -273,10 +334,10 @@ export async function createKbDocument(
     const position = await nextPosition(tx, ctx.orgId, parentId, projectIds[0] ?? null);
     await tx
       .prepare(
-        `INSERT INTO core.kb_documents (id, org_id, parent_id, title, body, position, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO core.kb_documents (id, org_id, kind, parent_id, title, body, position, created_by, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, ctx.orgId, parentId, title, body, position, ctx.user.id, ctx.user.id);
+      .run(id, ctx.orgId, kind, parentId, title, body, position, ctx.user.id, ctx.user.id);
 
     for (const projectId of projectIds) {
       await tx
@@ -292,7 +353,7 @@ export async function createKbDocument(
       entityType: "kb_document",
       entityId: id,
       verb: "kb_document.created",
-      payload: { title, parent_id: parentId, project_ids: projectIds },
+      payload: { title, kind, parent_id: parentId, project_ids: projectIds },
     });
   });
 
@@ -348,9 +409,11 @@ export async function updateKbDocument(
   patch: { title?: string; body?: string },
 ): Promise<KbDocumentDetail> {
   const access = await requireKbAccess(ctx, documentId, "doc.edit");
+  const folder = access.document.kind === "folder";
+  if (folder && patch.body !== undefined) throw new DomainError(422, "У папки нет текста");
   const previous = { title: access.document.title, body: access.document.body };
   const next = {
-    title: patch.title === undefined ? previous.title : cleanTitle(patch.title) || "Без названия",
+    title: patch.title === undefined ? previous.title : cleanTitle(patch.title) || UNTITLED,
     body: patch.body === undefined ? previous.body : sanitizeRichText(patch.body),
   };
   if (!isMeaningfulRevision(previous, next)) return documentDetail(ctx, access);
@@ -362,7 +425,8 @@ export async function updateKbDocument(
       )
       .run(next.title, next.body, ctx.user.id, documentId, ctx.orgId);
 
-    await writeVersion(tx, ctx, documentId, next);
+    // Историю ведёт только документ: у папки нечего восстанавливать.
+    if (!folder) await writeVersion(tx, ctx, documentId, next);
 
     const eventId = await emitEvent(tx, {
       orgId: ctx.orgId,
@@ -372,14 +436,16 @@ export async function updateKbDocument(
       verb: "kb_document.updated",
       payload: { title: next.title },
     });
-    await notifyMentions(tx, {
-      orgId: ctx.orgId,
-      eventId,
-      owner: { kind: "document", documentId },
-      actorId: ctx.user.id,
-      html: next.body,
-      prevHtml: previous.body,
-    });
+    if (!folder) {
+      await notifyMentions(tx, {
+        orgId: ctx.orgId,
+        eventId,
+        owner: { kind: "document", documentId },
+        actorId: ctx.user.id,
+        html: next.body,
+        prevHtml: previous.body,
+      });
+    }
   });
 
   return getKbDocument(ctx, documentId);
@@ -465,6 +531,7 @@ export async function moveKbDocument(
   let parent: KbAccess | null = null;
   if (parentId) {
     parent = await requireKbAccess(ctx, parentId, "doc.edit");
+    assertFolder(parent);
     const depth = await subtreeDepth(documentId);
     if (parent.path.length + depth > KB_MAX_DEPTH) {
       throw new DomainError(422, `Глубже ${KB_MAX_DEPTH} уровней вложенности не поддерживается`);
@@ -1193,4 +1260,92 @@ async function copyAttachmentsToDocument(
     if (copy) body = body.split(row.id).join(copy.id);
   }
   return body;
+}
+
+// --- Уборка пустых документов ------------------------------------------------------
+
+/**
+ * Есть ли у документа хоть что-нибудь, кроме заголовка и текста: вложения,
+ * обсуждения, привязанные задачи, история правок или вложенные узлы. Любого
+ * из этого достаточно, чтобы документ не считался брошенным.
+ */
+async function hasAnyContent(documentId: string): Promise<boolean> {
+  const row = await prepare<{ any_content: boolean }>(
+    `SELECT (
+       EXISTS (SELECT 1 FROM core.attachments WHERE document_id = ?)
+       OR EXISTS (SELECT 1 FROM core.doc_comments WHERE document_id = ? AND deleted_at IS NULL)
+       OR EXISTS (SELECT 1 FROM core.kb_document_tasks WHERE document_id = ?)
+       OR EXISTS (SELECT 1 FROM core.kb_document_versions WHERE document_id = ?)
+       OR EXISTS (SELECT 1 FROM core.kb_documents WHERE parent_id = ?)
+     ) AS any_content`,
+  ).get(documentId, documentId, documentId, documentId, documentId);
+  return !!row?.any_content;
+}
+
+/**
+ * Убрать документ, если в него так ничего и не добавили.
+ *
+ * Зовётся, когда человек уходит со страницы документа. Документ заводится одним
+ * нажатием «плюса», и передумать — обычное дело; такие пустышки копятся в
+ * дереве и мешают находить настоящее.
+ *
+ * Удаление здесь **жёсткое, мимо корзины**: в корзине пустышке делать нечего,
+ * восстанавливать в ней нечего. Решает сервер, а не браузер, — иначе правило
+ * «что считать пустым» разошлось бы между вкладкой и уборкой в cron.
+ */
+export async function discardEmptyKbDocument(
+  ctx: AuthContext,
+  documentId: string,
+): Promise<{ removed: boolean }> {
+  const access = await requireKbAccess(ctx, documentId, "doc.delete");
+  const disposable = isDisposableDocument({
+    kind: access.document.kind,
+    title: access.document.title,
+    body: access.document.body,
+    hasContent: await hasAnyContent(documentId),
+  });
+  if (!disposable) return { removed: false };
+
+  await transaction(async (tx) => {
+    await tx
+      .prepare(`DELETE FROM core.kb_documents WHERE id = ? AND org_id = ?`)
+      .run(documentId, ctx.orgId);
+    // Событие пишем: документ был создан событием, и лента не должна обрываться
+    // на «создан» у того, чего уже нет.
+    await emitEvent(tx, {
+      orgId: ctx.orgId,
+      actorId: ctx.user.id,
+      entityType: "kb_document",
+      entityId: documentId,
+      verb: "kb_document.discarded",
+      payload: {},
+    });
+  });
+  return { removed: true };
+}
+
+/**
+ * Та же уборка, но фоном: вкладку закрывают, не дождавшись запроса, и пустышка
+ * остаётся в дереве навсегда. Сутки отсрочки — чтобы не унести документ,
+ * открытый в соседней вкладке и ещё не заполненный.
+ *
+ * Зовётся из тика cron рядом с уборкой осиротевших вложений. Условие здесь
+ * повторяет чистую `isDisposableDocument` — правя одно, правь второе (то же
+ * требование, что у тихих часов и их SQL-зеркала).
+ */
+export async function purgeEmptyKbDocuments(): Promise<{ removed: number }> {
+  const result = await prepare(
+    `DELETE FROM core.kb_documents d
+     WHERE d.kind = 'document'
+       AND d.deleted_at IS NULL
+       AND d.created_at < now() - interval '1 day'
+       AND btrim(coalesce(d.title, '')) IN ('', 'Без названия')
+       AND btrim(regexp_replace(coalesce(d.body, ''), '<[^>]*>|&nbsp;', '', 'g')) = ''
+       AND NOT EXISTS (SELECT 1 FROM core.attachments a WHERE a.document_id = d.id)
+       AND NOT EXISTS (SELECT 1 FROM core.doc_comments c WHERE c.document_id = d.id AND c.deleted_at IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM core.kb_document_tasks t WHERE t.document_id = d.id)
+       AND NOT EXISTS (SELECT 1 FROM core.kb_document_versions v WHERE v.document_id = d.id)
+       AND NOT EXISTS (SELECT 1 FROM core.kb_documents c WHERE c.parent_id = d.id)`,
+  ).run();
+  return { removed: result.changes };
 }

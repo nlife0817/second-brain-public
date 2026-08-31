@@ -12,7 +12,13 @@
 import { prepare, type TxContext } from "@/lib/sql";
 import { DomainError } from "./http";
 import { assertKbRole, effectiveKbRole, type KbAction } from "./policy";
-import type { AuthContext, PolicyKbDocument, PolicyProject, ProjectRole } from "./types";
+import type {
+  AuthContext,
+  KbNodeKind,
+  PolicyKbDocument,
+  PolicyProject,
+  ProjectRole,
+} from "./types";
 
 /**
  * Предел вложенности. Рекурсивный поиск корня обязан завершаться на битых
@@ -25,6 +31,7 @@ const CHAIN_LIMIT = 32;
 export interface KbDocumentRow {
   id: string;
   org_id: string;
+  kind: KbNodeKind;
   parent_id: string | null;
   title: string;
   body: string;
@@ -45,11 +52,11 @@ export interface KbAccess {
   role: ProjectRole;
   /** Проекты корня. Пусто — документ «общий». */
   projectIds: string[];
-  /** Путь от корня до документа включительно. */
-  path: Array<{ id: string; title: string }>;
+  /** Путь от корня до узла включительно. */
+  path: Array<{ id: string; title: string; kind: KbNodeKind }>;
 }
 
-const DOCUMENT_COLUMNS = `id, org_id, parent_id, title, body, position, default_role::text AS default_role,
+const DOCUMENT_COLUMNS = `id, org_id, kind, parent_id, title, body, position, default_role::text AS default_role,
    created_by, updated_by, created_at, updated_at, deleted_at, deleted_by`;
 
 /**
@@ -123,7 +130,7 @@ export async function loadKbAccess(
     role,
     projectIds: projects.map((p) => p.id),
     // Цепочка идёт от документа к корню — крошкам нужен обратный порядок.
-    path: [...chain].reverse().map((row) => ({ id: row.id, title: row.title })),
+    path: [...chain].reverse().map((row) => ({ id: row.id, title: row.title, kind: row.kind })),
   };
 }
 

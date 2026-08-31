@@ -2,11 +2,12 @@
 // Без БД и без AuthContext — всё, что нужно решению, приходит аргументами.
 // Права живут в policy.ts, работа с данными — в kb.ts.
 
-import type { KbTreeNode } from "./types";
+import type { KbNodeKind, KbTreeNode } from "./types";
 
 /** Строка дерева в том виде, в каком её отдаёт выборка. */
 export interface KbNodeRow {
   id: string;
+  kind: KbNodeKind;
   parent_id: string | null;
   title: string;
   position: number;
@@ -28,6 +29,7 @@ export function buildKbTree(rows: KbNodeRow[]): KbTreeNode[] {
   for (const row of rows) {
     byId.set(row.id, {
       id: row.id,
+      kind: row.kind,
       parent_id: row.parent_id,
       title: row.title,
       position: row.position,
@@ -48,9 +50,13 @@ export function buildKbTree(rows: KbNodeRow[]): KbTreeNode[] {
     }
   }
 
+  // Папки идут перед документами: раздел, спрятанный между страницами,
+  // читается как потерянный. Внутри вида — позиция, `created_at` разводит
+  // равные (позиции в базе бывают и разъехавшимися).
   const sort = (list: KbTreeNode[]) => {
     list.sort(
       (a, b) =>
+        kindRank(a.kind) - kindRank(b.kind) ||
         a.position - b.position ||
         (order.get(a.id) ?? "").localeCompare(order.get(b.id) ?? "") ||
         a.id.localeCompare(b.id),
@@ -59,6 +65,11 @@ export function buildKbTree(rows: KbNodeRow[]): KbTreeNode[] {
   };
   sort(roots);
   return roots;
+}
+
+/** Папки впереди документов — один порядок у дерева и у страницы папки. */
+export function kindRank(kind: KbNodeKind): number {
+  return kind === "folder" ? 0 : 1;
 }
 
 /**
@@ -87,21 +98,50 @@ export function collectSubtree(rows: KbNodeRow[], rootId: string): string[] {
   return out;
 }
 
-/** Путь от корня ветки до документа включительно — хлебные крошки. */
+/** Путь от корня ветки до узла включительно — хлебные крошки. */
 export function pathToRoot(
-  rows: Array<{ id: string; parent_id: string | null; title: string }>,
+  rows: Array<{ id: string; parent_id: string | null; title: string; kind: KbNodeKind }>,
   documentId: string,
-): Array<{ id: string; title: string }> {
+): Array<{ id: string; title: string; kind: KbNodeKind }> {
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const path: Array<{ id: string; title: string }> = [];
+  const path: Array<{ id: string; title: string; kind: KbNodeKind }> = [];
   const seen = new Set<string>();
   let current = byId.get(documentId);
   while (current && !seen.has(current.id)) {
     seen.add(current.id);
-    path.unshift({ id: current.id, title: current.title });
+    path.unshift({ id: current.id, title: current.title, kind: current.kind });
     current = current.parent_id ? byId.get(current.parent_id) : undefined;
   }
   return path;
+}
+
+/** Название, которое получает только что созданный документ или папка. */
+export const UNTITLED = "Без названия";
+
+/**
+ * Пуст ли документ настолько, что его не жалко убрать.
+ *
+ * Документ заводится одним нажатием «плюса», и передумать — обычное дело:
+ * человек создал, посмотрел и ушёл. Такие пустышки копятся в дереве и мешают
+ * находить настоящее. Признак строгий: и заголовок не тронут, и текста нет, и
+ * ничего к нему не привязано — иначе уборка однажды унесёт чужую работу.
+ *
+ * Разметка пустого редактора это не пустая строка: Tiptap отдаёт `<p></p>`.
+ */
+export function isDisposableDocument(input: {
+  kind: KbNodeKind;
+  title: string;
+  body: string;
+  /** Вложения, обсуждения, связанные задачи, версии, дети — что угодно из этого. */
+  hasContent: boolean;
+}): boolean {
+  // Папку не трогаем никогда: она пуста ровно до того, как в неё что-то
+  // положат, и убрать её значит отменить осознанное действие.
+  if (input.kind !== "document") return false;
+  if (input.hasContent) return false;
+  const title = input.title.trim();
+  if (title !== "" && title !== UNTITLED) return false;
+  return input.body.replace(/<[^>]*>/g, "").replace(/&nbsp;|\s/g, "") === "";
 }
 
 /**
