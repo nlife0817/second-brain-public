@@ -144,15 +144,16 @@ export function MobileMyTasksClient({ initial }: { initial: TaskListItem[] }) {
         setTasks((prev) =>
           prev.map((t) => (t.id === taskId ? { ...t, planned_date: updated.planned_date } : t)),
         );
-        // Кэш списка держит старую строку — следующий заход на экран показал бы
-        // задачу в прежнем разделе.
-        if (path) invalidate(path);
+        // Кэш держит старую строку — следующий заход на экран показал бы
+        // задачу в прежнем разделе. Сбрасываем ветку целиком, как делает
+        // `reload`: списков два (с завершёнными и без), и устареть успевают оба.
+        invalidate(`/orgs/${orgId}/tasks`);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Не удалось изменить план");
         await load({ force: true });
       }
     },
-    [orgId, path, load],
+    [orgId, load],
   );
 
   return (
