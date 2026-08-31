@@ -387,7 +387,7 @@ Google OAuth убран целиком: остались `credentials.ts` (па�
 ## База знаний
 
 `core.kb_documents` + `kb_document_projects` / `kb_document_members` /
-`kb_document_versions` / `kb_document_tasks` (миграция 0054). Раздел `/v2/kb`:
+`kb_document_versions` / `kb_document_tasks` (миграция 0055). Раздел `/v2/kb`:
 дерево слева, документ справа. Редактор, вложения и обсуждения к фрагментам —
 те же, что у описания задачи; различается только владелец (`DocOwner`).
 
