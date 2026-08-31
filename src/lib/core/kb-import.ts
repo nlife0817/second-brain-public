@@ -21,8 +21,14 @@ import mammoth from "mammoth";
 import { sanitizeRichText } from "@/lib/sanitize";
 import { ATTACHMENT_MAX_BYTES, uploadAttachment } from "./attachments";
 import { DomainError } from "./http";
-import { createKbDocument, getKbDocument, updateKbDocument } from "./kb";
-import { csvToWorkbook } from "./sheet/csv";
+import {
+  createKbDocument,
+  discardFailedImport,
+  getKbDocument,
+  updateKbDocument,
+} from "./kb";
+import { csvOverflow, parseCsv, rowsToWorkbook } from "./sheet/csv";
+import { recalculate } from "./sheet/engine";
 import { serializeWorkbook } from "./sheet/model";
 import { workbookFromXlsx } from "./sheet/xlsx";
 import type { AuthContext, KbDocumentDetail, KbNodeKind } from "./types";
@@ -106,19 +112,38 @@ export async function importKbFile(
   const notes: string[] = [];
   let body: string;
 
-  if (format === "docx") {
-    const converted = await htmlFromDocx(ctx, created.id, input.bytes);
-    body = converted.html;
-    notes.push(...converted.notes);
-  } else if (format === "xlsx") {
-    const converted = await workbookFromXlsx(input.bytes);
-    body = serializeWorkbook(converted.workbook);
-    notes.push(...converted.notes);
-  } else {
-    body = serializeWorkbook(csvToWorkbook(decodeText(input.bytes), titleFrom(input.filename)));
-  }
+  try {
+    if (format === "docx") {
+      const converted = await htmlFromDocx(ctx, created.id, input.bytes);
+      body = converted.html;
+      notes.push(...converted.notes);
+    } else if (format === "xlsx") {
+      const converted = await workbookFromXlsx(input.bytes);
+      // Пересчитываем сразу: в файле лежат значения, посчитанные чужим Excel, и
+      // до первого открытия таблицы в базе хранилось бы то, чего наши формулы
+      // не дают. Расхождение никому не видно (страница и выгрузка считают
+      // заново), но объяснять его потом дороже, чем убрать сейчас.
+      recalculate(converted.workbook);
+      body = serializeWorkbook(converted.workbook);
+      notes.push(...converted.notes);
+    } else {
+      const rows = parseCsv(decodeText(input.bytes));
+      notes.push(...csvOverflow(rows));
+      body = serializeWorkbook(rowsToWorkbook(rows, titleFrom(input.filename)));
+    }
 
-  await updateKbDocument(ctx, created.id, { body });
+    await updateKbDocument(ctx, created.id, { body });
+  } catch (cause) {
+    // Файл оказался не тем, чем притворялся расширением, или повреждён. Узел к
+    // этому моменту уже заведён — убираем его, иначе в дереве останется пустая
+    // строка с именем файла, и человек решит, что загрузка всё-таки прошла.
+    await discardFailedImport(ctx, created.id).catch(() => {});
+    if (cause instanceof DomainError) throw cause;
+    throw new DomainError(
+      422,
+      `Не удалось разобрать «${input.filename}» — проверьте, что файл не повреждён`,
+    );
+  }
 
   if (input.keepOriginal !== false) {
     try {

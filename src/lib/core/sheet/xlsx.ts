@@ -60,6 +60,17 @@ export async function workbookFromXlsx(bytes: Uint8Array): Promise<ImportNotes> 
     if (used.truncated) {
       notes.push(`Лист «${sheet.name}»: перенесена только часть данных — файл слишком велик`);
     }
+    // Молча обрезать нельзя: человек обязан знать, чего в таблице не будет.
+    if (used.droppedRows) {
+      notes.push(
+        `Лист «${sheet.name}»: перенесены первые ${SHEET_LIMITS.rows} строк, ещё ${used.droppedRows} осталось в файле`,
+      );
+    }
+    if (used.droppedCols) {
+      notes.push(
+        `Лист «${sheet.name}»: перенесены первые ${SHEET_LIMITS.cols} колонок, ещё ${used.droppedCols} осталось в файле`,
+      );
+    }
     if (used.droppedFormulas) {
       notes.push(
         `Лист «${sheet.name}»: ${used.droppedFormulas} формул сохранены значениями — их синтаксис не поддерживается`,
@@ -80,6 +91,9 @@ interface SheetUsage {
   cells: number;
   truncated: boolean;
   droppedFormulas: number;
+  /** Строк и колонок, не поместившихся в лист: о них обязаны сказать вслух. */
+  droppedRows: number;
+  droppedCols: number;
 }
 
 function readSheet(
@@ -88,7 +102,13 @@ function readSheet(
   workbook: Workbook,
   budget: number,
 ): SheetUsage {
-  const usage: SheetUsage = { cells: 0, truncated: false, droppedFormulas: 0 };
+  const usage: SheetUsage = {
+    cells: 0,
+    truncated: false,
+    droppedFormulas: 0,
+    droppedRows: 0,
+    droppedCols: 0,
+  };
 
   // Размер листа: то, что реально занято, плюс запас на дописывание.
   sheet.rows = clamp(ws.actualRowCount || ws.rowCount || 0, SHEET_LIMITS.rows, 50, 30);
@@ -116,9 +136,16 @@ function readSheet(
   }
 
   ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (rowNumber > sheet.rows || usage.truncated) return;
+    if (rowNumber > sheet.rows) {
+      usage.droppedRows++;
+      return;
+    }
+    if (usage.truncated) return;
     row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-      if (colNumber > sheet.cols) return;
+      if (colNumber > sheet.cols) {
+        usage.droppedCols = Math.max(usage.droppedCols, colNumber - sheet.cols);
+        return;
+      }
       if (covered.has(cellRef(rowNumber - 1, colNumber - 1))) return;
       if (usage.cells >= budget) {
         usage.truncated = true;

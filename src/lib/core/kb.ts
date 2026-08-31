@@ -1373,6 +1373,37 @@ export async function discardEmptyKbDocument(
 }
 
 /**
+ * Снести узел, который так и не наполнился: импорт упал на разборе файла.
+ *
+ * Узел заводится ДО разбора (картинкам из .docx нужен владелец), поэтому отказ
+ * оставляет в дереве пустую строку с именем файла. Через сутки её подберёт
+ * фоновая уборка, но человек увидит её прямо сейчас и решит, что файл всё-таки
+ * загрузился. Удаление жёсткое и мимо корзины — по той же причине, что у
+ * брошенной пустышки: восстанавливать там нечего.
+ *
+ * Права проверены выше по стеку (узел только что создан этим же человеком),
+ * поэтому здесь достаточно ограничения по организации.
+ */
+export async function discardFailedImport(ctx: AuthContext, documentId: string): Promise<void> {
+  await transaction(async (tx) => {
+    const removed = await tx
+      .prepare<{ id: string }>(
+        `DELETE FROM core.kb_documents WHERE id = ? AND org_id = ? RETURNING id`,
+      )
+      .get(documentId, ctx.orgId);
+    if (!removed) return;
+    await emitEvent(tx, {
+      orgId: ctx.orgId,
+      actorId: ctx.user.id,
+      entityType: "kb_document",
+      entityId: documentId,
+      verb: "kb_document.discarded",
+      payload: {},
+    });
+  });
+}
+
+/**
  * Та же уборка, но фоном: вкладку закрывают, не дождавшись запроса, и пустышка
  * остаётся в дереве навсегда. Сутки отсрочки — чтобы не унести документ,
  * открытый в соседней вкладке и ещё не заполненный.
