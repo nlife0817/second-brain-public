@@ -17,6 +17,7 @@ import { dateToSerial, serialToDate } from "./functions";
 import { offsetFormula } from "./formula";
 import {
   cellRef,
+  parseRange,
   DEFAULT_COL_WIDTH,
   DEFAULT_ROW_HEIGHT,
   emptySheet,
@@ -97,10 +98,28 @@ function readSheet(
   // формула для них выводится сдвигом — тем же, что при копировании.
   const masters = new Map<string, string>();
 
+  // Объединения читаем ДО ячеек: exceljs отдаёт значение объединённой области
+  // в каждой её ячейке, а у нас живёт только левая верхняя (см. `mergeRange`).
+  // Без этого отмена объединения показывала бы четыре копии одного текста, и
+  // ровно столько же уезжало бы в csv.
+  const merges = (ws.model as { merges?: string[] })?.merges ?? [];
+  const covered = new Set<string>();
+  for (const item of merges.slice(0, 500)) {
+    const area = parseRange(item);
+    if (!area) continue;
+    for (let row = area.r1; row <= area.r2; row++) {
+      for (let col = area.c1; col <= area.c2; col++) {
+        if (row === area.r1 && col === area.c1) continue;
+        covered.add(cellRef(row, col));
+      }
+    }
+  }
+
   ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
     if (rowNumber > sheet.rows || usage.truncated) return;
     row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
       if (colNumber > sheet.cols) return;
+      if (covered.has(cellRef(rowNumber - 1, colNumber - 1))) return;
       if (usage.cells >= budget) {
         usage.truncated = true;
         return;
@@ -131,7 +150,6 @@ function readSheet(
     }
   });
 
-  const merges = (ws.model as { merges?: string[] })?.merges ?? [];
   if (merges.length) sheet.merges = merges.slice(0, 500);
 
   const view = ws.views?.[0];

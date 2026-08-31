@@ -233,11 +233,17 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
 
   // --- Правка --------------------------------------------------------------
 
-  const update = useCallback(
+  /**
+   * Общий хвост всех правок: положить книгу, отметить несохранённое, запустить
+   * пересчёт и таймер автосохранения.
+   *
+   * Ни одного побочного действия внутри обновляющей функции состояния — только
+   * снаружи. React вправе вызвать такую функцию дважды (в разработке он так и
+   * делает), и отмена, спрятанная внутри `setPast`, откатывала бы сразу два
+   * шага вместо одного.
+   */
+  const commit = useCallback(
     (next: Workbook) => {
-      if (!editable) return;
-      setPast((prev) => [...prev.slice(-(HISTORY_LIMIT - 1)), workbookRef.current]);
-      setFuture([]);
       const ready = computed(next);
       workbookRef.current = ready;
       setWorkbook(ready);
@@ -245,7 +251,18 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
       setStatus("dirty");
       schedule();
     },
-    [editable, schedule],
+    [schedule],
+  );
+
+  const update = useCallback(
+    (next: Workbook) => {
+      if (!editable) return;
+      const previous = workbookRef.current;
+      setPast((prev) => [...prev.slice(-(HISTORY_LIMIT - 1)), previous]);
+      setFuture([]);
+      commit(next);
+    },
+    [editable, commit],
   );
 
   const mutate = useCallback(
@@ -258,32 +275,22 @@ export function useSheet({ value, onSave, editable }: UseSheetOptions): SheetApi
   );
 
   const undo = useCallback(() => {
-    setPast((prev) => {
-      if (!prev.length) return prev;
-      const previous = prev[prev.length - 1];
-      setFuture((next) => [workbookRef.current, ...next].slice(0, HISTORY_LIMIT));
-      workbookRef.current = previous;
-      setWorkbook(previous);
-      dirtyRef.current = true;
-      setStatus("dirty");
-      schedule();
-      return prev.slice(0, -1);
-    });
-  }, [schedule]);
+    const previous = past[past.length - 1];
+    if (!previous) return;
+    const current = workbookRef.current;
+    setPast((prev) => prev.slice(0, -1));
+    setFuture((prev) => [current, ...prev].slice(0, HISTORY_LIMIT));
+    commit(previous);
+  }, [past, commit]);
 
   const redo = useCallback(() => {
-    setFuture((prev) => {
-      if (!prev.length) return prev;
-      const next = prev[0];
-      setPast((history) => [...history.slice(-(HISTORY_LIMIT - 1)), workbookRef.current]);
-      workbookRef.current = next;
-      setWorkbook(next);
-      dirtyRef.current = true;
-      setStatus("dirty");
-      schedule();
-      return prev.slice(1);
-    });
-  }, [schedule]);
+    const next = future[0];
+    if (!next) return;
+    const current = workbookRef.current;
+    setFuture((prev) => prev.slice(1));
+    setPast((prev) => [...prev.slice(-(HISTORY_LIMIT - 1)), current]);
+    commit(next);
+  }, [future, commit]);
 
   // --- Выделение -----------------------------------------------------------
 

@@ -66,22 +66,34 @@ export function SheetTabs({ api, editable }: { api: SheetApi; editable: boolean 
             />
           );
         }
+        // Неактивная вкладка — обычная кнопка перехода, активная — ещё и меню
+        // листа. Одним триггером это не сделать: `disabled` с него уезжает на
+        // саму кнопку, и по неактивной вкладке нельзя было бы даже кликнуть.
+        if (!activeTab || !editable) {
+          return (
+            <button
+              key={sheet.id}
+              type="button"
+              onClick={() => api.selectSheet(index)}
+              className={cn(
+                "h-6 max-w-40 truncate rounded px-2 text-xs transition-colors",
+                activeTab
+                  ? "bg-background font-semibold text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {sheet.name}
+            </button>
+          );
+        }
         return (
           <DropdownMenu key={sheet.id}>
             <DropdownMenuTrigger
-              disabled={!activeTab || !editable}
               render={
                 <button
                   type="button"
-                  onClick={() => {
-                    if (!activeTab) api.selectSheet(index);
-                  }}
-                  className={cn(
-                    "h-6 max-w-40 truncate rounded px-2 text-xs transition-colors",
-                    activeTab
-                      ? "bg-background font-semibold text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
+                  title="Переименовать или удалить лист"
+                  className="h-6 max-w-40 truncate rounded bg-background px-2 text-xs font-semibold text-foreground shadow-sm"
                 >
                   {sheet.name}
                 </button>
