@@ -50,13 +50,14 @@ type AttachmentRow = {
   width: number | null;
   height: number | null;
   created_at: string;
+  pinned: boolean;
 };
 
 function mapAttachment(r: AttachmentRow): Attachment {
   return { ...r, url: attachmentUrl(r.org_id, r.id) };
 }
 
-const ATTACHMENT_COLUMNS = `id, org_id, task_id, document_id, filename, mime_type, byte_size, width, height, created_at`;
+const ATTACHMENT_COLUMNS = `id, org_id, task_id, document_id, filename, mime_type, byte_size, width, height, created_at, pinned`;
 
 /** Имя файла как заголовок: без управляющих символов, кавычек и путей. */
 function safeFilename(raw: string): string {
@@ -71,6 +72,11 @@ export interface UploadInput {
   bytes: Uint8Array;
   width?: number | null;
   height?: number | null;
+  /**
+   * Файл приложен нарочно, ссылки на него в тексте не будет. Так грузится
+   * исходник импорта — иначе уборка осиротевших снесёт его через сутки.
+   */
+  pinned?: boolean;
 }
 
 /**
@@ -100,8 +106,8 @@ export async function uploadAttachment(
   const cols = ownerColumns(owner);
   const row = await prepare<AttachmentRow>(
     `INSERT INTO core.attachments
-       (org_id, task_id, document_id, uploaded_by, filename, mime_type, byte_size, width, height, data)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (org_id, task_id, document_id, uploaded_by, filename, mime_type, byte_size, width, height, data, pinned)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      RETURNING ${ATTACHMENT_COLUMNS}`,
   ).get(
     ctx.orgId,
@@ -115,6 +121,7 @@ export async function uploadAttachment(
     input.height ?? null,
     // Buffer — тот вид, в котором postgres.js кладёт значение в bytea.
     Buffer.from(input.bytes),
+    input.pinned === true,
   );
   if (!row) throw new DomainError(500, "Не удалось сохранить файл");
   return mapAttachment(row);
@@ -214,6 +221,9 @@ export async function purgeOrphanAttachments(): Promise<{ removed: number }> {
      USING core.kb_documents k
      WHERE k.id = a.document_id
        AND a.created_at < now() - interval '1 day'
+       -- Помеченный файл приложили нарочно: у книги тело вообще JSON, и ссылке
+       -- на исходник там взяться неоткуда (миграция 0058).
+       AND NOT a.pinned
        AND position(a.id::text in k.body) = 0
        -- Версии документа тоже держат разметку: снести файл, на который
        -- ссылается прошлая версия, значит сделать возврат к ней неполным.

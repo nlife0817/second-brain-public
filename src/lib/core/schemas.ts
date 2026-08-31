@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SHEET_LIMITS } from "./sheet/model";
 
 export const orgCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -606,13 +607,20 @@ export const lostReasonCreateSchema = z.object({
 // --- База знаний -----------------------------------------------------------------
 
 /** Тело документа — HTML; санитайзер на сервере всё равно перепишет его сам. */
-const kbBodySchema = z.string().max(2_000_000);
+/**
+ * Потолок тела узла — ровно предел книги (`SHEET_LIMITS.bytes`), не круглое
+ * число рядом: разойдись они, и появилась бы полоса размеров, где страница
+ * считает книгу допустимой, а сервер отвечает 400 на автосохранении.
+ * Содержательные пределы (листы, ячейки) проверяет `normalizeWorkbook` в
+ * сервисе — zod не должен знать формат книги.
+ */
+const kbBodySchema = z.string().max(SHEET_LIMITS.bytes);
 
 export const kbCreateSchema = z.object({
   title: z.string().trim().max(200).optional(),
   body: kbBodySchema.optional(),
   /** Папка или документ; по умолчанию документ. */
-  kind: z.enum(["document", "folder"]).optional(),
+  kind: z.enum(["document", "folder", "sheet"]).optional(),
   parent_id: z.uuid().nullish(),
   project_ids: z.array(z.uuid()).max(20).optional(),
 });

@@ -51,6 +51,10 @@ export function KbShell({
 
   const [tree, setTree] = useState(initialTree);
   const [error, setError] = useState<string | null>(null);
+  /** Что не поместилось при импорте — предупреждение, а не отказ. */
+  const [notice, setNotice] = useState<string | null>(null);
+  /** Имя файла, который сейчас разбирает сервер. */
+  const [importing, setImporting] = useState<string | null>(null);
   // Дерево приезжает с сервера при каждом router.refresh(); сравнение по ссылке
   // в рендере, а не эффектом — иначе лишний проход отрисовки со старым деревом.
   const [seed, setSeed] = useState(initialTree);
@@ -180,6 +184,45 @@ export function KbShell({
     [orgId, router],
   );
 
+  /**
+   * Загрузка готового файла. Разбор идёт на сервере (mammoth и exceljs весят
+   * вместе больше мегабайта), поэтому сюда приезжает уже готовый узел дерева.
+   *
+   * Замечания импорта показываем отдельной строкой, а не ошибкой: «перенесена
+   * часть данных» — это предупреждение о том, чего в узле не будет, и молчать
+   * о нём нельзя, но и загрузку оно не отменяет.
+   */
+  const upload = useCallback(
+    (target: { parentId: string | null; projectId: string | null }, file: File) => {
+      if (!orgId) return;
+      setError(null);
+      setNotice(null);
+      setImporting(file.name);
+      void (async () => {
+        try {
+          const form = new FormData();
+          form.append("file", file);
+          if (target.parentId) form.append("parent_id", target.parentId);
+          if (!target.parentId && target.projectId) {
+            form.append("project_ids", target.projectId);
+          }
+          const result = await api.upload<{
+            document: KbDocumentDetail;
+            notes: string[];
+          }>(`/orgs/${orgId}/kb/import`, form);
+          if (result.notes.length) setNotice(result.notes.join(" · "));
+          router.push(`/v2/kb/${result.document.id}`);
+          router.refresh();
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Не удалось загрузить файл");
+        } finally {
+          setImporting(null);
+        }
+      })();
+    },
+    [orgId, router],
+  );
+
   return (
     <KbDisposableContext.Provider value={markDisposable}>
     <div className="flex h-full min-h-0 flex-1">
@@ -193,6 +236,7 @@ export function KbShell({
         onMove={move}
         onReorderProjects={reorderProjects}
         onCreate={create}
+        onUpload={upload}
         trashCount={trashCount}
         hideOnNarrow={!!activeDocumentId || pathname === "/v2/kb/trash"}
       />
@@ -200,6 +244,19 @@ export function KbShell({
         {error && (
           <p className="border-b border-border bg-destructive/10 px-4 py-1.5 text-xs text-destructive">
             {error}
+          </p>
+        )}
+        {importing && (
+          <p className="border-b border-border bg-muted px-4 py-1.5 text-xs text-muted-foreground">
+            Разбираем «{importing}»…
+          </p>
+        )}
+        {notice && (
+          <p className="flex items-start gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+            <span className="flex-1">{notice}</span>
+            <button onClick={() => setNotice(null)} aria-label="Скрыть">
+              ✕
+            </button>
           </p>
         )}
         {children}
